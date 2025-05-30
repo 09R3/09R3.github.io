@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Welcome to emcee.work</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+        }
+
+        .sidebar {
+            width: 280px;
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(20px);
+            border-right: 1px solid rgba(255, 255, 255, 0.2);
+            padding: 2rem;
+            box-shadow: 4px 0 15px rgba(0, 0, 0, 0.1);
+        }
+
+        .logo {
+            color: white;
+            font-size: 1.5rem;
+            font-weight: bold;
+            margin-bottom: 3rem;
+            text-align: center;
+            padding: 1rem;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .nav-links {
+            list-style: none;
+        }
+
+        .nav-links li {
+            margin-bottom: 1rem;
+        }
+
+        .nav-links a {
+            color: rgba(255, 255, 255, 0.9);
+            text-decoration: none;
+            display: block;
+            padding: 1rem 1.5rem;
+            border-radius: 8px;
+            transition: all 0.3s ease;
+            font-weight: 500;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .nav-links a::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+            transition: left 0.5s;
+        }
+
+        .nav-links a:hover {
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            transform: translateX(5px);
+        }
+
+        .nav-links a:hover::before {
+            left: 100%;
+        }
+
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            padding: 2rem;
+            text-align: center;
+        }
+
+        .welcome-section {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(20px);
+            border-radius: 20px;
+            padding: 3rem;
+            margin-bottom: 3rem;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+            animation: fadeInUp 0.8s ease-out;
+        }
+
+        .welcome-title {
+            color: white;
+            font-size: 4rem;
+            font-weight: bold;
+            margin-bottom: 1rem;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+            animation: glow 2s ease-in-out infinite alternate;
+        }
+
+        .welcome-subtitle {
+            color: rgba(255, 255, 255, 0.9);
+            font-size: 1.5rem;
+            font-weight: 300;
+            line-height: 1.6;
+        }
+
+        .login-section {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(20px);
+            border-radius: 15px;
+            padding: 2.5rem;
+            width: 100%;
+            max-width: 400px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+            animation: fadeInUp 0.8s ease-out 0.2s both;
+        }
+
+        .login-title {
+            color: white;
+            font-size: 2rem;
+            margin-bottom: 2rem;
+            text-align: center;
+            font-weight: 600;
+        }
+
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+
+        .form-group label {
+            color: rgba(255, 255, 255, 0.9);
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 500;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 1rem;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: 8px;
+            color: white;
+            font-size: 1rem;
+            transition: all 0.3s ease;
+        }
+
+        .form-group input::placeholder {
+            color: rgba(255, 255, 255, 0.6);
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: rgba(255, 255, 255, 0.6);
+            background: rgba(255, 255, 255, 0.15);
+            transform: scale(1.02);
+        }
+
+        .login-btn {
+            width: 100%;
+            padding: 1rem;
+            background: linear-gradient(45deg, #ff6b6b, #ee5a52);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .login-btn::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+            transition: left 0.5s;
+        }
+
+        .login-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(255, 107, 107, 0.4);
+        }
+
+        .login-btn:hover::before {
+            left: 100%;
+        }
+
+        .login-btn:active {
+            transform: translateY(0);
+        }
+
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes glow {
+            from {
+                text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+            }
+            to {
+                text-shadow: 2px 2px 20px rgba(255, 255, 255, 0.5);
+            }
+        }
+
+        @media (max-width: 768px) {
+            body {
+                flex-direction: column;
+            }
+            
+            .sidebar {
+                width: 100%;
+                order: 2;
+                padding: 1rem;
+            }
+            
+            .main-content {
+                order: 1;
+                padding: 1rem;
+            }
+            
+            .welcome-title {
+                font-size: 2.5rem;
+            }
+            
+            .nav-links {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 0.5rem;
+            }
+            
+            .nav-links li {
+                margin-bottom: 0;
+                flex: 1;
+                min-width: 120px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="sidebar">
+        <div class="logo">emcee.work</div>
+        <ul class="nav-links">
+            <li><a href="#dashboard">Dashboard</a></li>
+            <li><a href="#events">Events</a></li>
+            <li><a href="#calendar">Calendar</a></li>
+            <li><a href="#clients">Clients</a></li>
+            <li><a href="#scripts">Scripts</a></li>
+            <li><a href="#resources">Resources</a></li>
+            <li><a href="#settings">Settings</a></li>
+            <li><a href="#help">Help & Support</a></li>
+        </ul>
+    </div>
+
+    <div class="main-content">
+        <div class="welcome-section">
+            <h1 class="welcome-title">Welcome to emcee.work</h1>
+            <p class="welcome-subtitle">Your professional emcee management platform</p>
+        </div>
+
+        <div class="login-section">
+            <h2 class="login-title">Sign In</h2>
+            <form id="loginForm">
+                <div class="form-group">
+                    <label for="username">Username</label>
+                    <input type="text" id="username" name="username" placeholder="Enter your username" required>
+                </div>
+                <div class="form-group">
+                    <label for="password">Password</label>
+                    <input type="password" id="password" name="password" placeholder="Enter your password" required>
+                </div>
+                <button type="submit" class="login-btn">Sign In</button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        // Add interactive functionality
+        document.getElementById('loginForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            
+            if (username && password) {
+                // Simulate authentication
+                const btn = document.querySelector('.login-btn');
+                btn.innerHTML = 'Signing In...';
+                btn.style.background = 'linear-gradient(45deg, #4CAF50, #45a049)';
+                
+                setTimeout(() => {
+                    alert(`Welcome, ${username}! Authentication successful.`);
+                    btn.innerHTML = 'Sign In';
+                    btn.style.background = 'linear-gradient(45deg, #ff6b6b, #ee5a52)';
+                    // Reset form
+                    this.reset();
+                }, 1500);
+            }
+        });
+
+        // Add hover effects to navigation
+        document.querySelectorAll('.nav-links a').forEach(link => {
+            link.addEventListener('click', function(e) {
+                e.preventDefault();
+                const section = this.textContent;
+                alert(`Navigating to ${section} section`);
+            });
+        });
+
+        // Add focus animations
+        document.querySelectorAll('input').forEach(input => {
+            input.addEventListener('focus', function() {
+                this.parentElement.style.transform = 'scale(1.02)';
+            });
+            
+            input.addEventListener('blur', function() {
+                this.parentElement.style.transform = 'scale(1)';
+            });
+        });
+    </script>
+</body>
+</html>
