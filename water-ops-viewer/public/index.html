@@ -106,6 +106,8 @@
         <button class="btn btn-ghost btn-sm export-btn" data-fmt="xlsx">Excel</button>
         <button class="btn btn-ghost btn-sm export-btn" data-fmt="pdf">PDF</button>
       </div>
+      <div class="import-divider"></div>
+      <button class="btn btn-ghost btn-sm" id="import-btn" title="Import CSV or Excel into this table">↑ Import</button>
     </div>
 
     <!-- Data Grid -->
@@ -168,6 +170,53 @@
     <div class="preview-footer">
       <button class="btn btn-ghost" id="preview-cancel">Cancel</button>
       <div class="preview-download-btns" id="preview-download-btns"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Import Modal ── -->
+<div class="preview-backdrop hidden" id="import-backdrop">
+  <div class="preview-modal glass import-modal">
+    <div class="preview-header">
+      <div>
+        <h3 id="import-title">Import Data</h3>
+        <span class="preview-meta" id="import-meta">Download a template, fill it in, then upload it here.</span>
+      </div>
+      <button class="icon-btn" id="import-close">✕</button>
+    </div>
+
+    <!-- Step 1: Template -->
+    <div class="import-section">
+      <div class="import-step-label">1 — Download blank template</div>
+      <div class="import-row">
+        <button class="btn btn-ghost btn-sm" id="tmpl-csv-btn">↓ CSV Template</button>
+        <button class="btn btn-ghost btn-sm" id="tmpl-xlsx-btn">↓ Excel Template</button>
+      </div>
+      <div class="import-hint">Serial / auto-increment ID columns are omitted — the database assigns them automatically.</div>
+    </div>
+
+    <!-- Step 2: Upload -->
+    <div class="import-section">
+      <div class="import-step-label">2 — Upload filled file</div>
+      <div class="drop-zone" id="drop-zone">
+        <div class="drop-icon">↑</div>
+        <div>Drop a CSV or Excel file here, or <label for="file-input" class="file-label">browse</label></div>
+        <input type="file" id="file-input" accept=".csv,.xlsx" />
+      </div>
+    </div>
+
+    <!-- Step 3: Preview (hidden until file loaded) -->
+    <div class="import-section hidden" id="import-preview-section">
+      <div class="import-step-label">3 — Preview <span id="import-preview-count"></span></div>
+      <div class="preview-grid import-preview-grid" id="import-preview-grid"></div>
+    </div>
+
+    <!-- Result banner -->
+    <div class="import-status hidden" id="import-status"></div>
+
+    <div class="preview-footer">
+      <button class="btn btn-ghost" id="import-cancel-btn">Cancel</button>
+      <button class="btn btn-primary hidden" id="import-confirm-btn">↑ Import</button>
     </div>
   </div>
 </div>
