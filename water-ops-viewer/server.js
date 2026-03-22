@@ -478,6 +478,206 @@ app.post('/api/export/pdf', requireDB, async (req, res) => {
   }
 });
 
+// ─── Import / Template Routes ──────────────────────────────────────────────────
+
+// Simple CSV parser (handles quoted fields with commas/newlines)
+function parseCSV(text) {
+  const lines = text.split(/\r?\n/);
+  const result = [];
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const row = [];
+    let field = '';
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (inQuotes) {
+        if (c === '"' && line[i + 1] === '"') { field += '"'; i++; }
+        else if (c === '"') { inQuotes = false; }
+        else { field += c; }
+      } else {
+        if (c === '"') { inQuotes = true; }
+        else if (c === ',') { row.push(field); field = ''; }
+        else { field += c; }
+      }
+    }
+    row.push(field);
+    result.push(row);
+  }
+  if (!result.length) return { headers: [], rows: [] };
+  const headers = result[0];
+  const rows = result.slice(1).map(vals => {
+    const obj = {};
+    headers.forEach((h, i) => { obj[h] = vals[i] !== undefined ? vals[i] : null; });
+    return obj;
+  });
+  return { headers, rows };
+}
+
+// GET /api/template/:schema/:table?fmt=csv|xlsx — blank import template
+app.get('/api/template/:schema/:table', requireDB, async (req, res) => {
+  const { schema, table } = req.params;
+  const fmt = req.query.fmt === 'xlsx' ? 'xlsx' : 'csv';
+
+  if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(schema) || !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(table)) {
+    return res.status(400).json({ error: 'Invalid schema or table name.' });
+  }
+
+  try {
+    const colResult = await pool.query(`
+      SELECT column_name, column_default, data_type
+      FROM information_schema.columns
+      WHERE table_schema = $1 AND table_name = $2
+      ORDER BY ordinal_position
+    `, [schema, table]);
+
+    if (!colResult.rows.length) return res.status(404).json({ error: 'Table not found.' });
+
+    // Exclude auto-generated (serial/identity) columns — DB assigns these
+    const importCols = colResult.rows
+      .filter(c => !c.column_default || !c.column_default.startsWith('nextval('))
+      .map(c => c.column_name);
+
+    const title = `${schema}.${table}`;
+    const safeName = title.replace(/[^a-zA-Z0-9_.-]/g, '_');
+
+    if (fmt === 'csv') {
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', `attachment; filename="${safeName}_template.csv"`);
+      res.end(importCols.map(c => `"${c.replace(/"/g, '""')}"`).join(',') + '\n');
+    } else {
+      const workbook = new ExcelJS.Workbook();
+      workbook.creator = 'Water Ops Viewer';
+      const sheet = workbook.addWorksheet(title.substring(0, 31));
+      sheet.addRow(importCols);
+      const headerRow = sheet.getRow(1);
+      headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF667EEA' } };
+      headerRow.alignment = { vertical: 'middle', horizontal: 'center' };
+      headerRow.height = 22;
+      importCols.forEach((col, i) => { sheet.getColumn(i + 1).width = Math.max(col.length + 4, 14); });
+      // Add one blank example row so Excel doesn't collapse the sheet
+      sheet.addRow(importCols.map(() => ''));
+
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="${safeName}_template.xlsx"`);
+      await workbook.xlsx.write(res);
+      res.end();
+    }
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/import/:schema/:table — insert rows from uploaded CSV or Excel
+// Body: { filename: string, data: base64string }
+app.post('/api/import/:schema/:table', requireDB, async (req, res) => {
+  const { schema, table } = req.params;
+
+  if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(schema) || !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(table)) {
+    return res.status(400).json({ error: 'Invalid schema or table name.' });
+  }
+
+  const { filename, data } = req.body;
+  if (!filename || !data) return res.status(400).json({ error: 'filename and data are required.' });
+
+  const ext = filename.split('.').pop().toLowerCase();
+  if (!['csv', 'xlsx'].includes(ext)) {
+    return res.status(400).json({ error: 'Only CSV and XLSX files are supported.' });
+  }
+
+  try {
+    // Get table column metadata
+    const colResult = await pool.query(`
+      SELECT column_name, column_default, data_type
+      FROM information_schema.columns
+      WHERE table_schema = $1 AND table_name = $2
+      ORDER BY ordinal_position
+    `, [schema, table]);
+
+    if (!colResult.rows.length) return res.status(404).json({ error: 'Table not found.' });
+
+    const tableColNames = new Set(colResult.rows.map(c => c.column_name));
+    const serialCols = new Set(
+      colResult.rows
+        .filter(c => c.column_default && c.column_default.startsWith('nextval('))
+        .map(c => c.column_name)
+    );
+
+    // Parse uploaded file
+    const buffer = Buffer.from(data, 'base64');
+    let fileColumns = [];
+    let rows = [];
+
+    if (ext === 'csv') {
+      const { headers, rows: parsed } = parseCSV(buffer.toString('utf8'));
+      fileColumns = headers;
+      rows = parsed;
+    } else {
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(buffer);
+      const sheet = workbook.worksheets[0];
+      const headerVals = sheet.getRow(1).values; // 1-indexed; index 0 is undefined
+      fileColumns = Array.from({ length: headerVals.length - 1 }, (_, i) =>
+        headerVals[i + 1] != null ? String(headerVals[i + 1]) : ''
+      );
+      sheet.eachRow((row, rowNum) => {
+        if (rowNum === 1) return;
+        const obj = {};
+        fileColumns.forEach((col, i) => {
+          const v = row.values[i + 1];
+          obj[col] = (v instanceof Date) ? v.toISOString() : (v != null ? v : null);
+        });
+        rows.push(obj);
+      });
+    }
+
+    // Validate column names
+    const unknownCols = fileColumns.filter(c => c && !tableColNames.has(c));
+    if (unknownCols.length) {
+      return res.status(400).json({ error: `Unknown columns in file: ${unknownCols.join(', ')}` });
+    }
+
+    // Only insert non-serial columns that are present in the file
+    const insertCols = fileColumns.filter(c => c && !serialCols.has(c));
+    if (!insertCols.length) {
+      return res.status(400).json({ error: 'No importable columns found in the file.' });
+    }
+
+    const quotedTable = `"${schema}"."${table}"`;
+    const colList = insertCols.map(c => `"${c}"`).join(', ');
+    const placeholders = insertCols.map((_, i) => `$${i + 1}`).join(', ');
+    const sql = `INSERT INTO ${quotedTable} (${colList}) VALUES (${placeholders})`;
+
+    const client = await pool.connect();
+    let imported = 0;
+    const errors = [];
+
+    try {
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        const values = insertCols.map(c => {
+          const v = row[c];
+          if (v === '' || v === null || v === undefined) return null;
+          return v;
+        });
+        try {
+          await client.query(sql, values);
+          imported++;
+        } catch (err) {
+          errors.push({ row: i + 2, error: err.message }); // row 1 = headers, so data starts at 2
+        }
+      }
+    } finally {
+      client.release();
+    }
+
+    res.json({ imported, total: rows.length, errors });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/status — check connection status
 app.get('/api/status', (req, res) => {
   res.json({ connected: !!pool });

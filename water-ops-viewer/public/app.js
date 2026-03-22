@@ -467,6 +467,230 @@ async function exportData(format, body) {
   }
 }
 
+// ── Import ─────────────────────────────────────────────────────────────────
+
+const importBackdrop = $('import-backdrop');
+const importTitle = $('import-title');
+const importMeta = $('import-meta');
+const importPreviewSection = $('import-preview-section');
+const importPreviewGrid = $('import-preview-grid');
+const importPreviewCount = $('import-preview-count');
+const importConfirmBtn = $('import-confirm-btn');
+const importStatus = $('import-status');
+const dropZone = $('drop-zone');
+const fileInput = $('file-input');
+
+let importParsed = null; // { filename, data (base64), rows, columns }
+
+$('import-btn').addEventListener('click', () => {
+  if (!state.currentTable) return alert('Select a table first.');
+  openImportModal();
+});
+
+function openImportModal() {
+  importTitle.textContent = `Import — ${state.currentSchema}.${state.currentTable}`;
+  importMeta.textContent = 'Download a template, fill it in, then upload it here.';
+  importPreviewSection.classList.add('hidden');
+  importPreviewGrid.innerHTML = '';
+  importConfirmBtn.classList.add('hidden');
+  importConfirmBtn.textContent = '↑ Import';
+  importConfirmBtn.disabled = false;
+  importStatus.className = 'import-status hidden';
+  importStatus.innerHTML = '';
+  fileInput.value = '';
+  importParsed = null;
+  importBackdrop.classList.remove('hidden');
+}
+
+function closeImportModal() {
+  importBackdrop.classList.add('hidden');
+  importParsed = null;
+  fileInput.value = '';
+}
+
+$('import-close').addEventListener('click', closeImportModal);
+$('import-cancel-btn').addEventListener('click', closeImportModal);
+importBackdrop.addEventListener('click', e => { if (e.target === importBackdrop) closeImportModal(); });
+
+// Template downloads
+$('tmpl-csv-btn').addEventListener('click', () => downloadTemplate('csv'));
+$('tmpl-xlsx-btn').addEventListener('click', () => downloadTemplate('xlsx'));
+
+function downloadTemplate(fmt) {
+  if (!state.currentTable) return;
+  const url = `/api/template/${encodeURIComponent(state.currentSchema)}/${encodeURIComponent(state.currentTable)}?fmt=${fmt}`;
+  const a = document.createElement('a');
+  a.href = url;
+  a.click();
+}
+
+// Drag & drop
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  if (file) handleImportFile(file);
+});
+fileInput.addEventListener('change', () => {
+  if (fileInput.files[0]) handleImportFile(fileInput.files[0]);
+});
+dropZone.addEventListener('click', e => {
+  // Don't trigger if they clicked the browse label (it handles its own click)
+  if (e.target.tagName !== 'LABEL') fileInput.click();
+});
+
+function handleImportFile(file) {
+  const ext = file.name.split('.').pop().toLowerCase();
+  if (!['csv', 'xlsx'].includes(ext)) {
+    showImportStatus('error', 'Only CSV and XLSX files are supported.');
+    return;
+  }
+
+  importStatus.className = 'import-status hidden';
+  importPreviewSection.classList.add('hidden');
+  importConfirmBtn.classList.add('hidden');
+  importMeta.textContent = `Reading ${file.name}…`;
+
+  const reader = new FileReader();
+  reader.onload = e => {
+    const base64 = btoa(String.fromCharCode(...new Uint8Array(e.target.result)));
+    // Parse client-side for preview
+    let rows = [], columns = [];
+    try {
+      if (ext === 'csv') {
+        const text = new TextDecoder().decode(e.target.result);
+        const parsed = clientParseCSV(text);
+        columns = parsed.columns;
+        rows = parsed.rows;
+      } else {
+        // For Excel we can't parse client-side without a library;
+        // send to server to preview via a lightweight parse check
+        // We'll just show the filename and row count after import
+        rows = null; // signal server-side only
+        columns = null;
+      }
+    } catch (err) {
+      showImportStatus('error', `Could not read file: ${err.message}`);
+      return;
+    }
+
+    importParsed = { filename: file.name, data: base64, rows, columns };
+
+    if (rows !== null && columns !== null) {
+      renderImportPreview(rows, columns);
+    } else {
+      // Excel: show placeholder
+      importPreviewSection.classList.remove('hidden');
+      importPreviewCount.textContent = '';
+      importPreviewGrid.innerHTML = '<div class="empty-state-sm">Excel file ready — preview will be shown after import.</div>';
+    }
+
+    importMeta.textContent = file.name;
+    importConfirmBtn.classList.remove('hidden');
+    const rowLabel = rows !== null ? `${rows.length} row${rows.length !== 1 ? 's' : ''}` : 'file';
+    importConfirmBtn.textContent = `↑ Import ${rowLabel}`;
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function clientParseCSV(text) {
+  const lines = text.split(/\r?\n/);
+  const result = [];
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const row = [];
+    let field = '';
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (inQuotes) {
+        if (c === '"' && line[i + 1] === '"') { field += '"'; i++; }
+        else if (c === '"') { inQuotes = false; }
+        else { field += c; }
+      } else {
+        if (c === '"') { inQuotes = true; }
+        else if (c === ',') { row.push(field); field = ''; }
+        else { field += c; }
+      }
+    }
+    row.push(field);
+    result.push(row);
+  }
+  if (!result.length) return { columns: [], rows: [] };
+  const columns = result[0];
+  const rows = result.slice(1).map(vals => {
+    const obj = {};
+    columns.forEach((h, i) => { obj[h] = vals[i] !== undefined ? vals[i] : ''; });
+    return obj;
+  });
+  return { columns, rows };
+}
+
+function renderImportPreview(rows, columns) {
+  importPreviewSection.classList.remove('hidden');
+  const preview = rows.slice(0, 10);
+  importPreviewCount.textContent = `(${rows.length} row${rows.length !== 1 ? 's' : ''} — showing first ${Math.min(10, rows.length)})`;
+  if (!rows.length) {
+    importPreviewGrid.innerHTML = '<div class="empty-state-sm">No data rows found in file.</div>';
+    return;
+  }
+  let html = '<table class="data-table"><thead><tr>';
+  for (const col of columns) html += `<th>${esc(col)}</th>`;
+  html += '</tr></thead><tbody>';
+  for (const row of preview) {
+    html += '<tr>';
+    for (const col of columns) html += `<td>${formatCell(row[col])}</td>`;
+    html += '</tr>';
+  }
+  html += '</tbody></table>';
+  importPreviewGrid.innerHTML = html;
+}
+
+importConfirmBtn.addEventListener('click', async () => {
+  if (!importParsed) return;
+  importConfirmBtn.disabled = true;
+  importConfirmBtn.textContent = 'Importing…';
+  importStatus.className = 'import-status hidden';
+
+  try {
+    const result = await post(
+      `/api/import/${encodeURIComponent(state.currentSchema)}/${encodeURIComponent(state.currentTable)}`,
+      { filename: importParsed.filename, data: importParsed.data }
+    );
+
+    let msg = `✓ Imported ${result.imported} of ${result.total} row${result.total !== 1 ? 's' : ''}.`;
+    let cls = 'import-status success';
+    if (result.errors && result.errors.length) {
+      cls = 'import-status warning';
+      msg += ` ${result.errors.length} row${result.errors.length !== 1 ? 's' : ''} failed:`;
+      msg += '<ul class="import-error-list">' +
+        result.errors.slice(0, 5).map(e => `<li>Row ${e.row}: ${esc(e.error)}</li>`).join('') +
+        (result.errors.length > 5 ? `<li>…and ${result.errors.length - 5} more</li>` : '') +
+        '</ul>';
+    }
+    importStatus.className = cls;
+    importStatus.innerHTML = msg;
+    importConfirmBtn.classList.add('hidden');
+
+    // Reload the table to show new rows
+    if (result.imported > 0) {
+      state.page = 1;
+      loadTable(state.currentSchema, state.currentTable);
+    }
+  } catch (err) {
+    showImportStatus('error', `Import failed: ${err.message}`);
+    importConfirmBtn.disabled = false;
+    importConfirmBtn.textContent = '↑ Retry Import';
+  }
+});
+
+function showImportStatus(type, msg) {
+  importStatus.className = `import-status ${type}`;
+  importStatus.innerHTML = esc(msg);
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 async function get(url) {
   const res = await fetch(API + url);

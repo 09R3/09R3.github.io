@@ -335,5 +335,46 @@ select { cursor: pointer; }
 .preview-download-btns { display: flex; gap: 8px; }
 .preview-download-btns .btn { min-width: 100px; }
 
+/* ── Import Modal ── */
+.import-modal { width: min(96vw, 800px); }
+.import-divider { width: 1px; height: 20px; background: var(--border); margin: 0 4px; }
+.import-section { padding: 14px 20px; border-bottom: 1px solid var(--border); }
+.import-step-label {
+  font-size: 10px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--text-muted); margin-bottom: 10px;
+}
+.import-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.import-hint { font-size: 11px; color: var(--text-muted); margin-top: 8px; line-height: 1.5; }
+
+.drop-zone {
+  border: 2px dashed var(--border); border-radius: var(--radius);
+  padding: 24px 20px; text-align: center; color: var(--text-muted);
+  cursor: pointer; transition: all 0.2s; font-size: 13px; user-select: none;
+}
+.drop-zone:hover, .drop-zone.drag-over {
+  border-color: var(--accent); color: var(--text);
+  background: rgba(102,126,234,0.06);
+}
+.drop-icon { font-size: 26px; margin-bottom: 8px; opacity: 0.6; }
+#file-input { display: none; }
+.file-label { color: var(--accent); cursor: pointer; text-decoration: underline; }
+
+.import-preview-grid {
+  max-height: 200px; overflow: auto;
+  border-radius: 0;
+}
+.import-preview-grid::-webkit-scrollbar { width: 8px; height: 8px; }
+.import-preview-grid::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+.import-status {
+  padding: 12px 20px; font-size: 13px; border-bottom: 1px solid var(--border);
+}
+.import-status.success { color: var(--success); }
+.import-status.warning { color: var(--warning); }
+.import-status.error { color: var(--error); }
+.import-error-list {
+  margin: 6px 0 0 16px; font-size: 12px; line-height: 1.8;
+}
+
 /* ── Scrollbar (Firefox) ── */
 * { scrollbar-color: var(--border) transparent; scrollbar-width: thin; }
