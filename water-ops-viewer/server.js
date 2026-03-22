@@ -45,7 +45,7 @@ function parseCookies(req) {
 
 function requireAuth(req, res, next) {
   const cookies = parseCookies(req);
-  if (isValidSession(cookies.dbviewer_session)) return next();
+  if (isValidSession(cookies.waterops_session)) return next();
   if (req.path.startsWith('/api/')) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
@@ -57,7 +57,7 @@ app.post('/auth/login', (req, res) => {
   const { username, password } = req.body;
   if (username === AUTH_USER && password === AUTH_PASS) {
     const token = createSession();
-    res.setHeader('Set-Cookie', `dbviewer_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_TTL_MS / 1000}`);
+    res.setHeader('Set-Cookie', `waterops_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_TTL_MS / 1000}`);
     res.json({ success: true });
   } else {
     res.status(401).json({ error: 'Invalid username or password.' });
@@ -67,8 +67,8 @@ app.post('/auth/login', (req, res) => {
 // Logout
 app.post('/auth/logout', (req, res) => {
   const cookies = parseCookies(req);
-  if (cookies.dbviewer_session) sessions.delete(cookies.dbviewer_session);
-  res.setHeader('Set-Cookie', 'dbviewer_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0');
+  if (cookies.waterops_session) sessions.delete(cookies.waterops_session);
+  res.setHeader('Set-Cookie', 'waterops_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0');
   res.json({ success: true });
 });
 
@@ -328,7 +328,7 @@ app.post('/api/export/xlsx', requireDB, async (req, res) => {
   try {
     const { rows, columns, title } = await fetchExportData(req);
     const workbook = new ExcelJS.Workbook();
-    workbook.creator = 'DB Viewer';
+    workbook.creator = 'Water Ops Viewer';
     workbook.created = new Date();
     const sheet = workbook.addWorksheet(title.substring(0, 31));
 
@@ -466,7 +466,7 @@ app.get('/api/status', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`DB Viewer running at http://localhost:${PORT}`);
+  console.log(`Water Ops Viewer running at http://localhost:${PORT}`);
   if (process.env.DB_HOST) {
     const cfg = {
       host: process.env.DB_HOST,

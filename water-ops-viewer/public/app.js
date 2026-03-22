@@ -1,4 +1,4 @@
-/* ── DB Viewer Frontend ── */
+/* ── Water Ops Viewer Frontend ── */
 
 const API = '';  // same origin
 
@@ -276,10 +276,10 @@ pageSize.addEventListener('change', () => {
 document.querySelectorAll('.export-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     if (!state.currentTable) return alert('Select a table first.');
-    exportData(btn.dataset.fmt, {
-      schema: state.currentSchema,
-      table: state.currentTable,
-    });
+    showExportPreview(
+      `${state.currentSchema}.${state.currentTable}`,
+      { schema: state.currentSchema, table: state.currentTable }
+    );
   });
 });
 
@@ -342,9 +342,105 @@ document.querySelectorAll('.sql-export-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     const sql = sqlEditor.value.trim();
     if (!sql) return alert('Write and run a SQL query first.');
-    exportData(btn.dataset.fmt, { sql });
+    if (!state.sqlResult) return alert('Run the query first to preview results.');
+    showExportPreview('Query Result', { sql }, state.sqlResult);
   });
 });
+
+// ── Export Preview ──────────────────────────────────────────────────────────
+const previewBackdrop = $('preview-backdrop');
+const previewTitle = $('preview-title');
+const previewMeta = $('preview-meta');
+const previewGrid = $('preview-grid');
+const previewDownloadBtns = $('preview-download-btns');
+
+$('preview-close').addEventListener('click', closePreview);
+$('preview-cancel').addEventListener('click', closePreview);
+previewBackdrop.addEventListener('click', e => { if (e.target === previewBackdrop) closePreview(); });
+
+function closePreview() {
+  previewBackdrop.classList.add('hidden');
+  previewGrid.innerHTML = '<div class="empty-state-sm">Loading preview…</div>';
+  previewDownloadBtns.innerHTML = '';
+}
+
+async function showExportPreview(title, exportBody, cachedResult = null) {
+  previewTitle.textContent = `Export Preview — ${title}`;
+  previewMeta.textContent = 'Loading…';
+  previewGrid.innerHTML = '<div class="empty-state-sm loading-row">Loading preview…</div>';
+  previewDownloadBtns.innerHTML = '';
+  previewBackdrop.classList.remove('hidden');
+
+  try {
+    let rows, columns, total;
+
+    if (cachedResult) {
+      // SQL result already in memory
+      rows = cachedResult.rows;
+      columns = cachedResult.fields.map(f => f.name);
+      total = cachedResult.rowCount;
+    } else {
+      // Table browse — fetch preview respecting current search/sort
+      const params = new URLSearchParams({
+        page: 1,
+        limit: 100,
+        search: state.search,
+        sort: state.sort,
+        dir: state.sortDir,
+      });
+      const data = await get(`/api/table/${encodeURIComponent(exportBody.schema)}/${encodeURIComponent(exportBody.table)}?${params}`);
+      rows = data.rows;
+      columns = data.columns;
+      total = data.total;
+    }
+
+    // Render preview meta
+    const showing = Math.min(rows.length, 100);
+    previewMeta.textContent = total > showing
+      ? `Showing first ${showing} of ${total.toLocaleString()} total rows — full data will be exported`
+      : `${total.toLocaleString()} row${total !== 1 ? 's' : ''} — all data will be exported`;
+
+    // Render preview table
+    if (!rows.length) {
+      previewGrid.innerHTML = '<div class="empty-state-sm">No rows to preview.</div>';
+    } else {
+      let html = '<table class="data-table"><thead><tr>';
+      for (const col of columns) html += `<th>${esc(col)}</th>`;
+      html += '</tr></thead><tbody>';
+      for (const row of rows.slice(0, 100)) {
+        html += '<tr>';
+        for (const col of columns) html += `<td>${formatCell(row[col])}</td>`;
+        html += '</tr>';
+      }
+      html += '</tbody></table>';
+      previewGrid.innerHTML = html;
+    }
+
+    // Render download buttons
+    for (const fmt of ['csv', 'xlsx', 'pdf']) {
+      const label = fmt === 'xlsx' ? 'Excel' : fmt.toUpperCase();
+      const btn = document.createElement('button');
+      btn.className = 'btn btn-primary';
+      btn.textContent = `↓ ${label}`;
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        btn.textContent = `Exporting…`;
+        try {
+          await exportData(fmt, exportBody);
+          closePreview();
+        } finally {
+          btn.disabled = false;
+          btn.textContent = `↓ ${label}`;
+        }
+      });
+      previewDownloadBtns.appendChild(btn);
+    }
+
+  } catch (err) {
+    previewGrid.innerHTML = `<div class="empty-state-sm" style="color:var(--error)">${esc(err.message)}</div>`;
+    previewMeta.textContent = 'Failed to load preview';
+  }
+}
 
 // ── Export Helper ──────────────────────────────────────────────────────────
 async function exportData(format, body) {
