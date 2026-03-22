@@ -251,8 +251,8 @@ app.get('/api/table/:schema/:table', requireDB, async (req, res) => {
     );
     const total = parseInt(countResult.rows[0].count);
 
-    const offsetParam = queryParams.length + 1;
-    const limitParam = queryParams.length + 2;
+    const limitParam = queryParams.length + 1;
+    const offsetParam = queryParams.length + 2;
     const dataResult = await pool.query(
       `SELECT * FROM ${quotedTable} ${whereClause} ${orderClause} LIMIT $${limitParam} OFFSET $${offsetParam}`,
       [...queryParams, limit, offset]
@@ -389,38 +389,43 @@ app.post('/api/export/pdf', requireDB, async (req, res) => {
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
 
-    const doc = new PDFDocument({ margin: 30, size: 'A4', layout: 'landscape' });
+    const doc = new PDFDocument({ margin: 30, size: 'A4', layout: 'landscape', autoFirstPage: true, bufferPages: true });
     doc.pipe(res);
 
     // Title
-    doc.fontSize(16).font('Helvetica-Bold').text(title, { align: 'center' });
+    doc.fontSize(16).font('Helvetica-Bold').text(title, { align: 'center', lineBreak: true });
     doc.fontSize(9).font('Helvetica').fillColor('#888888')
-      .text(`Generated: ${new Date().toLocaleString()} — ${rows.length} rows`, { align: 'center' });
+      .text(`Generated: ${new Date().toLocaleString()} — ${rows.length} rows`, { align: 'center', lineBreak: true });
     doc.moveDown(0.5);
 
-    const pageWidth = doc.page.width - 60;
-    const colWidth = Math.min(120, Math.floor(pageWidth / columns.length));
+    const margin = 30;
+    const pageWidth = doc.page.width - margin * 2;
+    const pageHeight = doc.page.height - margin * 2;
     const rowHeight = 18;
     const headerHeight = 22;
 
+    // Compute column widths: cap at 120 but ensure total doesn't exceed pageWidth
+    let colWidth = Math.floor(pageWidth / columns.length);
+    if (colWidth > 120) colWidth = 120;
+    // If total exceeds page, shrink to fit
+    const totalColWidth = colWidth * columns.length;
+    const effectiveColWidth = totalColWidth > pageWidth ? Math.floor(pageWidth / columns.length) : colWidth;
+
     function drawTableHeader(y) {
-      // Header background
-      doc.rect(30, y, pageWidth, headerHeight).fill('#667eea');
+      doc.rect(margin, y, pageWidth, headerHeight).fill('#667eea');
       doc.fillColor('#ffffff').fontSize(8).font('Helvetica-Bold');
       columns.forEach((col, i) => {
-        doc.text(
-          String(col).substring(0, 20),
-          30 + i * colWidth + 3,
-          y + 5,
-          { width: colWidth - 6, ellipsis: true }
-        );
+        const x = margin + i * effectiveColWidth + 3;
+        const w = effectiveColWidth - 6;
+        // lineBreak: false prevents PDFKit from advancing the internal cursor vertically
+        doc.text(String(col).substring(0, 25), x, y + 6, { width: w, lineBreak: false, ellipsis: true });
       });
       return y + headerHeight;
     }
 
     function drawRow(row, y, isEven) {
       if (isEven) {
-        doc.rect(30, y, pageWidth, rowHeight).fill('#f5f5f5');
+        doc.rect(margin, y, pageWidth, rowHeight).fill('#f5f5f5');
       }
       doc.fillColor('#333333').fontSize(7).font('Helvetica');
       columns.forEach((col, i) => {
@@ -428,29 +433,45 @@ app.post('/api/export/pdf', requireDB, async (req, res) => {
         if (val === null || val === undefined) val = '';
         else if (typeof val === 'object') val = JSON.stringify(val);
         else val = String(val);
-        doc.text(val.substring(0, 30), 30 + i * colWidth + 3, y + 5, { width: colWidth - 6, ellipsis: true });
+        const x = margin + i * effectiveColWidth + 3;
+        const w = effectiveColWidth - 6;
+        // lineBreak: false is critical — prevents PDFKit auto-adding pages mid-row
+        doc.text(val.substring(0, 40), x, y + 5, { width: w, lineBreak: false, ellipsis: true });
       });
-      // Row border
-      doc.rect(30, y, pageWidth, rowHeight).stroke('#dddddd');
+      doc.rect(margin, y, pageWidth, rowHeight).stroke('#dddddd');
       return y + rowHeight;
     }
 
+    // First page: start table after the title block
     let y = drawTableHeader(doc.y);
-    const maxRowsPerPage = Math.floor((doc.page.height - 100) / rowHeight);
+    // Space available below header on first page
+    const firstPageMaxY = doc.page.height - margin;
+    const subsequentMaxY = doc.page.height - margin;
 
+    let currentMaxY = firstPageMaxY;
     let rowsOnPage = 0;
+    const maxRowsFirstPage = Math.floor((currentMaxY - y) / rowHeight);
+    let maxRowsPerPage = maxRowsFirstPage;
+
     rows.forEach((row, idx) => {
       if (rowsOnPage >= maxRowsPerPage) {
         doc.addPage();
-        y = drawTableHeader(30);
+        y = drawTableHeader(margin);
         rowsOnPage = 0;
+        maxRowsPerPage = Math.floor((subsequentMaxY - margin - headerHeight) / rowHeight);
       }
       y = drawRow(row, y, idx % 2 === 1);
       rowsOnPage++;
     });
 
-    // Footer on each page
-    const totalPages = doc.bufferedPageRange ? doc.bufferedPageRange().count : '?';
+    // Add page numbers
+    const totalPages = doc.bufferedPageRange().count;
+    for (let i = 0; i < totalPages; i++) {
+      doc.switchToPage(i);
+      doc.fontSize(7).fillColor('#aaaaaa')
+        .text(`Page ${i + 1} of ${totalPages}`, margin, doc.page.height - margin + 5, { align: 'right', lineBreak: false });
+    }
+
     doc.end();
   } catch (err) {
     if (!res.headersSent) res.status(500).json({ error: err.message });
