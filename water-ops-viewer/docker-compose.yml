@@ -1,5 +1,5 @@
 services:
-  db-viewer:
+  water-ops-viewer:
     build: .
     ports:
       - "3000:3000"

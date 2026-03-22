@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>DB Viewer</title>
+  <title>Water Ops Viewer</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -13,7 +13,7 @@
   <div class="modal glass">
     <div class="modal-header">
       <div class="logo-icon">⬡</div>
-      <h2>DB Viewer</h2>
+      <h2>Water Ops Viewer</h2>
       <p>Connect to a PostgreSQL database</p>
     </div>
     <form id="connect-form" autocomplete="on">
@@ -58,7 +58,7 @@
     <div class="sidebar-header">
       <span class="logo-icon">⬡</span>
       <div class="sidebar-title">
-        <span class="app-name">DB Viewer</span>
+        <span class="app-name">Water Ops Viewer</span>
         <span id="db-label" class="db-label">—</span>
       </div>
       <button class="icon-btn" id="disconnect-btn" title="Disconnect">✕</button>
@@ -150,6 +150,26 @@
     <div class="empty-state-sm">Run a query to see results</div>
   </div>
   <div class="sql-status" id="sql-status"></div>
+</div>
+
+<!-- ── Export Preview Modal ── -->
+<div class="preview-backdrop hidden" id="preview-backdrop">
+  <div class="preview-modal glass">
+    <div class="preview-header">
+      <div>
+        <h3 id="preview-title">Export Preview</h3>
+        <span class="preview-meta" id="preview-meta"></span>
+      </div>
+      <button class="icon-btn" id="preview-close">✕</button>
+    </div>
+    <div class="preview-grid" id="preview-grid">
+      <div class="empty-state-sm">Loading preview…</div>
+    </div>
+    <div class="preview-footer">
+      <button class="btn btn-ghost" id="preview-cancel">Cancel</button>
+      <div class="preview-download-btns" id="preview-download-btns"></div>
+    </div>
+  </div>
 </div>
 
 <script src="app.js"></script>

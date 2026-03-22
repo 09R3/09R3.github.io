@@ -1,4 +1,4 @@
-# DB Viewer
+# Water Ops Viewer
 
 A self-hosted web app to browse PostgreSQL databases and export reports.
 
@@ -14,7 +14,7 @@ A self-hosted web app to browse PostgreSQL databases and export reports.
 
 ### 1. Install dependencies
 ```bash
-cd db-viewer
+cd water-ops-viewer
 npm install
 ```
 
