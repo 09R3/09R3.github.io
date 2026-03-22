@@ -237,6 +237,19 @@ function formatCell(val) {
   if (typeof val === 'number') return `<span class="num-val">${val}</span>`;
   if (typeof val === 'object') return `<span class="json-val">${esc(JSON.stringify(val))}</span>`;
   const str = String(val);
+  // Format ISO date/datetime strings from the pg driver (e.g. "2026-03-06T00:00:00.000Z")
+  if (/^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})?)?$/.test(str)) {
+    try {
+      const d = new Date(str);
+      if (!isNaN(d.getTime())) {
+        // Date-only string (10 chars) or timestamp at exactly midnight UTC → show date only
+        const dateOnly = str.length === 10 ||
+          (d.getUTCHours() === 0 && d.getUTCMinutes() === 0 && d.getUTCSeconds() === 0 && d.getUTCMilliseconds() === 0);
+        const label = dateOnly ? d.toLocaleDateString() : d.toLocaleString();
+        return `<span class="date-val" title="${esc(str)}">${esc(label)}</span>`;
+      }
+    } catch (_) { /* fall through to plain string */ }
+  }
   return esc(str);
 }
 
