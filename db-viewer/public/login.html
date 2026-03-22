@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DB Viewer — Login</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0f1117; --bg2: #1a1d27; --bg3: #22263a; --border: #2e3247;
+      --accent: #667eea; --accent2: #764ba2; --text: #e2e8f0;
+      --text-muted: #8892a4; --error: #fc8181; --radius: 8px;
+    }
+    html, body {
+      min-height: 100%; font-family: 'Segoe UI', system-ui, sans-serif;
+      background: linear-gradient(135deg, #0f1117 0%, #1a1030 100%);
+      color: var(--text); display: flex; align-items: center; justify-content: center;
+    }
+    .card {
+      width: 400px; padding: 40px;
+      background: rgba(30, 33, 55, 0.85);
+      border: 1px solid var(--border); border-radius: 16px;
+      backdrop-filter: blur(20px);
+      box-shadow: 0 24px 60px rgba(0,0,0,0.5);
+    }
+    .header { text-align: center; margin-bottom: 32px; }
+    .logo { font-size: 36px; color: var(--accent); }
+    h1 { font-size: 22px; font-weight: 700; margin: 10px 0 4px; }
+    p { font-size: 13px; color: var(--text-muted); }
+    .field { margin-bottom: 16px; }
+    label { display: block; font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
+    input {
+      width: 100%; background: var(--bg3); border: 1px solid var(--border);
+      color: var(--text); border-radius: var(--radius); padding: 10px 14px;
+      font-size: 14px; outline: none; transition: border-color 0.2s;
+    }
+    input:focus { border-color: var(--accent); }
+    .btn {
+      width: 100%; padding: 13px; margin-top: 4px;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      color: #fff; border: none; border-radius: var(--radius);
+      font-size: 15px; font-weight: 700; cursor: pointer;
+      transition: filter 0.15s;
+    }
+    .btn:hover { filter: brightness(1.1); }
+    .btn:disabled { opacity: 0.6; cursor: default; }
+    .error-box {
+      background: rgba(252,129,129,0.1); border: 1px solid var(--error);
+      border-radius: var(--radius); color: var(--error);
+      padding: 10px 14px; margin-bottom: 16px; font-size: 13px;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="header">
+      <div class="logo">⬡</div>
+      <h1>DB Viewer</h1>
+      <p>Sign in to access the database viewer</p>
+    </div>
+    <div class="error-box" id="error-box"></div>
+    <form id="login-form">
+      <div class="field">
+        <label>Username</label>
+        <input type="text" id="username" name="username" autofocus required />
+      </div>
+      <div class="field">
+        <label>Password</label>
+        <input type="password" id="password" name="password" required />
+      </div>
+      <button type="submit" class="btn" id="login-btn">Sign In</button>
+    </form>
+  </div>
+  <script>
+    document.getElementById('login-form').addEventListener('submit', async e => {
+      e.preventDefault();
+      const btn = document.getElementById('login-btn');
+      const errorBox = document.getElementById('error-box');
+      btn.disabled = true;
+      btn.textContent = 'Signing in…';
+      errorBox.style.display = 'none';
+      try {
+        const res = await fetch('/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: document.getElementById('username').value,
+            password: document.getElementById('password').value,
+          }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          window.location.href = '/';
+        } else {
+          errorBox.textContent = data.error || 'Login failed.';
+          errorBox.style.display = 'block';
+        }
+      } catch {
+        errorBox.textContent = 'Network error. Is the server running?';
+        errorBox.style.display = 'block';
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Sign In';
+      }
+    });
+  </script>
+</body>
+</html>

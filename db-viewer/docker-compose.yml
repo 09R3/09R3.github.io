@@ -1,0 +1,16 @@
+services:
+  db-viewer:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: 3000
+      AUTH_USER: ${AUTH_USER:-admin}
+      AUTH_PASS: ${AUTH_PASS:-changeme}
+      # Optional: auto-connect to PostgreSQL on startup
+      DB_HOST: ${DB_HOST:-}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_NAME: ${DB_NAME:-}
+      DB_USER: ${DB_USER:-}
+      DB_PASSWORD: ${DB_PASSWORD:-}
+    restart: unless-stopped
