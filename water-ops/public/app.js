@@ -201,17 +201,37 @@ async function loadAssets() {
 
 // ─── Login screen ─────────────────────────────────────────────────────────────
 async function initLogin() {
+  const statusEl = $('login-status');
+  if (statusEl) { statusEl.classList.add('hidden'); statusEl.textContent = ''; }
+
   try {
     const resp = await fetch(api('/api/users'));
-    const users = resp.ok ? await resp.json() : (state.assets.users || []);
-    const sel = $('user-select');
-    sel.innerHTML = '<option value="">— Select your name —</option>' +
-      users.map(u => `<option value="${u.username}">${u.full_name}</option>`).join('');
+    if (resp.ok) {
+      const users = await resp.json();
+      const sel = $('user-select');
+      sel.innerHTML = '<option value="">— Select your name —</option>' +
+        users.map(u => `<option value="${u.username}">${u.full_name}</option>`).join('');
+    } else {
+      // Server reachable but DB error — show cached names if available
+      const cached = state.assets.users || [];
+      const sel = $('user-select');
+      sel.innerHTML = '<option value="">— Select your name —</option>' +
+        cached.map(u => `<option value="${u.username}">${u.full_name}</option>`).join('');
+      if (cached.length === 0 && statusEl) {
+        statusEl.textContent = '⚠️ Database not connected — tap ⚙️ above to configure';
+        statusEl.classList.remove('hidden');
+      }
+    }
   } catch (e) {
+    // Network error — server unreachable
     const cached = state.assets.users || [];
     const sel = $('user-select');
     sel.innerHTML = '<option value="">— Select your name —</option>' +
       cached.map(u => `<option value="${u.username}">${u.full_name}</option>`).join('');
+    if (cached.length === 0 && statusEl) {
+      statusEl.textContent = '⚠️ Cannot reach server — tap ⚙️ above to configure';
+      statusEl.classList.remove('hidden');
+    }
   }
 }
 
