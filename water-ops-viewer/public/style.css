@@ -196,8 +196,6 @@ select { cursor: pointer; }
   flex-shrink: 0;
 }
 .filter-bar input { max-width: 240px; }
-.export-group { display: flex; align-items: center; gap: 6px; margin-left: auto; }
-.export-label { font-size: 11px; color: var(--text-muted); }
 
 /* ── Data Grid ── */
 .grid-container {
@@ -273,11 +271,52 @@ select { cursor: pointer; }
 }
 .sql-panel-header h3 { font-size: 15px; font-weight: 700; flex: 1; }
 .sql-actions { display: flex; align-items: center; gap: 8px; }
+.btn.active { background: var(--accent); color: #fff; }
+
+.sql-body { display: flex; flex: 1; overflow: hidden; min-height: 0; }
+.sql-main { display: flex; flex-direction: column; flex: 1; overflow: hidden; min-height: 0; }
 
 .sql-editor-wrap {
   flex: 0 0 200px; display: flex;
   border-bottom: 1px solid var(--border);
 }
+
+/* ── Saved Queries Panel ── */
+.saved-queries-panel {
+  width: 280px; flex-shrink: 0;
+  border-left: 1px solid var(--border);
+  background: var(--bg2);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+.saved-queries-panel.hidden { display: none; }
+.saved-queries-header {
+  padding: 10px 14px;
+  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--text-muted); border-bottom: 1px solid var(--border); flex-shrink: 0;
+}
+.saved-queries-list { flex: 1; overflow-y: auto; }
+.saved-queries-list::-webkit-scrollbar { width: 6px; }
+.saved-queries-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.saved-query-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 12px; border-bottom: 1px solid var(--border);
+  transition: background 0.15s;
+}
+.saved-query-item:hover { background: var(--bg); }
+.saved-query-name {
+  flex: 1; font-size: 13px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.saved-query-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.saved-del { opacity: 0.45; font-size: 11px; }
+.saved-del:hover { opacity: 1; color: var(--error); }
+.saved-empty { padding: 28px 16px; font-size: 12px; color: var(--text-muted); text-align: center; }
+.saved-queries-footer {
+  padding: 12px; border-top: 1px solid var(--border);
+  display: flex; flex-direction: column; gap: 8px; flex-shrink: 0;
+}
+.saved-queries-footer input { width: 100%; box-sizing: border-box; }
 #sql-editor {
   flex: 1; resize: none; border: none; border-radius: 0;
   background: #0d1117; color: #e6edf3;

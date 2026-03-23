@@ -82,16 +82,10 @@ $('disconnect-btn').addEventListener('click', () => {
 });
 
 // Sign-out button (logs out of the app entirely)
-const signOutBtn = document.createElement('button');
-signOutBtn.className = 'btn btn-ghost btn-sm';
-signOutBtn.title = 'Sign out';
-signOutBtn.textContent = '⏻ Sign out';
-signOutBtn.style.cssText = 'position:fixed;bottom:12px;right:12px;z-index:100;font-size:11px;opacity:0.7';
-signOutBtn.addEventListener('click', async () => {
+$('sign-out-btn').addEventListener('click', async () => {
   await fetch('/auth/logout', { method: 'POST' });
   window.location.href = '/login.html';
 });
-document.body.appendChild(signOutBtn);
 
 function setConnecting(on) {
   connectBtn.querySelector('.btn-text').classList.toggle('hidden', on);
@@ -286,14 +280,12 @@ pageSize.addEventListener('change', () => {
 });
 
 // ── Exports (table) ────────────────────────────────────────────────────────
-document.querySelectorAll('.export-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    if (!state.currentTable) return alert('Select a table first.');
-    showExportPreview(
-      `${state.currentSchema}.${state.currentTable}`,
-      { schema: state.currentSchema, table: state.currentTable }
-    );
-  });
+$('export-btn').addEventListener('click', () => {
+  if (!state.currentTable) return alert('Select a table first.');
+  showExportPreview(
+    `${state.currentSchema}.${state.currentTable}`,
+    { schema: state.currentSchema, table: state.currentTable }
+  );
 });
 
 // ── SQL Editor ─────────────────────────────────────────────────────────────
@@ -351,13 +343,11 @@ function renderSQLResult(data) {
 }
 
 // ── Exports (SQL result) ───────────────────────────────────────────────────
-document.querySelectorAll('.sql-export-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    const sql = sqlEditor.value.trim();
-    if (!sql) return alert('Write and run a SQL query first.');
-    if (!state.sqlResult) return alert('Run the query first to preview results.');
-    showExportPreview('Query Result', { sql }, state.sqlResult);
-  });
+$('sql-export-btn').addEventListener('click', () => {
+  const sql = sqlEditor.value.trim();
+  if (!sql) return alert('Write and run a SQL query first.');
+  if (!state.sqlResult) return alert('Run the query first to preview results.');
+  showExportPreview('Query Result', { sql }, state.sqlResult);
 });
 
 // ── Export Preview ──────────────────────────────────────────────────────────
@@ -454,6 +444,74 @@ async function showExportPreview(title, exportBody, cachedResult = null) {
     previewMeta.textContent = 'Failed to load preview';
   }
 }
+
+// ── Saved Queries ───────────────────────────────────────────────────────────
+const SAVED_KEY = 'waterops-saved-queries';
+
+function getSavedQueries() {
+  try { return JSON.parse(localStorage.getItem(SAVED_KEY) || '[]'); }
+  catch { return []; }
+}
+
+function putSavedQueries(queries) {
+  localStorage.setItem(SAVED_KEY, JSON.stringify(queries));
+}
+
+function renderSavedQueriesList() {
+  const queries = getSavedQueries();
+  const list = $('saved-queries-list');
+  if (!queries.length) {
+    list.innerHTML = '<div class="saved-empty">No saved queries yet.<br>Write a query and save it below.</div>';
+    return;
+  }
+  list.innerHTML = '';
+  for (const q of queries) {
+    const item = document.createElement('div');
+    item.className = 'saved-query-item';
+    item.innerHTML = `
+      <span class="saved-query-name" title="${esc(q.sql)}">${esc(q.name)}</span>
+      <div class="saved-query-actions">
+        <button class="btn btn-ghost btn-sm" data-id="${q.id}" data-action="load">Load</button>
+        <button class="icon-btn saved-del" data-id="${q.id}" data-action="delete" title="Delete">✕</button>
+      </div>`;
+    list.appendChild(item);
+  }
+}
+
+$('saved-queries-list').addEventListener('click', e => {
+  const btn = e.target.closest('[data-action]');
+  if (!btn) return;
+  const queries = getSavedQueries();
+  const q = queries.find(x => String(x.id) === btn.dataset.id);
+  if (!q) return;
+  if (btn.dataset.action === 'load') {
+    sqlEditor.value = q.sql;
+    sqlEditor.focus();
+  } else if (btn.dataset.action === 'delete') {
+    putSavedQueries(queries.filter(x => String(x.id) !== btn.dataset.id));
+    renderSavedQueriesList();
+  }
+});
+
+$('save-query-btn').addEventListener('click', () => {
+  const name = $('save-query-name').value.trim();
+  const sql = sqlEditor.value.trim();
+  if (!name) { $('save-query-name').focus(); return; }
+  if (!sql) return alert('Write a query in the editor first.');
+  const queries = getSavedQueries();
+  queries.unshift({ id: Date.now(), name, sql });
+  putSavedQueries(queries);
+  $('save-query-name').value = '';
+  renderSavedQueriesList();
+});
+
+$('sql-saved-btn').addEventListener('click', () => {
+  const panel = $('saved-queries-panel');
+  const opening = panel.classList.contains('hidden');
+  panel.classList.toggle('hidden', !opening);
+  $('sql-saved-btn').classList.toggle('active', opening);
+  if (opening) renderSavedQueriesList();
+});
 
 // ── Export Helper ──────────────────────────────────────────────────────────
 async function exportData(format, body) {

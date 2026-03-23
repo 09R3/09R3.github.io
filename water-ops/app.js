@@ -301,6 +301,15 @@ function startReadingFlow(type) {
     'maintenance-equipment': showMaintenanceEquipmentSelector,
     'maintenance-vehicle':   showMaintenanceVehicleSelector,
     'maintenance-building':  showMaintenanceBuildingSelector,
+    'pump-hours':       showSiteSelector,
+    pge:                showSiteSelector,
+    'power-monitor':    showSiteSelector,
+    'compressor-hours': showSiteSelector,
+    'well-operational': showWellSelector,
+    'well-static':      showKFSetSelector,
+    canal:              showCanalSelector,
+    pond:               showPondSelector,
+    vehicle:            showVehicleSelector,
   };
   (selectors[type] || showSiteSelector)();
 }
@@ -625,6 +634,10 @@ function showCanalSelector() {
       'w-full bg-sky-800 hover:bg-sky-600 text-white rounded-xl p-3 text-left touch-manipulation mb-2',
       `<div class="font-bold">${s.structure_name}</div>
        <div class="text-xs text-sky-300">${typeLabel} · ${s.flow_direction || ''}</div>`
+    const btn = el('button',
+      'w-full bg-sky-800 hover:bg-sky-600 text-white rounded-xl p-3 text-left touch-manipulation mb-2',
+      `<div class="font-bold">${s.structure_name}</div>
+       <div class="text-xs text-sky-300">${s.structure_type.replace('_', ' ')} · flow: ${s.flow_direction}</div>`
     );
     btn.addEventListener('click', () => {
       state.selectedAsset = s;
@@ -666,6 +679,7 @@ function showVehicleSelector() {
       'w-full bg-sky-800 hover:bg-sky-600 text-white rounded-xl p-3 text-left touch-manipulation mb-2',
       `<div class="font-bold">#${v.vehicle_number} — ${v.year} ${v.make} ${v.model}</div>
        <div class="text-xs text-sky-300">${v.assigned_user || 'Unassigned'}</div>`
+       <div class="text-xs text-sky-300">${v.fuel_type} · reads: ${v.reading_type}</div>`
     );
     btn.addEventListener('click', () => {
       state.selectedAsset = v;
@@ -835,6 +849,7 @@ function assetLabel() {
   if (type === 'maintenance-equipment') return `${(asset.equipment_type || 'Equipment').replace(/_/g, ' ')}${asset._assetId ? ' #' + asset._assetId : ''}`;
   if (type === 'maintenance-vehicle') return `#${asset.vehicle_number} — ${asset.year} ${asset.make} ${asset.model}`;
   if (type === 'maintenance-building') return `Building ${asset.building_letter} — ${asset.site_name || 'Site ' + asset.site_id}`;
+  if (type === 'canal') return `${asset.structure_name} (${asset.structure_type.replace('_', ' ')})`;
   if (type === 'pond') return asset.pond_name;
   if (type === 'vehicle') return `#${asset.vehicle_number} — ${asset.year} ${asset.make} ${asset.model}`;
   return JSON.stringify(asset);
@@ -885,6 +900,8 @@ function renderForm() {
 
   // Pre-fill date and time (supports reading_date and work_date)
   const dateInp = inputsEl.querySelector('[name="reading_date"], [name="work_date"]');
+  // Pre-fill date and time
+  const dateInp = inputsEl.querySelector('[name="reading_date"]');
   if (dateInp && !dateInp.value) dateInp.value = today();
   const timeInp = inputsEl.querySelector('[name="reading_time"]');
   if (timeInp && !timeInp.value) timeInp.value = new Date().toTimeString().slice(0, 5);
@@ -904,6 +921,8 @@ function prevReadingSummary(type, prev) {
     case 'well-operational':
       return `<div class="text-white font-bold text-xl">${parseFloat(prev.totalizer ?? 0).toFixed(3)} AF | ${parseFloat(prev.hour_reading ?? 0).toFixed(2)} hrs</div>
               <div class="text-sky-400 text-sm">${fmtDate(prev.reading_date)} · ${prev.flow_cfs ?? '—'} CFS · Oil: ${prev.motor_oil ? 'Full' : 'Low'}</div>`;
+      return `<div class="text-white font-bold text-xl">${parseFloat(prev.totalizer_reading_af).toFixed(3)} AF | ${parseFloat(prev.hour_reading).toFixed(2)} hrs</div>
+              <div class="text-sky-400 text-sm">${fmtDate(prev.reading_date)} · ${prev.instantaneous_flow_cfs} CFS · Oil: ${prev.oil_level}</div>`;
     case 'canal':
       return `<div class="text-white font-bold text-xl">${prev.totalizer_reading_af ? parseFloat(prev.totalizer_reading_af).toFixed(3) + ' AF' : 'N/A'} ${prev.instantaneous_flow_cfs ? '· ' + prev.instantaneous_flow_cfs + ' CFS' : ''}</div><div class="text-sky-400 text-sm">${fmtDate(prev.reading_date)}</div>`;
     case 'pond':
@@ -1142,6 +1161,18 @@ function getFormData() {
     if (asset._assetId) data.equipment_id = asset._assetId;
   }
 
+    pge: ['pge_meter_id', 'pge_meter_id'],
+    'power-monitor': ['monitor_id', 'monitor_id'],
+    'pump-hours': ['position_id', 'position_id'],
+    'compressor-hours': ['compressor_id', 'compressor_id'],
+    'well-static': ['well_id', 'well_id'],
+    'well-operational': ['well_id', 'well_id'],
+    canal: ['structure_id', 'structure_id'],
+    pond: ['pond_id', 'pond_id'],
+    vehicle: ['vehicle_id', 'vehicle_id'],
+  };
+  const [field, prop] = idMap[type] || [];
+  if (field) data[field] = asset[prop] || asset._assetId;
   return data;
 }
 
@@ -1248,6 +1279,7 @@ $('form-submit-btn') && $('form-submit-btn').addEventListener('click', async () 
     alert(`Please enter a ${isMaintenance ? 'work' : 'reading'} date.`);
     return;
   }
+  if (!data.reading_date) { alert('Please enter a reading date.'); return; }
 
   const btn = $('form-submit-btn');
   btn.disabled = true;
@@ -1314,6 +1346,8 @@ $('confirm-same-btn') && $('confirm-same-btn').addEventListener('click', async (
   } else {
     await loadFormForAsset();
   }
+  // Re-enter same asset — reload last readings and show form again
+  await loadFormForAsset();
 });
 
 // ─── Back buttons ─────────────────────────────────────────────────────────────

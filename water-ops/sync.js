@@ -80,6 +80,10 @@ export async function submitReading(type, data, queueFn) {
     : api(`/api/readings/${type}`);
   try {
     const resp = await fetch(endpoint, {
+// Try to POST a single reading; if it fails, queue it locally
+export async function submitReading(type, data, queueFn) {
+  try {
+    const resp = await fetch(api(`/api/readings/${type}`), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
