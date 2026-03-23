@@ -82,16 +82,10 @@ $('disconnect-btn').addEventListener('click', () => {
 });
 
 // Sign-out button (logs out of the app entirely)
-const signOutBtn = document.createElement('button');
-signOutBtn.className = 'btn btn-ghost btn-sm';
-signOutBtn.title = 'Sign out';
-signOutBtn.textContent = '⏻ Sign out';
-signOutBtn.style.cssText = 'position:fixed;bottom:12px;right:12px;z-index:100;font-size:11px;opacity:0.7';
-signOutBtn.addEventListener('click', async () => {
+$('sign-out-btn').addEventListener('click', async () => {
   await fetch('/auth/logout', { method: 'POST' });
   window.location.href = '/login.html';
 });
-document.body.appendChild(signOutBtn);
 
 function setConnecting(on) {
   connectBtn.querySelector('.btn-text').classList.toggle('hidden', on);
@@ -286,14 +280,12 @@ pageSize.addEventListener('change', () => {
 });
 
 // ── Exports (table) ────────────────────────────────────────────────────────
-document.querySelectorAll('.export-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    if (!state.currentTable) return alert('Select a table first.');
-    showExportPreview(
-      `${state.currentSchema}.${state.currentTable}`,
-      { schema: state.currentSchema, table: state.currentTable }
-    );
-  });
+$('export-btn').addEventListener('click', () => {
+  if (!state.currentTable) return alert('Select a table first.');
+  showExportPreview(
+    `${state.currentSchema}.${state.currentTable}`,
+    { schema: state.currentSchema, table: state.currentTable }
+  );
 });
 
 // ── SQL Editor ─────────────────────────────────────────────────────────────
@@ -351,13 +343,11 @@ function renderSQLResult(data) {
 }
 
 // ── Exports (SQL result) ───────────────────────────────────────────────────
-document.querySelectorAll('.sql-export-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    const sql = sqlEditor.value.trim();
-    if (!sql) return alert('Write and run a SQL query first.');
-    if (!state.sqlResult) return alert('Run the query first to preview results.');
-    showExportPreview('Query Result', { sql }, state.sqlResult);
-  });
+$('sql-export-btn').addEventListener('click', () => {
+  const sql = sqlEditor.value.trim();
+  if (!sql) return alert('Write and run a SQL query first.');
+  if (!state.sqlResult) return alert('Run the query first to preview results.');
+  showExportPreview('Query Result', { sql }, state.sqlResult);
 });
 
 // ── Export Preview ──────────────────────────────────────────────────────────

@@ -196,8 +196,6 @@ select { cursor: pointer; }
   flex-shrink: 0;
 }
 .filter-bar input { max-width: 240px; }
-.export-group { display: flex; align-items: center; gap: 6px; margin-left: auto; }
-.export-label { font-size: 11px; color: var(--text-muted); }
 
 /* ── Data Grid ── */
 .grid-container {
