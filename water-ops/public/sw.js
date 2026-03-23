@@ -1,12 +1,12 @@
-const CACHE_NAME = 'waterops-v2';
+const CACHE_NAME = 'waterops-v3';
 const APP_SHELL = [
   '/',
   '/index.html',
   '/app.js',
+  '/config.js',
   '/db.js',
   '/sync.js',
   '/manifest.json',
-  'https://cdn.tailwindcss.com',
 ];
 
 self.addEventListener('install', (e) => {
@@ -26,7 +26,13 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
 
-  // Network-first for API calls
+  // Skip non-GET requests
+  if (e.request.method !== 'GET') return;
+
+  // Skip cross-origin (e.g. Tailwind CDN) — let browser handle it
+  if (url.origin !== self.location.origin) return;
+
+  // API calls: network-only, no caching
   if (url.pathname.startsWith('/api/')) {
     e.respondWith(
       fetch(e.request).catch(() =>
@@ -37,17 +43,16 @@ self.addEventListener('fetch', (e) => {
     return;
   }
 
-  // Cache-first for app shell
+  // App shell: network-first, fall back to cache when offline
   e.respondWith(
-    caches.match(e.request).then(cached => {
-      if (cached) return cached;
-      return fetch(e.request).then(resp => {
+    fetch(e.request)
+      .then(resp => {
         if (resp.ok) {
           const clone = resp.clone();
           caches.open(CACHE_NAME).then(cache => cache.put(e.request, clone));
         }
         return resp;
-      }).catch(() => caches.match('/index.html'));
-    })
+      })
+      .catch(() => caches.match(e.request).then(cached => cached || caches.match('/index.html')))
   );
 });
