@@ -41,19 +41,57 @@ npm start
 
 > **Note:** Safari requires HTTPS for full service worker support in some modes. For local LAN-only use, HTTP works for installation. If you need full offline PWA behavior, see the SSL section below.
 
+## Docker Deployment (recommended)
+
+### 1. Pull from GitHub
+```
+git clone https://github.com/09R3/09R3.github.io.git
+```
+Or if already cloned:
+```
+git pull origin main
+```
+
+### 2. Copy water-ops to AppData
+```
+xcopy /E /I 09R3.github.io\water-ops %APPDATA%\water-ops
+```
+
+### 3. Configure credentials (first time only)
+```
+cd %APPDATA%\water-ops
+copy .env.example .env
+```
+Edit `.env` with your PostgreSQL credentials.
+
+### 4. Start the container in the background
+```
+docker compose up -d --build
+```
+
+The app runs at `http://localhost:3067` (or `http://<machine-IP>:3067` from the iPad).
+
+To stop: `docker compose down`
+To view logs: `docker compose logs -f`
+
+> **Note:** DB settings changed via the app UI are written back to `.env` on the host (via
+> the volume mount) and will persist across container restarts.
+
+---
+
 ## Reading Types Supported
 
 | Type | Table | Formula Shown |
 |------|-------|---------------|
-| Pump Hours | `pump_hours_readings` | Run hours (current − previous) |
-| PGE Meter | `pge_readings` | kWh used |
-| Power Monitor | `power_monitor_readings` | kWh used |
-| Compressor Hours | `compressor_hours_readings` | Run hours |
-| Well Operational | `well_operational_readings` | AF used, avg CFS |
-| Well Static | `well_static_readings` | Depth change |
-| Canal | `canal_readings` | AF since last read |
+| Pump Hours | `readings_pump_hours` | Run hours (current − previous) |
+| PGE Meter | `readings_pge_meters` | kWh used |
+| Power Monitor | `readings_power_monitors` | kWh used |
+| Compressor Hours | `readings_compressor_hours` | Run hours |
+| Well Operational | `readings_well` | AF used, avg CFS |
+| Well Static | `readings_kf_monthly` | Depth change |
+| Canal | `readings_canal` | AF since last read |
 | Pond | `pond_readings` | Net CFS (in − out) |
-| Vehicle | `vehicle_readings` | Miles or hours since last |
+| Vehicle | `readings_vehicle_monthly` | Miles or hours since last |
 
 ## Offline Behavior
 - Asset lists (sites, wells, etc.) are cached in the browser after first load.
