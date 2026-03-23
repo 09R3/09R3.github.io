@@ -1,4 +1,4 @@
-const CACHE_NAME = 'waterops-v1';
+const CACHE_NAME = 'waterops-v2';
 const APP_SHELL = [
   '/',
   '/index.html',
