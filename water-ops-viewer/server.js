@@ -13,7 +13,7 @@ app.use(express.urlencoded({ extended: false }));
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 
 const AUTH_USER = process.env.AUTH_USER || 'admin';
-const AUTH_PASS = process.env.AUTH_PASS || '';
+const AUTH_PASS = process.env.AUTH_PASS || 'test';
 // In-memory session store: token -> expiry timestamp
 const sessions = new Map();
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000; // 8 hours
