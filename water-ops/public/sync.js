@@ -74,16 +74,11 @@ function handleOffline() {
 
 // Try to POST a single reading or maintenance record; if it fails, queue it locally
 export async function submitReading(type, data, queueFn) {
-  // Maintenance types post to /api/maintenance/<subtype>, all others to /api/readings/<type>
   const endpoint = type.startsWith('maintenance-')
     ? api(`/api/maintenance/${type.replace('maintenance-', '')}`)
     : api(`/api/readings/${type}`);
   try {
     const resp = await fetch(endpoint, {
-// Try to POST a single reading; if it fails, queue it locally
-export async function submitReading(type, data, queueFn) {
-  try {
-    const resp = await fetch(api(`/api/readings/${type}`), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
@@ -91,7 +86,6 @@ export async function submitReading(type, data, queueFn) {
     if (!resp.ok) throw new Error(`Server ${resp.status}`);
     return { ok: true, queued: false };
   } catch (e) {
-    // Save to IndexedDB queue
     await queueFn(type, data);
     return { ok: true, queued: true };
   }
