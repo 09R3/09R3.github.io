@@ -236,6 +236,7 @@ select { cursor: pointer; }
 .data-table .bool-true { color: var(--success); }
 .data-table .bool-false { color: var(--error); }
 .data-table .json-val { color: #f6e05e; font-family: var(--mono); font-size: 11px; }
+.data-table .date-val { color: #76e4f7; cursor: default; }
 
 /* ── Pagination ── */
 .pagination {
