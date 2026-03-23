@@ -445,6 +445,74 @@ async function showExportPreview(title, exportBody, cachedResult = null) {
   }
 }
 
+// ── Saved Queries ───────────────────────────────────────────────────────────
+const SAVED_KEY = 'waterops-saved-queries';
+
+function getSavedQueries() {
+  try { return JSON.parse(localStorage.getItem(SAVED_KEY) || '[]'); }
+  catch { return []; }
+}
+
+function putSavedQueries(queries) {
+  localStorage.setItem(SAVED_KEY, JSON.stringify(queries));
+}
+
+function renderSavedQueriesList() {
+  const queries = getSavedQueries();
+  const list = $('saved-queries-list');
+  if (!queries.length) {
+    list.innerHTML = '<div class="saved-empty">No saved queries yet.<br>Write a query and save it below.</div>';
+    return;
+  }
+  list.innerHTML = '';
+  for (const q of queries) {
+    const item = document.createElement('div');
+    item.className = 'saved-query-item';
+    item.innerHTML = `
+      <span class="saved-query-name" title="${esc(q.sql)}">${esc(q.name)}</span>
+      <div class="saved-query-actions">
+        <button class="btn btn-ghost btn-sm" data-id="${q.id}" data-action="load">Load</button>
+        <button class="icon-btn saved-del" data-id="${q.id}" data-action="delete" title="Delete">✕</button>
+      </div>`;
+    list.appendChild(item);
+  }
+}
+
+$('saved-queries-list').addEventListener('click', e => {
+  const btn = e.target.closest('[data-action]');
+  if (!btn) return;
+  const queries = getSavedQueries();
+  const q = queries.find(x => String(x.id) === btn.dataset.id);
+  if (!q) return;
+  if (btn.dataset.action === 'load') {
+    sqlEditor.value = q.sql;
+    sqlEditor.focus();
+  } else if (btn.dataset.action === 'delete') {
+    putSavedQueries(queries.filter(x => String(x.id) !== btn.dataset.id));
+    renderSavedQueriesList();
+  }
+});
+
+$('save-query-btn').addEventListener('click', () => {
+  const name = $('save-query-name').value.trim();
+  const sql = sqlEditor.value.trim();
+  if (!name) { $('save-query-name').focus(); return; }
+  if (!sql) return alert('Write a query in the editor first.');
+  const queries = getSavedQueries();
+  queries.unshift({ id: Date.now(), name, sql });
+  putSavedQueries(queries);
+  $('save-query-name').value = '';
+  renderSavedQueriesList();
+});
+
+$('sql-saved-btn').addEventListener('click', () => {
+  const panel = $('saved-queries-panel');
+  const opening = panel.classList.contains('hidden');
+  panel.classList.toggle('hidden', !opening);
+  $('sql-saved-btn').classList.toggle('active', opening);
+  if (opening) renderSavedQueriesList();
+});
+
 // ── Export Helper ──────────────────────────────────────────────────────────
 async function exportData(format, body) {
   try {
