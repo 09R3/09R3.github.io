@@ -104,6 +104,9 @@ const READING_TYPES = {
   canal:              { label: 'Canal Reading',       icon: '🌊', group: 'Canal & Ponds' },
   pond:               { label: 'Pond Reading',        icon: '🏞️', group: 'Canal & Ponds' },
   vehicle:            { label: 'Vehicle Reading',     icon: '🚛', group: 'Vehicles' },
+  'maintenance-equipment': { label: 'Equipment Maintenance', icon: '🔩', group: 'Maintenance' },
+  'maintenance-vehicle':   { label: 'Vehicle Maintenance',   icon: '🔧', group: 'Maintenance' },
+  'maintenance-building':  { label: 'Building Maintenance',  icon: '🏢', group: 'Maintenance' },
 };
 
 // ─── DOM helpers ──────────────────────────────────────────────────────────────
@@ -286,6 +289,18 @@ function startReadingFlow(type) {
   state.assetStep = 0;
 
   const selectors = {
+    'pump-hours':            showSiteSelector,
+    pge:                     showSiteSelector,
+    'power-monitor':         showSiteSelector,
+    'compressor-hours':      showSiteSelector,
+    'well-operational':      showWellSelector,
+    'well-static':           showKFSetSelector,
+    canal:                   showCanalSelector,
+    pond:                    showPondSelector,
+    vehicle:                 showVehicleSelector,
+    'maintenance-equipment': showMaintenanceEquipmentSelector,
+    'maintenance-vehicle':   showMaintenanceVehicleSelector,
+    'maintenance-building':  showMaintenanceBuildingSelector,
     'pump-hours':       showSiteSelector,
     pge:                showSiteSelector,
     'power-monitor':    showSiteSelector,
@@ -614,6 +629,11 @@ function showCanalSelector() {
   container.innerHTML = '';
 
   for (const s of (state.assets.canals || [])) {
+    const typeLabel = s.structure_type ? s.structure_type.replace(/_/g, ' ') : 'unspecified';
+    const btn = el('button',
+      'w-full bg-sky-800 hover:bg-sky-600 text-white rounded-xl p-3 text-left touch-manipulation mb-2',
+      `<div class="font-bold">${s.structure_name}</div>
+       <div class="text-xs text-sky-300">${typeLabel} · ${s.flow_direction || ''}</div>`
     const btn = el('button',
       'w-full bg-sky-800 hover:bg-sky-600 text-white rounded-xl p-3 text-left touch-manipulation mb-2',
       `<div class="font-bold">${s.structure_name}</div>
@@ -658,6 +678,7 @@ function showVehicleSelector() {
     const btn = el('button',
       'w-full bg-sky-800 hover:bg-sky-600 text-white rounded-xl p-3 text-left touch-manipulation mb-2',
       `<div class="font-bold">#${v.vehicle_number} — ${v.year} ${v.make} ${v.model}</div>
+       <div class="text-xs text-sky-300">${v.assigned_user || 'Unassigned'}</div>`
        <div class="text-xs text-sky-300">${v.fuel_type} · reads: ${v.reading_type}</div>`
     );
     btn.addEventListener('click', () => {
@@ -668,6 +689,129 @@ function showVehicleSelector() {
     container.appendChild(btn);
   }
   showScreen('screen-asset');
+}
+
+// ─── Maintenance selectors ────────────────────────────────────────────────────
+
+function showMaintenanceEquipmentSelector() {
+  $('asset-title').textContent = 'Equipment Maintenance — Select Type';
+  const container = $('asset-content');
+  container.innerHTML = '';
+  const types = [
+    { id: 'motor',          label: 'Motor',           icon: '⚙️' },
+    { id: 'pump_unit',      label: 'Pump Unit',        icon: '💧' },
+    { id: 'air_compressor', label: 'Air Compressor',   icon: '🌬️' },
+    { id: 'scada',          label: 'SCADA',            icon: '📡' },
+    { id: 'other',          label: 'Other Equipment',  icon: '🛠️' },
+  ];
+  const grid = el('div', 'grid grid-cols-2 gap-3');
+  for (const t of types) {
+    const btn = el('button',
+      'flex flex-col items-center justify-center bg-sky-900 hover:bg-sky-700 active:bg-sky-600 text-white rounded-xl p-4 gap-2 touch-manipulation',
+      `<span class="text-3xl">${t.icon}</span><span class="text-sm font-semibold text-center">${t.label}</span>`
+    );
+    btn.addEventListener('click', () => {
+      if (t.id === 'air_compressor') {
+        showMaintenanceCompressorSelector(t.id);
+      } else if (t.id === 'motor' || t.id === 'pump_unit') {
+        showMaintenancePumpSelector(t.id);
+      } else {
+        state.selectedAsset = { equipment_type: t.id, _assetId: null };
+        loadMaintenanceForm();
+      }
+    });
+    grid.appendChild(btn);
+  }
+  container.appendChild(grid);
+  showScreen('screen-asset');
+}
+
+function showMaintenanceCompressorSelector(equipType) {
+  $('asset-title').textContent = 'Equipment Maintenance — Select Compressor';
+  const container = $('asset-content');
+  container.innerHTML = '';
+  const backBtn = el('button', 'mb-4 bg-sky-800 hover:bg-sky-700 text-sky-300 text-sm font-semibold rounded-xl px-4 py-2 touch-manipulation', '← Back');
+  backBtn.addEventListener('click', showMaintenanceEquipmentSelector);
+  container.appendChild(backBtn);
+  for (const c of (state.assets.compressors || [])) {
+    const btn = el('button',
+      'w-full bg-sky-800 hover:bg-sky-600 text-white rounded-xl p-3 text-left touch-manipulation mb-2',
+      `<div class="font-bold">Compressor — ${c.notes || c.compressor_id}</div>
+       <div class="text-xs text-sky-300">${c.site_name || ''} · Bldg ${c.building_letter || ''}</div>`
+    );
+    btn.addEventListener('click', () => {
+      state.selectedAsset = { ...c, equipment_type: equipType, _assetId: c.compressor_id };
+      loadMaintenanceForm();
+    });
+    container.appendChild(btn);
+  }
+}
+
+function showMaintenancePumpSelector(equipType) {
+  $('asset-title').textContent = 'Equipment Maintenance — Select Pump';
+  const container = $('asset-content');
+  container.innerHTML = '';
+  const backBtn = el('button', 'mb-4 bg-sky-800 hover:bg-sky-700 text-sky-300 text-sm font-semibold rounded-xl px-4 py-2 touch-manipulation', '← Back');
+  backBtn.addEventListener('click', showMaintenanceEquipmentSelector);
+  container.appendChild(backBtn);
+  for (const p of (state.assets.pumpPositions || [])) {
+    const btn = el('button',
+      'w-full bg-sky-800 hover:bg-sky-600 text-white rounded-xl p-3 text-left touch-manipulation mb-2',
+      `<div class="font-bold">Position ${p.position_id}</div>
+       <div class="text-xs text-sky-300">${p.site_name || ''} · Bldg ${p.building_letter || ''} · ${p.rated_hp} HP</div>`
+    );
+    btn.addEventListener('click', () => {
+      state.selectedAsset = { ...p, equipment_type: equipType, _assetId: p.position_id };
+      loadMaintenanceForm();
+    });
+    container.appendChild(btn);
+  }
+}
+
+function showMaintenanceVehicleSelector() {
+  $('asset-title').textContent = 'Vehicle Maintenance — Select Vehicle';
+  const container = $('asset-content');
+  container.innerHTML = '';
+  for (const v of (state.assets.vehicles || [])) {
+    const btn = el('button',
+      'w-full bg-sky-800 hover:bg-sky-600 text-white rounded-xl p-3 text-left touch-manipulation mb-2',
+      `<div class="font-bold">#${v.vehicle_number} — ${v.year} ${v.make} ${v.model}</div>
+       <div class="text-xs text-sky-300">${v.assigned_user || 'Unassigned'}</div>`
+    );
+    btn.addEventListener('click', () => {
+      state.selectedAsset = v;
+      state.selectedAsset._assetId = v.vehicle_id;
+      loadMaintenanceForm();
+    });
+    container.appendChild(btn);
+  }
+  showScreen('screen-asset');
+}
+
+function showMaintenanceBuildingSelector() {
+  $('asset-title').textContent = 'Building Maintenance — Select Building';
+  const container = $('asset-content');
+  container.innerHTML = '';
+  for (const b of (state.assets.buildings || [])) {
+    const btn = el('button',
+      'w-full bg-sky-800 hover:bg-sky-600 text-white rounded-xl p-3 text-left touch-manipulation mb-2',
+      `<div class="font-bold">Building ${b.building_letter}</div>
+       <div class="text-xs text-sky-300">${b.site_name || 'Site ' + b.site_id}</div>`
+    );
+    btn.addEventListener('click', () => {
+      state.selectedAsset = b;
+      state.selectedAsset._assetId = b.building_id;
+      loadMaintenanceForm();
+    });
+    container.appendChild(btn);
+  }
+  showScreen('screen-asset');
+}
+
+function loadMaintenanceForm() {
+  state.lastReadings = [];
+  renderForm();
+  showScreen('screen-form');
 }
 
 // ─── Form rendering ───────────────────────────────────────────────────────────
@@ -701,6 +845,10 @@ function assetLabel() {
   if (type === 'power-monitor') return `Monitor ${asset.monitor_number} — ${asset.site_name} Bldg ${asset.building_letter}`;
   if (type === 'compressor-hours') return `Compressor ${asset.serial_number || asset.compressor_id} — ${asset.site_name} Bldg ${asset.building_letter}`;
   if (type === 'well-operational' || type === 'well-static') return `Well ${asset.well_id}${asset.common_name && asset.common_name !== asset.well_id ? ` (${asset.common_name})` : ''}`;
+  if (type === 'canal') return `${asset.structure_name}${asset.structure_type ? ' (' + asset.structure_type.replace(/_/g, ' ') + ')' : ''}`;
+  if (type === 'maintenance-equipment') return `${(asset.equipment_type || 'Equipment').replace(/_/g, ' ')}${asset._assetId ? ' #' + asset._assetId : ''}`;
+  if (type === 'maintenance-vehicle') return `#${asset.vehicle_number} — ${asset.year} ${asset.make} ${asset.model}`;
+  if (type === 'maintenance-building') return `Building ${asset.building_letter} — ${asset.site_name || 'Site ' + asset.site_id}`;
   if (type === 'canal') return `${asset.structure_name} (${asset.structure_type.replace('_', ' ')})`;
   if (type === 'pond') return asset.pond_name;
   if (type === 'vehicle') return `#${asset.vehicle_number} — ${asset.year} ${asset.make} ${asset.model}`;
@@ -746,6 +894,12 @@ function renderForm() {
     inp.addEventListener('input', () => updateFormula());
   });
 
+  // Update submit button label for maintenance records
+  const submitBtn = $('form-submit-btn');
+  if (submitBtn) submitBtn.textContent = type.startsWith('maintenance-') ? 'Save Record' : 'Save Reading';
+
+  // Pre-fill date and time (supports reading_date and work_date)
+  const dateInp = inputsEl.querySelector('[name="reading_date"], [name="work_date"]');
   // Pre-fill date and time
   const dateInp = inputsEl.querySelector('[name="reading_date"]');
   if (dateInp && !dateInp.value) dateInp.value = today();
@@ -765,6 +919,8 @@ function prevReadingSummary(type, prev) {
     case 'well-static':
       return `<div class="text-white font-bold text-xl">${parseFloat(prev.dtw_reading ?? 0).toFixed(2)} ft depth</div><div class="text-sky-400 text-sm">${fmtDate(prev.reading_date)} · ${prev.well_on_off ? 'Well ON' : 'Well OFF'} · ${prev.operator || ''}</div>`;
     case 'well-operational':
+      return `<div class="text-white font-bold text-xl">${parseFloat(prev.totalizer ?? 0).toFixed(3)} AF | ${parseFloat(prev.hour_reading ?? 0).toFixed(2)} hrs</div>
+              <div class="text-sky-400 text-sm">${fmtDate(prev.reading_date)} · ${prev.flow_cfs ?? '—'} CFS · Oil: ${prev.motor_oil ? 'Full' : 'Low'}</div>`;
       return `<div class="text-white font-bold text-xl">${parseFloat(prev.totalizer_reading_af).toFixed(3)} AF | ${parseFloat(prev.hour_reading).toFixed(2)} hrs</div>
               <div class="text-sky-400 text-sm">${fmtDate(prev.reading_date)} · ${prev.instantaneous_flow_cfs} CFS · Oil: ${prev.oil_level}</div>`;
     case 'canal':
@@ -777,6 +933,10 @@ function prevReadingSummary(type, prev) {
       if (prev.odometer_miles) parts.push(`${parseInt(prev.odometer_miles).toLocaleString()} mi`);
       if (prev.engine_hours) parts.push(`${parseFloat(prev.engine_hours).toFixed(1)} hrs`);
       return `<div class="text-white font-bold text-xl">${parts.join(' | ')}</div><div class="text-sky-400 text-sm">${fmtDate(prev.reading_date)}</div>`;
+    case 'maintenance-equipment':
+    case 'maintenance-vehicle':
+    case 'maintenance-building':
+      return '';
     default: return JSON.stringify(prev);
   }
 }
@@ -874,6 +1034,98 @@ function formInputsHTML(type) {
         ${notesInput()}`;
     }
 
+    case 'maintenance-equipment': {
+      return `
+        ${label('Work Date', 'work_date', true)}${dateInput('work_date')}
+        ${label('Work Type', 'work_type', true)}
+        ${selectInput('work_type', [
+          {v:'OIL_CHANGE',     l:'Oil Change'},      {v:'BEARING_SERVICE', l:'Bearing Service'},
+          {v:'PACKING_ADJ',    l:'Packing Adjustment'}, {v:'AIR_FILTER', l:'Air Filter'},
+          {v:'INSPECTION',     l:'Inspection'},      {v:'REPAIR',           l:'Repair'},
+          {v:'UNPLANNED_ISSUE',l:'Unplanned Issue'}, {v:'OTHER',            l:'Other'},
+        ])}
+        ${label('Description', 'description', true)}
+        <textarea id="description" name="description" rows="3" placeholder="Describe the work performed or issue observed…"
+          class="w-full bg-sky-950 border border-sky-600 text-white rounded-xl px-4 py-3 mb-4 focus:outline-none focus:border-sky-400 placeholder-sky-700 resize-none" required></textarea>
+        ${label('Performed By', 'performed_by', true)}${textInput('performed_by', 'Name or company', true)}
+        ${label('Contractor?', 'is_contractor', false)}
+        ${selectInput('is_contractor', [{v:'false', l:'No — In-house'}, {v:'true', l:'Yes — Contractor'}], false)}
+        ${label('Location', 'location_at_time', false)}${textInput('location_at_time', 'e.g. 1A, 3B Pump Room')}
+        ${label('Hours at Service', 'hours_at_service', false)}${numInput('hours_at_service', '0.0', false, '0.01')}
+        ${label('Parts Used', 'parts_used', false)}${textInput('parts_used', 'Part numbers or description')}
+        ${label('Cost ($)', 'cost', false)}${numInput('cost', '0.00', false, '0.01')}
+        ${label('PO Number', 'po_number', false)}${textInput('po_number', 'Optional')}
+        ${label('Next Service Date', 'next_service_date', false)}
+        <input type="date" id="next_service_date" name="next_service_date"
+          class="w-full bg-sky-950 border border-sky-600 text-white text-xl rounded-xl px-4 py-3 mb-4 focus:outline-none focus:border-sky-400">
+        ${notesInput()}`;
+    }
+
+    case 'maintenance-vehicle': {
+      const mv = state.selectedAsset;
+      const showOdo = !mv?.reading_type || mv.reading_type === 'odometer' || mv.reading_type === 'both';
+      const showHrs = mv?.reading_type === 'hours' || mv?.reading_type === 'both';
+      return `
+        ${label('Work Date', 'work_date', true)}${dateInput('work_date')}
+        ${label('Work Type', 'work_type', true)}
+        ${selectInput('work_type', [
+          {v:'OIL_CHANGE',       l:'Oil Change'},       {v:'TIRE_ROTATION',   l:'Tire Rotation'},
+          {v:'BRAKE_SERVICE',    l:'Brake Service'},    {v:'TRANSMISSION',    l:'Transmission Service'},
+          {v:'INSPECTION',       l:'Inspection'},       {v:'REPAIR',          l:'Repair'},
+          {v:'UNPLANNED_ISSUE',  l:'Unplanned Issue'},  {v:'OTHER',           l:'Other'},
+        ])}
+        ${label('Description', 'description', false)}
+        <textarea id="description" name="description" rows="2" placeholder="Optional details…"
+          class="w-full bg-sky-950 border border-sky-600 text-white rounded-xl px-4 py-3 mb-4 focus:outline-none focus:border-sky-400 placeholder-sky-700 resize-none"></textarea>
+        ${label('Performed By', 'performed_by', true)}${textInput('performed_by', 'Name or shop', true)}
+        ${label('Contractor?', 'is_contractor', false)}
+        ${selectInput('is_contractor', [{v:'false', l:'No — In-house'}, {v:'true', l:'Yes — Contractor'}], false)}
+        ${showOdo ? `${label('Odometer at Service (mi)', 'odometer_at_service', false)}${numInput('odometer_at_service', '0', false, '1')}` : ''}
+        ${showHrs ? `${label('Engine Hours at Service', 'engine_hours_at_service', false)}${numInput('engine_hours_at_service', '0.0', false, '0.1')}` : ''}
+        ${label('Parts Used', 'parts_used', false)}${textInput('parts_used', 'Part numbers or description')}
+        ${label('Cost ($)', 'cost', false)}${numInput('cost', '0.00', false, '0.01')}
+        ${label('PO Number', 'po_number', false)}${textInput('po_number', 'Optional')}
+        ${label('Next Service Date', 'next_service_date', false)}
+        <input type="date" id="next_service_date" name="next_service_date"
+          class="w-full bg-sky-950 border border-sky-600 text-white text-xl rounded-xl px-4 py-3 mb-4 focus:outline-none focus:border-sky-400">
+        ${label('Next Service Miles', 'next_service_miles', false)}${numInput('next_service_miles', '0', false, '1')}
+        ${notesInput()}`;
+    }
+
+    case 'maintenance-building': {
+      return `
+        ${label('Date', 'work_date', true)}${dateInput('work_date')}
+        ${label('Record Type', 'record_type', true)}
+        ${selectInput('record_type', [{v:'maintenance', l:'Scheduled Maintenance'}, {v:'issue', l:'Unplanned Issue'}])}
+        ${label('Work Type', 'work_type', true)}
+        ${selectInput('work_type', [
+          {v:'HVAC_AC',           l:'HVAC / AC'},          {v:'HVAC_HEAT',        l:'HVAC / Heat'},
+          {v:'ELECTRICAL',        l:'Electrical'},          {v:'PLUMBING',         l:'Plumbing'},
+          {v:'STRUCTURAL',        l:'Structural'},          {v:'PGE_TRANSFORMER',  l:'PGE Transformer'},
+          {v:'BACKUP_BATTERY',    l:'Backup Battery / UPS'},{v:'GENERATOR',        l:'Generator'},
+          {v:'INSPECTION',        l:'Inspection'},          {v:'OTHER',            l:'Other'},
+        ])}
+        ${label('Description', 'description', true)}
+        <textarea id="description" name="description" rows="3" placeholder="Describe the work or issue…"
+          class="w-full bg-sky-950 border border-sky-600 text-white rounded-xl px-4 py-3 mb-4 focus:outline-none focus:border-sky-400 placeholder-sky-700 resize-none" required></textarea>
+        ${label('Performed By', 'performed_by', true)}${textInput('performed_by', 'Name or contractor', true)}
+        ${label('Contractor?', 'is_contractor', false)}
+        ${selectInput('is_contractor', [{v:'false', l:'No — In-house'}, {v:'true', l:'Yes — Contractor'}], false)}
+        ${label('Severity (issues only)', 'severity', false)}
+        ${selectInput('severity', [{v:'', l:'N/A'}, {v:'low', l:'Low'}, {v:'medium', l:'Medium'}, {v:'high', l:'High'}, {v:'critical', l:'Critical'}], false)}
+        ${label('Status', 'status', false)}
+        ${selectInput('status', [{v:'completed', l:'Completed'}, {v:'in_progress', l:'In Progress'}, {v:'pending', l:'Pending'}], false)}
+        ${label('Cost ($)', 'cost', false)}${numInput('cost', '0.00', false, '0.01')}
+        ${label('PO Number', 'po_number', false)}${textInput('po_number', 'Optional')}
+        ${label('Resolution Notes', 'resolution_notes', false)}
+        <textarea id="resolution_notes" name="resolution_notes" rows="2" placeholder="How was it resolved?"
+          class="w-full bg-sky-950 border border-sky-600 text-white rounded-xl px-4 py-3 mb-4 focus:outline-none focus:border-sky-400 placeholder-sky-700 resize-none"></textarea>
+        ${label('Next Service Date', 'next_service_date', false)}
+        <input type="date" id="next_service_date" name="next_service_date"
+          class="w-full bg-sky-950 border border-sky-600 text-white text-xl rounded-xl px-4 py-3 mb-4 focus:outline-none focus:border-sky-400">
+        ${notesInput()}`;
+    }
+
     default: return '<p class="text-red-400">Unknown form type</p>';
   }
 }
@@ -888,6 +1140,27 @@ function getFormData() {
   const type = state.readingType;
   const asset = state.selectedAsset;
   const idMap = {
+    pge:                     ['pge_meter_id',  'pge_meter_id'],
+    'power-monitor':         ['monitor_id',    'monitor_id'],
+    'pump-hours':            ['position_id',   'position_id'],
+    'compressor-hours':      ['compressor_id', 'compressor_id'],
+    'well-static':           ['well_id',       'well_id'],
+    'well-operational':      ['well_id',       'well_id'],
+    canal:                   ['structure_id',  'structure_id'],
+    pond:                    ['pond_id',       'pond_id'],
+    vehicle:                 ['vehicle_id',    'vehicle_id'],
+    'maintenance-vehicle':   ['vehicle_id',    'vehicle_id'],
+    'maintenance-building':  ['building_id',   'building_id'],
+  };
+  const [field, prop] = idMap[type] || [];
+  if (field) data[field] = asset[prop] || asset._assetId;
+
+  // Equipment maintenance: carry through equipment_type and optional equipment_id
+  if (type === 'maintenance-equipment') {
+    data.equipment_type = asset.equipment_type || null;
+    if (asset._assetId) data.equipment_id = asset._assetId;
+  }
+
     pge: ['pge_meter_id', 'pge_meter_id'],
     'power-monitor': ['monitor_id', 'monitor_id'],
     'pump-hours': ['position_id', 'position_id'],
@@ -930,6 +1203,12 @@ function renderHistory() {
   const readings = state.lastReadings;
   const histEl = $('form-history');
   if (!histEl) return;
+
+  // Maintenance records have no history table
+  if (state.readingType.startsWith('maintenance-')) {
+    histEl.innerHTML = '';
+    return;
+  }
 
   if (readings.length === 0) {
     histEl.innerHTML = '<p class="text-sky-600 text-sm text-center py-2">No previous readings</p>';
@@ -995,6 +1274,11 @@ $('form-submit-btn') && $('form-submit-btn').addEventListener('click', async () 
   const data = getFormData();
 
   // Basic validation
+  const isMaintenance = type.startsWith('maintenance-');
+  if (isMaintenance ? !data.work_date : !data.reading_date) {
+    alert(`Please enter a ${isMaintenance ? 'work' : 'reading'} date.`);
+    return;
+  }
   if (!data.reading_date) { alert('Please enter a reading date.'); return; }
 
   const btn = $('form-submit-btn');
@@ -1057,6 +1341,11 @@ $('confirm-menu-btn') && $('confirm-menu-btn').addEventListener('click', () => {
 });
 
 $('confirm-same-btn') && $('confirm-same-btn').addEventListener('click', async () => {
+  if (state.readingType.startsWith('maintenance-')) {
+    loadMaintenanceForm();
+  } else {
+    await loadFormForAsset();
+  }
   // Re-enter same asset — reload last readings and show form again
   await loadFormForAsset();
 });

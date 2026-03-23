@@ -72,6 +72,14 @@ function handleOffline() {
   notifyStatus('Offline — readings will queue locally', 'warning');
 }
 
+// Try to POST a single reading or maintenance record; if it fails, queue it locally
+export async function submitReading(type, data, queueFn) {
+  // Maintenance types post to /api/maintenance/<subtype>, all others to /api/readings/<type>
+  const endpoint = type.startsWith('maintenance-')
+    ? api(`/api/maintenance/${type.replace('maintenance-', '')}`)
+    : api(`/api/readings/${type}`);
+  try {
+    const resp = await fetch(endpoint, {
 // Try to POST a single reading; if it fails, queue it locally
 export async function submitReading(type, data, queueFn) {
   try {
