@@ -1,4 +1,4 @@
-//3-23-26 0958 
+//3-23-26 1025 
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -16,7 +16,7 @@ let pool = createPool();
 
 function createPool() {
   return new Pool({
-    host:     process.env.DB_HOST     || 'localhost',
+    host:     process.env.DB_HOST     || '10.93.1.111',
     port:     parseInt(process.env.DB_PORT) || 5432,
     database: process.env.DB_NAME     || 'waterops',
     user:     process.env.DB_USER,
@@ -49,7 +49,7 @@ app.get('/api/health', async (req, res) => {
     res.json({
       ok: true,
       ts: new Date().toISOString(),
-      db_host: process.env.DB_HOST || 'localhost',
+      db_host: process.env.DB_HOST || '10.93.1.111',
       db_name: process.env.DB_NAME || '',
     });
   } catch (e) {
@@ -61,7 +61,7 @@ app.get('/api/health', async (req, res) => {
 
 app.get('/api/settings', (req, res) => {
   res.json({
-    db_host:      process.env.DB_HOST     || 'localhost',
+    db_host:      process.env.DB_HOST     || '10.93.1.111',
     db_port:      process.env.DB_PORT     || '5432',
     db_name:      process.env.DB_NAME     || '',
     db_user:      process.env.DB_USER     || '',
