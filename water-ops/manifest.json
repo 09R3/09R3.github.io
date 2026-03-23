@@ -1,0 +1,14 @@
+{
+  "name": "WaterOps Field App",
+  "short_name": "WaterOps",
+  "description": "Water Operations daily readings and data entry",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0c4a6e",
+  "theme_color": "#0369a1",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
