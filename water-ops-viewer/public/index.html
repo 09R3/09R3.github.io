@@ -130,16 +130,29 @@
   <div class="sql-panel-header">
     <h3>SQL Editor</h3>
     <div class="sql-actions">
+      <button class="btn btn-ghost btn-sm" id="sql-saved-btn" title="Saved queries">☰ Saved</button>
       <button class="btn btn-ghost btn-sm" id="sql-export-btn">↓ Export result</button>
       <button class="btn btn-primary btn-sm" id="sql-run-btn">▶ Run</button>
       <button class="icon-btn" id="sql-close-btn">✕</button>
     </div>
   </div>
-  <div class="sql-editor-wrap">
-    <textarea id="sql-editor" spellcheck="false" placeholder="SELECT * FROM my_table LIMIT 100;"></textarea>
-  </div>
-  <div class="sql-result" id="sql-result">
-    <div class="empty-state-sm">Run a query to see results</div>
+  <div class="sql-body">
+    <div class="sql-main">
+      <div class="sql-editor-wrap">
+        <textarea id="sql-editor" spellcheck="false" placeholder="SELECT * FROM my_table LIMIT 100;"></textarea>
+      </div>
+      <div class="sql-result" id="sql-result">
+        <div class="empty-state-sm">Run a query to see results</div>
+      </div>
+    </div>
+    <div class="saved-queries-panel hidden" id="saved-queries-panel">
+      <div class="saved-queries-header">Saved Queries</div>
+      <div class="saved-queries-list" id="saved-queries-list"></div>
+      <div class="saved-queries-footer">
+        <input type="text" id="save-query-name" placeholder="Name this query…" />
+        <button class="btn btn-primary btn-sm btn-full" id="save-query-btn">↑ Save current query</button>
+      </div>
+    </div>
   </div>
   <div class="sql-status" id="sql-status"></div>
 </div>
