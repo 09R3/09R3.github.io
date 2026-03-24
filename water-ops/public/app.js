@@ -748,17 +748,28 @@ function showMaintenanceCompressorSelector(equipType) {
   const backBtn = el('button', 'mb-4 bg-sky-800 hover:bg-sky-700 text-sky-300 text-sm font-semibold rounded-xl px-4 py-2 touch-manipulation', '← Back');
   backBtn.addEventListener('click', showMaintenanceEquipmentSelector);
   container.appendChild(backBtn);
+
+  // Group by site (pumping plant)
+  const byPlant = {};
   for (const c of (state.assets.compressors || [])) {
-    const btn = el('button',
-      'w-full bg-sky-800 hover:bg-sky-600 text-white rounded-xl p-3 text-left touch-manipulation mb-2',
-      `<div class="font-bold">Compressor — ${c.notes || c.compressor_id}</div>
-       <div class="text-xs text-sky-300">${c.site_name || ''} · Bldg ${c.building_letter || ''}</div>`
-    );
-    btn.addEventListener('click', () => {
-      state.selectedAsset = { ...c, equipment_type: equipType, _assetId: c.compressor_id };
-      loadMaintenanceForm();
-    });
-    container.appendChild(btn);
+    const plant = c.site_name || 'Other';
+    if (!byPlant[plant]) byPlant[plant] = [];
+    byPlant[plant].push(c);
+  }
+  for (const [plant, comps] of Object.entries(byPlant)) {
+    container.appendChild(el('div', 'text-xs font-bold uppercase text-sky-400 tracking-widest mt-3 mb-1 px-1', plant));
+    for (const c of comps) {
+      const btn = el('button',
+        'w-full bg-sky-800 hover:bg-sky-600 text-white rounded-xl p-3 text-left touch-manipulation mb-2',
+        `<div class="font-bold">Compressor — ${c.notes || c.compressor_id}</div>
+         <div class="text-xs text-sky-300">Bldg ${c.building_letter || ''}</div>`
+      );
+      btn.addEventListener('click', () => {
+        state.selectedAsset = { ...c, equipment_type: equipType, _assetId: c.compressor_id };
+        loadMaintenanceForm();
+      });
+      container.appendChild(btn);
+    }
   }
 }
 
@@ -769,17 +780,28 @@ function showMaintenancePumpSelector(equipType) {
   const backBtn = el('button', 'mb-4 bg-sky-800 hover:bg-sky-700 text-sky-300 text-sm font-semibold rounded-xl px-4 py-2 touch-manipulation', '← Back');
   backBtn.addEventListener('click', showMaintenanceEquipmentSelector);
   container.appendChild(backBtn);
+
+  // Group by pumping plant (site_name)
+  const byPlant = {};
   for (const p of (state.assets.pumpPositions || [])) {
-    const btn = el('button',
-      'w-full bg-sky-800 hover:bg-sky-600 text-white rounded-xl p-3 text-left touch-manipulation mb-2',
-      `<div class="font-bold">Position ${p.position_id}</div>
-       <div class="text-xs text-sky-300">${p.site_name || ''} · Bldg ${p.building_letter || ''} · ${p.rated_hp} HP</div>`
-    );
-    btn.addEventListener('click', () => {
-      state.selectedAsset = { ...p, equipment_type: equipType, _assetId: p.position_id };
-      loadMaintenanceForm();
-    });
-    container.appendChild(btn);
+    const plant = p.site_name || 'Other';
+    if (!byPlant[plant]) byPlant[plant] = [];
+    byPlant[plant].push(p);
+  }
+  for (const [plant, pumps] of Object.entries(byPlant)) {
+    container.appendChild(el('div', 'text-xs font-bold uppercase text-sky-400 tracking-widest mt-3 mb-1 px-1', plant));
+    for (const p of pumps) {
+      const btn = el('button',
+        'w-full bg-sky-800 hover:bg-sky-600 text-white rounded-xl p-3 text-left touch-manipulation mb-2',
+        `<div class="font-bold">Position ${p.position_id}</div>
+         <div class="text-xs text-sky-300">Bldg ${p.building_letter || ''} · ${p.rated_hp} HP</div>`
+      );
+      btn.addEventListener('click', () => {
+        state.selectedAsset = { ...p, equipment_type: equipType, _assetId: p.position_id };
+        loadMaintenanceForm();
+      });
+      container.appendChild(btn);
+    }
   }
 }
 
@@ -787,18 +809,32 @@ function showMaintenanceVehicleSelector() {
   $('asset-title').textContent = 'Vehicle Maintenance — Select Vehicle';
   const container = $('asset-content');
   container.innerHTML = '';
+
+  // Group by category (field may be named category, vehicle_type, or type)
+  const CATEGORY_ORDER = ['Vehicle', 'Heavy Equipment', 'Trailer'];
+  const byCategory = {};
   for (const v of (state.assets.vehicles || [])) {
-    const btn = el('button',
-      'w-full bg-sky-800 hover:bg-sky-600 text-white rounded-xl p-3 text-left touch-manipulation mb-2',
-      `<div class="font-bold">#${v.vehicle_number} — ${v.year} ${v.make} ${v.model}</div>
-       <div class="text-xs text-sky-300">${v.assigned_user || 'Unassigned'}</div>`
-    );
-    btn.addEventListener('click', () => {
-      state.selectedAsset = v;
-      state.selectedAsset._assetId = v.vehicle_id;
-      loadMaintenanceForm();
-    });
-    container.appendChild(btn);
+    const cat = v.category || v.vehicle_type || v.type || 'Vehicle';
+    if (!byCategory[cat]) byCategory[cat] = [];
+    byCategory[cat].push(v);
+  }
+  const cats = [...new Set([...CATEGORY_ORDER, ...Object.keys(byCategory)])].filter(c => byCategory[c]);
+  const showHeaders = cats.length > 1;
+
+  for (const cat of cats) {
+    if (showHeaders) container.appendChild(el('div', 'text-xs font-bold uppercase text-sky-400 tracking-widest mt-3 mb-1 px-1', cat));
+    for (const v of byCategory[cat]) {
+      const btn = el('button',
+        'w-full bg-sky-800 hover:bg-sky-600 text-white rounded-xl p-3 text-left touch-manipulation mb-2',
+        `<div class="font-bold">#${v.vehicle_number} — ${v.year} ${v.make} ${v.model}</div>
+         <div class="text-xs text-sky-300">${v.assigned_user || 'Unassigned'}</div>`
+      );
+      btn.addEventListener('click', () => {
+        state.selectedAsset = { ...v, _assetId: v.vehicle_id };
+        loadMaintenanceForm();
+      });
+      container.appendChild(btn);
+    }
   }
   showScreen('screen-asset');
 }
@@ -807,18 +843,27 @@ function showMaintenanceBuildingSelector() {
   $('asset-title').textContent = 'Building Maintenance — Select Building';
   const container = $('asset-content');
   container.innerHTML = '';
+
+  // Group by site (pumping plant)
+  const bySite = {};
   for (const b of (state.assets.buildings || [])) {
-    const btn = el('button',
-      'w-full bg-sky-800 hover:bg-sky-600 text-white rounded-xl p-3 text-left touch-manipulation mb-2',
-      `<div class="font-bold">Building ${b.building_letter}</div>
-       <div class="text-xs text-sky-300">${b.site_name || 'Site ' + b.site_id}</div>`
-    );
-    btn.addEventListener('click', () => {
-      state.selectedAsset = b;
-      state.selectedAsset._assetId = b.building_id;
-      loadMaintenanceForm();
-    });
-    container.appendChild(btn);
+    const site = b.site_name || ('Site ' + b.site_id);
+    if (!bySite[site]) bySite[site] = [];
+    bySite[site].push(b);
+  }
+  for (const [site, buildings] of Object.entries(bySite)) {
+    container.appendChild(el('div', 'text-xs font-bold uppercase text-sky-400 tracking-widest mt-3 mb-1 px-1', site));
+    for (const b of buildings) {
+      const btn = el('button',
+        'w-full bg-sky-800 hover:bg-sky-600 text-white rounded-xl p-3 text-left touch-manipulation mb-2',
+        `<div class="font-bold">Building ${b.building_letter}</div>`
+      );
+      btn.addEventListener('click', () => {
+        state.selectedAsset = { ...b, _assetId: b.building_id };
+        loadMaintenanceForm();
+      });
+      container.appendChild(btn);
+    }
   }
   showScreen('screen-asset');
 }
@@ -904,9 +949,10 @@ function renderForm() {
   // Last 5 history table
   renderHistory();
 
-  // Wire up live formula computation
+  // Wire up live formula computation + dirty tracking
+  state.formDirty = false;
   inputsEl.querySelectorAll('input, select, textarea').forEach(inp => {
-    inp.addEventListener('input', () => updateFormula());
+    inp.addEventListener('input', () => { state.formDirty = true; updateFormula(); });
   });
 
   // Update submit button label for maintenance records
@@ -1280,7 +1326,6 @@ $('form-submit-btn') && $('form-submit-btn').addEventListener('click', async () 
     alert(`Please enter a ${isMaintenance ? 'work' : 'reading'} date.`);
     return;
   }
-  if (!data.reading_date) { alert('Please enter a reading date.'); return; }
 
   const btn = $('form-submit-btn');
   btn.disabled = true;
@@ -1301,6 +1346,7 @@ $('form-submit-btn') && $('form-submit-btn').addEventListener('click', async () 
 
   btn.disabled = false;
   btn.textContent = 'Save Reading';
+  state.formDirty = false;
 
   showConfirm(data, result.queued);
   updatePendingBadge();
@@ -1353,7 +1399,38 @@ $('confirm-same-btn') && $('confirm-same-btn').addEventListener('click', async (
 
 // ─── Back buttons ─────────────────────────────────────────────────────────────
 $('asset-back-btn') && $('asset-back-btn').addEventListener('click', () => showScreen('screen-menu'));
-$('form-back-btn') && $('form-back-btn').addEventListener('click', () => showScreen('screen-asset'));
+
+$('form-back-btn') && $('form-back-btn').addEventListener('click', () => {
+  if (!state.formDirty) { showScreen('screen-asset'); return; }
+
+  // Build a temporary overlay
+  const overlay = document.createElement('div');
+  overlay.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-6';
+  overlay.innerHTML = `
+    <div class="bg-sky-900 rounded-2xl p-6 w-full max-w-sm shadow-2xl">
+      <div class="text-white font-bold text-lg mb-1">Unsaved Changes</div>
+      <div class="text-sky-300 text-sm mb-5">You have data that hasn't been saved yet.</div>
+      <div class="flex flex-col gap-3">
+        <button id="_back-discard" class="w-full bg-red-700 hover:bg-red-600 text-white font-semibold rounded-xl py-3 touch-manipulation">Discard &amp; Go Back</button>
+        <button id="_back-save"    class="w-full bg-green-700 hover:bg-green-600 text-white font-semibold rounded-xl py-3 touch-manipulation">Save First, Then Go Back</button>
+        <button id="_back-cancel"  class="w-full bg-sky-700 hover:bg-sky-600 text-white font-semibold rounded-xl py-3 touch-manipulation">Cancel — Keep Editing</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  const close = () => document.body.removeChild(overlay);
+
+  overlay.querySelector('#_back-discard').addEventListener('click', () => {
+    state.formDirty = false;
+    close();
+    showScreen('screen-asset');
+  });
+  overlay.querySelector('#_back-save').addEventListener('click', () => {
+    close();
+    $('form-submit-btn') && $('form-submit-btn').click();
+  });
+  overlay.querySelector('#_back-cancel').addEventListener('click', close);
+});
 
 // ─── Daily Pumping Plant screen ───────────────────────────────────────────────
 
