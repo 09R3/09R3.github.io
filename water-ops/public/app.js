@@ -1,4 +1,4 @@
-import { queueReading, cacheAssets, getCachedAssets, cacheLastReadings, getCachedLastReadings, prependToCache, getPendingCount, clearAllPending, exportPendingAsCSV } from './db.js';
+import { queueReading, cacheAssets, getCachedAssets, cacheLastReadings, getCachedLastReadings, prependToCache, getPendingCount, clearAllPending, exportPendingAsCSV, exportPendingByType } from './db.js';
 import { submitReading, startAutoSync, setSyncStatusCallback, syncNow } from './sync.js';
 import { api, getBaseUrl, setBaseUrl, clearBaseUrl } from './config.js';
 
@@ -163,17 +163,24 @@ $('cancel-sync-btn') && $('cancel-sync-btn').addEventListener('click', async () 
   setStatus('Queue cleared', 'info');
 });
 
-// ── Export pending readings as CSV ────────────────────────────────────────────
+// ── Export pending readings as CSV (one file per reading type) ───────────────
 $('export-csv-btn') && $('export-csv-btn').addEventListener('click', async () => {
-  const csv = await exportPendingAsCSV();
-  if (!csv) { alert('No pending readings to export.'); return; }
-  const blob = new Blob([csv], { type: 'text/csv' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `waterops-pending-${new Date().toISOString().slice(0,10)}.csv`;
-  a.click();
-  URL.revokeObjectURL(url);
+  const byType = await exportPendingByType();
+  if (!byType || byType.size === 0) { alert('No pending readings to export.'); return; }
+  const date = new Date().toISOString().slice(0, 10);
+  let i = 0;
+  for (const [type, csv] of byType) {
+    setTimeout(() => {
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `waterops-${type}-${date}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }, i * 300); // stagger downloads so browser doesn't block them
+    i++;
+  }
 });
 
 // ─── Asset loading ─────────────────────────────────────────────────────────────
@@ -810,11 +817,11 @@ function showMaintenanceVehicleSelector() {
   const container = $('asset-content');
   container.innerHTML = '';
 
-  // Group by category (field may be named category, vehicle_type, or type)
+  // Group by vehicle_type
   const CATEGORY_ORDER = ['Vehicle', 'Heavy Equipment', 'Trailer'];
   const byCategory = {};
   for (const v of (state.assets.vehicles || [])) {
-    const cat = v.category || v.vehicle_type || v.type || 'Vehicle';
+    const cat = v.vehicle_type || 'Other';
     if (!byCategory[cat]) byCategory[cat] = [];
     byCategory[cat].push(v);
   }
@@ -1710,7 +1717,7 @@ async function openSettings() {
   urlInput.value = getBaseUrl();
   $('settings-url-status').textContent = '';
 
-  // Fetch current DB settings from server (non-sensitive fields only)
+  // Fetch current DB + server settings from server (non-sensitive fields only)
   try {
     const resp = await fetch(api('/api/settings'));
     if (resp.ok) {
@@ -1721,6 +1728,8 @@ async function openSettings() {
       $('settings-db-user').value     = s.db_user || '';
       $('settings-db-password').value = '';          // never pre-fill password
       $('settings-db-password').placeholder = s.has_password ? '••••••••  (unchanged)' : 'Enter password';
+      // Use server-saved URL as the input value if the user hasn't overridden locally
+      if (s.server_url && urlInput.value === window.location.origin) urlInput.value = s.server_url;
     }
   } catch {
     // Server unreachable — leave fields blank, user can still change server URL
@@ -1770,13 +1779,14 @@ $('settings-save-btn') && $('settings-save-btn').addEventListener('click', async
   const newUrl = $('settings-server-url').value.trim().replace(/\/$/, '');
   if (newUrl) setBaseUrl(newUrl); else clearBaseUrl();
 
-  // 2 — Send DB settings to server
+  // 2 — Send DB + server URL settings to server (persisted to .env)
   const dbPayload = {
     db_host:     $('settings-db-host').value.trim(),
     db_port:     $('settings-db-port').value.trim(),
     db_name:     $('settings-db-name').value.trim(),
     db_user:     $('settings-db-user').value.trim(),
     db_password: $('settings-db-password').value, // only sent if non-empty
+    server_url:  newUrl,
   };
   // Strip empty password so server doesn't overwrite with blank
   if (!dbPayload.db_password) delete dbPayload.db_password;

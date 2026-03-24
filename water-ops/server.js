@@ -66,11 +66,12 @@ app.get('/api/settings', (req, res) => {
     db_name:      process.env.DB_NAME     || '',
     db_user:      process.env.DB_USER     || '',
     has_password: !!(process.env.DB_PASSWORD),
+    server_url:   process.env.SERVER_URL  || '',
   });
 });
 
 app.post('/api/settings', async (req, res) => {
-  const { db_host, db_port, db_name, db_user, db_password } = req.body;
+  const { db_host, db_port, db_name, db_user, db_password, server_url } = req.body;
 
   const updates = {};
   if (db_host)     { process.env.DB_HOST     = db_host;     updates.DB_HOST     = db_host; }
@@ -78,6 +79,7 @@ app.post('/api/settings', async (req, res) => {
   if (db_name)     { process.env.DB_NAME     = db_name;     updates.DB_NAME     = db_name; }
   if (db_user)     { process.env.DB_USER     = db_user;     updates.DB_USER     = db_user; }
   if (db_password) { process.env.DB_PASSWORD = db_password; updates.DB_PASSWORD = db_password; }
+  if (server_url)  { process.env.SERVER_URL  = server_url;  updates.SERVER_URL  = server_url; }
 
   try {
     if (Object.keys(updates).length > 0) saveEnv(updates);

@@ -128,6 +128,46 @@ export async function exportPendingAsCSV() {
   return rows.join('\n');
 }
 
+// Returns a Map of { type -> csvString } — one clean CSV per reading type
+export async function exportPendingByType() {
+  const pending = await getPendingReadings();
+  if (pending.length === 0) return null;
+
+  const escape = v => {
+    if (v == null) return '';
+    const s = String(v);
+    return s.includes(',') || s.includes('"') || s.includes('\n')
+      ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+
+  // Group by type
+  const byType = {};
+  for (const item of pending) {
+    if (!byType[item.type]) byType[item.type] = [];
+    byType[item.type].push(item);
+  }
+
+  const result = new Map();
+  for (const [type, items] of Object.entries(byType)) {
+    // Columns: localId, createdAt, then all data keys (no redundant type col)
+    const dataKeys = new Set();
+    for (const item of items) {
+      for (const k of Object.keys(item.data || {})) dataKeys.add(k);
+    }
+    const keys = ['localId', 'createdAt', ...dataKeys];
+    const rows = [keys.join(',')];
+    for (const item of items) {
+      rows.push(keys.map(k => {
+        if (k === 'localId')    return escape(item.localId);
+        if (k === 'createdAt')  return escape(item.createdAt);
+        return escape((item.data || {})[k]);
+      }).join(','));
+    }
+    result.set(type, rows.join('\n'));
+  }
+  return result;
+}
+
 // ─── Asset Cache ─────────────────────────────────────────────────────────────
 
 export async function cacheAssets(assets) {
