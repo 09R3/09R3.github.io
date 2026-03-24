@@ -152,6 +152,21 @@ async function updateSyncActions() {
   }
 }
 
+// ── Force refresh — clear SW cache and reload to pick up latest files ─────────
+$('force-refresh-btn') && $('force-refresh-btn').addEventListener('click', async () => {
+  if (!confirm('Clear app cache and reload the latest version?\n(Your unsynced readings are safe — they live in a separate local database.)')) return;
+  // Unregister all service workers so the next load fetches fresh files
+  if ('serviceWorker' in navigator) {
+    const regs = await navigator.serviceWorker.getRegistrations();
+    await Promise.all(regs.map(r => r.unregister()));
+  }
+  // Delete all Cache API caches (SW app-shell cache)
+  const keys = await caches.keys();
+  await Promise.all(keys.map(k => caches.delete(k)));
+  // Hard reload — browser will fetch everything fresh from server
+  location.reload();
+});
+
 // ── Cancel sync (clear queue) ─────────────────────────────────────────────────
 $('cancel-sync-btn') && $('cancel-sync-btn').addEventListener('click', async () => {
   const count = await getPendingCount();

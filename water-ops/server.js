@@ -15,13 +15,18 @@ app.use(express.static(path.join(__dirname, 'public')));
 let pool = createPool();
 
 function createPool() {
-  return new Pool({
+  const p = new Pool({
     host:     process.env.DB_HOST     || '10.93.1.111',
     port:     parseInt(process.env.DB_PORT) || 5432,
     database: process.env.DB_NAME     || 'waterops',
     user:     process.env.DB_USER,
     password: process.env.DB_PASSWORD,
   });
+  // Prevent idle-client disconnect errors from crashing the process
+  p.on('error', (err) => {
+    console.error('[pool] idle client error:', err.message);
+  });
+  return p;
 }
 
 // Write key=value pairs back to .env file so settings survive restarts
@@ -681,6 +686,10 @@ app.get('/api/export/:type', async (req, res) => {
     res.send(lines.join('\n'));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+
+// ─── Keep alive — log unhandled errors instead of crashing ─────────────────
+process.on('uncaughtException',  (err) => console.error('[uncaught]',   err.message));
+process.on('unhandledRejection', (err) => console.error('[unhandled]',  err?.message || err));
 
 // ─── Start ──────────────────────────────────────────────────────────────────
 const PORT = parseInt(process.env.PORT) || 3000;
