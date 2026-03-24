@@ -34,13 +34,18 @@
 <!-- Sync status bar (fixed top) -->
 <div id="sync-bar" class="fixed top-0 left-0 right-0 z-50 bg-blue-600 text-white text-sm py-1 flex items-center justify-between px-2 gap-2">
   <span id="sync-bar-msg" class="flex-1 text-center">Connecting…</span>
-  <div id="sync-actions" class="hidden flex-shrink-0 flex gap-1">
-    <button id="export-csv-btn"
-      class="bg-sky-700 hover:bg-sky-600 text-white text-xs font-bold px-2 py-0.5 rounded touch-manipulation"
-      title="Export queued readings as CSV">⬇ CSV</button>
-    <button id="cancel-sync-btn"
-      class="bg-red-600 hover:bg-red-500 text-white text-xs font-bold px-2 py-0.5 rounded touch-manipulation"
-      title="Clear all queued readings">✕ Clear</button>
+  <div class="flex-shrink-0 flex gap-1">
+    <div id="sync-actions" class="hidden flex gap-1">
+      <button id="export-csv-btn"
+        class="bg-sky-700 hover:bg-sky-600 text-white text-xs font-bold px-2 py-0.5 rounded touch-manipulation"
+        title="Export queued readings as CSV">⬇ CSV</button>
+      <button id="cancel-sync-btn"
+        class="bg-red-600 hover:bg-red-500 text-white text-xs font-bold px-2 py-0.5 rounded touch-manipulation"
+        title="Clear all queued readings">✕ Clear</button>
+    </div>
+    <button id="force-refresh-btn"
+      class="bg-sky-800 hover:bg-sky-700 text-white text-xs font-bold px-2 py-0.5 rounded touch-manipulation"
+      title="Clear cache and reload latest version">↺</button>
   </div>
 </div>
 
