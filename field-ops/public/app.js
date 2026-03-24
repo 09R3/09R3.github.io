@@ -168,6 +168,8 @@ function onLogout() {
   el('pp-site').value = '';
   el('pp-form-body').innerHTML = '<div class="placeholder-msg">Select a site to load readings.</div>';
   el('pp-save-bar').classList.add('hidden');
+  // Refresh DB status on logout
+  checkDBStatus();
 }
 
 async function checkAuth() {
@@ -1013,5 +1015,94 @@ el('user-modal-save').addEventListener('click', async () => {
   }
 });
 
+/* ── Login Page: DB status + username dropdown + settings modal ──────────── */
+async function checkDBStatus() {
+  try {
+    const status = await api('GET', '/api/db-status');
+    const dot  = el('db-dot');
+    const text = el('db-status-text');
+    if (status.connected) {
+      dot.className  = 'db-dot connected';
+      text.textContent = `Connected — ${status.host}:${status.port}/${status.database}`;
+    } else {
+      dot.className  = 'db-dot disconnected';
+      text.textContent = 'Database not connected';
+    }
+  } catch {
+    el('db-dot').className   = 'db-dot disconnected';
+    el('db-status-text').textContent = 'Could not reach server';
+  }
+}
+
+async function loadLoginUserList() {
+  try {
+    const users = await api('GET', '/api/users/list');
+    const sel = el('login-username');
+    sel.innerHTML = '<option value="">Select user…</option>';
+    users.forEach(u => {
+      const opt = document.createElement('option');
+      opt.value = u.username;
+      opt.textContent = u.full_name ? `${u.full_name} (${u.username})` : u.username;
+      sel.appendChild(opt);
+    });
+    if (!users.length) {
+      // DB not connected or no users — fall back to text input
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.id   = 'login-username';
+      input.className = 'ctrl-input';
+      input.autocomplete = 'username';
+      input.autocapitalize = 'none';
+      input.placeholder = 'Username';
+      sel.replaceWith(input);
+    }
+  } catch { /* leave dropdown empty */ }
+}
+
+// DB Settings Modal
+el('db-gear-btn').addEventListener('click', () => {
+  el('db-test-result').className = 'db-test-result hidden';
+  el('db-test-result').textContent = '';
+  el('db-modal').classList.remove('hidden');
+});
+el('db-modal-close').addEventListener('click',  () => el('db-modal').classList.add('hidden'));
+el('db-modal-cancel').addEventListener('click', () => el('db-modal').classList.add('hidden'));
+
+el('db-test-btn').addEventListener('click', async () => {
+  const btn = el('db-test-btn');
+  const result = el('db-test-result');
+  btn.disabled = true;
+  btn.textContent = 'Testing…';
+  result.className = 'db-test-result hidden';
+
+  const body = {
+    host:     el('db-host').value.trim(),
+    port:     el('db-port').value || '5432',
+    database: el('db-name').value.trim(),
+    user:     el('db-user').value.trim(),
+    password: el('db-password').value,
+  };
+
+  try {
+    const data = await api('POST', '/api/db-test', body);
+    if (data.connected) {
+      result.className = 'db-test-result success';
+      result.textContent = '✓ Connection successful!';
+    } else {
+      result.className = 'db-test-result error';
+      result.textContent = '✗ ' + (data.error || 'Connection failed');
+    }
+  } catch (err) {
+    result.className = 'db-test-result error';
+    result.textContent = '✗ ' + err.message;
+  } finally {
+    result.classList.remove('hidden');
+    btn.disabled = false;
+    btn.textContent = 'Test Connection';
+  }
+});
+
 /* ── Init ────────────────────────────────────────────────────────────────── */
+checkDBStatus();
+loadLoginUserList();
 checkAuth();

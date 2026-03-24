@@ -122,6 +122,53 @@ app.post('/auth/logout', (req, res) => {
 
 app.get('/auth/me', requireAuth, (req, res) => res.json({ user: req.user }));
 
+// ── Public: DB status + test (no auth — needed before login) ─────────────────
+app.get('/api/db-status', async (req, res) => {
+  try {
+    await pool.query('SELECT 1');
+    res.json({
+      connected: true,
+      host: process.env.DB_HOST,
+      port: process.env.DB_PORT,
+      database: process.env.DB_NAME,
+    });
+  } catch (err) {
+    res.json({ connected: false, error: err.message });
+  }
+});
+
+app.post('/api/db-test', async (req, res) => {
+  const { host, port, database, user, password } = req.body || {};
+  if (!host || !database || !user) {
+    return res.status(400).json({ error: 'host, database, and user are required' });
+  }
+  const testPool = new Pool({
+    host, port: parseInt(port) || 5432, database, user, password,
+    connectionTimeoutMillis: 5000, max: 1,
+  });
+  try {
+    await testPool.query('SELECT 1');
+    res.json({ connected: true });
+  } catch (err) {
+    res.json({ connected: false, error: err.message });
+  } finally {
+    testPool.end().catch(() => {});
+  }
+});
+
+// ── Public: username list for login dropdown ──────────────────────────────────
+app.get('/api/users/list', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT username, full_name FROM users WHERE is_active = true ORDER BY full_name, username'
+    );
+    res.json(rows);
+  } catch (err) {
+    // Return empty list if DB not connected — login form falls back gracefully
+    res.json([]);
+  }
+});
+
 // ── Sites ─────────────────────────────────────────────────────────────────────
 app.get('/api/sites', requireAuth, async (req, res) => {
   try {

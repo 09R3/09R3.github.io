@@ -14,10 +14,17 @@
     <div class="login-card">
       <div class="login-logo">Field Ops</div>
       <div class="login-subtitle">Operator Portal</div>
+      <div class="db-status-row">
+        <span class="db-dot" id="db-dot"></span>
+        <span class="db-status-text" id="db-status-text">Checking database…</span>
+        <button class="db-gear-btn" id="db-gear-btn" title="Database Settings">&#9881;</button>
+      </div>
       <form id="login-form">
         <div class="form-group">
           <label>Username</label>
-          <input type="text" id="login-username" autocomplete="username" autocapitalize="none" required>
+          <select id="login-username" class="ctrl-select" required>
+            <option value="">Select user…</option>
+          </select>
         </div>
         <div class="form-group">
           <label>Password</label>
@@ -26,6 +33,51 @@
         <div id="login-error" class="error-msg hidden"></div>
         <button type="submit" class="btn btn-primary btn-full">Sign In</button>
       </form>
+    </div>
+  </div>
+</div>
+
+<!-- ── DB Settings Modal ─────────────────────────────────────────────────────── -->
+<div id="db-modal" class="modal-overlay hidden">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h2>Database Settings</h2>
+      <button class="modal-close" id="db-modal-close">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p class="db-modal-note">
+        Test your connection here. To save changes permanently, update your
+        <code>.env</code> file and redeploy.
+      </p>
+      <div class="two-col">
+        <div class="form-group">
+          <label>Host</label>
+          <input type="text" id="db-host" class="ctrl-input" placeholder="192.168.1.100">
+        </div>
+        <div class="form-group">
+          <label>Port</label>
+          <input type="number" id="db-port" class="ctrl-input" placeholder="5432">
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Database Name</label>
+        <input type="text" id="db-name" class="ctrl-input" placeholder="your_database">
+      </div>
+      <div class="two-col">
+        <div class="form-group">
+          <label>Username</label>
+          <input type="text" id="db-user" class="ctrl-input" autocapitalize="none">
+        </div>
+        <div class="form-group">
+          <label>Password</label>
+          <input type="password" id="db-password" class="ctrl-input">
+        </div>
+      </div>
+      <div id="db-test-result" class="db-test-result hidden"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" id="db-modal-cancel">Close</button>
+      <button class="btn btn-primary" id="db-test-btn">Test Connection</button>
     </div>
   </div>
 </div>

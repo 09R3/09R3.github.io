@@ -38,7 +38,7 @@ html, body {
 .error-msg { color: var(--red-light); font-size: 0.875rem; margin-top: 8px; }
 
 /* ── Screen System ───────────────────────────────────────────────────────── */
-.screen { position: fixed; inset: 0; z-index: 10; }
+.screen { position: fixed; inset: 0; z-index: 10; display: none; }
 .screen.active { display: flex; }
 #app-shell { display: flex; flex-direction: column; height: 100%; }
 #app-shell.hidden { display: none; }
@@ -73,8 +73,72 @@ html, body {
   text-align: center;
   color: var(--text-dim);
   font-size: 0.9rem;
-  margin: 4px 0 28px;
+  margin: 4px 0 12px;
 }
+
+/* DB status row on login page */
+.db-status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  margin-bottom: 20px;
+}
+.db-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex-shrink: 0;
+  transition: background 0.3s;
+}
+.db-dot.connected    { background: #4caf50; box-shadow: 0 0 6px #4caf5066; }
+.db-dot.disconnected { background: var(--red-light); box-shadow: 0 0 6px #ef535066; }
+.db-status-text {
+  flex: 1;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+.db-gear-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 1.1rem;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: var(--radius-sm);
+  line-height: 1;
+  flex-shrink: 0;
+  transition: color var(--transition);
+}
+.db-gear-btn:hover { color: var(--text); }
+
+/* DB settings modal */
+.db-modal-note {
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  margin-bottom: 16px;
+  line-height: 1.5;
+}
+.db-modal-note code {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 0.8rem;
+  color: var(--accent);
+}
+.db-test-result {
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 0.875rem;
+  margin-top: 4px;
+}
+.db-test-result.success { background: #0a2e0a; border: 1px solid var(--green); color: #a5d6a7; }
+.db-test-result.error   { background: #3a1b1b; border: 1px solid var(--red); color: #ef9a9a; }
 
 /* ── Header ──────────────────────────────────────────────────────────────── */
 .app-header {
