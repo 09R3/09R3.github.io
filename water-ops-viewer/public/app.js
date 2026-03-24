@@ -454,63 +454,74 @@ async function showExportPreview(title, exportBody, cachedResult = null) {
 }
 
 // ── Saved Queries ───────────────────────────────────────────────────────────
-const SAVED_KEY = 'waterops-saved-queries';
 
-function getSavedQueries() {
-  try { return JSON.parse(localStorage.getItem(SAVED_KEY) || '[]'); }
-  catch { return []; }
-}
-
-function putSavedQueries(queries) {
-  localStorage.setItem(SAVED_KEY, JSON.stringify(queries));
-}
-
-function renderSavedQueriesList() {
-  const queries = getSavedQueries();
+async function renderSavedQueriesList() {
   const list = $('saved-queries-list');
-  if (!queries.length) {
-    list.innerHTML = '<div class="saved-empty">No saved queries yet.<br>Write a query and save it below.</div>';
-    return;
-  }
-  list.innerHTML = '';
-  for (const q of queries) {
-    const item = document.createElement('div');
-    item.className = 'saved-query-item';
-    item.innerHTML = `
-      <span class="saved-query-name" title="${esc(q.sql)}">${esc(q.name)}</span>
-      <div class="saved-query-actions">
-        <button class="btn btn-ghost btn-sm" data-id="${q.id}" data-action="load">Load</button>
-        <button class="icon-btn saved-del" data-id="${q.id}" data-action="delete" title="Delete">✕</button>
-      </div>`;
-    list.appendChild(item);
+  list.innerHTML = '<div class="saved-empty">Loading…</div>';
+  try {
+    const queries = await get('/api/saved-queries');
+    if (!queries.length) {
+      list.innerHTML = '<div class="saved-empty">No saved queries yet.<br>Write a query and save it below.</div>';
+      return;
+    }
+    list.innerHTML = '';
+    for (const q of queries) {
+      const date = new Date(q.created_at).toLocaleDateString();
+      const item = document.createElement('div');
+      item.className = 'saved-query-item';
+      item.innerHTML = `
+        <div class="saved-query-info">
+          <span class="saved-query-name" title="${esc(q.sql)}">${esc(q.name)}</span>
+          <span class="saved-query-meta">${esc(q.created_by)} · ${date}</span>
+        </div>
+        <div class="saved-query-actions">
+          <button class="btn btn-ghost btn-sm" data-id="${q.id}" data-sql="${esc(q.sql)}" data-action="load">Load</button>
+          <button class="icon-btn saved-del" data-id="${q.id}" data-action="delete" title="Delete">✕</button>
+        </div>`;
+      list.appendChild(item);
+    }
+  } catch (err) {
+    list.innerHTML = `<div class="saved-empty" style="color:var(--error)">${esc(err.message)}</div>`;
   }
 }
 
-$('saved-queries-list').addEventListener('click', e => {
+$('saved-queries-list').addEventListener('click', async e => {
   const btn = e.target.closest('[data-action]');
   if (!btn) return;
-  const queries = getSavedQueries();
-  const q = queries.find(x => String(x.id) === btn.dataset.id);
-  if (!q) return;
   if (btn.dataset.action === 'load') {
-    sqlEditor.value = q.sql;
+    sqlEditor.value = btn.dataset.sql;
     sqlEditor.focus();
   } else if (btn.dataset.action === 'delete') {
-    putSavedQueries(queries.filter(x => String(x.id) !== btn.dataset.id));
-    renderSavedQueriesList();
+    btn.disabled = true;
+    try {
+      const res = await fetch(`${API}/api/saved-queries/${btn.dataset.id}`, { method: 'DELETE' });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.error); }
+      renderSavedQueriesList();
+    } catch (err) {
+      alert(`Delete failed: ${err.message}`);
+      btn.disabled = false;
+    }
   }
 });
 
-$('save-query-btn').addEventListener('click', () => {
+$('save-query-btn').addEventListener('click', async () => {
   const name = $('save-query-name').value.trim();
   const sql = sqlEditor.value.trim();
   if (!name) { $('save-query-name').focus(); return; }
   if (!sql) return alert('Write a query in the editor first.');
-  const queries = getSavedQueries();
-  queries.unshift({ id: Date.now(), name, sql });
-  putSavedQueries(queries);
-  $('save-query-name').value = '';
-  renderSavedQueriesList();
+  const saveBtn = $('save-query-btn');
+  saveBtn.disabled = true;
+  saveBtn.textContent = 'Saving…';
+  try {
+    await post('/api/saved-queries', { name, sql });
+    $('save-query-name').value = '';
+    renderSavedQueriesList();
+  } catch (err) {
+    alert(`Save failed: ${err.message}`);
+  } finally {
+    saveBtn.disabled = false;
+    saveBtn.textContent = '↑ Save current query';
+  }
 });
 
 $('sql-saved-btn').addEventListener('click', () => {
