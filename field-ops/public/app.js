@@ -88,7 +88,16 @@ function showScreen(name) {
   el('screen-title').textContent = titles[name] || 'Field Ops';
   closeDrawer();
 
+  // Block admin screen for operators
+  if (name === 'admin') {
+    if (!currentUser || (currentUser.role !== 'admin' && currentUser.role !== 'supervisor')) {
+      showScreen('dashboard');
+      return;
+    }
+  }
+
   // Lazy-load data on first visit
+  if (name === 'dashboard')   loadDashboardStats();
   if (name === 'wells')       initWellsScreen();
   if (name === 'canal')       initCanalScreen();
   if (name === 'vehicles')    initVehiclesScreen();
@@ -154,6 +163,29 @@ function onLogin(user) {
   // Init pumping plant site selector
   loadPPSites();
   showScreen('dashboard');
+  loadDashboardStats();
+}
+
+/* ── Dashboard Stats ─────────────────────────────────────────────────────── */
+async function loadDashboardStats() {
+  try {
+    const s = await api('GET', '/api/dashboard/stats');
+    const grid = el('dashboard-stats');
+    grid.innerHTML = `
+      <div class="stat-card">
+        <div class="stat-value">${s.kf_total - s.kf_done}</div>
+        <div class="stat-label">KF Remaining</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">${s.kf_done} / ${s.kf_total}</div>
+        <div class="stat-label">KF Done (month)</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">${s.wells_read_today} / ${s.wells_total}</div>
+        <div class="stat-label">Wells Read Today</div>
+      </div>
+    `;
+  } catch { /* non-critical */ }
 }
 
 function onLogout() {
@@ -487,85 +519,173 @@ async function savePPReadings() {
 
 /* ── Wells ───────────────────────────────────────────────────────────────── */
 let wellsLoaded = false;
-let wellOnOff   = true;
-let wellMotorOil = true;
 
 async function initWellsScreen() {
   if (wellsLoaded) return;
   wellsLoaded = true;
-  el('well-date').value = todayISO();
-  el('well-time').value = nowHHMM();
+
+  const dateInput = el('well-date');
+  const timeInput = el('well-time');
+  dateInput.value = todayISO();
+  timeInput.value = nowHHMM();
+
+  const body = el('well-list-body');
+  body.innerHTML = '<div class="placeholder-msg">Loading wells…</div>';
+
   try {
-    const wells = await api('GET', '/api/wells');
-    const sel = el('well-select');
-    sel.innerHTML = '<option value="">Select well…</option>';
+    const wells = await api('GET', '/api/wells/operational');
+    if (!wells.length) {
+      body.innerHTML = '<div class="placeholder-msg">No operational wells found.</div>';
+      return;
+    }
+
+    // Group by area
+    const byArea = {};
     wells.forEach(w => {
-      const opt = document.createElement('option');
-      opt.value = w.well_id;
-      opt.textContent = w.common_name + (w.area ? ` (${w.area})` : '');
-      sel.appendChild(opt);
+      const area = w.area || 'Other';
+      if (!byArea[area]) byArea[area] = [];
+      byArea[area].push(w);
+    });
+
+    body.innerHTML = '';
+    Object.entries(byArea).forEach(([area, areaWells]) => {
+      const section = document.createElement('div');
+      section.className = 'list-section';
+      const hdr = document.createElement('div');
+      hdr.className = 'list-section-header';
+      hdr.textContent = area;
+      section.appendChild(hdr);
+      areaWells.forEach(w => section.appendChild(createWellItem(w, dateInput, timeInput)));
+      body.appendChild(section);
     });
   } catch (err) {
+    body.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
     showToast('Failed to load wells: ' + err.message, 'error');
   }
 }
 
-// ON/OFF toggle
-el('well-on-btn').addEventListener('click', () => {
-  wellOnOff = true;
-  el('well-on-btn').classList.add('active');
-  el('well-off-btn').classList.remove('active');
-});
-el('well-off-btn').addEventListener('click', () => {
-  wellOnOff = false;
-  el('well-off-btn').classList.add('active');
-  el('well-on-btn').classList.remove('active');
-});
+function createWellItem(w, dateInput, timeInput) {
+  const div = document.createElement('div');
+  div.className = 'list-item';
 
-// Motor oil toggle
-el('well-motoroil-yes').addEventListener('click', () => {
-  wellMotorOil = true;
-  el('well-motoroil-yes').classList.add('active');
-  el('well-motoroil-no').classList.remove('active');
-});
-el('well-motoroil-no').addEventListener('click', () => {
-  wellMotorOil = false;
-  el('well-motoroil-no').classList.add('active');
-  el('well-motoroil-yes').classList.remove('active');
-});
+  const hrs = w.hours_since_reading;
+  const sc = hrs == null ? 'due' : hrs <= 8 ? 'done' : 'overdue';
+  const badge = hrs == null ? 'Not read' : hrs < 1 ? 'Just read' : `${Math.round(hrs)}h ago`;
 
-el('well-save-btn').addEventListener('click', async () => {
-  clearError('well-error');
-  const well_id = el('well-select').value;
-  if (!well_id) return showError('well-error', 'Please select a well');
+  div.innerHTML = `
+    <div class="list-item-header">
+      <span class="status-dot ${sc}"></span>
+      <span class="list-item-name">${w.common_name}</span>
+      <span class="status-badge ${sc}">${badge}</span>
+      <span class="expand-chevron">&#9660;</span>
+    </div>
+    <div class="list-item-form">
+      <div class="lif-row">
+        <div class="toggle-group">
+          <button class="toggle-btn active" data-role="on">ON</button>
+          <button class="toggle-btn" data-role="off">OFF</button>
+        </div>
+        <div class="toggle-group">
+          <span class="lif-label">Motor Oil</span>
+          <button class="toggle-btn active" data-role="oil-y">Y</button>
+          <button class="toggle-btn" data-role="oil-n">N</button>
+        </div>
+      </div>
+      <div class="two-col">
+        <div class="form-group">
+          <label>Hours</label>
+          <input type="number" class="ctrl-input w-hours" step="0.1" inputmode="decimal" placeholder="0.0">
+        </div>
+        <div class="form-group">
+          <label>Flow (cfs)</label>
+          <input type="number" class="ctrl-input w-flow" step="0.01" inputmode="decimal" placeholder="0.00">
+        </div>
+      </div>
+      <div class="two-col">
+        <div class="form-group">
+          <label>Totalizer</label>
+          <input type="number" class="ctrl-input w-totalizer" step="1" inputmode="decimal" placeholder="0">
+        </div>
+        <div class="form-group">
+          <label>Dripper Oil</label>
+          <input type="number" class="ctrl-input w-dripperoil" step="0.01" inputmode="decimal" placeholder="0.00">
+        </div>
+      </div>
+      <div class="form-group">
+        <label>PG&amp;E kWh</label>
+        <input type="number" class="ctrl-input w-pge" step="1" inputmode="decimal" placeholder="0">
+      </div>
+      <div class="form-group">
+        <label>Notes</label>
+        <textarea class="ctrl-textarea w-notes" rows="2" placeholder="Optional notes…"></textarea>
+      </div>
+      <div class="lif-error error-msg hidden"></div>
+      <button class="btn btn-save btn-full w-save-btn">Save Well Reading</button>
+    </div>`;
 
-  const body = {
-    well_id:      parseInt(well_id),
-    reading_date: el('well-date').value,
-    reading_time: el('well-time').value,
-    on_off:       wellOnOff,
-    hour_reading: el('well-hours').value || null,
-    flow_cfs:     el('well-flow').value || null,
-    totalizer:    el('well-totalizer').value || null,
-    motor_oil:    wellMotorOil,
-    dripper_oil:  el('well-dripperoil').value || null,
-    pge_kwh:      el('well-pge').value || null,
-    notes:        el('well-notes').value || null,
-  };
+  let onOff = true, motorOil = true;
 
-  try {
-    await api('POST', '/api/readings/well', body);
-    showToast('Well reading saved', 'success');
-    el('well-hours').value = '';
-    el('well-flow').value  = '';
-    el('well-totalizer').value = '';
-    el('well-pge').value   = '';
-    el('well-dripperoil').value = '';
-    el('well-notes').value = '';
-  } catch (err) {
-    showError('well-error', err.message);
-  }
-});
+  div.querySelector('[data-role="on"]').addEventListener('click', e => {
+    onOff = true;
+    e.currentTarget.classList.add('active');
+    div.querySelector('[data-role="off"]').classList.remove('active');
+  });
+  div.querySelector('[data-role="off"]').addEventListener('click', e => {
+    onOff = false;
+    e.currentTarget.classList.add('active');
+    div.querySelector('[data-role="on"]').classList.remove('active');
+  });
+  div.querySelector('[data-role="oil-y"]').addEventListener('click', e => {
+    motorOil = true;
+    e.currentTarget.classList.add('active');
+    div.querySelector('[data-role="oil-n"]').classList.remove('active');
+  });
+  div.querySelector('[data-role="oil-n"]').addEventListener('click', e => {
+    motorOil = false;
+    e.currentTarget.classList.add('active');
+    div.querySelector('[data-role="oil-y"]').classList.remove('active');
+  });
+
+  div.querySelector('.list-item-header').addEventListener('click', () => {
+    const open = div.classList.toggle('expanded');
+    div.querySelector('.list-item-form').style.display = open ? '' : 'none';
+  });
+
+  div.querySelector('.w-save-btn').addEventListener('click', async e => {
+    e.stopPropagation();
+    const errEl = div.querySelector('.lif-error');
+    errEl.classList.add('hidden');
+    const body = {
+      well_id:      w.well_id,
+      reading_date: dateInput.value,
+      reading_time: timeInput.value,
+      on_off:       onOff,
+      hour_reading: div.querySelector('.w-hours').value || null,
+      flow_cfs:     div.querySelector('.w-flow').value || null,
+      totalizer:    div.querySelector('.w-totalizer').value || null,
+      motor_oil:    motorOil,
+      dripper_oil:  div.querySelector('.w-dripperoil').value || null,
+      pge_kwh:      div.querySelector('.w-pge').value || null,
+      notes:        div.querySelector('.w-notes').value || null,
+    };
+    try {
+      await api('POST', '/api/readings/well', body);
+      div.querySelector('.status-dot').className = 'status-dot done';
+      div.querySelector('.status-badge').textContent = 'Just saved';
+      div.querySelector('.status-badge').className = 'status-badge done';
+      div.classList.remove('expanded');
+      div.querySelector('.list-item-form').style.display = 'none';
+      showToast(`${w.common_name} saved`, 'success');
+    } catch (err) {
+      errEl.textContent = err.message;
+      errEl.classList.remove('hidden');
+    }
+  });
+
+  // Start collapsed
+  div.querySelector('.list-item-form').style.display = 'none';
+  return div;
+}
 
 /* ── Canal ───────────────────────────────────────────────────────────────── */
 let canalLoaded = false;
@@ -619,66 +739,132 @@ el('canal-save-btn').addEventListener('click', async () => {
 
 /* ── Vehicles ────────────────────────────────────────────────────────────── */
 let vehiclesLoaded = false;
-let vehiclesList   = [];
+
+const VTYPE_ORDER  = ['truck', 'heavy_equipment', 'trailer', 'other'];
+const VTYPE_LABELS = { truck: 'Trucks', heavy_equipment: 'Heavy Equipment', trailer: 'Trailers', other: 'Other' };
 
 async function initVehiclesScreen() {
   if (vehiclesLoaded) return;
   vehiclesLoaded = true;
-  el('vehicle-date').value = todayISO();
-  el('vehicle-time').value = nowHHMM();
+
+  const dateInput = el('vehicle-date');
+  const timeInput = el('vehicle-time');
+  dateInput.value = todayISO();
+  timeInput.value = nowHHMM();
+
+  const body = el('vehicle-list-body');
+  body.innerHTML = '<div class="placeholder-msg">Loading vehicles…</div>';
+
   try {
-    vehiclesList = await api('GET', '/api/vehicles');
-    const sel = el('vehicle-select');
-    sel.innerHTML = '<option value="">Select vehicle…</option>';
-    vehiclesList.forEach(v => {
-      const opt = document.createElement('option');
-      opt.value = v.vehicle_id;
-      opt.textContent = `${v.vehicle_number} — ${v.year || ''} ${v.make || ''} ${v.model || ''}`.trim();
-      sel.appendChild(opt);
+    const vehicles = await api('GET', '/api/vehicles');
+    if (!vehicles.length) {
+      body.innerHTML = '<div class="placeholder-msg">No vehicles found.</div>';
+      return;
+    }
+
+    const byType = {};
+    vehicles.forEach(v => {
+      const t = (v.vehicle_type || 'other').toLowerCase();
+      if (!byType[t]) byType[t] = [];
+      byType[t].push(v);
+    });
+
+    body.innerHTML = '';
+    [...new Set([...VTYPE_ORDER, ...Object.keys(byType)])].forEach(type => {
+      if (!byType[type]) return;
+      const section = document.createElement('div');
+      section.className = 'list-section';
+      const hdr = document.createElement('div');
+      hdr.className = 'list-section-header';
+      hdr.textContent = VTYPE_LABELS[type] || type.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+      section.appendChild(hdr);
+      byType[type].forEach(v => section.appendChild(createVehicleItem(v, dateInput, timeInput)));
+      body.appendChild(section);
     });
   } catch (err) {
+    body.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
     showToast('Failed to load vehicles: ' + err.message, 'error');
   }
 }
 
-el('vehicle-select').addEventListener('change', () => {
-  const id = parseInt(el('vehicle-select').value);
-  const v  = vehiclesList.find(x => x.vehicle_id === id);
-  const info = el('vehicle-info');
-  if (v) {
-    info.textContent = `${v.vehicle_type || ''} · Reading type: ${v.reading_type || 'both'}`.trim();
-    info.classList.remove('hidden');
-  } else {
-    info.classList.add('hidden');
-  }
-});
+function createVehicleItem(v, dateInput, timeInput) {
+  const div = document.createElement('div');
+  div.className = 'list-item';
 
-el('vehicle-save-btn').addEventListener('click', async () => {
-  clearError('vehicle-error');
-  const vehicle_id = el('vehicle-select').value;
-  if (!vehicle_id) return showError('vehicle-error', 'Please select a vehicle');
+  const label = [v.vehicle_number, [v.year, v.make, v.model].filter(Boolean).join(' ')]
+    .filter(Boolean).join(' — ');
+  const assigned = v.assigned_to ? ` · ${v.assigned_to}` : '';
+  const lastOdo  = v.last_odometer != null ? `${Number(v.last_odometer).toLocaleString()} mi` : null;
+  const lastHrs  = v.last_engine_hours != null ? `${Number(v.last_engine_hours).toFixed(1)} hrs` : null;
+  const prevText = [lastOdo, lastHrs].filter(Boolean).join(' / ');
 
-  const v = vehiclesList.find(x => x.vehicle_id === parseInt(vehicle_id));
-  const body = {
-    vehicle_id:     parseInt(vehicle_id),
-    vehicle_number: v?.vehicle_number || null,
-    reading_date:   el('vehicle-date').value,
-    reading_time:   el('vehicle-time').value,
-    odometer_miles: el('vehicle-odometer').value || null,
-    engine_hours:   el('vehicle-hours').value || null,
-    notes:          el('vehicle-notes').value || null,
-  };
+  div.innerHTML = `
+    <div class="list-item-header">
+      <span class="list-item-name">${label}${assigned}</span>
+      <span class="expand-chevron">&#9660;</span>
+    </div>
+    <div class="list-item-meta">
+      ${prevText ? `<span>Prev: ${prevText}</span>` : ''}
+      ${v.vin ? `<span>VIN: …${v.vin.slice(-6)}</span>` : ''}
+      ${v.license_plate ? `<span>Plate: ${v.license_plate}</span>` : ''}
+    </div>
+    <div class="list-item-form">
+      <div class="two-col">
+        <div class="form-group">
+          <label>Odometer (mi)${lastOdo ? `<span class="prev-hint"> · Prev: ${lastOdo}</span>` : ''}</label>
+          <input type="number" class="ctrl-input v-odo" step="1" inputmode="numeric" placeholder="0">
+        </div>
+        <div class="form-group">
+          <label>Engine Hours${lastHrs ? `<span class="prev-hint"> · Prev: ${lastHrs}</span>` : ''}</label>
+          <input type="number" class="ctrl-input v-hrs" step="0.1" inputmode="decimal" placeholder="0.0">
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Notes</label>
+        <textarea class="ctrl-textarea v-notes" rows="2" placeholder="Optional notes…"></textarea>
+      </div>
+      <div class="lif-error error-msg hidden"></div>
+      <button class="btn btn-save btn-full v-save-btn">Save Reading</button>
+    </div>`;
 
-  try {
-    await api('POST', '/api/readings/vehicle-monthly', body);
-    showToast('Vehicle reading saved', 'success');
-    el('vehicle-odometer').value = '';
-    el('vehicle-hours').value    = '';
-    el('vehicle-notes').value    = '';
-  } catch (err) {
-    showError('vehicle-error', err.message);
-  }
-});
+  div.querySelector('.list-item-header').addEventListener('click', () => {
+    const open = div.classList.toggle('expanded');
+    div.querySelector('.list-item-form').style.display = open ? '' : 'none';
+  });
+
+  div.querySelector('.v-save-btn').addEventListener('click', async e => {
+    e.stopPropagation();
+    const errEl = div.querySelector('.lif-error');
+    errEl.classList.add('hidden');
+    const body = {
+      vehicle_id:     v.vehicle_id,
+      vehicle_number: v.vehicle_number,
+      reading_date:   dateInput.value,
+      reading_time:   timeInput.value,
+      odometer_miles: div.querySelector('.v-odo').value || null,
+      engine_hours:   div.querySelector('.v-hrs').value || null,
+      notes:          div.querySelector('.v-notes').value || null,
+    };
+    try {
+      await api('POST', '/api/readings/vehicle-monthly', body);
+      div.classList.remove('expanded');
+      div.querySelector('.list-item-form').style.display = 'none';
+      // Update meta preview
+      const odoVal  = body.odometer_miles ? `${Number(body.odometer_miles).toLocaleString()} mi` : lastOdo;
+      const hrsVal  = body.engine_hours   ? `${Number(body.engine_hours).toFixed(1)} hrs`       : lastHrs;
+      const newPrev = [odoVal, hrsVal].filter(Boolean).join(' / ');
+      const meta = div.querySelector('.list-item-meta span');
+      if (meta && newPrev) meta.textContent = `Prev: ${newPrev}`;
+      showToast(`${label} saved`, 'success');
+    } catch (err) {
+      errEl.textContent = err.message;
+      errEl.classList.remove('hidden');
+    }
+  });
+
+  div.querySelector('.list-item-form').style.display = 'none';
+  return div;
+}
 
 /* ── Maintenance ─────────────────────────────────────────────────────────── */
 let maintLoaded   = false;
@@ -715,7 +901,31 @@ async function initMaintenanceScreen() {
       sel.appendChild(opt);
     });
   } catch { /* non-critical */ }
+
+  // Load equipment for the equipment dropdown (default: pump)
+  await loadMaintEquipment(el('maint-equip-type').value);
 }
+
+async function loadMaintEquipment(type) {
+  const sel = el('maint-equip-select');
+  sel.innerHTML = '<option value="">Loading…</option>';
+  try {
+    const list = await api('GET', `/api/equipment/${type}`);
+    sel.innerHTML = '<option value="">Select equipment…</option>';
+    list.forEach(e => {
+      const opt = document.createElement('option');
+      opt.value = e.id;
+      opt.textContent = e.name;
+      sel.appendChild(opt);
+    });
+  } catch {
+    sel.innerHTML = '<option value="">Select equipment…</option>';
+  }
+}
+
+el('maint-equip-type').addEventListener('change', () => {
+  loadMaintEquipment(el('maint-equip-type').value);
+});
 
 // Maintenance type segmented control
 document.querySelectorAll('#maint-type-seg .seg-btn').forEach(btn => {
@@ -785,7 +995,7 @@ el('maint-save-btn').addEventListener('click', async () => {
       await api('POST', '/api/maintenance/equipment', {
         ...common,
         equipment_type:    el('maint-equip-type').value,
-        equipment_id:      parseInt(el('maint-equip-id').value) || null,
+        equipment_id:      parseInt(el('maint-equip-select').value) || null,
         location_at_time:  el('maint-equip-loc').value || null,
         hours_at_service:  el('maint-equip-hours').value || null,
       });
@@ -825,107 +1035,220 @@ el('maint-save-btn').addEventListener('click', async () => {
 });
 
 /* ── KF Monthly ─────────────────────────────────────────────────────────── */
-let kfLoaded  = false;
-let kfOnOff   = true;
-let kfAllWells = []; // full well list for client-side filtering
+let kfLoaded   = false;
+let kfAllWells = [];
+let kfSets     = [];
+let kfActiveSet = null;
 
 async function initKFScreen() {
   if (kfLoaded) return;
   kfLoaded = true;
+
   el('kf-date').value = todayISO();
   el('kf-time').value = nowHHMM();
 
-  // Auto-fill operator from logged-in user
-  if (currentUser) {
-    el('kf-operator').value = currentUser.initials || currentUser.username;
-  }
-
   try {
-    // Load well sets for the set dropdown
-    const sets = await api('GET', '/api/well-sets');
-    const setSel = el('kf-set-select');
-    setSel.innerHTML = '<option value="">All wells…</option>';
-    sets.forEach(s => {
-      const opt = document.createElement('option');
-      opt.value = s.set_id;
-      opt.textContent = s.set_name || `Set ${s.set_id}`;
-      if (s.description) opt.title = s.description;
-      setSel.appendChild(opt);
-    });
-  } catch { /* non-critical if no sets exist */ }
-
-  try {
-    // Load all KF-capable wells (those with a kf_set_id or kf well_type)
-    kfAllWells = await api('GET', '/api/wells/kf');
-    populateKFWells(null);
+    [kfSets, kfAllWells] = await Promise.all([
+      api('GET', '/api/well-sets'),
+      api('GET', '/api/wells/kf'),
+    ]);
   } catch (err) {
-    showToast('Failed to load KF wells: ' + err.message, 'error');
+    el('kf-list-body').innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
+    showToast('Failed to load KF data: ' + err.message, 'error');
+    return;
   }
+
+  // Build set tabs
+  const tabsEl = el('kf-set-tabs');
+  tabsEl.innerHTML = '';
+  const makeTab = (label, setId) => {
+    const btn = document.createElement('button');
+    btn.className = 'set-tab' + (setId === null ? ' active' : '');
+    btn.textContent = label;
+    btn.dataset.setId = setId ?? '';
+    tabsEl.appendChild(btn);
+  };
+  makeTab('All', null);
+  kfSets.forEach(s => makeTab(s.set_name || `Set ${s.set_id}`, s.set_id));
+
+  tabsEl.addEventListener('click', e => {
+    const tab = e.target.closest('.set-tab');
+    if (!tab) return;
+    tabsEl.querySelectorAll('.set-tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    kfActiveSet = tab.dataset.setId || null;
+    renderKFList();
+  });
+
+  renderKFList();
 }
 
-function populateKFWells(setId) {
-  const sel = el('kf-well-select');
-  const filtered = setId
-    ? kfAllWells.filter(w => String(w.kf_set_id) === String(setId))
+function renderKFList() {
+  const body    = el('kf-list-body');
+  const dateIn  = el('kf-date');
+  const timeIn  = el('kf-time');
+  const filtered = kfActiveSet
+    ? kfAllWells.filter(w => String(w.kf_set_id) === String(kfActiveSet))
     : kfAllWells;
 
-  sel.innerHTML = '<option value="">Select well…</option>';
-  filtered.forEach(w => {
-    const opt = document.createElement('option');
-    opt.value = w.well_id;
-    opt.textContent = w.common_name + (w.area ? ` (${w.area})` : '');
-    if (w.set_name) opt.textContent += ` — ${w.set_name}`;
-    sel.appendChild(opt);
-  });
+  if (!filtered.length) {
+    body.innerHTML = '<div class="placeholder-msg">No wells in this set.</div>';
+    return;
+  }
+
+  body.innerHTML = '';
+
+  if (!kfActiveSet) {
+    // Group by set
+    const bySets = {};
+    filtered.forEach(w => {
+      const key = w.set_name || 'No Set';
+      if (!bySets[key]) bySets[key] = [];
+      bySets[key].push(w);
+    });
+    Object.entries(bySets).forEach(([setName, wells]) => {
+      const section = document.createElement('div');
+      section.className = 'list-section';
+      const hdr = document.createElement('div');
+      hdr.className = 'list-section-header';
+      hdr.textContent = setName;
+      section.appendChild(hdr);
+      wells.forEach(w => section.appendChild(createKFItem(w, dateIn, timeIn)));
+      body.appendChild(section);
+    });
+  } else {
+    filtered.forEach(w => body.appendChild(createKFItem(w, dateIn, timeIn)));
+  }
 }
 
-el('kf-set-select').addEventListener('change', () => {
-  const setId = el('kf-set-select').value || null;
-  populateKFWells(setId);
-});
+function createKFItem(w, dateInput, timeInput) {
+  const div = document.createElement('div');
+  div.className = 'list-item';
 
-el('kf-on-btn').addEventListener('click', () => {
-  kfOnOff = true;
-  el('kf-on-btn').classList.add('active');
-  el('kf-off-btn').classList.remove('active');
-});
-el('kf-off-btn').addEventListener('click', () => {
-  kfOnOff = false;
-  el('kf-off-btn').classList.add('active');
-  el('kf-on-btn').classList.remove('active');
-});
+  const days = w.days_since_reading;
+  const sc   = days == null ? 'due' : days <= 25 ? 'done' : 'overdue';
+  const badge = days == null ? 'Never' : days === 0 ? 'Today' : `${days}d ago`;
+  const prevDTW = w.last_dtw != null ? `${Number(w.last_dtw).toFixed(2)} ft` : null;
 
-el('kf-save-btn').addEventListener('click', async () => {
-  clearError('kf-error');
-  const well_id = el('kf-well-select').value;
-  if (!well_id) return showError('kf-error', 'Please select a well');
-
-  const dtw = el('kf-dtw').value;
-  if (!dtw) return showError('kf-error', 'Depth to water reading is required');
-
-  const body = {
-    well_id:        parseInt(well_id),
-    reading_date:   el('kf-date').value,
-    reading_time:   el('kf-time').value,
-    dtw_reading:    parseFloat(dtw),
-    well_on_off:    kfOnOff,
-    plopper_sounder:el('kf-plopper-sounder').value || null,
-    operator:       el('kf-operator').value || null,
-    notes:          el('kf-notes').value || null,
-  };
-
-  try {
-    await api('POST', '/api/readings/kf-monthly', body);
-    showToast('KF reading saved', 'success');
-    el('kf-dtw').value   = '';
-    el('kf-notes').value = '';
-    // Reset date/time to now for next entry
-    el('kf-date').value = todayISO();
-    el('kf-time').value = nowHHMM();
-  } catch (err) {
-    showError('kf-error', err.message);
+  let gpsHref = '';
+  if (w.gps_latitude && w.gps_longitude) {
+    const q = `${w.gps_latitude},${w.gps_longitude}`;
+    gpsHref = `geo:${q}?q=${q}(${encodeURIComponent(w.common_name)})`;
   }
-});
+
+  div.innerHTML = `
+    <div class="list-item-header">
+      <span class="status-dot ${sc}"></span>
+      <span class="list-item-name">${w.common_name}</span>
+      <span class="status-badge ${sc}">${badge}</span>
+      <span class="expand-chevron">&#9660;</span>
+    </div>
+    ${prevDTW ? `<div class="list-item-meta"><span>Prev DTW: ${prevDTW}</span></div>` : ''}
+    <div class="list-item-form">
+      <div class="form-group">
+        <label>Depth to Water (ft)${prevDTW ? `<span class="prev-hint"> · Prev: ${prevDTW}</span>` : ''}</label>
+        <input type="number" class="ctrl-input kf-dtw" step="0.01" inputmode="decimal" placeholder="0.00">
+      </div>
+      <div class="form-group toggle-row">
+        <label>Status</label>
+        <div class="toggle-group">
+          <button class="toggle-btn active kf-on">ON</button>
+          <button class="toggle-btn kf-off">OFF</button>
+        </div>
+      </div>
+      <div class="two-col">
+        <div class="form-group">
+          <label>Method</label>
+          <select class="ctrl-select kf-method">
+            <option value="">Select…</option>
+            <option value="plopper">Plopper</option>
+            <option value="sounder">Sounder</option>
+            <option value="tape">Tape</option>
+            <option value="transducer">Transducer</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Operator</label>
+          <input type="text" class="ctrl-input kf-op" placeholder="Initials">
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Notes</label>
+        <textarea class="ctrl-textarea kf-notes" rows="2" placeholder="Optional notes…"></textarea>
+      </div>
+      <div class="lif-error error-msg hidden"></div>
+      <div class="lif-footer">
+        ${gpsHref ? `<a href="${gpsHref}" class="btn btn-secondary btn-sm" target="_blank">&#128205; Map</a>` : ''}
+        <button class="btn btn-save kf-save">Save Reading</button>
+      </div>
+    </div>`;
+
+  // Auto-fill operator
+  if (currentUser) {
+    div.querySelector('.kf-op').value = currentUser.initials || currentUser.username;
+  }
+
+  let kfOnOff = true;
+  div.querySelector('.kf-on').addEventListener('click', e => {
+    kfOnOff = true;
+    e.currentTarget.classList.add('active');
+    div.querySelector('.kf-off').classList.remove('active');
+  });
+  div.querySelector('.kf-off').addEventListener('click', e => {
+    kfOnOff = false;
+    e.currentTarget.classList.add('active');
+    div.querySelector('.kf-on').classList.remove('active');
+  });
+
+  div.querySelector('.list-item-header').addEventListener('click', () => {
+    const open = div.classList.toggle('expanded');
+    div.querySelector('.list-item-form').style.display = open ? '' : 'none';
+  });
+
+  div.querySelector('.kf-save').addEventListener('click', async e => {
+    e.stopPropagation();
+    const errEl = div.querySelector('.lif-error');
+    errEl.classList.add('hidden');
+    const dtw = div.querySelector('.kf-dtw').value;
+    if (!dtw) { errEl.textContent = 'Depth to water is required'; errEl.classList.remove('hidden'); return; }
+
+    const body = {
+      well_id:         w.well_id,
+      reading_date:    dateInput.value,
+      reading_time:    timeInput.value,
+      dtw_reading:     parseFloat(dtw),
+      well_on_off:     kfOnOff,
+      plopper_sounder: div.querySelector('.kf-method').value || null,
+      operator:        div.querySelector('.kf-op').value || null,
+      notes:           div.querySelector('.kf-notes').value || null,
+    };
+    try {
+      await api('POST', '/api/readings/kf-monthly', body);
+      div.querySelector('.status-dot').className = 'status-dot done';
+      div.querySelector('.status-badge').textContent = 'Today';
+      div.querySelector('.status-badge').className = 'status-badge done';
+      div.classList.remove('expanded');
+      div.querySelector('.list-item-form').style.display = 'none';
+      // Update prev DTW
+      const newPrev = `${Number(dtw).toFixed(2)} ft`;
+      let meta = div.querySelector('.list-item-meta');
+      if (!meta) {
+        meta = document.createElement('div');
+        meta.className = 'list-item-meta';
+        div.querySelector('.list-item-header').after(meta);
+      }
+      meta.innerHTML = `<span>Prev DTW: ${newPrev}</span>`;
+      showToast(`${w.common_name} saved`, 'success');
+    } catch (err) {
+      errEl.textContent = err.message;
+      errEl.classList.remove('hidden');
+    }
+  });
+
+  div.querySelector('.list-item-form').style.display = 'none';
+  return div;
+}
 
 /* ── Admin ───────────────────────────────────────────────────────────────── */
 let adminLoaded = false;

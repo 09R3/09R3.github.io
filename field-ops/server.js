@@ -444,16 +444,60 @@ app.get('/api/well-sets', requireAuth, async (req, res) => {
   }
 });
 
-// KF wells — wells that have a kf_set_id assigned (used for KF monthly readings)
+// KF wells — includes GPS, last reading, days since reading
 app.get('/api/wells/kf', requireAuth, async (req, res) => {
   try {
     const { rows } = await pool.query(`
-      SELECT w.well_id, w.common_name, w.area, w.kf_set_id, ws.set_name
+      SELECT
+        w.well_id, w.common_name, w.area, w.kf_set_id, ws.set_name,
+        w.gps_latitude, w.gps_longitude,
+        r.kf_reading_id    AS last_reading_id,
+        r.reading_date     AS last_reading_date,
+        r.dtw_reading      AS last_dtw,
+        (CURRENT_DATE - r.reading_date)::int AS days_since_reading
       FROM wells w
       LEFT JOIN well_sets ws ON w.kf_set_id = ws.set_id
+      LEFT JOIN LATERAL (
+        SELECT kf_reading_id, reading_date, dtw_reading
+        FROM readings_kf_monthly
+        WHERE well_id = w.well_id
+        ORDER BY reading_date DESC, reading_time DESC
+        LIMIT 1
+      ) r ON true
       WHERE w.kf_set_id IS NOT NULL
         AND (LOWER(w.status) != 'inactive' OR w.status IS NULL)
       ORDER BY ws.set_name, w.common_name
+    `);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Operational wells — for daily well readings screen, grouped by area with status
+app.get('/api/wells/operational', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        w.well_id, w.common_name, w.area, w.well_type, w.status,
+        r.reading_id        AS last_reading_id,
+        r.reading_date      AS last_reading_date,
+        r.reading_time      AS last_reading_time,
+        r.hour_reading      AS last_hour_reading,
+        r.totalizer         AS last_totalizer,
+        EXTRACT(EPOCH FROM (NOW() - (r.reading_date + COALESCE(r.reading_time, '00:00'::time))))::int / 3600
+                            AS hours_since_reading
+      FROM wells w
+      LEFT JOIN LATERAL (
+        SELECT reading_id, reading_date, reading_time, hour_reading, totalizer
+        FROM readings_well
+        WHERE well_id = w.well_id
+        ORDER BY reading_date DESC, reading_time DESC
+        LIMIT 1
+      ) r ON true
+      WHERE LOWER(w.well_type) LIKE '%operational%'
+        AND (LOWER(w.status) NOT IN ('inactive','removed') OR w.status IS NULL)
+      ORDER BY w.area, w.common_name
     `);
     res.json(rows);
   } catch (err) {
@@ -564,13 +608,117 @@ app.post('/api/readings/canal', requireAuth, async (req, res) => {
 // ── Vehicles ──────────────────────────────────────────────────────────────────
 app.get('/api/vehicles', requireAuth, async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      `SELECT vehicle_id, vehicle_number, vehicle_type, year, make, model, reading_type, status
-       FROM vehicles
-       WHERE LOWER(status) != 'inactive' OR status IS NULL
-       ORDER BY vehicle_number`
-    );
+    const { rows } = await pool.query(`
+      SELECT
+        v.vehicle_id, v.vehicle_number, v.vehicle_type, v.year, v.make, v.model,
+        v.vin, v.license_plate, v.fuel_type, v.assigned_user, v.reading_type, v.status,
+        r.odometer_miles  AS last_odometer,
+        r.engine_hours    AS last_engine_hours,
+        r.reading_date    AS last_reading_date
+      FROM vehicles v
+      LEFT JOIN LATERAL (
+        SELECT odometer_miles, engine_hours, reading_date
+        FROM readings_vehicle_monthly
+        WHERE vehicle_id = v.vehicle_id
+        ORDER BY reading_date DESC, reading_time DESC
+        LIMIT 1
+      ) r ON true
+      WHERE LOWER(v.status) != 'inactive' OR v.status IS NULL
+      ORDER BY v.vehicle_type, v.vehicle_number
+    `);
     res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Equipment by type (for maintenance form) ──────────────────────────────────
+app.get('/api/equipment/:type', requireAuth, async (req, res) => {
+  const { type } = req.params;
+  try {
+    let rows;
+    if (type === 'pump') {
+      ({ rows } = await pool.query(`
+        SELECT pp.position_id::text AS id,
+          s.site_name || ' — ' || COALESCE(b.building_name, b.building_letter) || ' — ' || pp.pump_letter || ' Pump' AS name
+        FROM pump_positions pp
+        JOIN buildings b ON pp.building_id = b.building_id
+        JOIN sites s ON pp.site_id = s.site_id
+        WHERE LOWER(pp.status) != 'inactive' OR pp.status IS NULL
+        ORDER BY s.site_name, b.building_letter, pp.pump_letter
+      `));
+    } else if (type === 'motor') {
+      ({ rows } = await pool.query(`
+        SELECT motor_id::text AS id,
+          COALESCE(manufacturer,'') || ' ' || COALESCE(model_number,'') ||
+          CASE WHEN current_location IS NOT NULL AND current_location != '' THEN ' (' || current_location || ')' ELSE '' END AS name
+        FROM motors
+        WHERE LOWER(status) != 'inactive' OR status IS NULL
+        ORDER BY manufacturer, model_number
+      `));
+    } else if (type === 'compressor') {
+      ({ rows } = await pool.query(`
+        SELECT ac.compressor_id::text AS id,
+          s.site_name || ' — ' || COALESCE(b.building_name, b.building_letter) || ' Air Compressor' ||
+          CASE WHEN ac.manufacturer IS NOT NULL THEN ' (' || ac.manufacturer || ')' ELSE '' END AS name
+        FROM air_compressors ac
+        JOIN buildings b ON ac.building_id = b.building_id
+        JOIN sites s ON b.site_id = s.site_id
+        WHERE LOWER(ac.status) != 'inactive' OR ac.status IS NULL
+        ORDER BY s.site_name, b.building_letter
+      `));
+    } else {
+      rows = [];
+    }
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Dashboard stats ───────────────────────────────────────────────────────────
+app.get('/api/dashboard/stats', requireAuth, async (req, res) => {
+  try {
+    const [kf, wells] = await Promise.all([
+      pool.query(`
+        SELECT
+          COUNT(*)                                                    AS total,
+          COUNT(*) FILTER (WHERE days_since <= 25)                    AS done,
+          COUNT(*) FILTER (WHERE days_since IS NULL OR days_since > 25) AS due
+        FROM (
+          SELECT w.well_id,
+            (CURRENT_DATE - (
+              SELECT reading_date FROM readings_kf_monthly
+              WHERE well_id = w.well_id ORDER BY reading_date DESC LIMIT 1
+            ))::int AS days_since
+          FROM wells w
+          WHERE w.kf_set_id IS NOT NULL
+            AND (LOWER(w.status) != 'inactive' OR w.status IS NULL)
+        ) s
+      `),
+      pool.query(`
+        SELECT
+          COUNT(*)                                                 AS total,
+          COUNT(*) FILTER (WHERE last_date = CURRENT_DATE)        AS read_today,
+          COUNT(*) FILTER (WHERE last_date IS NULL OR last_date < CURRENT_DATE) AS unread_today
+        FROM (
+          SELECT w.well_id,
+            (SELECT reading_date FROM readings_well WHERE well_id = w.well_id
+             ORDER BY reading_date DESC LIMIT 1) AS last_date
+          FROM wells w
+          WHERE LOWER(w.well_type) LIKE '%operational%'
+            AND (LOWER(w.status) NOT IN ('inactive','removed') OR w.status IS NULL)
+        ) s
+      `),
+    ]);
+    res.json({
+      kf_total:         parseInt(kf.rows[0].total),
+      kf_done:          parseInt(kf.rows[0].done),
+      kf_due:           parseInt(kf.rows[0].due),
+      wells_total:      parseInt(wells.rows[0].total),
+      wells_read_today: parseInt(wells.rows[0].read_today),
+      wells_due_today:  parseInt(wells.rows[0].unread_today),
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

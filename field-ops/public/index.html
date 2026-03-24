@@ -115,6 +115,7 @@
 
   <!-- ── Dashboard ──────────────────────────────────────────────────────────── -->
   <div id="screen-dashboard" class="screen-content">
+    <div id="dashboard-stats" class="stats-grid"></div>
     <div class="dashboard-grid">
       <button class="dash-tile" data-screen="pumping-plant">
         <span class="dash-icon">&#128167;</span>
@@ -176,70 +177,13 @@
 
   <!-- ── Well Readings ──────────────────────────────────────────────────────── -->
   <div id="screen-wells" class="screen-content">
-    <div class="form-card">
-      <div class="form-group">
-        <label>Well</label>
-        <select id="well-select" class="ctrl-select">
-          <option value="">Select well…</option>
-        </select>
-      </div>
+    <div class="sticky-controls">
       <div class="two-col">
-        <div class="form-group">
-          <label>Date</label>
-          <input type="date" id="well-date" class="ctrl-input">
-        </div>
-        <div class="form-group">
-          <label>Time</label>
-          <input type="time" id="well-time" class="ctrl-input">
-        </div>
+        <div class="form-group"><label>Date</label><input type="date" id="well-date" class="ctrl-input"></div>
+        <div class="form-group"><label>Time</label><input type="time" id="well-time" class="ctrl-input"></div>
       </div>
-      <div class="form-group toggle-row">
-        <label>Status</label>
-        <div class="toggle-group">
-          <button class="toggle-btn active" id="well-on-btn" data-val="true">ON</button>
-          <button class="toggle-btn" id="well-off-btn" data-val="false">OFF</button>
-        </div>
-      </div>
-      <div class="two-col">
-        <div class="form-group">
-          <label>Hour Reading</label>
-          <input type="number" id="well-hours" step="0.1" class="ctrl-input" placeholder="0.0">
-        </div>
-        <div class="form-group">
-          <label>Flow (cfs)</label>
-          <input type="number" id="well-flow" step="0.01" class="ctrl-input" placeholder="0.00">
-        </div>
-      </div>
-      <div class="two-col">
-        <div class="form-group">
-          <label>Totalizer</label>
-          <input type="number" id="well-totalizer" step="0.01" class="ctrl-input" placeholder="0.00">
-        </div>
-        <div class="form-group">
-          <label>PG&E kWh</label>
-          <input type="number" id="well-pge" step="0.1" class="ctrl-input" placeholder="0.0">
-        </div>
-      </div>
-      <div class="two-col">
-        <div class="form-group toggle-row">
-          <label>Motor Oil OK</label>
-          <div class="toggle-group">
-            <button class="toggle-btn active" id="well-motoroil-yes" data-val="true">Yes</button>
-            <button class="toggle-btn" id="well-motoroil-no" data-val="false">No</button>
-          </div>
-        </div>
-        <div class="form-group">
-          <label>Dripper Oil (qt)</label>
-          <input type="number" id="well-dripperoil" step="0.1" class="ctrl-input" placeholder="0.0">
-        </div>
-      </div>
-      <div class="form-group">
-        <label>Notes</label>
-        <textarea id="well-notes" class="ctrl-textarea" rows="2" placeholder="Optional notes…"></textarea>
-      </div>
-      <div id="well-error" class="error-msg hidden"></div>
-      <button class="btn btn-save btn-full" id="well-save-btn">Save Well Reading</button>
     </div>
+    <div id="well-list-body"><div class="placeholder-msg">Loading wells…</div></div>
   </div>
 
   <!-- ── Canal Readings ─────────────────────────────────────────────────────── -->
@@ -296,103 +240,25 @@
 
   <!-- ── Vehicle Monthly ────────────────────────────────────────────────────── -->
   <div id="screen-vehicles" class="screen-content">
-    <div class="form-card">
-      <div class="form-group">
-        <label>Vehicle</label>
-        <select id="vehicle-select" class="ctrl-select">
-          <option value="">Select vehicle…</option>
-        </select>
-      </div>
-      <div id="vehicle-info" class="info-chip hidden"></div>
+    <div class="sticky-controls">
       <div class="two-col">
-        <div class="form-group">
-          <label>Date</label>
-          <input type="date" id="vehicle-date" class="ctrl-input">
-        </div>
-        <div class="form-group">
-          <label>Time</label>
-          <input type="time" id="vehicle-time" class="ctrl-input">
-        </div>
+        <div class="form-group"><label>Date</label><input type="date" id="vehicle-date" class="ctrl-input"></div>
+        <div class="form-group"><label>Time</label><input type="time" id="vehicle-time" class="ctrl-input"></div>
       </div>
-      <div class="two-col">
-        <div class="form-group">
-          <label>Odometer (mi)</label>
-          <input type="number" id="vehicle-odometer" step="1" class="ctrl-input" placeholder="0">
-        </div>
-        <div class="form-group">
-          <label>Engine Hours</label>
-          <input type="number" id="vehicle-hours" step="0.1" class="ctrl-input" placeholder="0.0">
-        </div>
-      </div>
-      <div class="form-group">
-        <label>Notes</label>
-        <textarea id="vehicle-notes" class="ctrl-textarea" rows="2" placeholder="Optional notes…"></textarea>
-      </div>
-      <div id="vehicle-error" class="error-msg hidden"></div>
-      <button class="btn btn-save btn-full" id="vehicle-save-btn">Save Vehicle Reading</button>
     </div>
+    <div id="vehicle-list-body"><div class="placeholder-msg">Loading vehicles…</div></div>
   </div>
 
   <!-- ── KF Monthly Readings ───────────────────────────────────────────────── -->
   <div id="screen-kf-monthly" class="screen-content">
-    <div class="form-card">
-      <div class="form-group">
-        <label>Well Set</label>
-        <select id="kf-set-select" class="ctrl-select">
-          <option value="">All wells…</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label>Well</label>
-        <select id="kf-well-select" class="ctrl-select">
-          <option value="">Select well…</option>
-        </select>
-      </div>
+    <div class="sticky-controls">
       <div class="two-col">
-        <div class="form-group">
-          <label>Date</label>
-          <input type="date" id="kf-date" class="ctrl-input">
-        </div>
-        <div class="form-group">
-          <label>Time</label>
-          <input type="time" id="kf-time" class="ctrl-input">
-        </div>
+        <div class="form-group"><label>Date</label><input type="date" id="kf-date" class="ctrl-input"></div>
+        <div class="form-group"><label>Time</label><input type="time" id="kf-time" class="ctrl-input"></div>
       </div>
-      <div class="form-group">
-        <label>Depth to Water (ft)</label>
-        <input type="number" id="kf-dtw" step="0.01" class="ctrl-input" placeholder="0.00" inputmode="decimal">
-      </div>
-      <div class="form-group toggle-row">
-        <label>Well Status</label>
-        <div class="toggle-group">
-          <button class="toggle-btn active" id="kf-on-btn">ON</button>
-          <button class="toggle-btn" id="kf-off-btn">OFF</button>
-        </div>
-      </div>
-      <div class="two-col">
-        <div class="form-group">
-          <label>Measurement Method</label>
-          <select id="kf-plopper-sounder" class="ctrl-select">
-            <option value="">Select…</option>
-            <option value="plopper">Plopper</option>
-            <option value="sounder">Sounder</option>
-            <option value="tape">Tape</option>
-            <option value="transducer">Transducer</option>
-            <option value="other">Other</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label>Operator</label>
-          <input type="text" id="kf-operator" class="ctrl-input" placeholder="Initials or name">
-        </div>
-      </div>
-      <div class="form-group">
-        <label>Notes</label>
-        <textarea id="kf-notes" class="ctrl-textarea" rows="2" placeholder="Optional notes…"></textarea>
-      </div>
-      <div id="kf-error" class="error-msg hidden"></div>
-      <button class="btn btn-save btn-full" id="kf-save-btn">Save KF Reading</button>
+      <div id="kf-set-tabs" class="set-tabs"></div>
     </div>
+    <div id="kf-list-body"><div class="placeholder-msg">Loading KF wells…</div></div>
   </div>
 
   <!-- ── Maintenance Log ────────────────────────────────────────────────────── -->
@@ -419,8 +285,10 @@
           </select>
         </div>
         <div class="form-group">
-          <label>Equipment ID</label>
-          <input type="number" id="maint-equip-id" class="ctrl-input" placeholder="Equipment ID">
+          <label>Equipment</label>
+          <select id="maint-equip-select" class="ctrl-select">
+            <option value="">Select equipment…</option>
+          </select>
         </div>
         <div class="form-group">
           <label>Location at Time</label>
