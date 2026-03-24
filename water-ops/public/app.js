@@ -915,8 +915,6 @@ function renderForm() {
 
   // Pre-fill date and time (supports reading_date and work_date)
   const dateInp = inputsEl.querySelector('[name="reading_date"], [name="work_date"]');
-  // Pre-fill date and time
-  const dateInp = inputsEl.querySelector('[name="reading_date"]');
   if (dateInp && !dateInp.value) dateInp.value = today();
   const timeInp = inputsEl.querySelector('[name="reading_time"]');
   if (timeInp && !timeInp.value) timeInp.value = new Date().toTimeString().slice(0, 5);
