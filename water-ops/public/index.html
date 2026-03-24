@@ -334,6 +334,19 @@
   </div>
 </div>
 
+<script>
+  // Catch any JS errors (including module load failures) and show them on screen
+  window.addEventListener('error', (e) => {
+    const bar = document.getElementById('sync-bar-msg');
+    if (bar) bar.textContent = '❌ JS Error: ' + (e.message || e.type) + ' — ' + (e.filename || '').split('/').pop() + ':' + e.lineno;
+    console.error('App error:', e);
+  });
+  window.addEventListener('unhandledrejection', (e) => {
+    const bar = document.getElementById('sync-bar-msg');
+    if (bar) bar.textContent = '❌ Load failed: ' + (e.reason?.message || String(e.reason));
+    console.error('Unhandled rejection:', e.reason);
+  });
+</script>
 <script type="module" src="/app.js"></script>
 </body>
 </html>
