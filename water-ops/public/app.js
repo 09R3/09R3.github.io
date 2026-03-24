@@ -1173,18 +1173,6 @@ function getFormData() {
     data.equipment_type = asset.equipment_type || null;
     if (asset._assetId) data.equipment_id = asset._assetId;
   }
-
-    pge: ['pge_meter_id', 'pge_meter_id'],
-    'power-monitor': ['monitor_id', 'monitor_id'],
-    'pump-hours': ['position_id', 'position_id'],
-    'compressor-hours': ['compressor_id', 'compressor_id'],
-    'well-static': ['well_id', 'well_id'],
-    'well-operational': ['well_id', 'well_id'],
-    canal: ['structure_id', 'structure_id'],
-    pond: ['pond_id', 'pond_id'],
-    vehicle: ['vehicle_id', 'vehicle_id'],
-  };
-  const [field, prop] = idMap[type] || [];
   if (field) data[field] = asset[prop] || asset._assetId;
   return data;
 }
