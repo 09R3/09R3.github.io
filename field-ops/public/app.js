@@ -81,6 +81,7 @@ function showScreen(name) {
     wells:          'Well Readings',
     canal:          'Canal Readings',
     vehicles:       'Vehicle Monthly',
+    'kf-monthly':   'KF Monthly Readings',
     maintenance:    'Maintenance Log',
     admin:          'Admin',
   };
@@ -91,6 +92,7 @@ function showScreen(name) {
   if (name === 'wells')       initWellsScreen();
   if (name === 'canal')       initCanalScreen();
   if (name === 'vehicles')    initVehiclesScreen();
+  if (name === 'kf-monthly')  initKFScreen();
   if (name === 'maintenance') initMaintenanceScreen();
   if (name === 'admin')       initAdminScreen();
 }
@@ -725,6 +727,12 @@ document.querySelectorAll('#maint-type-seg .seg-btn').forEach(btn => {
   });
 });
 
+// Show/hide resolution notes based on status selection
+el('maint-status').addEventListener('change', () => {
+  const showResolution = ['resolved', 'closed'].includes(el('maint-status').value);
+  el('maint-resolution-group').style.display = showResolution ? '' : 'none';
+});
+
 // Contractor toggle
 el('maint-contractor-yes').addEventListener('click', () => {
   maintContractor = true;
@@ -793,9 +801,11 @@ el('maint-save-btn').addEventListener('click', async () => {
       if (!buildingId) return showError('maint-error', 'Please select a building');
       await api('POST', '/api/maintenance/building', {
         ...common,
-        building_id:  parseInt(buildingId),
-        record_type:  el('maint-building-record-type').value,
-        severity:     el('maint-severity').value || null,
+        building_id:      parseInt(buildingId),
+        record_type:      el('maint-building-record-type').value,
+        severity:         el('maint-severity').value || null,
+        status:           el('maint-status').value || null,
+        resolution_notes: el('maint-resolution-notes').value || null,
       });
     }
     showToast('Maintenance record saved', 'success');
@@ -805,9 +815,113 @@ el('maint-save-btn').addEventListener('click', async () => {
     el('maint-cost').value  = '';
     el('maint-po').value    = '';
     el('maint-notes').value = '';
+    el('maint-resolution-notes').value = '';
     el('maint-performed-by').value = '';
   } catch (err) {
     showError('maint-error', err.message);
+  }
+});
+
+/* ── KF Monthly ─────────────────────────────────────────────────────────── */
+let kfLoaded  = false;
+let kfOnOff   = true;
+let kfAllWells = []; // full well list for client-side filtering
+
+async function initKFScreen() {
+  if (kfLoaded) return;
+  kfLoaded = true;
+  el('kf-date').value = todayISO();
+  el('kf-time').value = nowHHMM();
+
+  // Auto-fill operator from logged-in user
+  if (currentUser) {
+    el('kf-operator').value = currentUser.initials || currentUser.username;
+  }
+
+  try {
+    // Load well sets for the set dropdown
+    const sets = await api('GET', '/api/well-sets');
+    const setSel = el('kf-set-select');
+    setSel.innerHTML = '<option value="">All wells…</option>';
+    sets.forEach(s => {
+      const opt = document.createElement('option');
+      opt.value = s.set_id;
+      opt.textContent = s.set_name || `Set ${s.set_id}`;
+      if (s.description) opt.title = s.description;
+      setSel.appendChild(opt);
+    });
+  } catch { /* non-critical if no sets exist */ }
+
+  try {
+    // Load all KF-capable wells (those with a kf_set_id or kf well_type)
+    kfAllWells = await api('GET', '/api/wells/kf');
+    populateKFWells(null);
+  } catch (err) {
+    showToast('Failed to load KF wells: ' + err.message, 'error');
+  }
+}
+
+function populateKFWells(setId) {
+  const sel = el('kf-well-select');
+  const filtered = setId
+    ? kfAllWells.filter(w => String(w.kf_set_id) === String(setId))
+    : kfAllWells;
+
+  sel.innerHTML = '<option value="">Select well…</option>';
+  filtered.forEach(w => {
+    const opt = document.createElement('option');
+    opt.value = w.well_id;
+    opt.textContent = w.common_name + (w.area ? ` (${w.area})` : '');
+    if (w.set_name) opt.textContent += ` — ${w.set_name}`;
+    sel.appendChild(opt);
+  });
+}
+
+el('kf-set-select').addEventListener('change', () => {
+  const setId = el('kf-set-select').value || null;
+  populateKFWells(setId);
+});
+
+el('kf-on-btn').addEventListener('click', () => {
+  kfOnOff = true;
+  el('kf-on-btn').classList.add('active');
+  el('kf-off-btn').classList.remove('active');
+});
+el('kf-off-btn').addEventListener('click', () => {
+  kfOnOff = false;
+  el('kf-off-btn').classList.add('active');
+  el('kf-on-btn').classList.remove('active');
+});
+
+el('kf-save-btn').addEventListener('click', async () => {
+  clearError('kf-error');
+  const well_id = el('kf-well-select').value;
+  if (!well_id) return showError('kf-error', 'Please select a well');
+
+  const dtw = el('kf-dtw').value;
+  if (!dtw) return showError('kf-error', 'Depth to water reading is required');
+
+  const body = {
+    well_id:        parseInt(well_id),
+    reading_date:   el('kf-date').value,
+    reading_time:   el('kf-time').value,
+    dtw_reading:    parseFloat(dtw),
+    well_on_off:    kfOnOff,
+    plopper_sounder:el('kf-plopper-sounder').value || null,
+    operator:       el('kf-operator').value || null,
+    notes:          el('kf-notes').value || null,
+  };
+
+  try {
+    await api('POST', '/api/readings/kf-monthly', body);
+    showToast('KF reading saved', 'success');
+    el('kf-dtw').value   = '';
+    el('kf-notes').value = '';
+    // Reset date/time to now for next entry
+    el('kf-date').value = todayISO();
+    el('kf-time').value = nowHHMM();
+  } catch (err) {
+    showError('kf-error', err.message);
   }
 });
 

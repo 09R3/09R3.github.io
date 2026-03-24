@@ -385,6 +385,61 @@ app.put('/api/readings/pump-hours/:id', requireAuth, requireRole('supervisor', '
   }
 });
 
+// ── Well Sets ─────────────────────────────────────────────────────────────────
+app.get('/api/well-sets', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT set_id, set_name, description FROM well_sets ORDER BY set_name'
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// KF wells — wells that have a kf_set_id assigned (used for KF monthly readings)
+app.get('/api/wells/kf', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT w.well_id, w.common_name, w.area, w.kf_set_id, ws.set_name
+      FROM wells w
+      LEFT JOIN well_sets ws ON w.kf_set_id = ws.set_id
+      WHERE w.kf_set_id IS NOT NULL
+        AND (LOWER(w.status) != 'inactive' OR w.status IS NULL)
+      ORDER BY ws.set_name, w.common_name
+    `);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── KF Monthly Readings ───────────────────────────────────────────────────────
+app.post('/api/readings/kf-monthly', requireAuth, async (req, res) => {
+  const {
+    well_id, reading_date, reading_time,
+    dtw_reading, well_on_off, plopper_sounder, operator, notes,
+  } = req.body;
+  if (!well_id || dtw_reading == null) {
+    return res.status(400).json({ error: 'well_id and dtw_reading are required' });
+  }
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO readings_kf_monthly
+         (well_id, reading_date, reading_time, dtw_reading, well_on_off, plopper_sounder, operator, notes)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING kf_reading_id`,
+      [well_id, reading_date, reading_time, dtw_reading,
+       well_on_off ?? null, plopper_sounder || null, operator || null, notes || null]
+    );
+    res.json({ ok: true, kf_reading_id: rows[0].kf_reading_id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/readings/kf-monthly/:id', requireAuth, (req, res) =>
+  deleteReading(req, res, 'readings_kf_monthly', 'kf_reading_id'));
+
 // ── Wells ─────────────────────────────────────────────────────────────────────
 app.get('/api/wells', requireAuth, async (req, res) => {
   try {

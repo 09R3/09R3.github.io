@@ -52,6 +52,7 @@
       <li><button class="nav-btn" data-screen="wells">&#128204; Well Readings</button></li>
       <li><button class="nav-btn" data-screen="canal">&#127754; Canal Readings</button></li>
       <li><button class="nav-btn" data-screen="vehicles">&#128664; Vehicle Monthly</button></li>
+      <li><button class="nav-btn" data-screen="kf-monthly">&#128200; KF Monthly</button></li>
       <li><button class="nav-btn" data-screen="maintenance">&#128295; Maintenance Log</button></li>
       <li class="nav-admin hidden" id="nav-admin-item"><button class="nav-btn" data-screen="admin">&#9881;&#65039; Admin</button></li>
     </ul>
@@ -78,6 +79,10 @@
       <button class="dash-tile" data-screen="vehicles">
         <span class="dash-icon">&#128664;</span>
         <span class="dash-label">Vehicle<br>Monthly</span>
+      </button>
+      <button class="dash-tile" data-screen="kf-monthly">
+        <span class="dash-icon">&#128200;</span>
+        <span class="dash-label">KF Monthly<br>Readings</span>
       </button>
       <button class="dash-tile" data-screen="maintenance">
         <span class="dash-icon">&#128295;</span>
@@ -276,6 +281,68 @@
     </div>
   </div>
 
+  <!-- ── KF Monthly Readings ───────────────────────────────────────────────── -->
+  <div id="screen-kf-monthly" class="screen-content hidden">
+    <div class="form-card">
+      <div class="form-group">
+        <label>Well Set</label>
+        <select id="kf-set-select" class="ctrl-select">
+          <option value="">All wells…</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Well</label>
+        <select id="kf-well-select" class="ctrl-select">
+          <option value="">Select well…</option>
+        </select>
+      </div>
+      <div class="two-col">
+        <div class="form-group">
+          <label>Date</label>
+          <input type="date" id="kf-date" class="ctrl-input">
+        </div>
+        <div class="form-group">
+          <label>Time</label>
+          <input type="time" id="kf-time" class="ctrl-input">
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Depth to Water (ft)</label>
+        <input type="number" id="kf-dtw" step="0.01" class="ctrl-input" placeholder="0.00" inputmode="decimal">
+      </div>
+      <div class="form-group toggle-row">
+        <label>Well Status</label>
+        <div class="toggle-group">
+          <button class="toggle-btn active" id="kf-on-btn">ON</button>
+          <button class="toggle-btn" id="kf-off-btn">OFF</button>
+        </div>
+      </div>
+      <div class="two-col">
+        <div class="form-group">
+          <label>Measurement Method</label>
+          <select id="kf-plopper-sounder" class="ctrl-select">
+            <option value="">Select…</option>
+            <option value="plopper">Plopper</option>
+            <option value="sounder">Sounder</option>
+            <option value="tape">Tape</option>
+            <option value="transducer">Transducer</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Operator</label>
+          <input type="text" id="kf-operator" class="ctrl-input" placeholder="Initials or name">
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Notes</label>
+        <textarea id="kf-notes" class="ctrl-textarea" rows="2" placeholder="Optional notes…"></textarea>
+      </div>
+      <div id="kf-error" class="error-msg hidden"></div>
+      <button class="btn btn-save btn-full" id="kf-save-btn">Save KF Reading</button>
+    </div>
+  </div>
+
   <!-- ── Maintenance Log ────────────────────────────────────────────────────── -->
   <div id="screen-maintenance" class="screen-content hidden">
     <div class="form-card">
@@ -364,6 +431,20 @@
             <option value="critical">Critical</option>
           </select>
         </div>
+        <div class="form-group">
+          <label>Work Order Status</label>
+          <select id="maint-status" class="ctrl-select">
+            <option value="open">Open</option>
+            <option value="in_progress">In Progress</option>
+            <option value="on_hold">On Hold</option>
+            <option value="resolved">Resolved</option>
+            <option value="closed">Closed</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-group" id="maint-resolution-group" style="display:none">
+        <label>Resolution Notes</label>
+        <textarea id="maint-resolution-notes" class="ctrl-textarea" rows="2" placeholder="Describe how the issue was resolved…"></textarea>
       </div>
 
       <!-- Common fields -->
