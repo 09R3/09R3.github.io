@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <title>Field Ops</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ── Login Screen ─────────────────────────────────────────────────────────── -->
+<div id="screen-login" class="screen active">
+  <div class="login-wrap">
+    <div class="login-card">
+      <div class="login-logo">Field Ops</div>
+      <div class="login-subtitle">Operator Portal</div>
+      <form id="login-form">
+        <div class="form-group">
+          <label>Username</label>
+          <input type="text" id="login-username" autocomplete="username" autocapitalize="none" required>
+        </div>
+        <div class="form-group">
+          <label>Password</label>
+          <input type="password" id="login-password" autocomplete="current-password" required>
+        </div>
+        <div id="login-error" class="error-msg hidden"></div>
+        <button type="submit" class="btn btn-primary btn-full">Sign In</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- ── App Shell (all authenticated screens) ────────────────────────────────── -->
+<div id="app-shell" class="hidden">
+
+  <!-- Top Navigation Bar -->
+  <header class="app-header">
+    <button class="hamburger" id="menu-toggle" aria-label="Menu">&#9776;</button>
+    <h1 class="app-title" id="screen-title">Field Ops</h1>
+    <div class="user-badge" id="user-badge"></div>
+  </header>
+
+  <!-- Side Drawer -->
+  <div class="drawer-overlay" id="drawer-overlay"></div>
+  <nav class="drawer" id="drawer">
+    <div class="drawer-header">
+      <div class="drawer-user" id="drawer-user"></div>
+    </div>
+    <ul class="drawer-nav">
+      <li><button class="nav-btn" data-screen="dashboard">&#127968; Dashboard</button></li>
+      <li><button class="nav-btn" data-screen="pumping-plant">&#128167; Pumping Plant Readings</button></li>
+      <li><button class="nav-btn" data-screen="wells">&#128204; Well Readings</button></li>
+      <li><button class="nav-btn" data-screen="canal">&#127754; Canal Readings</button></li>
+      <li><button class="nav-btn" data-screen="vehicles">&#128664; Vehicle Monthly</button></li>
+      <li><button class="nav-btn" data-screen="maintenance">&#128295; Maintenance Log</button></li>
+      <li class="nav-admin hidden" id="nav-admin-item"><button class="nav-btn" data-screen="admin">&#9881;&#65039; Admin</button></li>
+    </ul>
+    <div class="drawer-footer">
+      <button class="nav-btn nav-logout" id="logout-btn">&#x2192; Sign Out</button>
+    </div>
+  </nav>
+
+  <!-- ── Dashboard ──────────────────────────────────────────────────────────── -->
+  <div id="screen-dashboard" class="screen-content hidden">
+    <div class="dashboard-grid">
+      <button class="dash-tile" data-screen="pumping-plant">
+        <span class="dash-icon">&#128167;</span>
+        <span class="dash-label">Pumping Plant<br>Readings</span>
+      </button>
+      <button class="dash-tile" data-screen="wells">
+        <span class="dash-icon">&#128204;</span>
+        <span class="dash-label">Well<br>Readings</span>
+      </button>
+      <button class="dash-tile" data-screen="canal">
+        <span class="dash-icon">&#127754;</span>
+        <span class="dash-label">Canal<br>Readings</span>
+      </button>
+      <button class="dash-tile" data-screen="vehicles">
+        <span class="dash-icon">&#128664;</span>
+        <span class="dash-label">Vehicle<br>Monthly</span>
+      </button>
+      <button class="dash-tile" data-screen="maintenance">
+        <span class="dash-icon">&#128295;</span>
+        <span class="dash-label">Maintenance<br>Log</span>
+      </button>
+      <button class="dash-tile admin-tile hidden" id="dash-admin-tile" data-screen="admin">
+        <span class="dash-icon">&#9881;&#65039;</span>
+        <span class="dash-label">Admin</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- ── Pumping Plant Readings ─────────────────────────────────────────────── -->
+  <div id="screen-pumping-plant" class="screen-content hidden">
+    <div class="pp-controls sticky-controls">
+      <div class="control-row">
+        <label class="ctrl-label">Plant</label>
+        <select id="pp-site" class="ctrl-select">
+          <option value="">Select site…</option>
+        </select>
+      </div>
+      <div class="control-row">
+        <label class="ctrl-label">Date</label>
+        <input type="date" id="pp-date" class="ctrl-input">
+        <label class="ctrl-label">Time</label>
+        <input type="time" id="pp-time" class="ctrl-input">
+      </div>
+    </div>
+
+    <div id="pp-form-body">
+      <div class="placeholder-msg">Select a site to load readings.</div>
+    </div>
+
+    <div id="pp-save-bar" class="save-bar hidden">
+      <button class="btn btn-save" id="pp-save-btn">Save Readings</button>
+      <span class="save-status" id="pp-save-status"></span>
+    </div>
+  </div>
+
+  <!-- ── Well Readings ──────────────────────────────────────────────────────── -->
+  <div id="screen-wells" class="screen-content hidden">
+    <div class="form-card">
+      <div class="form-group">
+        <label>Well</label>
+        <select id="well-select" class="ctrl-select">
+          <option value="">Select well…</option>
+        </select>
+      </div>
+      <div class="two-col">
+        <div class="form-group">
+          <label>Date</label>
+          <input type="date" id="well-date" class="ctrl-input">
+        </div>
+        <div class="form-group">
+          <label>Time</label>
+          <input type="time" id="well-time" class="ctrl-input">
+        </div>
+      </div>
+      <div class="form-group toggle-row">
+        <label>Status</label>
+        <div class="toggle-group">
+          <button class="toggle-btn active" id="well-on-btn" data-val="true">ON</button>
+          <button class="toggle-btn" id="well-off-btn" data-val="false">OFF</button>
+        </div>
+      </div>
+      <div class="two-col">
+        <div class="form-group">
+          <label>Hour Reading</label>
+          <input type="number" id="well-hours" step="0.1" class="ctrl-input" placeholder="0.0">
+        </div>
+        <div class="form-group">
+          <label>Flow (cfs)</label>
+          <input type="number" id="well-flow" step="0.01" class="ctrl-input" placeholder="0.00">
+        </div>
+      </div>
+      <div class="two-col">
+        <div class="form-group">
+          <label>Totalizer</label>
+          <input type="number" id="well-totalizer" step="0.01" class="ctrl-input" placeholder="0.00">
+        </div>
+        <div class="form-group">
+          <label>PG&E kWh</label>
+          <input type="number" id="well-pge" step="0.1" class="ctrl-input" placeholder="0.0">
+        </div>
+      </div>
+      <div class="two-col">
+        <div class="form-group toggle-row">
+          <label>Motor Oil OK</label>
+          <div class="toggle-group">
+            <button class="toggle-btn active" id="well-motoroil-yes" data-val="true">Yes</button>
+            <button class="toggle-btn" id="well-motoroil-no" data-val="false">No</button>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Dripper Oil (qt)</label>
+          <input type="number" id="well-dripperoil" step="0.1" class="ctrl-input" placeholder="0.0">
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Notes</label>
+        <textarea id="well-notes" class="ctrl-textarea" rows="2" placeholder="Optional notes…"></textarea>
+      </div>
+      <div id="well-error" class="error-msg hidden"></div>
+      <button class="btn btn-save btn-full" id="well-save-btn">Save Well Reading</button>
+    </div>
+  </div>
+
+  <!-- ── Canal Readings ─────────────────────────────────────────────────────── -->
+  <div id="screen-canal" class="screen-content hidden">
+    <div class="form-card">
+      <div class="form-group">
+        <label>Structure</label>
+        <select id="canal-select" class="ctrl-select">
+          <option value="">Select structure…</option>
+        </select>
+      </div>
+      <div class="two-col">
+        <div class="form-group">
+          <label>Date</label>
+          <input type="date" id="canal-date" class="ctrl-input">
+        </div>
+        <div class="form-group">
+          <label>Time</label>
+          <input type="time" id="canal-time" class="ctrl-input">
+        </div>
+      </div>
+      <div class="two-col">
+        <div class="form-group">
+          <label>Flow (cfs)</label>
+          <input type="number" id="canal-flow" step="0.01" class="ctrl-input" placeholder="0.00">
+        </div>
+        <div class="form-group">
+          <label>Totalizer (af)</label>
+          <input type="number" id="canal-totalizer" step="0.01" class="ctrl-input" placeholder="0.00">
+        </div>
+      </div>
+      <div class="two-col">
+        <div class="form-group">
+          <label>Gate Setting</label>
+          <input type="text" id="canal-gate" class="ctrl-input" placeholder="e.g. 2.5">
+        </div>
+        <div class="form-group">
+          <label>Head Reading (ft)</label>
+          <input type="number" id="canal-head" step="0.01" class="ctrl-input" placeholder="0.00">
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Derived Flow (cfs)</label>
+        <input type="number" id="canal-derived" step="0.01" class="ctrl-input" placeholder="0.00">
+      </div>
+      <div class="form-group">
+        <label>Notes</label>
+        <textarea id="canal-notes" class="ctrl-textarea" rows="2" placeholder="Optional notes…"></textarea>
+      </div>
+      <div id="canal-error" class="error-msg hidden"></div>
+      <button class="btn btn-save btn-full" id="canal-save-btn">Save Canal Reading</button>
+    </div>
+  </div>
+
+  <!-- ── Vehicle Monthly ────────────────────────────────────────────────────── -->
+  <div id="screen-vehicles" class="screen-content hidden">
+    <div class="form-card">
+      <div class="form-group">
+        <label>Vehicle</label>
+        <select id="vehicle-select" class="ctrl-select">
+          <option value="">Select vehicle…</option>
+        </select>
+      </div>
+      <div id="vehicle-info" class="info-chip hidden"></div>
+      <div class="two-col">
+        <div class="form-group">
+          <label>Date</label>
+          <input type="date" id="vehicle-date" class="ctrl-input">
+        </div>
+        <div class="form-group">
+          <label>Time</label>
+          <input type="time" id="vehicle-time" class="ctrl-input">
+        </div>
+      </div>
+      <div class="two-col">
+        <div class="form-group">
+          <label>Odometer (mi)</label>
+          <input type="number" id="vehicle-odometer" step="1" class="ctrl-input" placeholder="0">
+        </div>
+        <div class="form-group">
+          <label>Engine Hours</label>
+          <input type="number" id="vehicle-hours" step="0.1" class="ctrl-input" placeholder="0.0">
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Notes</label>
+        <textarea id="vehicle-notes" class="ctrl-textarea" rows="2" placeholder="Optional notes…"></textarea>
+      </div>
+      <div id="vehicle-error" class="error-msg hidden"></div>
+      <button class="btn btn-save btn-full" id="vehicle-save-btn">Save Vehicle Reading</button>
+    </div>
+  </div>
+
+  <!-- ── Maintenance Log ────────────────────────────────────────────────────── -->
+  <div id="screen-maintenance" class="screen-content hidden">
+    <div class="form-card">
+      <div class="form-group">
+        <label>Record Type</label>
+        <div class="seg-group" id="maint-type-seg">
+          <button class="seg-btn active" data-val="equipment">Equipment</button>
+          <button class="seg-btn" data-val="vehicle">Vehicle</button>
+          <button class="seg-btn" data-val="building">Building</button>
+        </div>
+      </div>
+
+      <!-- Equipment fields -->
+      <div id="maint-equipment-fields">
+        <div class="form-group">
+          <label>Equipment Type</label>
+          <select id="maint-equip-type" class="ctrl-select">
+            <option value="pump">Pump</option>
+            <option value="motor">Motor</option>
+            <option value="compressor">Air Compressor</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Equipment ID</label>
+          <input type="number" id="maint-equip-id" class="ctrl-input" placeholder="Equipment ID">
+        </div>
+        <div class="form-group">
+          <label>Location at Time</label>
+          <input type="text" id="maint-equip-loc" class="ctrl-input" placeholder="Location">
+        </div>
+        <div class="form-group">
+          <label>Hours at Service</label>
+          <input type="number" id="maint-equip-hours" step="0.1" class="ctrl-input" placeholder="0.0">
+        </div>
+      </div>
+
+      <!-- Vehicle fields -->
+      <div id="maint-vehicle-fields" class="hidden">
+        <div class="form-group">
+          <label>Vehicle</label>
+          <select id="maint-vehicle-select" class="ctrl-select">
+            <option value="">Select vehicle…</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Odometer at Service</label>
+          <input type="number" id="maint-vehicle-odometer" step="1" class="ctrl-input" placeholder="0">
+        </div>
+        <div class="form-group">
+          <label>Engine Hours at Service</label>
+          <input type="number" id="maint-vehicle-hours" step="0.1" class="ctrl-input" placeholder="0.0">
+        </div>
+      </div>
+
+      <!-- Building fields -->
+      <div id="maint-building-fields" class="hidden">
+        <div class="form-group">
+          <label>Site</label>
+          <select id="maint-site-select" class="ctrl-select">
+            <option value="">Select site…</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Building</label>
+          <select id="maint-building-select" class="ctrl-select" disabled>
+            <option value="">Select building…</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Record Type</label>
+          <select id="maint-building-record-type" class="ctrl-select">
+            <option value="repair">Repair</option>
+            <option value="inspection">Inspection</option>
+            <option value="pm">Preventive Maintenance</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Severity</label>
+          <select id="maint-severity" class="ctrl-select">
+            <option value="">None</option>
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+            <option value="critical">Critical</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Common fields -->
+      <div class="two-col">
+        <div class="form-group">
+          <label>Work Date</label>
+          <input type="date" id="maint-date" class="ctrl-input">
+        </div>
+        <div class="form-group">
+          <label>Work Type</label>
+          <select id="maint-work-type" class="ctrl-select">
+            <option value="repair">Repair</option>
+            <option value="pm">Preventive Maint.</option>
+            <option value="inspection">Inspection</option>
+            <option value="replacement">Replacement</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+      </div>
+      <div class="two-col">
+        <div class="form-group">
+          <label>Performed By</label>
+          <input type="text" id="maint-performed-by" class="ctrl-input" placeholder="Name">
+        </div>
+        <div class="form-group toggle-row">
+          <label>Contractor?</label>
+          <div class="toggle-group">
+            <button class="toggle-btn" id="maint-contractor-yes" data-val="true">Yes</button>
+            <button class="toggle-btn active" id="maint-contractor-no" data-val="false">No</button>
+          </div>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Description</label>
+        <textarea id="maint-description" class="ctrl-textarea" rows="3" placeholder="Describe the work performed…"></textarea>
+      </div>
+      <div class="two-col">
+        <div class="form-group">
+          <label>Parts Used</label>
+          <input type="text" id="maint-parts" class="ctrl-input" placeholder="Part numbers / description">
+        </div>
+        <div class="form-group">
+          <label>Cost ($)</label>
+          <input type="number" id="maint-cost" step="0.01" class="ctrl-input" placeholder="0.00">
+        </div>
+      </div>
+      <div class="two-col">
+        <div class="form-group">
+          <label>PO Number</label>
+          <input type="text" id="maint-po" class="ctrl-input" placeholder="PO #">
+        </div>
+        <div class="form-group">
+          <label>Next Service Date</label>
+          <input type="date" id="maint-next-service" class="ctrl-input">
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Notes</label>
+        <textarea id="maint-notes" class="ctrl-textarea" rows="2" placeholder="Optional notes…"></textarea>
+      </div>
+      <div id="maint-error" class="error-msg hidden"></div>
+      <button class="btn btn-save btn-full" id="maint-save-btn">Save Maintenance Record</button>
+    </div>
+  </div>
+
+  <!-- ── Admin ──────────────────────────────────────────────────────────────── -->
+  <div id="screen-admin" class="screen-content hidden">
+    <div class="admin-actions">
+      <button class="btn btn-primary" id="admin-add-user-btn">+ Add User</button>
+    </div>
+    <div id="admin-user-list" class="user-list"></div>
+
+    <!-- Add/Edit User Modal -->
+    <div id="user-modal" class="modal-overlay hidden">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h2 id="user-modal-title">Add User</h2>
+          <button class="modal-close" id="user-modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label>Username</label>
+            <input type="text" id="um-username" class="ctrl-input" autocapitalize="none">
+          </div>
+          <div class="form-group">
+            <label>Full Name</label>
+            <input type="text" id="um-fullname" class="ctrl-input">
+          </div>
+          <div class="two-col">
+            <div class="form-group">
+              <label>Initials</label>
+              <input type="text" id="um-initials" class="ctrl-input" maxlength="4">
+            </div>
+            <div class="form-group">
+              <label>Role</label>
+              <select id="um-role" class="ctrl-select">
+                <option value="operator">Operator</option>
+                <option value="supervisor">Supervisor</option>
+                <option value="admin">Admin</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Email</label>
+            <input type="email" id="um-email" class="ctrl-input">
+          </div>
+          <div class="form-group" id="um-password-group">
+            <label>Password</label>
+            <input type="password" id="um-password" class="ctrl-input">
+          </div>
+          <div id="um-error" class="error-msg hidden"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" id="user-modal-cancel">Cancel</button>
+          <button class="btn btn-primary" id="user-modal-save">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /app-shell -->
+
+<!-- Notes Popup Modal -->
+<div id="notes-modal" class="modal-overlay hidden">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h2 id="notes-modal-title">Notes</h2>
+      <button class="modal-close" id="notes-modal-close">&times;</button>
+    </div>
+    <div class="modal-body">
+      <textarea id="notes-modal-text" class="ctrl-textarea notes-ta" rows="5" placeholder="Enter notes…"></textarea>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" id="notes-modal-cancel">Cancel</button>
+      <button class="btn btn-primary" id="notes-modal-ok">OK</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast notification -->
+<div id="toast" class="toast hidden"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
