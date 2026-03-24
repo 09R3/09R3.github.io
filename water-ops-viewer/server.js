@@ -683,6 +683,59 @@ app.get('/api/status', (req, res) => {
   res.json({ connected: !!pool });
 });
 
+// ─── Saved Queries ─────────────────────────────────────────────────────────────
+
+const ENSURE_SAVED_TABLE = `
+  CREATE TABLE IF NOT EXISTS _waterops_saved_queries (
+    id         SERIAL       PRIMARY KEY,
+    name       TEXT         NOT NULL,
+    sql        TEXT         NOT NULL,
+    created_by TEXT         NOT NULL DEFAULT 'admin',
+    created_at TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+  )
+`;
+
+// GET /api/saved-queries
+app.get('/api/saved-queries', requireDB, async (req, res) => {
+  try {
+    await pool.query(ENSURE_SAVED_TABLE);
+    const result = await pool.query(
+      'SELECT id, name, sql, created_by, created_at FROM _waterops_saved_queries ORDER BY created_at DESC'
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/saved-queries
+app.post('/api/saved-queries', requireDB, async (req, res) => {
+  const { name, sql } = req.body;
+  if (!name || !sql) return res.status(400).json({ error: 'name and sql are required.' });
+  try {
+    await pool.query(ENSURE_SAVED_TABLE);
+    const result = await pool.query(
+      'INSERT INTO _waterops_saved_queries (name, sql, created_by) VALUES ($1, $2, $3) RETURNING *',
+      [name.trim(), sql.trim(), AUTH_USER]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/saved-queries/:id
+app.delete('/api/saved-queries/:id', requireDB, async (req, res) => {
+  const id = parseInt(req.params.id);
+  if (isNaN(id)) return res.status(400).json({ error: 'Invalid id.' });
+  try {
+    await pool.query('DELETE FROM _waterops_saved_queries WHERE id = $1', [id]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── Start Server ─────────────────────────────────────────────────────────────
 
 const PORT = process.env.PORT || 3000;
