@@ -237,7 +237,7 @@ app.get('/api/assets/all', async (req, res) => {
       pool.query(`SELECT ac.*, b.building_letter, s.site_id, s.site_name FROM air_compressors ac JOIN buildings b ON ac.building_id = b.building_id JOIN sites s ON b.site_id = s.site_id WHERE ac.status = 'active' ORDER BY s.site_id, b.building_letter`),
       pool.query("SELECT w.*, ws.set_name FROM wells w LEFT JOIN well_sets ws ON w.kf_set_id = ws.set_id WHERE w.well_type IN ('operational','both') ORDER BY COALESCE(w.area,'Other'), w.common_name"),
       pool.query('SELECT * FROM well_sets ORDER BY set_name'),
-      pool.query("SELECT w.*, ws.set_name FROM wells w JOIN well_sets ws ON w.kf_set_id = ws.set_id WHERE w.kf_set_id IS NOT NULL AND w.status = 'active' ORDER BY w.kf_set_id, w.common_name"),
+      pool.query("SELECT w.*, ws.set_name FROM wells w LEFT JOIN well_sets ws ON w.kf_set_id = ws.set_id WHERE w.kf_set_id IS NOT NULL AND w.status = 'active' ORDER BY w.kf_set_id, w.common_name"),
       pool.query('SELECT * FROM canal_structures ORDER BY structure_name'),
       pool.query('SELECT 0 as pond_placeholder LIMIT 0'),
       pool.query("SELECT * FROM vehicles WHERE status = 'active' ORDER BY vehicle_number"),
@@ -568,16 +568,19 @@ app.post('/api/sync/batch', async (req, res) => {
     for (const item of readings) {
       const cfg = INSERT_SQL[item.type];
       if (!cfg) { failed.push({ localId: item.localId, error: 'Unknown type' }); continue; }
+      await client.query('SAVEPOINT sp');
       try {
         await client.query(cfg.sql, cfg.params(item.data));
         synced.push(item.localId);
+        await client.query('RELEASE SAVEPOINT sp');
       } catch (e) {
+        await client.query('ROLLBACK TO SAVEPOINT sp');
         failed.push({ localId: item.localId, error: e.message });
       }
     }
     await client.query('COMMIT');
   } catch (e) {
-    await client.query('ROLLBACK');
+    try { await client.query('ROLLBACK'); } catch (_) {}
     return res.status(500).json({ ok: false, error: e.message });
   } finally {
     client.release();
