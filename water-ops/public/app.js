@@ -654,10 +654,6 @@ function showCanalSelector() {
       'w-full bg-sky-800 hover:bg-sky-600 text-white rounded-xl p-3 text-left touch-manipulation mb-2',
       `<div class="font-bold">${s.structure_name}</div>
        <div class="text-xs text-sky-300">${typeLabel} · ${s.flow_direction || ''}</div>`
-    const btn = el('button',
-      'w-full bg-sky-800 hover:bg-sky-600 text-white rounded-xl p-3 text-left touch-manipulation mb-2',
-      `<div class="font-bold">${s.structure_name}</div>
-       <div class="text-xs text-sky-300">${s.structure_type.replace('_', ' ')} · flow: ${s.flow_direction}</div>`
     );
     btn.addEventListener('click', () => {
       state.selectedAsset = s;
