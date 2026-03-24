@@ -695,7 +695,6 @@ function showVehicleSelector() {
       'w-full bg-sky-800 hover:bg-sky-600 text-white rounded-xl p-3 text-left touch-manipulation mb-2',
       `<div class="font-bold">#${v.vehicle_number} — ${v.year} ${v.make} ${v.model}</div>
        <div class="text-xs text-sky-300">${v.assigned_user || 'Unassigned'}</div>`
-       <div class="text-xs text-sky-300">${v.fuel_type} · reads: ${v.reading_type}</div>`
     );
     btn.addEventListener('click', () => {
       state.selectedAsset = v;
