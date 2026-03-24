@@ -50,6 +50,11 @@
       padding: 10px 14px; margin-bottom: 16px; font-size: 13px;
       display: none;
     }
+    .caps-warn {
+      font-size: 11px; color: #f6ad55; margin-top: 5px;
+      display: none; align-items: center; gap: 4px;
+    }
+    .caps-warn.visible { display: flex; }
   </style>
 </head>
 <body>
@@ -68,11 +73,19 @@
       <div class="field">
         <label>Password</label>
         <input type="password" id="password" name="password" required />
+        <div class="caps-warn" id="caps-warn">⚠ Caps Lock is on</div>
       </div>
       <button type="submit" class="btn" id="login-btn">Sign In</button>
     </form>
   </div>
   <script>
+    const passInput = document.getElementById('password');
+    const capsWarn  = document.getElementById('caps-warn');
+    passInput.addEventListener('keyup', e => {
+      capsWarn.classList.toggle('visible', e.getModifierState('CapsLock'));
+    });
+    passInput.addEventListener('blur', () => capsWarn.classList.remove('visible'));
+
     document.getElementById('login-form').addEventListener('submit', async e => {
       e.preventDefault();
       const btn = document.getElementById('login-btn');
