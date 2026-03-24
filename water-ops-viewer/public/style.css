@@ -104,6 +104,7 @@ select { cursor: pointer; }
 
 /* ── Spinner / Error ── */
 .error-box { background: rgba(252,129,129,0.1); border: 1px solid var(--error); border-radius: var(--radius); color: var(--error); padding: 10px 14px; margin-bottom: 14px; font-size: 13px; }
+.caps-warn { font-size: 11px; color: #f6ad55; margin-top: 5px; display: flex; align-items: center; gap: 4px; }
 .hidden { display: none !important; }
 .btn-spinner { font-style: italic; color: rgba(255,255,255,0.7); }
 

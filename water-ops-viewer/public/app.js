@@ -41,6 +41,14 @@ const sqlEditor = $('sql-editor');
 const sqlResult = $('sql-result');
 const sqlStatus = $('sql-status');
 
+// ── Caps Lock warning on DB password field ─────────────────────────────────
+const dbPass = $('db-pass');
+const dbCapsWarn = $('db-caps-warn');
+dbPass.addEventListener('keyup', e => {
+  dbCapsWarn.classList.toggle('hidden', !e.getModifierState('CapsLock'));
+});
+dbPass.addEventListener('blur', () => dbCapsWarn.classList.add('hidden'));
+
 // ── Connect ────────────────────────────────────────────────────────────────
 connectForm.addEventListener('submit', async e => {
   e.preventDefault();
