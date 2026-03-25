@@ -712,6 +712,27 @@ function createWellItem(w, dateInput, timeInput) {
     openHistoryModal('well', w.well_id, w.common_name);
   });
 
+  // Live totalizer delta
+  if (w.last_totalizer != null) {
+    const totInput = div.querySelector('.w-totalizer');
+    const calcDiv  = document.createElement('div');
+    calcDiv.className = 'totalizer-calc';
+    totInput.after(calcDiv);
+    totInput.addEventListener('input', () => {
+      const cur = parseFloat(totInput.value);
+      if (!isNaN(cur)) {
+        const diff  = cur - Number(w.last_totalizer);
+        const sign  = diff >= 0 ? '+' : '';
+        const since = w.last_reading_date ? ` · since ${fmtDate(w.last_reading_date)}` : '';
+        calcDiv.textContent = `Δ ${sign}${diff.toFixed(2)} AF${since}`;
+        calcDiv.className   = `totalizer-calc${diff < 0 ? ' neg' : ''}`;
+      } else {
+        calcDiv.textContent = '';
+        calcDiv.className   = 'totalizer-calc';
+      }
+    });
+  }
+
   let onOff = true, motorOil = true;
 
   div.querySelector('[data-role="on"]').addEventListener('click', e => {
@@ -871,6 +892,28 @@ function createCanalItem(s, dateInput, timeInput) {
     </div>`;
 
   if (s.last_notes) div.querySelector('.c-notes').value = s.last_notes;
+
+  // Live totalizer delta
+  const cTotInput = div.querySelector('.c-totalizer');
+  if (cTotInput && s.last_totalizer != null) {
+    const calcDiv = document.createElement('div');
+    calcDiv.className = 'totalizer-calc';
+    cTotInput.after(calcDiv);
+    cTotInput.addEventListener('input', () => {
+      const cur = parseFloat(cTotInput.value);
+      if (!isNaN(cur)) {
+        const diff  = cur - Number(s.last_totalizer);
+        const sign  = diff >= 0 ? '+' : '';
+        const since = s.last_reading_date ? ` · since ${fmtDate(s.last_reading_date)}` : '';
+        calcDiv.textContent = `Δ ${sign}${diff.toFixed(2)} AF${since}`;
+        calcDiv.className   = `totalizer-calc${diff < 0 ? ' neg' : ''}`;
+      } else {
+        calcDiv.textContent = '';
+        calcDiv.className   = 'totalizer-calc';
+      }
+    });
+  }
+
   div.querySelector('.c-hist-btn').addEventListener('click', e => {
     e.stopPropagation();
     openHistoryModal('canal', s.structure_id, s.structure_name);

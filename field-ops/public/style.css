@@ -572,6 +572,17 @@ html, body {
   line-height: 1;
 }
 .notes-plus-btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+/* ── Totalizer delta calc ─────────────────────────────────────────────────── */
+.totalizer-calc {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--accent);
+  padding: 3px 0 0;
+  min-height: 1em;
+}
+.totalizer-calc.neg { color: var(--red-light); }
+
 .hist-btn {
   background: var(--surface2);
   border: 1px solid var(--border);
