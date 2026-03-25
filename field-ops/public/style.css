@@ -853,6 +853,10 @@ html, body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.list-item-name.well-important {
+  color: #f5c542;
+  font-weight: 700;
+}
 
 .expand-chevron {
   color: var(--text-muted);

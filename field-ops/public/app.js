@@ -1247,7 +1247,7 @@ function createKFItem(w, dateInput, timeInput) {
   div.innerHTML = `
     <div class="list-item-header">
       <span class="status-dot ${sc}"></span>
-      <span class="list-item-name">${w.common_name}</span>
+      <span class="list-item-name${w.is_important ? ' well-important' : ''}">${w.common_name}</span>
       <span class="status-badge ${sc}">${badge}</span>
       <span class="expand-chevron">&#9660;</span>
     </div>

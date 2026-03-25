@@ -454,7 +454,7 @@ app.get('/api/wells/kf', requireAuth, async (req, res) => {
     const { rows } = await pool.query(`
       SELECT
         w.well_id, w.common_name, w.area, w.kf_set_id, ws.set_name,
-        w.gps_latitude, w.gps_longitude,
+        w.gps_latitude, w.gps_longitude, w.is_important,
         r.kf_reading_id    AS last_reading_id,
         r.reading_date     AS last_reading_date,
         r.dtw_reading      AS last_dtw,
