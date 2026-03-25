@@ -524,8 +524,10 @@ app.post('/api/readings/kf-monthly', requireAuth, async (req, res) => {
   try {
     const { rows } = await pool.query(
       `INSERT INTO readings_kf_monthly
-         (well_id, reading_date, reading_time, dtw_reading, well_on_off, plopper_sounder, operator, notes)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING kf_reading_id`,
+         (well_id, common_name, reading_date, reading_time, dtw_reading, well_on_off, plopper_sounder, operator, notes)
+       SELECT $1, common_name, $2, $3, $4, $5, $6, $7, $8
+       FROM wells WHERE well_id = $1
+       RETURNING kf_reading_id`,
       [well_id, reading_date, reading_time, dtw_reading,
        well_on_off ?? null, plopper_sounder || null, operator || null, notes || null]
     );
