@@ -641,7 +641,8 @@ app.get('/api/equipment/:type', requireAuth, async (req, res) => {
     if (type === 'pump') {
       ({ rows } = await pool.query(`
         SELECT pp.position_id::text AS id,
-          s.site_name || ' — ' || COALESCE(b.building_name, b.building_letter) || ' — ' || pp.pump_letter || ' Pump' AS name
+          REPLACE(s.site_name, 'Site', 'Plant') || ' — ' ||
+          COALESCE(b.building_name, b.building_letter) || ' — Pump ' || pp.pump_letter AS name
         FROM pump_positions pp
         JOIN buildings b ON pp.building_id = b.building_id
         JOIN sites s ON pp.site_id = s.site_id
@@ -660,13 +661,13 @@ app.get('/api/equipment/:type', requireAuth, async (req, res) => {
     } else if (type === 'compressor') {
       ({ rows } = await pool.query(`
         SELECT ac.compressor_id::text AS id,
-          s.site_name || ' — ' || COALESCE(b.building_name, b.building_letter) || ' Air Compressor' ||
+          COALESCE(b.building_name, b.building_letter) || ' Air Compressor' ||
           CASE WHEN ac.manufacturer IS NOT NULL THEN ' (' || ac.manufacturer || ')' ELSE '' END AS name
         FROM air_compressors ac
         JOIN buildings b ON ac.building_id = b.building_id
         JOIN sites s ON b.site_id = s.site_id
         WHERE LOWER(ac.status) != 'inactive' OR ac.status IS NULL
-        ORDER BY s.site_name, b.building_letter
+        ORDER BY b.building_letter
       `));
     } else {
       rows = [];
