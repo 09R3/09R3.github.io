@@ -89,6 +89,53 @@ function makeCollapsibleSection(title, items) {
   return section;
 }
 
+// Returns { diff, cfs, elapsedDays } or null if not computable
+function totalizerCFS(prevVal, prevDate, prevTime, curVal, curDate, curTime) {
+  if (prevVal == null || !prevDate || isNaN(curVal)) return null;
+  const prevDT    = new Date(`${prevDate}T${(prevTime || '00:00').slice(0,5)}:00`);
+  const curDT     = new Date(`${curDate}T${(curTime  || '00:00').slice(0,5)}:00`);
+  const elapsedSec = (curDT - prevDT) / 1000;
+  if (elapsedSec <= 0) return null;
+  const diff       = curVal - Number(prevVal);
+  const cfs        = (diff * 43560) / elapsedSec;
+  return { diff, cfs, elapsedDays: elapsedSec / 86400 };
+}
+
+// Renders the always-visible totalizer info block and wires live CFS calc
+function attachTotalizerCalc(inputEl, prevVal, prevDate, prevTime, dateInput, timeInput) {
+  const wrap = document.createElement('div');
+  wrap.className = 'totalizer-calc-wrap';
+
+  const prevLine = document.createElement('div');
+  prevLine.className = 'totalizer-prev';
+  prevLine.textContent = prevVal != null
+    ? `Prev: ${Number(prevVal).toFixed(2)} AF${prevDate ? '  ·  ' + fmtDate(prevDate) : ''}`
+    : 'No previous reading';
+  wrap.appendChild(prevLine);
+
+  const calcLine = document.createElement('div');
+  calcLine.className = 'totalizer-calc';
+  wrap.appendChild(calcLine);
+
+  inputEl.after(wrap);
+
+  function update() {
+    const cur = parseFloat(inputEl.value);
+    if (isNaN(cur) || prevVal == null) { calcLine.textContent = ''; calcLine.className = 'totalizer-calc'; return; }
+    const r = totalizerCFS(prevVal, prevDate, prevTime, cur, dateInput.value, timeInput.value);
+    if (!r) { calcLine.textContent = ''; calcLine.className = 'totalizer-calc'; return; }
+    const sign = r.diff >= 0 ? '+' : '';
+    const days = r.elapsedDays.toFixed(1);
+    calcLine.textContent = `Δ ${sign}${r.diff.toFixed(2)} AF  ·  ${Math.abs(r.cfs).toFixed(2)} cfs avg  (${days} days)`;
+    calcLine.className = `totalizer-calc${r.diff < 0 ? ' neg' : ''}`;
+  }
+
+  inputEl.addEventListener('input', update);
+  // Recalculate if operator changes the reading date/time
+  dateInput.addEventListener('change', update);
+  timeInput.addEventListener('change', update);
+}
+
 function mapsUrl(lat, lon, label) {
   const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
   if (isIOS) return `https://maps.apple.com/?ll=${lat},${lon}&q=${encodeURIComponent(label)}`;
@@ -712,26 +759,12 @@ function createWellItem(w, dateInput, timeInput) {
     openHistoryModal('well', w.well_id, w.common_name);
   });
 
-  // Live totalizer delta
-  if (w.last_totalizer != null) {
-    const totInput = div.querySelector('.w-totalizer');
-    const calcDiv  = document.createElement('div');
-    calcDiv.className = 'totalizer-calc';
-    totInput.after(calcDiv);
-    totInput.addEventListener('input', () => {
-      const cur = parseFloat(totInput.value);
-      if (!isNaN(cur)) {
-        const diff  = cur - Number(w.last_totalizer);
-        const sign  = diff >= 0 ? '+' : '';
-        const since = w.last_reading_date ? ` · since ${fmtDate(w.last_reading_date)}` : '';
-        calcDiv.textContent = `Δ ${sign}${diff.toFixed(2)} AF${since}`;
-        calcDiv.className   = `totalizer-calc${diff < 0 ? ' neg' : ''}`;
-      } else {
-        calcDiv.textContent = '';
-        calcDiv.className   = 'totalizer-calc';
-      }
-    });
-  }
+  // Totalizer: always show previous + live CFS calc
+  attachTotalizerCalc(
+    div.querySelector('.w-totalizer'),
+    w.last_totalizer, w.last_reading_date, w.last_reading_time,
+    dateInput, timeInput
+  );
 
   let onOff = true, motorOil = true;
 
@@ -893,25 +926,14 @@ function createCanalItem(s, dateInput, timeInput) {
 
   if (s.last_notes) div.querySelector('.c-notes').value = s.last_notes;
 
-  // Live totalizer delta
+  // Totalizer: always show previous + live CFS calc
   const cTotInput = div.querySelector('.c-totalizer');
-  if (cTotInput && s.last_totalizer != null) {
-    const calcDiv = document.createElement('div');
-    calcDiv.className = 'totalizer-calc';
-    cTotInput.after(calcDiv);
-    cTotInput.addEventListener('input', () => {
-      const cur = parseFloat(cTotInput.value);
-      if (!isNaN(cur)) {
-        const diff  = cur - Number(s.last_totalizer);
-        const sign  = diff >= 0 ? '+' : '';
-        const since = s.last_reading_date ? ` · since ${fmtDate(s.last_reading_date)}` : '';
-        calcDiv.textContent = `Δ ${sign}${diff.toFixed(2)} AF${since}`;
-        calcDiv.className   = `totalizer-calc${diff < 0 ? ' neg' : ''}`;
-      } else {
-        calcDiv.textContent = '';
-        calcDiv.className   = 'totalizer-calc';
-      }
-    });
+  if (cTotInput) {
+    attachTotalizerCalc(
+      cTotInput,
+      s.last_totalizer, s.last_reading_date, s.last_reading_time,
+      dateInput, timeInput
+    );
   }
 
   div.querySelector('.c-hist-btn').addEventListener('click', e => {

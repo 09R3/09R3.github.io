@@ -591,11 +591,12 @@ app.get('/api/canal-structures', requireAuth, async (req, res) => {
         r.head_reading_ft        AS last_head,
         r.derived_flow_cfs       AS last_derived,
         r.reading_date           AS last_reading_date,
+        r.reading_time           AS last_reading_time,
         r.notes                  AS last_notes
       FROM canal_structures cs
       LEFT JOIN LATERAL (
         SELECT instantaneous_flow_cfs, totalizer_reading_af, gate_setting,
-               head_reading_ft, derived_flow_cfs, reading_date, notes
+               head_reading_ft, derived_flow_cfs, reading_date, reading_time, notes
         FROM readings_canal
         WHERE structure_id = cs.structure_id
         ORDER BY reading_date DESC, reading_time DESC
