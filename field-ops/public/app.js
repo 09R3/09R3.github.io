@@ -1739,7 +1739,7 @@ async function loadLoginUserList() {
     users.forEach(u => {
       const opt = document.createElement('option');
       opt.value = u.username;
-      opt.textContent = u.full_name ? `${u.full_name} (${u.username})` : u.username;
+      opt.textContent = u.username;
       sel.appendChild(opt);
     });
     if (!users.length) {
