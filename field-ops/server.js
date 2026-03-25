@@ -602,7 +602,7 @@ app.get('/api/canal-structures', requireAuth, async (req, res) => {
         LIMIT 1
       ) r ON true
       WHERE cs.in_service = true
-      ORDER BY cs.flow_direction, cs.structure_name
+      ORDER BY cs.flow_direction, cs.structure_id
     `);
     res.json(rows);
   } catch (err) {
