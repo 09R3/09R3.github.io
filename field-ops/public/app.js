@@ -789,10 +789,11 @@ function createWellItem(w, dateInput, timeInput) {
     openHistoryModal('well', w.well_id, w.common_name);
   });
 
-  // Hours, Flow, Dripper Oil: prev + live Δ
+  // Hours, Flow, Dripper Oil, PG&E: prev + live Δ
   attachDiffDisplay(div.querySelector('.w-hours'),     w.last_hour_reading, 'hrs', 1);
   attachDiffDisplay(div.querySelector('.w-flow'),      w.last_flow_cfs,     'cfs', 2);
   attachDiffDisplay(div.querySelector('.w-dripperoil'),w.last_dripper_oil,  '',    2);
+  attachDiffDisplay(div.querySelector('.w-pge'),       w.last_pge_kwh,      'kWh', 0);
 
   // Totalizer: always show previous + live CFS calc
   attachTotalizerCalc(
@@ -871,7 +872,7 @@ let canalLoaded = false;
 // Which fields each structure type uses
 const CANAL_FIELDS = {
   metered_turnout:    { flow: true,  totalizer: true,  gate: true,  head: false, derived: false },
-  head_gate:          { flow: true,  totalizer: false, gate: true,  head: false, derived: false },
+  head_gate:          { flow: true,  totalizer: false, gate: true,  head: true,  headLabel: 'Head (ft)', derived: false },
   sharp_crested_weir: { flow: true,  totalizer: false, gate: false, head: true,  headLabel: 'Overpour (ft)', derived: false },
 };
 const CANAL_TYPE_LABELS = {
@@ -940,15 +941,15 @@ function createCanalItem(s, dateInput, timeInput) {
     </div>
     ${typeDisp ? `<div class="list-item-meta"><span>${typeDisp}</span></div>` : ''}
     <div class="list-item-form">
-      ${f.flow ? `<div class="form-group"><label>Flow (cfs)${prevHint(s.last_flow, 'cfs')}</label>
+      ${f.flow ? `<div class="form-group"><label>Flow (cfs)</label>
         <input type="number" class="ctrl-input c-flow" step="0.01" inputmode="decimal" placeholder="0.00"></div>` : ''}
-      ${f.totalizer ? `<div class="form-group"><label>Totalizer (AF)${prevHint(s.last_totalizer, 'AF')}</label>
+      ${f.totalizer ? `<div class="form-group"><label>Totalizer (AF)</label>
         <input type="number" class="ctrl-input c-totalizer" step="0.01" inputmode="decimal" placeholder="0.00"></div>` : ''}
-      ${f.gate ? `<div class="form-group"><label>Gate Setting${s.last_gate != null ? `<span class="prev-hint"> · Prev: ${s.last_gate}</span>` : ''}</label>
+      ${f.gate ? `<div class="form-group"><label>Gate Setting</label>
         <input type="text" class="ctrl-input c-gate" placeholder="e.g. 2.5"></div>` : ''}
-      ${f.head ? `<div class="form-group"><label>${f.headLabel || 'Head (ft)'}${prevHint(s.last_head, 'ft')}</label>
+      ${f.head ? `<div class="form-group"><label>${f.headLabel || 'Head (ft)'}</label>
         <input type="number" class="ctrl-input c-head" step="0.01" inputmode="decimal" placeholder="0.00"></div>` : ''}
-      ${f.derived ? `<div class="form-group"><label>Derived Flow (cfs)${prevHint(s.last_derived, 'cfs')}</label>
+      ${f.derived ? `<div class="form-group"><label>Derived Flow (cfs)</label>
         <input type="number" class="ctrl-input c-derived" step="0.01" inputmode="decimal" placeholder="0.00"></div>` : ''}
       <div class="form-group"><label>Notes</label>
         <textarea class="ctrl-textarea c-notes" rows="2" placeholder="Optional notes…"></textarea></div>
@@ -960,6 +961,19 @@ function createCanalItem(s, dateInput, timeInput) {
     </div>`;
 
   if (s.last_notes) div.querySelector('.c-notes').value = s.last_notes;
+
+  // Prev + live Δ for flow, gate, head/overpour, derived
+  const cFlow = div.querySelector('.c-flow');
+  if (cFlow) attachDiffDisplay(cFlow, s.last_flow, 'cfs', 2);
+
+  const cGate = div.querySelector('.c-gate');
+  if (cGate) attachDiffDisplay(cGate, s.last_gate != null ? parseFloat(s.last_gate) : null, '', 2);
+
+  const cHead = div.querySelector('.c-head');
+  if (cHead) attachDiffDisplay(cHead, s.last_head, 'ft', 2);
+
+  const cDerived = div.querySelector('.c-derived');
+  if (cDerived) attachDiffDisplay(cDerived, s.last_derived, 'cfs', 2);
 
   // Totalizer: always show previous + live CFS calc
   const cTotInput = div.querySelector('.c-totalizer');

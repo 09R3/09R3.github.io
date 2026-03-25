@@ -493,12 +493,13 @@ app.get('/api/wells/operational', requireAuth, async (req, res) => {
         r.flow_cfs          AS last_flow_cfs,
         r.totalizer         AS last_totalizer,
         r.dripper_oil       AS last_dripper_oil,
+        r.pge_kwh           AS last_pge_kwh,
         r.notes             AS last_notes,
         EXTRACT(EPOCH FROM (NOW() - (r.reading_date + COALESCE(r.reading_time, '00:00'::time))))::int / 3600
                             AS hours_since_reading
       FROM wells w
       LEFT JOIN LATERAL (
-        SELECT reading_id, reading_date, reading_time, hour_reading, flow_cfs, totalizer, dripper_oil, notes
+        SELECT reading_id, reading_date, reading_time, hour_reading, flow_cfs, totalizer, dripper_oil, pge_kwh, notes
         FROM readings_well
         WHERE well_id = w.well_id
         ORDER BY reading_date DESC, reading_time DESC
