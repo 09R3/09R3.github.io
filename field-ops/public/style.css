@@ -395,13 +395,29 @@ html, body {
 }
 .seg-btn.active { background: var(--accent); color: #fff; }
 
-/* ── Pumping Plant Form ──────────────────────────────────────────────────── */
+/* ── Non-sticky date/time bar (wells, vehicles, KF) ─────────────────────── */
+.date-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  margin-bottom: 12px;
+}
+.ctrl-input.ctrl-date { width: 140px; flex-shrink: 0; }
+.ctrl-input.ctrl-time { width: 110px; flex-shrink: 0; }
+.kf-tabs-inline { flex: 1; margin-top: 0; }
+
+/* ── Pumping Plant sticky controls ───────────────────────────────────────── */
 .sticky-controls {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 14px 16px;
-  margin-bottom: 16px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
   position: sticky;
   top: calc(var(--header-h) + 8px);
   z-index: 50;
@@ -409,14 +425,14 @@ html, body {
 .control-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
   margin-bottom: 8px;
 }
 .control-row:last-child { margin-bottom: 0; }
 .ctrl-label {
-  font-size: 0.82rem;
-  font-weight: 600;
+  font-size: 0.78rem;
+  font-weight: 700;
   color: var(--text-dim);
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -424,7 +440,6 @@ html, body {
   flex-shrink: 0;
 }
 .ctrl-select.ctrl-site { flex: 1; min-width: 140px; }
-.ctrl-input.ctrl-date, .ctrl-input.ctrl-time { flex: 1; min-width: 120px; }
 
 .building-section {
   background: var(--surface);
@@ -442,48 +457,53 @@ html, body {
   letter-spacing: 0.02em;
 }
 
+/* ── Pumping Plant Reading Rows ───────────────────────────────────────────── */
+/* Compact horizontal layout: Label | Current | Diff | Prev | Notes [+] */
 .reading-row {
-  display: grid;
-  grid-template-columns: 1fr;
+  display: flex;
+  align-items: center;
+  gap: 5px;
   border-bottom: 1px solid var(--border);
-  padding: 10px 12px;
-  gap: 8px;
+  padding: 7px 10px;
   transition: background var(--transition);
+  min-width: 0;
 }
 .reading-row:last-child { border-bottom: none; }
 .reading-row.saved { background: var(--green-bg); }
-.reading-row.saved .rr-current input { border-color: var(--green); }
 
 .rr-label {
-  font-size: 0.9rem;
+  flex: 0 0 auto;
+  width: 105px;
+  font-size: 0.8rem;
   font-weight: 600;
   color: var(--text-dim);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.rr-label .prev-date {
-  font-size: 0.75rem;
+.prev-date {
+  display: block;
+  font-size: 0.68rem;
   color: var(--text-muted);
   font-weight: 400;
 }
-
-.rr-fields {
-  display: grid;
-  grid-template-columns: 2fr 1fr 1fr;
-  gap: 8px;
-  align-items: end;
+.rr-field-group {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
 }
-
-.rr-field-group label {
+.rr-col-hd {
   display: block;
-  font-size: 0.72rem;
-  font-weight: 600;
+  font-size: 0.6rem;
+  font-weight: 700;
   color: var(--text-muted);
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin-bottom: 4px;
+  letter-spacing: 0.04em;
+  margin-bottom: 2px;
 }
+.rr-cur-wrap  { width: 72px; }
+.rr-diff-wrap { width: 58px; }
+.rr-prev-wrap { width: 58px; }
 
 .rr-input {
   width: 100%;
@@ -491,22 +511,24 @@ html, body {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--text);
-  padding: 8px 10px;
-  font-size: 0.95rem;
+  padding: 5px 7px;
+  font-size: 0.9rem;
   outline: none;
   transition: border-color var(--transition);
-  min-height: 40px;
+  min-height: 34px;
+  text-align: right;
 }
-.rr-input:focus { border-color: var(--accent); }
-.rr-input.calc { color: var(--text-dim); background: var(--bg); cursor: default; }
-.rr-input.prev { color: var(--text-dim); background: var(--bg); cursor: default; font-size: 0.88rem; }
-.rr-input.current { font-size: 1rem; }
-.rr-input.neg { color: var(--red-light); }
+.rr-input:focus  { border-color: var(--accent); }
+.rr-input.calc   { color: var(--text-dim); background: var(--bg); cursor: default; }
+.rr-input.prev   { color: var(--text-dim); background: var(--bg); cursor: default; }
+.rr-input.neg    { color: var(--red-light); }
 
-.rr-notes-row {
+.rr-notes-wrap {
+  flex: 1;
+  min-width: 50px;
   display: flex;
-  gap: 8px;
-  align-items: flex-start;
+  gap: 4px;
+  align-items: center;
 }
 .rr-notes-input {
   flex: 1;
@@ -514,10 +536,10 @@ html, body {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--text);
-  padding: 7px 10px;
-  font-size: 0.88rem;
+  padding: 5px 8px;
+  font-size: 0.82rem;
   outline: none;
-  min-height: 36px;
+  min-height: 34px;
   transition: border-color var(--transition);
 }
 .rr-notes-input:focus { border-color: var(--accent); }
@@ -527,9 +549,9 @@ html, body {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--text-dim);
-  width: 36px;
-  height: 36px;
-  font-size: 1.3rem;
+  width: 34px;
+  height: 34px;
+  font-size: 1.2rem;
   font-weight: 700;
   cursor: pointer;
   flex-shrink: 0;
@@ -709,17 +731,22 @@ html, body {
 .toast.error   { background: #3a1b1b; border-color: var(--red); color: #ef9a9a; }
 
 /* ── Responsive: larger screens ──────────────────────────────────────────── */
-@media (min-width: 640px) {
-  .reading-row {
-    grid-template-columns: 180px 1fr;
-    align-items: start;
-  }
-  .rr-label { padding-top: 8px; }
+@media (min-width: 520px) {
+  /* More breathing room for reading rows on wider phones / tablets */
+  .rr-label     { width: 130px; font-size: 0.85rem; }
+  .rr-cur-wrap  { width: 82px; }
+  .rr-diff-wrap { width: 68px; }
+  .rr-prev-wrap { width: 68px; }
+  .rr-input     { font-size: 0.95rem; padding: 6px 8px; }
 }
 
 @media (min-width: 900px) {
-  #screen-pumping-plant { max-width: 860px; margin: 0 auto; }
+  #screen-pumping-plant { max-width: 940px; margin: 0 auto; }
   .dashboard-grid { grid-template-columns: repeat(3, 1fr); }
+  .rr-label     { width: 160px; }
+  .rr-cur-wrap  { width: 92px; }
+  .rr-diff-wrap { width: 76px; }
+  .rr-prev-wrap { width: 76px; }
 }
 
 /* ── Dashboard Stats ─────────────────────────────────────────────────────── */

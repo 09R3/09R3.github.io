@@ -176,11 +176,11 @@
 
   <!-- ── Well Readings ──────────────────────────────────────────────────────── -->
   <div id="screen-wells" class="screen-content">
-    <div class="sticky-controls">
-      <div class="two-col">
-        <div class="form-group"><label>Date</label><input type="date" id="well-date" class="ctrl-input"></div>
-        <div class="form-group"><label>Time</label><input type="time" id="well-time" class="ctrl-input"></div>
-      </div>
+    <div class="date-bar">
+      <span class="ctrl-label">Date</span>
+      <input type="date" id="well-date" class="ctrl-input ctrl-date">
+      <span class="ctrl-label">Time</span>
+      <input type="time" id="well-time" class="ctrl-input ctrl-time">
     </div>
     <div id="well-list-body"><div class="placeholder-msg">Loading wells…</div></div>
   </div>
@@ -239,23 +239,23 @@
 
   <!-- ── Vehicle Monthly ────────────────────────────────────────────────────── -->
   <div id="screen-vehicles" class="screen-content">
-    <div class="sticky-controls">
-      <div class="two-col">
-        <div class="form-group"><label>Date</label><input type="date" id="vehicle-date" class="ctrl-input"></div>
-        <div class="form-group"><label>Time</label><input type="time" id="vehicle-time" class="ctrl-input"></div>
-      </div>
+    <div class="date-bar">
+      <span class="ctrl-label">Date</span>
+      <input type="date" id="vehicle-date" class="ctrl-input ctrl-date">
+      <span class="ctrl-label">Time</span>
+      <input type="time" id="vehicle-time" class="ctrl-input ctrl-time">
     </div>
     <div id="vehicle-list-body"><div class="placeholder-msg">Loading vehicles…</div></div>
   </div>
 
   <!-- ── KF Monthly Readings ───────────────────────────────────────────────── -->
   <div id="screen-kf-monthly" class="screen-content">
-    <div class="sticky-controls">
-      <div class="two-col">
-        <div class="form-group"><label>Date</label><input type="date" id="kf-date" class="ctrl-input"></div>
-        <div class="form-group"><label>Time</label><input type="time" id="kf-time" class="ctrl-input"></div>
-      </div>
-      <div id="kf-set-tabs" class="set-tabs"></div>
+    <div class="date-bar">
+      <span class="ctrl-label">Date</span>
+      <input type="date" id="kf-date" class="ctrl-input ctrl-date">
+      <span class="ctrl-label">Time</span>
+      <input type="time" id="kf-time" class="ctrl-input ctrl-time">
+      <div id="kf-set-tabs" class="set-tabs kf-tabs-inline"></div>
     </div>
     <div id="kf-list-body"><div class="placeholder-msg">Loading KF wells…</div></div>
   </div>

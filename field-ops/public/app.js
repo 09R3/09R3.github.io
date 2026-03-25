@@ -408,26 +408,22 @@ function createReadingRow({ type, id, label, prev, prevDate, unit, decimals = 1 
   const dateDisp = prevDate ? fmtDate(prevDate) : '';
 
   row.innerHTML = `
-    <div class="rr-label">
-      <span>${label}</span>
-      ${dateDisp ? `<span class="prev-date">${dateDisp}</span>` : ''}
+    <div class="rr-label" title="${label}">
+      ${label}${dateDisp ? `<div class="prev-date">${dateDisp}</div>` : ''}
     </div>
-    <div class="rr-fields">
-      <div class="rr-field-group">
-        <label>Current</label>
-        <input type="number" class="rr-input current rr-current" step="0.1"
-               placeholder="" inputmode="decimal">
-      </div>
-      <div class="rr-field-group">
-        <label>Difference</label>
-        <input type="text" class="rr-input calc rr-diff" readonly placeholder="—">
-      </div>
-      <div class="rr-field-group">
-        <label>Previous</label>
-        <input type="text" class="rr-input prev rr-prev" readonly value="${prevDisp}">
-      </div>
+    <div class="rr-field-group rr-cur-wrap">
+      <span class="rr-col-hd">Current</span>
+      <input type="number" class="rr-input current rr-current" step="0.1" inputmode="decimal" placeholder="—">
     </div>
-    <div class="rr-notes-row">
+    <div class="rr-field-group rr-diff-wrap">
+      <span class="rr-col-hd">Diff</span>
+      <input type="text" class="rr-input calc rr-diff" readonly placeholder="—">
+    </div>
+    <div class="rr-field-group rr-prev-wrap">
+      <span class="rr-col-hd">Prev</span>
+      <input type="text" class="rr-input prev rr-prev" readonly value="${prevDisp}">
+    </div>
+    <div class="rr-notes-wrap">
       <input type="text" class="rr-notes-input rr-notes" placeholder="Notes…">
       <button class="notes-plus-btn" title="Expand notes">+</button>
     </div>
