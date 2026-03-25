@@ -67,6 +67,31 @@ function clearError(elId) {
   e.classList.add('hidden');
 }
 
+/* ── List Screen Helpers ─────────────────────────────────────────────────── */
+function makeCollapsibleSection(title, items) {
+  const section = document.createElement('div');
+  section.className = 'list-section collapsed';
+
+  const hdr = document.createElement('div');
+  hdr.className = 'list-section-header';
+  hdr.innerHTML = `<span>${title} <span style="color:var(--text-muted);font-weight:400">(${items.length})</span></span><span class="section-chevron">&#9660;</span>`;
+  hdr.addEventListener('click', () => section.classList.toggle('collapsed'));
+
+  const itemsEl = document.createElement('div');
+  itemsEl.className = 'list-section-items';
+  items.forEach(item => itemsEl.appendChild(item));
+
+  section.appendChild(hdr);
+  section.appendChild(itemsEl);
+  return section;
+}
+
+function mapsUrl(lat, lon, label) {
+  const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  if (isIOS) return `https://maps.apple.com/?ll=${lat},${lon}&q=${encodeURIComponent(label)}`;
+  return `https://maps.google.com/maps?q=${lat},${lon}`;
+}
+
 /* ── Screen Navigation ───────────────────────────────────────────────────── */
 function showScreen(name) {
   document.querySelectorAll('.screen-content').forEach(s => s.classList.remove('active'));
@@ -549,14 +574,8 @@ async function initWellsScreen() {
 
     body.innerHTML = '';
     Object.entries(byArea).forEach(([area, areaWells]) => {
-      const section = document.createElement('div');
-      section.className = 'list-section';
-      const hdr = document.createElement('div');
-      hdr.className = 'list-section-header';
-      hdr.textContent = area;
-      section.appendChild(hdr);
-      areaWells.forEach(w => section.appendChild(createWellItem(w, dateInput, timeInput)));
-      body.appendChild(section);
+      const items = areaWells.map(w => createWellItem(w, dateInput, timeInput));
+      body.appendChild(makeCollapsibleSection(area, items));
     });
   } catch (err) {
     body.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
@@ -740,8 +759,8 @@ el('canal-save-btn').addEventListener('click', async () => {
 /* ── Vehicles ────────────────────────────────────────────────────────────── */
 let vehiclesLoaded = false;
 
-const VTYPE_ORDER  = ['truck', 'heavy_equipment', 'trailer', 'other'];
-const VTYPE_LABELS = { truck: 'Trucks', heavy_equipment: 'Heavy Equipment', trailer: 'Trailers', other: 'Other' };
+const VTYPE_ORDER  = ['truck', 'heavy_equipment', 'other'];
+const VTYPE_LABELS = { truck: 'Trucks', heavy_equipment: 'Heavy Equipment', other: 'Other' };
 
 async function initVehiclesScreen() {
   if (vehiclesLoaded) return;
@@ -765,21 +784,17 @@ async function initVehiclesScreen() {
     const byType = {};
     vehicles.forEach(v => {
       const t = (v.vehicle_type || 'other').toLowerCase();
+      if (t === 'trailer') return; // trailers are maintenance-only
       if (!byType[t]) byType[t] = [];
       byType[t].push(v);
     });
 
     body.innerHTML = '';
     [...new Set([...VTYPE_ORDER, ...Object.keys(byType)])].forEach(type => {
-      if (!byType[type]) return;
-      const section = document.createElement('div');
-      section.className = 'list-section';
-      const hdr = document.createElement('div');
-      hdr.className = 'list-section-header';
-      hdr.textContent = VTYPE_LABELS[type] || type.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-      section.appendChild(hdr);
-      byType[type].forEach(v => section.appendChild(createVehicleItem(v, dateInput, timeInput)));
-      body.appendChild(section);
+      if (!byType[type] || !byType[type].length) return;
+      const label = VTYPE_LABELS[type] || type.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+      const items = byType[type].map(v => createVehicleItem(v, dateInput, timeInput));
+      body.appendChild(makeCollapsibleSection(label, items));
     });
   } catch (err) {
     body.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
@@ -791,16 +806,17 @@ function createVehicleItem(v, dateInput, timeInput) {
   const div = document.createElement('div');
   div.className = 'list-item';
 
-  const label = [v.vehicle_number, [v.year, v.make, v.model].filter(Boolean).join(' ')]
-    .filter(Boolean).join(' — ');
-  const assigned = v.assigned_to ? ` · ${v.assigned_to}` : '';
-  const lastOdo  = v.last_odometer != null ? `${Number(v.last_odometer).toLocaleString()} mi` : null;
-  const lastHrs  = v.last_engine_hours != null ? `${Number(v.last_engine_hours).toFixed(1)} hrs` : null;
+  const parts = [v.vehicle_number];
+  if (v.year || v.model) parts.push([v.year, v.model].filter(Boolean).join(' '));
+  if (v.assigned_user) parts.push(v.assigned_user);
+  const label = parts.filter(Boolean).join(' - ');
+  const lastOdo = v.last_odometer != null ? `${Number(v.last_odometer).toLocaleString()} mi` : null;
+  const lastHrs = v.last_engine_hours != null ? `${Number(v.last_engine_hours).toFixed(1)} hrs` : null;
   const prevText = [lastOdo, lastHrs].filter(Boolean).join(' / ');
 
   div.innerHTML = `
     <div class="list-item-header">
-      <span class="list-item-name">${label}${assigned}</span>
+      <span class="list-item-name">${label}</span>
       <span class="expand-chevron">&#9660;</span>
     </div>
     <div class="list-item-meta">
@@ -1099,7 +1115,7 @@ function renderKFList() {
   body.innerHTML = '';
 
   if (!kfActiveSet) {
-    // Group by set
+    // Group by set with collapsible sections
     const bySets = {};
     filtered.forEach(w => {
       const key = w.set_name || 'No Set';
@@ -1107,14 +1123,8 @@ function renderKFList() {
       bySets[key].push(w);
     });
     Object.entries(bySets).forEach(([setName, wells]) => {
-      const section = document.createElement('div');
-      section.className = 'list-section';
-      const hdr = document.createElement('div');
-      hdr.className = 'list-section-header';
-      hdr.textContent = setName;
-      section.appendChild(hdr);
-      wells.forEach(w => section.appendChild(createKFItem(w, dateIn, timeIn)));
-      body.appendChild(section);
+      const items = wells.map(w => createKFItem(w, dateIn, timeIn));
+      body.appendChild(makeCollapsibleSection(setName, items));
     });
   } else {
     filtered.forEach(w => body.appendChild(createKFItem(w, dateIn, timeIn)));
@@ -1128,13 +1138,10 @@ function createKFItem(w, dateInput, timeInput) {
   const days = w.days_since_reading;
   const sc   = days == null ? 'due' : days <= 25 ? 'done' : 'overdue';
   const badge = days == null ? 'Never' : days === 0 ? 'Today' : `${days}d ago`;
-  const prevDTW = w.last_dtw != null ? `${Number(w.last_dtw).toFixed(2)} ft` : null;
-
-  let gpsHref = '';
-  if (w.gps_latitude && w.gps_longitude) {
-    const q = `${w.gps_latitude},${w.gps_longitude}`;
-    gpsHref = `geo:${q}?q=${q}(${encodeURIComponent(w.common_name)})`;
-  }
+  const prevDTW    = w.last_dtw    != null ? `${Number(w.last_dtw).toFixed(2)} ft` : null;
+  const prevMethod = w.last_method != null ? w.last_method.charAt(0).toUpperCase() + w.last_method.slice(1) : null;
+  const prevMeta   = [prevDTW, prevMethod].filter(Boolean).join(' · ');
+  const hasGPS     = w.gps_latitude && w.gps_longitude;
 
   div.innerHTML = `
     <div class="list-item-header">
@@ -1143,7 +1150,7 @@ function createKFItem(w, dateInput, timeInput) {
       <span class="status-badge ${sc}">${badge}</span>
       <span class="expand-chevron">&#9660;</span>
     </div>
-    ${prevDTW ? `<div class="list-item-meta"><span>Prev DTW: ${prevDTW}</span></div>` : ''}
+    ${prevMeta ? `<div class="list-item-meta"><span>Prev: ${prevMeta}</span></div>` : ''}
     <div class="list-item-form">
       <div class="form-group">
         <label>Depth to Water (ft)${prevDTW ? `<span class="prev-hint"> · Prev: ${prevDTW}</span>` : ''}</label>
@@ -1179,7 +1186,7 @@ function createKFItem(w, dateInput, timeInput) {
       </div>
       <div class="lif-error error-msg hidden"></div>
       <div class="lif-footer">
-        ${gpsHref ? `<a href="${gpsHref}" class="btn btn-secondary btn-sm" target="_blank">&#128205; Map</a>` : ''}
+        ${hasGPS ? `<button class="btn btn-secondary btn-sm kf-map-btn">&#128205; Map</button>` : ''}
         <button class="btn btn-save kf-save">Save Reading</button>
       </div>
     </div>`;
@@ -1187,6 +1194,15 @@ function createKFItem(w, dateInput, timeInput) {
   // Auto-fill operator
   if (currentUser) {
     div.querySelector('.kf-op').value = currentUser.initials || currentUser.username;
+  }
+
+  // Map button
+  const mapBtn = div.querySelector('.kf-map-btn');
+  if (mapBtn) {
+    mapBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      window.open(mapsUrl(w.gps_latitude, w.gps_longitude, w.common_name), '_blank');
+    });
   }
 
   let kfOnOff = true;
@@ -1230,15 +1246,19 @@ function createKFItem(w, dateInput, timeInput) {
       div.querySelector('.status-badge').className = 'status-badge done';
       div.classList.remove('expanded');
       div.querySelector('.list-item-form').style.display = 'none';
-      // Update prev DTW
-      const newPrev = `${Number(dtw).toFixed(2)} ft`;
+      // Update prev meta
+      const method = div.querySelector('.kf-method').value;
+      const newPrev = [
+        `${Number(dtw).toFixed(2)} ft`,
+        method ? method.charAt(0).toUpperCase() + method.slice(1) : null,
+      ].filter(Boolean).join(' · ');
       let meta = div.querySelector('.list-item-meta');
       if (!meta) {
         meta = document.createElement('div');
         meta.className = 'list-item-meta';
         div.querySelector('.list-item-header').after(meta);
       }
-      meta.innerHTML = `<span>Prev DTW: ${newPrev}</span>`;
+      meta.innerHTML = `<span>Prev: ${newPrev}</span>`;
       showToast(`${w.common_name} saved`, 'success');
     } catch (err) {
       errEl.textContent = err.message;

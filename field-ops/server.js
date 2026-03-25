@@ -454,11 +454,12 @@ app.get('/api/wells/kf', requireAuth, async (req, res) => {
         r.kf_reading_id    AS last_reading_id,
         r.reading_date     AS last_reading_date,
         r.dtw_reading      AS last_dtw,
+        r.plopper_sounder  AS last_method,
         (CURRENT_DATE - r.reading_date)::int AS days_since_reading
       FROM wells w
       LEFT JOIN well_sets ws ON w.kf_set_id = ws.set_id
       LEFT JOIN LATERAL (
-        SELECT kf_reading_id, reading_date, dtw_reading
+        SELECT kf_reading_id, reading_date, dtw_reading, plopper_sounder
         FROM readings_kf_monthly
         WHERE well_id = w.well_id
         ORDER BY reading_date DESC, reading_time DESC

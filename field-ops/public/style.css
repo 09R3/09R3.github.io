@@ -541,18 +541,15 @@ html, body {
 }
 .notes-plus-btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
 
-.save-bar {
-  position: sticky;
-  bottom: 0;
-  background: var(--bg);
-  border-top: 1px solid var(--border);
-  padding: 14px 16px;
+.pp-save-row {
   display: flex;
   align-items: center;
   gap: 12px;
-  z-index: 50;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
 }
-.save-bar .btn-save { flex-shrink: 0; min-width: 160px; }
+.pp-save-row .btn-save { flex-shrink: 0; min-height: 40px; padding: 8px 20px; }
 .save-status { font-size: 0.9rem; color: var(--text-dim); }
 .save-status.success { color: #4caf50; }
 .save-status.error { color: var(--red-light); }
@@ -760,13 +757,33 @@ html, body {
 /* ── List Screens (Wells / Vehicles / KF) ────────────────────────────────── */
 .list-section { margin-bottom: 8px; }
 .list-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   font-size: 0.78rem;
   font-weight: 700;
-  color: var(--text-muted);
+  color: var(--text-dim);
   text-transform: uppercase;
   letter-spacing: 0.07em;
-  padding: 10px 14px 6px;
+  padding: 10px 14px;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 6px;
+  transition: background var(--transition);
 }
+.list-section-header:active { background: var(--surface2); }
+.list-section-header .section-chevron {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  transition: transform var(--transition);
+}
+.list-section.collapsed .section-chevron { transform: rotate(-90deg); }
+.list-section-items { overflow: hidden; }
+.list-section.collapsed .list-section-items { display: none; }
 
 .list-item {
   background: var(--surface);
