@@ -574,10 +574,27 @@ app.post('/api/readings/well', requireAuth, async (req, res) => {
 // ── Canal ─────────────────────────────────────────────────────────────────────
 app.get('/api/canal-structures', requireAuth, async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      `SELECT structure_id, structure_name, structure_type, flow_direction
-       FROM canal_structures WHERE in_service = true ORDER BY structure_name`
-    );
+    const { rows } = await pool.query(`
+      SELECT
+        cs.structure_id, cs.structure_name, cs.structure_type, cs.flow_direction,
+        r.instantaneous_flow_cfs AS last_flow,
+        r.totalizer_reading_af   AS last_totalizer,
+        r.gate_setting           AS last_gate,
+        r.head_reading_ft        AS last_head,
+        r.derived_flow_cfs       AS last_derived,
+        r.reading_date           AS last_reading_date
+      FROM canal_structures cs
+      LEFT JOIN LATERAL (
+        SELECT instantaneous_flow_cfs, totalizer_reading_af, gate_setting,
+               head_reading_ft, derived_flow_cfs, reading_date
+        FROM readings_canal
+        WHERE structure_id = cs.structure_id
+        ORDER BY reading_date DESC, reading_time DESC
+        LIMIT 1
+      ) r ON true
+      WHERE cs.in_service = true
+      ORDER BY cs.flow_direction, cs.structure_name
+    `);
     res.json(rows);
   } catch (err) {
     res.status(500).json({ error: err.message });

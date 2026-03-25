@@ -705,52 +705,143 @@ function createWellItem(w, dateInput, timeInput) {
 /* ── Canal ───────────────────────────────────────────────────────────────── */
 let canalLoaded = false;
 
+// Which fields each structure type uses
+const CANAL_FIELDS = {
+  metered_turnout:    { flow: true,  totalizer: true,  gate: true,  head: false, derived: false },
+  head_gate:          { flow: true,  totalizer: false, gate: true,  head: false, derived: false },
+  sharp_crested_weir: { flow: true,  totalizer: false, gate: false, head: true,  headLabel: 'Overpour (ft)', derived: false },
+};
+const CANAL_TYPE_LABELS = {
+  metered_turnout:    'Metered Turnout',
+  head_gate:          'Head Gate',
+  sharp_crested_weir: 'Sharp Crested Weir',
+};
+
+function canalFields(type) {
+  return CANAL_FIELDS[(type || '').toLowerCase()]
+    || { flow: true, totalizer: true, gate: true, head: true, headLabel: 'Head (ft)', derived: true };
+}
+
 async function initCanalScreen() {
   if (canalLoaded) return;
   canalLoaded = true;
-  el('canal-date').value = todayISO();
-  el('canal-time').value = nowHHMM();
+
+  const dateInput = el('canal-date');
+  const timeInput = el('canal-time');
+  dateInput.value = todayISO();
+  timeInput.value = nowHHMM();
+
+  const body = el('canal-list-body');
+  body.innerHTML = '<div class="placeholder-msg">Loading structures…</div>';
+
   try {
     const structures = await api('GET', '/api/canal-structures');
-    const sel = el('canal-select');
-    sel.innerHTML = '<option value="">Select structure…</option>';
-    structures.forEach(s => {
-      const opt = document.createElement('option');
-      opt.value = s.structure_id;
-      opt.textContent = s.structure_name + (s.structure_type ? ` (${s.structure_type})` : '');
-      sel.appendChild(opt);
-    });
+    if (!structures.length) {
+      body.innerHTML = '<div class="placeholder-msg">No active canal structures found.</div>';
+      return;
+    }
+
+    // Inflow: direction is inflow, both, or null
+    // Outflow: direction is outflow or both
+    const inflow  = structures.filter(s => !s.flow_direction || ['inflow','both'].includes(s.flow_direction));
+    const outflow = structures.filter(s => ['outflow','both'].includes(s.flow_direction));
+
+    body.innerHTML = '';
+    if (inflow.length)  body.appendChild(makeCollapsibleSection('Inflow',  inflow.map(s  => createCanalItem(s,  dateInput, timeInput))));
+    if (outflow.length) body.appendChild(makeCollapsibleSection('Outflow', outflow.map(s => createCanalItem(s, dateInput, timeInput))));
   } catch (err) {
+    body.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
     showToast('Failed to load structures: ' + err.message, 'error');
   }
 }
 
-el('canal-save-btn').addEventListener('click', async () => {
-  clearError('canal-error');
-  const structure_id = el('canal-select').value;
-  if (!structure_id) return showError('canal-error', 'Please select a structure');
+function createCanalItem(s, dateInput, timeInput) {
+  const div = document.createElement('div');
+  div.className = 'list-item';
 
-  const body = {
-    structure_id:          parseInt(structure_id),
-    reading_date:          el('canal-date').value,
-    reading_time:          el('canal-time').value,
-    instantaneous_flow_cfs:el('canal-flow').value || null,
-    totalizer_reading_af:  el('canal-totalizer').value || null,
-    gate_setting:          el('canal-gate').value || null,
-    head_reading_ft:       el('canal-head').value || null,
-    derived_flow_cfs:      el('canal-derived').value || null,
-    notes:                 el('canal-notes').value || null,
-  };
+  const f        = canalFields(s.structure_type);
+  const typeDisp = CANAL_TYPE_LABELS[(s.structure_type || '').toLowerCase()] || s.structure_type || null;
+  const prevFlow = s.last_flow != null ? `${Number(s.last_flow).toFixed(2)} cfs` : null;
+  const prevDate = s.last_reading_date ? fmtDate(s.last_reading_date) : null;
 
-  try {
-    await api('POST', '/api/readings/canal', body);
-    showToast('Canal reading saved', 'success');
-    ['canal-flow','canal-totalizer','canal-gate','canal-head','canal-derived','canal-notes']
-      .forEach(id => { el(id).value = ''; });
-  } catch (err) {
-    showError('canal-error', err.message);
+  function prevHint(val, unit = '', decimals = 2) {
+    if (val == null) return '';
+    return `<span class="prev-hint"> · Prev: ${Number(val).toFixed(decimals)}${unit ? ' ' + unit : ''}</span>`;
   }
-});
+
+  div.innerHTML = `
+    <div class="list-item-header">
+      <span class="list-item-name">${s.structure_name}</span>
+      ${prevFlow ? `<span class="status-badge due">${prevFlow}${prevDate ? ' · ' + prevDate : ''}</span>` : ''}
+      <span class="expand-chevron">&#9660;</span>
+    </div>
+    ${typeDisp ? `<div class="list-item-meta"><span>${typeDisp}</span></div>` : ''}
+    <div class="list-item-form">
+      ${f.flow ? `<div class="form-group"><label>Flow (cfs)${prevHint(s.last_flow, 'cfs')}</label>
+        <input type="number" class="ctrl-input c-flow" step="0.01" inputmode="decimal" placeholder="0.00"></div>` : ''}
+      ${f.totalizer ? `<div class="form-group"><label>Totalizer (AF)${prevHint(s.last_totalizer, 'AF')}</label>
+        <input type="number" class="ctrl-input c-totalizer" step="0.01" inputmode="decimal" placeholder="0.00"></div>` : ''}
+      ${f.gate ? `<div class="form-group"><label>Gate Setting${s.last_gate != null ? `<span class="prev-hint"> · Prev: ${s.last_gate}</span>` : ''}</label>
+        <input type="text" class="ctrl-input c-gate" placeholder="e.g. 2.5"></div>` : ''}
+      ${f.head ? `<div class="form-group"><label>${f.headLabel || 'Head (ft)'}${prevHint(s.last_head, 'ft')}</label>
+        <input type="number" class="ctrl-input c-head" step="0.01" inputmode="decimal" placeholder="0.00"></div>` : ''}
+      ${f.derived ? `<div class="form-group"><label>Derived Flow (cfs)${prevHint(s.last_derived, 'cfs')}</label>
+        <input type="number" class="ctrl-input c-derived" step="0.01" inputmode="decimal" placeholder="0.00"></div>` : ''}
+      <div class="form-group"><label>Notes</label>
+        <textarea class="ctrl-textarea c-notes" rows="2" placeholder="Optional notes…"></textarea></div>
+      <div class="lif-error error-msg hidden"></div>
+      <button class="btn btn-save btn-full c-save-btn">Save Reading</button>
+    </div>`;
+
+  div.querySelector('.list-item-header').addEventListener('click', () => {
+    const open = div.classList.toggle('expanded');
+    div.querySelector('.list-item-form').style.display = open ? '' : 'none';
+  });
+
+  div.querySelector('.c-save-btn').addEventListener('click', async e => {
+    e.stopPropagation();
+    const errEl = div.querySelector('.lif-error');
+    errEl.classList.add('hidden');
+
+    const payload = {
+      structure_id:           s.structure_id,
+      reading_date:           dateInput.value,
+      reading_time:           timeInput.value,
+      instantaneous_flow_cfs: div.querySelector('.c-flow')?.value       || null,
+      totalizer_reading_af:   div.querySelector('.c-totalizer')?.value   || null,
+      gate_setting:           div.querySelector('.c-gate')?.value        || null,
+      head_reading_ft:        div.querySelector('.c-head')?.value        || null,
+      derived_flow_cfs:       div.querySelector('.c-derived')?.value     || null,
+      notes:                  div.querySelector('.c-notes').value        || null,
+    };
+
+    try {
+      await api('POST', '/api/readings/canal', payload);
+      // Update badge with new flow
+      const newFlow = payload.instantaneous_flow_cfs;
+      const badge   = div.querySelector('.status-badge');
+      if (newFlow) {
+        const fl = `${Number(newFlow).toFixed(2)} cfs`;
+        if (badge) { badge.textContent = fl + ' · now'; badge.className = 'status-badge done'; }
+        else {
+          const b = document.createElement('span');
+          b.className = 'status-badge done';
+          b.textContent = fl + ' · now';
+          div.querySelector('.list-item-header').insertBefore(b, div.querySelector('.expand-chevron'));
+        }
+      }
+      div.classList.remove('expanded');
+      div.querySelector('.list-item-form').style.display = 'none';
+      showToast(`${s.structure_name} saved`, 'success');
+    } catch (err) {
+      errEl.textContent = err.message;
+      errEl.classList.remove('hidden');
+    }
+  });
+
+  div.querySelector('.list-item-form').style.display = 'none';
+  return div;
+}
 
 /* ── Vehicles ────────────────────────────────────────────────────────────── */
 let vehiclesLoaded = false;

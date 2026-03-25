@@ -187,54 +187,13 @@
 
   <!-- ── Canal Readings ─────────────────────────────────────────────────────── -->
   <div id="screen-canal" class="screen-content">
-    <div class="form-card">
-      <div class="form-group">
-        <label>Structure</label>
-        <select id="canal-select" class="ctrl-select">
-          <option value="">Select structure…</option>
-        </select>
-      </div>
-      <div class="two-col">
-        <div class="form-group">
-          <label>Date</label>
-          <input type="date" id="canal-date" class="ctrl-input">
-        </div>
-        <div class="form-group">
-          <label>Time</label>
-          <input type="time" id="canal-time" class="ctrl-input">
-        </div>
-      </div>
-      <div class="two-col">
-        <div class="form-group">
-          <label>Flow (cfs)</label>
-          <input type="number" id="canal-flow" step="0.01" class="ctrl-input" placeholder="0.00">
-        </div>
-        <div class="form-group">
-          <label>Totalizer (af)</label>
-          <input type="number" id="canal-totalizer" step="0.01" class="ctrl-input" placeholder="0.00">
-        </div>
-      </div>
-      <div class="two-col">
-        <div class="form-group">
-          <label>Gate Setting</label>
-          <input type="text" id="canal-gate" class="ctrl-input" placeholder="e.g. 2.5">
-        </div>
-        <div class="form-group">
-          <label>Head Reading (ft)</label>
-          <input type="number" id="canal-head" step="0.01" class="ctrl-input" placeholder="0.00">
-        </div>
-      </div>
-      <div class="form-group">
-        <label>Derived Flow (cfs)</label>
-        <input type="number" id="canal-derived" step="0.01" class="ctrl-input" placeholder="0.00">
-      </div>
-      <div class="form-group">
-        <label>Notes</label>
-        <textarea id="canal-notes" class="ctrl-textarea" rows="2" placeholder="Optional notes…"></textarea>
-      </div>
-      <div id="canal-error" class="error-msg hidden"></div>
-      <button class="btn btn-save btn-full" id="canal-save-btn">Save Canal Reading</button>
+    <div class="date-bar">
+      <span class="ctrl-label">Date</span>
+      <input type="date" id="canal-date" class="ctrl-input ctrl-date">
+      <span class="ctrl-label">Time</span>
+      <input type="time" id="canal-time" class="ctrl-input ctrl-time">
     </div>
+    <div id="canal-list-body"><div class="placeholder-msg">Loading structures…</div></div>
   </div>
 
   <!-- ── Vehicle Monthly ────────────────────────────────────────────────────── -->
