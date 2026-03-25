@@ -572,6 +572,46 @@ html, body {
   line-height: 1;
 }
 .notes-plus-btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+.hist-btn {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 0.85rem;
+  padding: 0 6px;
+  height: 32px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.hist-btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+/* ── History Modal Table ──────────────────────────────────────────────────── */
+.hist-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+.hist-table th {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 2px solid var(--border);
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+.hist-table td {
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+  color: var(--text);
+}
+.hist-table tbody tr:last-child td { border-bottom: none; }
+.hist-table tbody tr:hover td { background: var(--surface2); }
+.hist-time { font-size: 0.75rem; color: var(--text-muted); margin-top: 2px; }
+.hist-notes { color: var(--text-dim); font-style: italic; max-width: 160px; }
 
 .pp-save-row {
   display: flex;

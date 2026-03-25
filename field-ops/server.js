@@ -632,6 +632,63 @@ app.post('/api/readings/canal', requireAuth, async (req, res) => {
   }
 });
 
+// ── Reading History ────────────────────────────────────────────────────────────
+app.get('/api/history', requireAuth, async (req, res) => {
+  const { type, id } = req.query;
+  if (!type || !id) return res.status(400).json({ error: 'type and id required' });
+  try {
+    let rows;
+    const LIMIT = 5;
+    if (type === 'pump') {
+      ({ rows } = await pool.query(
+        `SELECT reading_date, reading_time, hour_reading AS value, notes
+         FROM readings_pump_hours WHERE position_id = $1
+         ORDER BY reading_date DESC, reading_time DESC LIMIT $2`, [id, LIMIT]));
+    } else if (type === 'compressor') {
+      ({ rows } = await pool.query(
+        `SELECT reading_date, reading_time, hour_reading AS value, notes
+         FROM readings_compressor_hours WHERE compressor_id = $1
+         ORDER BY reading_date DESC, reading_time DESC LIMIT $2`, [id, LIMIT]));
+    } else if (type === 'pge') {
+      ({ rows } = await pool.query(
+        `SELECT reading_date, reading_time, kwh_reading AS value, notes
+         FROM readings_pge_meters WHERE pge_meter_id = $1
+         ORDER BY reading_date DESC, reading_time DESC LIMIT $2`, [id, LIMIT]));
+    } else if (type === 'monitor') {
+      ({ rows } = await pool.query(
+        `SELECT reading_date, reading_time, kwh_reading AS value, notes
+         FROM readings_power_monitors WHERE monitor_id = $1
+         ORDER BY reading_date DESC, reading_time DESC LIMIT $2`, [id, LIMIT]));
+    } else if (type === 'well') {
+      ({ rows } = await pool.query(
+        `SELECT reading_date, reading_time, hour_reading, flow_cfs, totalizer, notes
+         FROM readings_well WHERE well_id = $1
+         ORDER BY reading_date DESC, reading_time DESC LIMIT $2`, [id, LIMIT]));
+    } else if (type === 'kf') {
+      ({ rows } = await pool.query(
+        `SELECT reading_date, reading_time, dtw_reading AS value, plopper_sounder AS method, notes
+         FROM readings_kf_monthly WHERE well_id = $1
+         ORDER BY reading_date DESC, reading_time DESC LIMIT $2`, [id, LIMIT]));
+    } else if (type === 'canal') {
+      ({ rows } = await pool.query(
+        `SELECT reading_date, reading_time, instantaneous_flow_cfs AS flow,
+                totalizer_reading_af AS totalizer, gate_setting, notes
+         FROM readings_canal WHERE structure_id = $1
+         ORDER BY reading_date DESC, reading_time DESC LIMIT $2`, [id, LIMIT]));
+    } else if (type === 'vehicle') {
+      ({ rows } = await pool.query(
+        `SELECT reading_date, reading_time, odometer_miles, engine_hours, notes
+         FROM readings_vehicle_monthly WHERE vehicle_id = $1
+         ORDER BY reading_date DESC, reading_time DESC LIMIT $2`, [id, LIMIT]));
+    } else {
+      return res.status(400).json({ error: 'unknown type' });
+    }
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Vehicles ──────────────────────────────────────────────────────────────────
 app.get('/api/vehicles', requireAuth, async (req, res) => {
   try {

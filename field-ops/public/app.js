@@ -263,6 +263,59 @@ function closeNotesModal() {
   notesTarget = null;
 }
 
+/* ── History Modal ───────────────────────────────────────────────────────── */
+el('history-modal-close').addEventListener('click', () => el('history-modal').classList.add('hidden'));
+el('history-modal').addEventListener('click', e => {
+  if (e.target === el('history-modal')) el('history-modal').classList.add('hidden');
+});
+
+const HIST_COLS = {
+  pump:        [{ key: 'value',         label: 'Hours' }],
+  compressor:  [{ key: 'value',         label: 'Hours' }],
+  pge:         [{ key: 'value',         label: 'kWh' }],
+  monitor:     [{ key: 'value',         label: 'kWh' }],
+  well:        [{ key: 'hour_reading',  label: 'Hours' }, { key: 'flow_cfs', label: 'Flow (cfs)' }, { key: 'totalizer', label: 'Totalizer' }],
+  kf:          [{ key: 'value',         label: 'DTW (ft)' }, { key: 'method', label: 'Method' }],
+  canal:       [{ key: 'flow',          label: 'Flow (cfs)' }, { key: 'totalizer', label: 'Totalizer (AF)' }, { key: 'gate_setting', label: 'Gate' }],
+  vehicle:     [{ key: 'odometer_miles',label: 'Odometer' }, { key: 'engine_hours', label: 'Eng. Hrs' }],
+};
+
+async function openHistoryModal(type, id, label) {
+  const body = el('history-modal-body');
+  el('history-modal-title').textContent = `History — ${label}`;
+  body.innerHTML = '<div class="placeholder-msg" style="padding:16px">Loading…</div>';
+  el('history-modal').classList.remove('hidden');
+
+  try {
+    const rows = await api('GET', `/api/history?type=${type}&id=${encodeURIComponent(id)}`);
+    if (!rows.length) {
+      body.innerHTML = '<div class="placeholder-msg" style="padding:16px">No history found.</div>';
+      return;
+    }
+
+    const cols = HIST_COLS[type] || [];
+    const headCells = cols.map(c => `<th>${c.label}</th>`).join('');
+    const bodyRows  = rows.map(r => {
+      const d = fmtDate(r.reading_date);
+      const t = r.reading_time ? r.reading_time.slice(0, 5) : '';
+      const valCells = cols.map(c => `<td>${r[c.key] != null ? r[c.key] : '—'}</td>`).join('');
+      return `<tr>
+        <td>${d}${t ? `<div class="hist-time">${t}</div>` : ''}</td>
+        ${valCells}
+        <td class="hist-notes">${r.notes || ''}</td>
+      </tr>`;
+    }).join('');
+
+    body.innerHTML = `
+      <table class="hist-table">
+        <thead><tr><th>Date</th>${headCells}<th>Notes</th></tr></thead>
+        <tbody>${bodyRows}</tbody>
+      </table>`;
+  } catch (err) {
+    body.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light);padding:16px">${err.message}</div>`;
+  }
+}
+
 /* ── Pumping Plant ───────────────────────────────────────────────────────── */
 async function initPPScreen() {
   if (ppLoaded) return;
@@ -433,6 +486,7 @@ function createReadingRow({ type, id, label, prev, prevDate, prevNotes, unit, de
     <div class="rr-notes-wrap">
       <input type="text" class="rr-notes-input rr-notes" placeholder="Notes…">
       <button class="notes-plus-btn" title="Expand notes">+</button>
+      <button class="hist-btn" title="View history">&#128200;</button>
     </div>
   `;
 
@@ -457,6 +511,9 @@ function createReadingRow({ type, id, label, prev, prevDate, prevNotes, unit, de
   if (prevNotes) notesInput.value = prevNotes;
   row.querySelector('.notes-plus-btn').addEventListener('click', () => {
     openNotesModal(label, notesInput);
+  });
+  row.querySelector('.hist-btn').addEventListener('click', () => {
+    openHistoryModal(type, id, label);
   });
 
   return row;
@@ -643,10 +700,17 @@ function createWellItem(w, dateInput, timeInput) {
         <textarea class="ctrl-textarea w-notes" rows="2" placeholder="Optional notes…"></textarea>
       </div>
       <div class="lif-error error-msg hidden"></div>
-      <button class="btn btn-save btn-full w-save-btn">Save Well Reading</button>
+      <div class="lif-footer">
+        <button class="btn btn-secondary btn-sm w-hist-btn">&#128200; History</button>
+        <button class="btn btn-save w-save-btn">Save Well Reading</button>
+      </div>
     </div>`;
 
   if (w.last_notes) div.querySelector('.w-notes').value = w.last_notes;
+  div.querySelector('.w-hist-btn').addEventListener('click', e => {
+    e.stopPropagation();
+    openHistoryModal('well', w.well_id, w.common_name);
+  });
 
   let onOff = true, motorOil = true;
 
@@ -800,10 +864,17 @@ function createCanalItem(s, dateInput, timeInput) {
       <div class="form-group"><label>Notes</label>
         <textarea class="ctrl-textarea c-notes" rows="2" placeholder="Optional notes…"></textarea></div>
       <div class="lif-error error-msg hidden"></div>
-      <button class="btn btn-save btn-full c-save-btn">Save Reading</button>
+      <div class="lif-footer">
+        <button class="btn btn-secondary btn-sm c-hist-btn">&#128200; History</button>
+        <button class="btn btn-save c-save-btn">Save Reading</button>
+      </div>
     </div>`;
 
   if (s.last_notes) div.querySelector('.c-notes').value = s.last_notes;
+  div.querySelector('.c-hist-btn').addEventListener('click', e => {
+    e.stopPropagation();
+    openHistoryModal('canal', s.structure_id, s.structure_name);
+  });
 
   div.querySelector('.list-item-header').addEventListener('click', () => {
     const open = div.classList.toggle('expanded');
@@ -939,10 +1010,17 @@ function createVehicleItem(v, dateInput, timeInput) {
         <textarea class="ctrl-textarea v-notes" rows="2" placeholder="Optional notes…"></textarea>
       </div>
       <div class="lif-error error-msg hidden"></div>
-      <button class="btn btn-save btn-full v-save-btn">Save Reading</button>
+      <div class="lif-footer">
+        <button class="btn btn-secondary btn-sm v-hist-btn">&#128200; History</button>
+        <button class="btn btn-save v-save-btn">Save Reading</button>
+      </div>
     </div>`;
 
   if (v.last_notes) div.querySelector('.v-notes').value = v.last_notes;
+  div.querySelector('.v-hist-btn').addEventListener('click', e => {
+    e.stopPropagation();
+    openHistoryModal('vehicle', v.vehicle_id, label);
+  });
 
   div.querySelector('.list-item-header').addEventListener('click', () => {
     const open = div.classList.toggle('expanded');
@@ -1288,6 +1366,7 @@ function createKFItem(w, dateInput, timeInput) {
       <div class="lif-error error-msg hidden"></div>
       <div class="lif-footer">
         ${hasGPS ? `<button class="btn btn-secondary btn-sm kf-map-btn">&#128205; Map</button>` : ''}
+        <button class="btn btn-secondary btn-sm kf-hist-btn">&#128200; History</button>
         <button class="btn btn-save kf-save">Save Reading</button>
       </div>
     </div>`;
@@ -1306,6 +1385,11 @@ function createKFItem(w, dateInput, timeInput) {
       window.open(mapsUrl(w.gps_latitude, w.gps_longitude, w.common_name), '_blank');
     });
   }
+
+  div.querySelector('.kf-hist-btn').addEventListener('click', e => {
+    e.stopPropagation();
+    openHistoryModal('kf', w.well_id, w.common_name);
+  });
 
   let kfOnOff = true;
   div.querySelector('.kf-on').addEventListener('click', e => {
