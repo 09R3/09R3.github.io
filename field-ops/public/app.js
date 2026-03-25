@@ -1086,6 +1086,14 @@ async function initVehiclesScreen() {
   }
 }
 
+function daysSinceDate(dateStr) {
+  if (!dateStr) return null;
+  const [y, m, d] = String(dateStr).slice(0, 10).split('-').map(Number);
+  const then  = new Date(y, m - 1, d);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  return Math.floor((today - then) / 86400000);
+}
+
 function createVehicleItem(v, dateInput, timeInput) {
   const div = document.createElement('div');
   div.className = 'list-item';
@@ -1098,9 +1106,15 @@ function createVehicleItem(v, dateInput, timeInput) {
   const lastHrs = v.last_engine_hours != null ? `${Number(v.last_engine_hours).toFixed(1)} hrs` : null;
   const prevText = [lastOdo, lastHrs].filter(Boolean).join(' / ');
 
+  const days  = daysSinceDate(v.last_reading_date);
+  const sc    = days == null ? 'due' : days <= 7 ? 'done' : days <= 25 ? 'due' : 'overdue';
+  const badge = days == null ? 'Not read' : days === 0 ? 'Today' : `${days}d ago`;
+
   div.innerHTML = `
     <div class="list-item-header">
+      <span class="status-dot ${sc}"></span>
       <span class="list-item-name">${label}</span>
+      <span class="status-badge ${sc}">${badge}</span>
       <span class="expand-chevron">&#9660;</span>
     </div>
     <div class="list-item-meta">
@@ -1158,6 +1172,10 @@ function createVehicleItem(v, dateInput, timeInput) {
       await api('POST', '/api/readings/vehicle-monthly', body);
       div.classList.remove('expanded');
       div.querySelector('.list-item-form').style.display = 'none';
+      // Flip status to green
+      div.querySelector('.status-dot').className   = 'status-dot done';
+      div.querySelector('.status-badge').textContent = 'Today';
+      div.querySelector('.status-badge').className   = 'status-badge done';
       // Update meta preview
       const odoVal  = body.odometer_miles ? `${Number(body.odometer_miles).toLocaleString()} mi` : lastOdo;
       const hrsVal  = body.engine_hours   ? `${Number(body.engine_hours).toFixed(1)} hrs`       : lastHrs;
