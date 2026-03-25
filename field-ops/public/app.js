@@ -138,6 +138,34 @@ function attachTotalizerCalc(inputEl, prevVal, prevDate, prevTime, dateInput, ti
   timeInput.addEventListener('change', update);
 }
 
+// Simple prev + Δ display for non-totalizer fields (hours, flow, dripper oil, etc.)
+function attachDiffDisplay(inputEl, prevVal, unit, decimals = 1) {
+  const wrap = document.createElement('div');
+  wrap.className = 'totalizer-calc-wrap';
+
+  const prevLine = document.createElement('div');
+  prevLine.className = 'totalizer-prev';
+  prevLine.textContent = prevVal != null
+    ? `Prev: ${Number(prevVal).toFixed(decimals)}${unit ? ' ' + unit : ''}`
+    : 'No previous reading';
+  wrap.appendChild(prevLine);
+
+  const calcLine = document.createElement('div');
+  calcLine.className = 'totalizer-calc';
+  wrap.appendChild(calcLine);
+
+  inputEl.after(wrap);
+
+  inputEl.addEventListener('input', () => {
+    const cur = parseFloat(inputEl.value);
+    if (isNaN(cur) || prevVal == null) { calcLine.textContent = ''; calcLine.className = 'totalizer-calc'; return; }
+    const diff = cur - Number(prevVal);
+    const sign = diff >= 0 ? '+' : '';
+    calcLine.textContent = `Δ ${sign}${diff.toFixed(decimals)}${unit ? ' ' + unit : ''}`;
+    calcLine.className   = `totalizer-calc${diff < 0 ? ' neg' : ''}`;
+  });
+}
+
 function mapsUrl(lat, lon, label) {
   const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
   if (isIOS) return `https://maps.apple.com/?ll=${lat},${lon}&q=${encodeURIComponent(label)}`;
@@ -732,7 +760,7 @@ function createWellItem(w, dateInput, timeInput) {
       </div>
       <div class="two-col">
         <div class="form-group">
-          <label>Totalizer</label>
+          <label>Totalizer (AF)</label>
           <input type="number" class="ctrl-input w-totalizer" step="1" inputmode="decimal" placeholder="0">
         </div>
         <div class="form-group">
@@ -760,6 +788,11 @@ function createWellItem(w, dateInput, timeInput) {
     e.stopPropagation();
     openHistoryModal('well', w.well_id, w.common_name);
   });
+
+  // Hours, Flow, Dripper Oil: prev + live Δ
+  attachDiffDisplay(div.querySelector('.w-hours'),     w.last_hour_reading, 'hrs', 1);
+  attachDiffDisplay(div.querySelector('.w-flow'),      w.last_flow_cfs,     'cfs', 2);
+  attachDiffDisplay(div.querySelector('.w-dripperoil'),w.last_dripper_oil,  '',    2);
 
   // Totalizer: always show previous + live CFS calc
   attachTotalizerCalc(
