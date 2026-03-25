@@ -245,9 +245,10 @@ function formatCell(val) {
       const d = new Date(str);
       if (!isNaN(d.getTime())) {
         // Date-only string (10 chars) or timestamp at exactly midnight UTC → show date only
+        // Use timeZone:'UTC' so a DATE like 2026-03-06T00:00:00Z doesn't shift back a day
         const dateOnly = str.length === 10 ||
           (d.getUTCHours() === 0 && d.getUTCMinutes() === 0 && d.getUTCSeconds() === 0 && d.getUTCMilliseconds() === 0);
-        const label = dateOnly ? d.toLocaleDateString() : d.toLocaleString();
+        const label = dateOnly ? d.toLocaleDateString(undefined, { timeZone: 'UTC' }) : d.toLocaleString();
         return `<span class="date-val" title="${esc(str)}">${esc(label)}</span>`;
       }
     } catch (_) { /* fall through to plain string */ }
