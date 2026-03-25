@@ -411,7 +411,17 @@ html, body {
 .ctrl-input.ctrl-time { width: 110px; flex-shrink: 0; }
 .kf-tabs-inline { flex: 1; margin-top: 0; }
 
-/* ── Pumping Plant sticky controls ───────────────────────────────────────── */
+/* ── Pumping Plant site tabs + site-header divider ───────────────────────── */
+.pp-tabs-inline { flex: 1; margin-top: 0; padding: 8px 12px; }
+.pp-site-header {
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-dim);
+  padding: 14px 4px 4px;
+}
+/* ── Pumping Plant sticky controls (legacy, kept for reference) ────────────── */
 .sticky-controls {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -567,9 +577,9 @@ html, body {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border);
-  margin-top: 4px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
 }
 .pp-save-row .btn-save { flex-shrink: 0; min-height: 40px; padding: 8px 20px; }
 .save-status { font-size: 0.9rem; color: var(--text-dim); }

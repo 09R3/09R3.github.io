@@ -4,9 +4,12 @@ let currentScreen = null;
 
 // Pumping plant state
 const pp = {
-  siteId:    null,
-  buildings: [],   // [{ building_id, building_letter, building_name, pumps, compressors, pgeMeters, powerMonitors }]
+  sites:       [],
+  buildings:   {},     // keyed by site_id
+  loadedSites: new Set(),
+  activeTab:   null,   // null = All
 };
+let ppLoaded = false;
 
 // Notes modal state
 let notesTarget = null; // { rowEl, notesInput }
@@ -122,8 +125,9 @@ function showScreen(name) {
   }
 
   // Lazy-load data on first visit
-  if (name === 'dashboard')   loadDashboardStats();
-  if (name === 'wells')       initWellsScreen();
+  if (name === 'dashboard')     loadDashboardStats();
+  if (name === 'pumping-plant') initPPScreen();
+  if (name === 'wells')         initWellsScreen();
   if (name === 'canal')       initCanalScreen();
   if (name === 'vehicles')    initVehiclesScreen();
   if (name === 'kf-monthly')  initKFScreen();
@@ -185,8 +189,6 @@ function onLogin(user) {
     el('dash-admin-tile').classList.remove('hidden');
   }
 
-  // Init pumping plant site selector
-  loadPPSites();
   showScreen('dashboard');
   loadDashboardStats();
 }
@@ -220,10 +222,10 @@ function onLogout() {
   el('login-password').value = '';
   el('login-username').value = '';
   // Reset pumping plant
-  pp.siteId = null;
-  pp.buildings = [];
-  el('pp-site').value = '';
-  el('pp-form-body').innerHTML = '<div class="placeholder-msg">Select a site to load readings.</div>';
+  pp.sites = []; pp.buildings = {}; pp.loadedSites = new Set(); pp.activeTab = null;
+  ppLoaded = false;
+  el('pp-site-tabs').innerHTML = '';
+  el('pp-form-body').innerHTML = '<div class="placeholder-msg">Loading plants…</div>';
   el('pp-save-bar').classList.add('hidden');
   // Refresh DB status on logout
   checkDBStatus();
@@ -262,139 +264,140 @@ function closeNotesModal() {
 }
 
 /* ── Pumping Plant ───────────────────────────────────────────────────────── */
-async function loadPPSites() {
+async function initPPScreen() {
+  if (ppLoaded) return;
+  ppLoaded = true;
+
+  el('pp-date').value = todayISO();
+  el('pp-time').value = nowHHMM();
+
   try {
-    const sites = await api('GET', '/api/sites');
-    const select = el('pp-site');
-    select.innerHTML = '<option value="">Select site…</option>';
-    sites.forEach(s => {
-      const opt = document.createElement('option');
-      opt.value = s.site_id;
-      opt.textContent = s.site_name;
-      select.appendChild(opt);
-    });
+    pp.sites = await api('GET', '/api/sites');
   } catch (err) {
-    showToast('Failed to load sites: ' + err.message, 'error');
-  }
-}
-
-// Set default date/time for pumping plant
-el('pp-date').value = todayISO();
-el('pp-time').value = nowHHMM();
-
-el('pp-site').addEventListener('change', async () => {
-  const siteId = el('pp-site').value;
-  if (!siteId) {
-    el('pp-form-body').innerHTML = '<div class="placeholder-msg">Select a site to load readings.</div>';
-    el('pp-save-bar').classList.add('hidden');
+    el('pp-form-body').innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
+    showToast('Failed to load plants: ' + err.message, 'error');
     return;
   }
-  pp.siteId = siteId;
-  el('pp-form-body').innerHTML = '<div class="placeholder-msg">Loading…</div>';
-  try {
-    await loadPPBuildings(siteId);
-    renderPPForm();
-    el('pp-save-bar').classList.remove('hidden');
-  } catch (err) {
-    el('pp-form-body').innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">Error: ${err.message}</div>`;
-  }
-});
 
-async function loadPPBuildings(siteId) {
-  const buildings = await api('GET', `/api/buildings?site_id=${siteId}`);
-  pp.buildings = [];
+  // Build site tabs
+  const tabsEl = el('pp-site-tabs');
+  tabsEl.innerHTML = '';
+  const makeTab = (label, siteId) => {
+    const btn = document.createElement('button');
+    btn.className = 'set-tab' + (siteId === null ? ' active' : '');
+    btn.textContent = label;
+    btn.dataset.siteId = siteId ?? '';
+    tabsEl.appendChild(btn);
+  };
+  makeTab('All', null);
+  pp.sites.forEach(s => makeTab(s.site_name.replace('Site', 'Plant'), s.site_id));
 
-  await Promise.all(buildings.map(async b => {
-    const [pumps, compressors, pgeMeters, powerMonitors] = await Promise.all([
-      api('GET', `/api/pump-positions?building_id=${b.building_id}`),
-      api('GET', `/api/air-compressors?building_id=${b.building_id}`),
-      api('GET', `/api/pge-meters?building_id=${b.building_id}`),
-      api('GET', `/api/power-monitors?building_id=${b.building_id}`),
-    ]);
-    pp.buildings.push({ ...b, pumps, compressors, pgeMeters, powerMonitors });
-  }));
+  tabsEl.addEventListener('click', async e => {
+    const tab = e.target.closest('.set-tab');
+    if (!tab) return;
+    tabsEl.querySelectorAll('.set-tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    pp.activeTab = tab.dataset.siteId || null;
+    await renderPPBody();
+  });
 
-  // Sort buildings by letter
-  pp.buildings.sort((a, b) => (a.building_letter || '').localeCompare(b.building_letter || ''));
+  await renderPPBody();
 }
 
-function renderPPForm() {
+async function renderPPBody() {
   const body = el('pp-form-body');
-  if (!pp.buildings.length) {
-    body.innerHTML = '<div class="placeholder-msg">No buildings found for this site.</div>';
+  body.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+
+  const sitesToShow = pp.activeTab
+    ? pp.sites.filter(s => String(s.site_id) === String(pp.activeTab))
+    : pp.sites;
+
+  // Load buildings for any uncached sites
+  try {
+    await Promise.all(sitesToShow.map(async site => {
+      if (pp.loadedSites.has(site.site_id)) return;
+      pp.loadedSites.add(site.site_id);
+      const buildings = await api('GET', `/api/buildings?site_id=${site.site_id}`);
+      const withData = await Promise.all(buildings.map(async b => {
+        const [pumps, compressors, pgeMeters, powerMonitors] = await Promise.all([
+          api('GET', `/api/pump-positions?building_id=${b.building_id}`),
+          api('GET', `/api/air-compressors?building_id=${b.building_id}`),
+          api('GET', `/api/pge-meters?building_id=${b.building_id}`),
+          api('GET', `/api/power-monitors?building_id=${b.building_id}`),
+        ]);
+        return { ...b, pumps, compressors, pgeMeters, powerMonitors };
+      }));
+      withData.sort((a, b) => (a.building_letter || '').localeCompare(b.building_letter || ''));
+      pp.buildings[site.site_id] = withData;
+    }));
+  } catch (err) {
+    body.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">Error: ${err.message}</div>`;
+    showToast('Failed to load buildings: ' + err.message, 'error');
     return;
   }
 
   body.innerHTML = '';
 
-  pp.buildings.forEach(building => {
-    const hasAny = building.pumps.length || building.compressors.length ||
-                   building.pgeMeters.length || building.powerMonitors.length;
-    if (!hasAny) return;
+  sitesToShow.forEach(site => {
+    const buildings = pp.buildings[site.site_id] || [];
 
-    const section = document.createElement('div');
-    section.className = 'building-section';
-    section.innerHTML = `<div class="building-header">${building.building_name || building.building_letter + ' Plant'}</div>`;
+    // Site header divider when showing all plants
+    if (!pp.activeTab && pp.sites.length > 1) {
+      const hdr = document.createElement('div');
+      hdr.className = 'pp-site-header';
+      hdr.textContent = site.site_name.replace('Site', 'Plant');
+      body.appendChild(hdr);
+    }
 
-    // Pump rows
-    building.pumps.forEach(pump => {
-      section.appendChild(createReadingRow({
-        type:      'pump',
-        id:        pump.position_id,
-        label:     `${pump.pump_letter} Pump Hours`,
-        prev:      pump.last_reading,
-        prevDate:  pump.last_reading_date,
-        unit:      'hrs',
-      }));
+    buildings.forEach(building => {
+      const items = buildBuildingRows(building);
+      if (!items.length) return;
+      body.appendChild(makeCollapsibleSection(
+        building.building_name || (building.building_letter + ' Plant'),
+        items
+      ));
     });
-
-    // Air compressor rows
-    building.compressors.forEach(comp => {
-      const label = comp.manufacturer
-        ? `Air Compressor (${comp.manufacturer})`
-        : 'Air Compressor Hours';
-      section.appendChild(createReadingRow({
-        type:     'compressor',
-        id:       comp.compressor_id,
-        label,
-        prev:     comp.last_reading,
-        prevDate: comp.last_reading_date,
-        unit:     'hrs',
-      }));
-    });
-
-    // PG&E meter rows
-    building.pgeMeters.forEach(m => {
-      const label = m.meter_name || `PG&E kWh (${m.meter_number || m.pge_meter_id})`;
-      section.appendChild(createReadingRow({
-        type:     'pge',
-        id:       m.pge_meter_id,
-        label,
-        prev:     m.last_reading,
-        prevDate: m.last_reading_date,
-        unit:     'kWh',
-        decimals: 0,
-      }));
-    });
-
-    // Power monitor rows
-    building.powerMonitors.forEach(m => {
-      const label = m.monitor_number
-        ? `Power Monitor kWh (${m.monitor_number})`
-        : 'Power Monitor kWh';
-      section.appendChild(createReadingRow({
-        type:     'monitor',
-        id:       m.monitor_id,
-        label,
-        prev:     m.last_reading,
-        prevDate: m.last_reading_date,
-        unit:     'kWh',
-        decimals: 0,
-      }));
-    });
-
-    body.appendChild(section);
   });
+
+  if (!body.children.length) {
+    body.innerHTML = '<div class="placeholder-msg">No readings found.</div>';
+    return;
+  }
+
+  el('pp-save-bar').classList.remove('hidden');
+}
+
+function buildBuildingRows(building) {
+  const rows = [];
+  building.pumps.forEach(pump => {
+    rows.push(createReadingRow({
+      type: 'pump', id: pump.position_id,
+      label: `${pump.pump_letter} Pump Hours`,
+      prev: pump.last_reading, prevDate: pump.last_reading_date, unit: 'hrs',
+    }));
+  });
+  building.compressors.forEach(comp => {
+    rows.push(createReadingRow({
+      type: 'compressor', id: comp.compressor_id,
+      label: comp.manufacturer ? `Air Compressor (${comp.manufacturer})` : 'Air Compressor Hours',
+      prev: comp.last_reading, prevDate: comp.last_reading_date, unit: 'hrs',
+    }));
+  });
+  building.pgeMeters.forEach(m => {
+    rows.push(createReadingRow({
+      type: 'pge', id: m.pge_meter_id,
+      label: m.meter_name || `PG&E kWh (${m.meter_number || m.pge_meter_id})`,
+      prev: m.last_reading, prevDate: m.last_reading_date, unit: 'kWh', decimals: 0,
+    }));
+  });
+  building.powerMonitors.forEach(m => {
+    rows.push(createReadingRow({
+      type: 'monitor', id: m.monitor_id,
+      label: m.monitor_number ? `Power Monitor kWh (${m.monitor_number})` : 'Power Monitor kWh',
+      prev: m.last_reading, prevDate: m.last_reading_date, unit: 'kWh', decimals: 0,
+    }));
+  });
+  return rows;
 }
 
 function createReadingRow({ type, id, label, prev, prevDate, unit, decimals = 1 }) {

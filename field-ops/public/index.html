@@ -150,27 +150,19 @@
 
   <!-- ── Pumping Plant Readings ─────────────────────────────────────────────── -->
   <div id="screen-pumping-plant" class="screen-content">
-    <div class="pp-controls sticky-controls">
-      <div class="control-row">
-        <label class="ctrl-label">Plant</label>
-        <select id="pp-site" class="ctrl-select ctrl-site">
-          <option value="">Select site…</option>
-        </select>
-      </div>
-      <div class="control-row">
-        <label class="ctrl-label">Date</label>
-        <input type="date" id="pp-date" class="ctrl-input">
-        <label class="ctrl-label">Time</label>
-        <input type="time" id="pp-time" class="ctrl-input">
-      </div>
-      <div id="pp-save-bar" class="pp-save-row hidden">
-        <button class="btn btn-save" id="pp-save-btn">Save Readings</button>
-        <span class="save-status" id="pp-save-status"></span>
-      </div>
+    <div class="date-bar">
+      <span class="ctrl-label">Date</span>
+      <input type="date" id="pp-date" class="ctrl-input ctrl-date">
+      <span class="ctrl-label">Time</span>
+      <input type="time" id="pp-time" class="ctrl-input ctrl-time">
     </div>
-
+    <div id="pp-site-tabs" class="set-tabs pp-tabs-inline"></div>
+    <div id="pp-save-bar" class="pp-save-row hidden">
+      <button class="btn btn-save" id="pp-save-btn">Save Readings</button>
+      <span class="save-status" id="pp-save-status"></span>
+    </div>
     <div id="pp-form-body">
-      <div class="placeholder-msg">Select a site to load readings.</div>
+      <div class="placeholder-msg">Loading plants…</div>
     </div>
   </div>
 
