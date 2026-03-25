@@ -373,34 +373,38 @@ function buildBuildingRows(building) {
     rows.push(createReadingRow({
       type: 'pump', id: pump.position_id,
       label: `${pump.pump_letter} Pump Hours`,
-      prev: pump.last_reading, prevDate: pump.last_reading_date, unit: 'hrs',
+      prev: pump.last_reading, prevDate: pump.last_reading_date,
+      prevNotes: pump.last_notes, unit: 'hrs',
     }));
   });
   building.compressors.forEach(comp => {
     rows.push(createReadingRow({
       type: 'compressor', id: comp.compressor_id,
       label: comp.manufacturer ? `Air Compressor (${comp.manufacturer})` : 'Air Compressor Hours',
-      prev: comp.last_reading, prevDate: comp.last_reading_date, unit: 'hrs',
+      prev: comp.last_reading, prevDate: comp.last_reading_date,
+      prevNotes: comp.last_notes, unit: 'hrs',
     }));
   });
   building.pgeMeters.forEach(m => {
     rows.push(createReadingRow({
       type: 'pge', id: m.pge_meter_id,
       label: m.meter_name || `PG&E kWh (${m.meter_number || m.pge_meter_id})`,
-      prev: m.last_reading, prevDate: m.last_reading_date, unit: 'kWh', decimals: 0,
+      prev: m.last_reading, prevDate: m.last_reading_date,
+      prevNotes: m.last_notes, unit: 'kWh', decimals: 0,
     }));
   });
   building.powerMonitors.forEach(m => {
     rows.push(createReadingRow({
       type: 'monitor', id: m.monitor_id,
       label: m.monitor_number ? `Power Monitor kWh (${m.monitor_number})` : 'Power Monitor kWh',
-      prev: m.last_reading, prevDate: m.last_reading_date, unit: 'kWh', decimals: 0,
+      prev: m.last_reading, prevDate: m.last_reading_date,
+      prevNotes: m.last_notes, unit: 'kWh', decimals: 0,
     }));
   });
   return rows;
 }
 
-function createReadingRow({ type, id, label, prev, prevDate, unit, decimals = 1 }) {
+function createReadingRow({ type, id, label, prev, prevDate, prevNotes, unit, decimals = 1 }) {
   const row = document.createElement('div');
   row.className = 'reading-row';
   row.dataset.type = type;
@@ -450,6 +454,7 @@ function createReadingRow({ type, id, label, prev, prevDate, unit, decimals = 1 
 
   // Notes + button
   const notesInput = row.querySelector('.rr-notes');
+  if (prevNotes) notesInput.value = prevNotes;
   row.querySelector('.notes-plus-btn').addEventListener('click', () => {
     openNotesModal(label, notesInput);
   });
@@ -641,6 +646,8 @@ function createWellItem(w, dateInput, timeInput) {
       <button class="btn btn-save btn-full w-save-btn">Save Well Reading</button>
     </div>`;
 
+  if (w.last_notes) div.querySelector('.w-notes').value = w.last_notes;
+
   let onOff = true, motorOil = true;
 
   div.querySelector('[data-role="on"]').addEventListener('click', e => {
@@ -796,6 +803,8 @@ function createCanalItem(s, dateInput, timeInput) {
       <button class="btn btn-save btn-full c-save-btn">Save Reading</button>
     </div>`;
 
+  if (s.last_notes) div.querySelector('.c-notes').value = s.last_notes;
+
   div.querySelector('.list-item-header').addEventListener('click', () => {
     const open = div.classList.toggle('expanded');
     div.querySelector('.list-item-form').style.display = open ? '' : 'none';
@@ -932,6 +941,8 @@ function createVehicleItem(v, dateInput, timeInput) {
       <div class="lif-error error-msg hidden"></div>
       <button class="btn btn-save btn-full v-save-btn">Save Reading</button>
     </div>`;
+
+  if (v.last_notes) div.querySelector('.v-notes').value = v.last_notes;
 
   div.querySelector('.list-item-header').addEventListener('click', () => {
     const open = div.classList.toggle('expanded');
@@ -1281,10 +1292,11 @@ function createKFItem(w, dateInput, timeInput) {
       </div>
     </div>`;
 
-  // Auto-fill operator
+  // Auto-fill operator and pre-populate last notes
   if (currentUser) {
     div.querySelector('.kf-op').value = currentUser.initials || currentUser.username;
   }
+  if (w.last_notes) div.querySelector('.kf-notes').value = w.last_notes;
 
   // Map button
   const mapBtn = div.querySelector('.kf-map-btn');

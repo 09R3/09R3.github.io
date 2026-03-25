@@ -207,10 +207,11 @@ app.get('/api/pump-positions', requireAuth, async (req, res) => {
         r.reading_id    AS last_reading_id,
         r.hour_reading  AS last_reading,
         r.reading_date  AS last_reading_date,
-        r.entered_by    AS last_entered_by
+        r.entered_by    AS last_entered_by,
+        r.notes         AS last_notes
       FROM pump_positions pp
       LEFT JOIN LATERAL (
-        SELECT reading_id, hour_reading, reading_date, entered_by
+        SELECT reading_id, hour_reading, reading_date, entered_by, notes
         FROM readings_pump_hours
         WHERE position_id = pp.position_id
         ORDER BY reading_date DESC, reading_time DESC
@@ -234,10 +235,11 @@ app.get('/api/air-compressors', requireAuth, async (req, res) => {
         ac.compressor_id, ac.manufacturer, ac.model_number, ac.status,
         r.reading_id    AS last_reading_id,
         r.hour_reading  AS last_reading,
-        r.reading_date  AS last_reading_date
+        r.reading_date  AS last_reading_date,
+        r.notes         AS last_notes
       FROM air_compressors ac
       LEFT JOIN LATERAL (
-        SELECT reading_id, hour_reading, reading_date
+        SELECT reading_id, hour_reading, reading_date, notes
         FROM readings_compressor_hours
         WHERE compressor_id = ac.compressor_id
         ORDER BY reading_date DESC, reading_time DESC
@@ -261,10 +263,11 @@ app.get('/api/pge-meters', requireAuth, async (req, res) => {
         pm.pge_meter_id, pm.meter_name, pm.meter_number,
         r.reading_id   AS last_reading_id,
         r.kwh_reading  AS last_reading,
-        r.reading_date AS last_reading_date
+        r.reading_date AS last_reading_date,
+        r.notes        AS last_notes
       FROM pge_meters pm
       LEFT JOIN LATERAL (
-        SELECT reading_id, kwh_reading, reading_date
+        SELECT reading_id, kwh_reading, reading_date, notes
         FROM readings_pge_meters
         WHERE pge_meter_id = pm.pge_meter_id
         ORDER BY reading_date DESC, reading_time DESC
@@ -288,10 +291,11 @@ app.get('/api/power-monitors', requireAuth, async (req, res) => {
         pm.monitor_id, pm.monitor_number, pm.manufacturer,
         r.reading_id   AS last_reading_id,
         r.kwh_reading  AS last_reading,
-        r.reading_date AS last_reading_date
+        r.reading_date AS last_reading_date,
+        r.notes        AS last_notes
       FROM power_monitors pm
       LEFT JOIN LATERAL (
-        SELECT reading_id, kwh_reading, reading_date
+        SELECT reading_id, kwh_reading, reading_date, notes
         FROM readings_power_monitors
         WHERE monitor_id = pm.monitor_id
         ORDER BY reading_date DESC, reading_time DESC
@@ -455,11 +459,12 @@ app.get('/api/wells/kf', requireAuth, async (req, res) => {
         r.reading_date     AS last_reading_date,
         r.dtw_reading      AS last_dtw,
         r.plopper_sounder  AS last_method,
+        r.notes            AS last_notes,
         (CURRENT_DATE - r.reading_date)::int AS days_since_reading
       FROM wells w
       LEFT JOIN well_sets ws ON w.kf_set_id = ws.set_id
       LEFT JOIN LATERAL (
-        SELECT kf_reading_id, reading_date, dtw_reading, plopper_sounder
+        SELECT kf_reading_id, reading_date, dtw_reading, plopper_sounder, notes
         FROM readings_kf_monthly
         WHERE well_id = w.well_id
         ORDER BY reading_date DESC, reading_time DESC
@@ -486,11 +491,12 @@ app.get('/api/wells/operational', requireAuth, async (req, res) => {
         r.reading_time      AS last_reading_time,
         r.hour_reading      AS last_hour_reading,
         r.totalizer         AS last_totalizer,
+        r.notes             AS last_notes,
         EXTRACT(EPOCH FROM (NOW() - (r.reading_date + COALESCE(r.reading_time, '00:00'::time))))::int / 3600
                             AS hours_since_reading
       FROM wells w
       LEFT JOIN LATERAL (
-        SELECT reading_id, reading_date, reading_time, hour_reading, totalizer
+        SELECT reading_id, reading_date, reading_time, hour_reading, totalizer, notes
         FROM readings_well
         WHERE well_id = w.well_id
         ORDER BY reading_date DESC, reading_time DESC
@@ -582,11 +588,12 @@ app.get('/api/canal-structures', requireAuth, async (req, res) => {
         r.gate_setting           AS last_gate,
         r.head_reading_ft        AS last_head,
         r.derived_flow_cfs       AS last_derived,
-        r.reading_date           AS last_reading_date
+        r.reading_date           AS last_reading_date,
+        r.notes                  AS last_notes
       FROM canal_structures cs
       LEFT JOIN LATERAL (
         SELECT instantaneous_flow_cfs, totalizer_reading_af, gate_setting,
-               head_reading_ft, derived_flow_cfs, reading_date
+               head_reading_ft, derived_flow_cfs, reading_date, notes
         FROM readings_canal
         WHERE structure_id = cs.structure_id
         ORDER BY reading_date DESC, reading_time DESC
@@ -632,10 +639,11 @@ app.get('/api/vehicles', requireAuth, async (req, res) => {
         v.vin, v.license_plate, v.fuel_type, v.assigned_user, v.reading_type, v.status,
         r.odometer_miles  AS last_odometer,
         r.engine_hours    AS last_engine_hours,
-        r.reading_date    AS last_reading_date
+        r.reading_date    AS last_reading_date,
+        r.notes           AS last_notes
       FROM vehicles v
       LEFT JOIN LATERAL (
-        SELECT odometer_miles, engine_hours, reading_date
+        SELECT odometer_miles, engine_hours, reading_date, notes
         FROM readings_vehicle_monthly
         WHERE vehicle_id = v.vehicle_id
         ORDER BY reading_date DESC, reading_time DESC
