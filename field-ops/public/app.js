@@ -346,6 +346,14 @@ el('history-modal').addEventListener('click', e => {
   if (e.target === el('history-modal')) el('history-modal').classList.add('hidden');
 });
 
+function isWithin24h(dateStr, timeStr) {
+  if (!dateStr) return false;
+  const [y, m, d] = String(dateStr).slice(0, 10).split('-').map(Number);
+  const t = (timeStr || '00:00').slice(0, 5).split(':').map(Number);
+  const readingDT = new Date(y, m - 1, d, t[0], t[1]);
+  return (Date.now() - readingDT.getTime()) <= 24 * 60 * 60 * 1000;
+}
+
 const HIST_COLS = {
   pump:        [{ key: 'value',         label: 'Hours' }],
   compressor:  [{ key: 'value',         label: 'Hours' }],
@@ -370,24 +378,52 @@ async function openHistoryModal(type, id, label) {
       return;
     }
 
+    const role = currentUser?.role;
+    const username = currentUser?.username;
+    const canDeleteAll = role === 'supervisor' || role === 'admin';
+
     const cols = HIST_COLS[type] || [];
     const headCells = cols.map(c => `<th>${c.label}</th>`).join('');
-    const bodyRows  = rows.map(r => {
+
+    const table = document.createElement('table');
+    table.className = 'hist-table';
+    table.innerHTML = `<thead><tr><th>Date</th>${headCells}<th>Notes</th><th></th></tr></thead><tbody></tbody>`;
+    const tbody = table.querySelector('tbody');
+
+    rows.forEach(r => {
       const d = fmtDate(r.reading_date);
       const t = r.reading_time ? r.reading_time.slice(0, 5) : '';
       const valCells = cols.map(c => `<td>${r[c.key] != null ? r[c.key] : '—'}</td>`).join('');
-      return `<tr>
+
+      const showDel = canDeleteAll ||
+        (role === 'operator' && r.entered_by === username && isWithin24h(r.reading_date, r.reading_time));
+
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
         <td>${d}${t ? `<div class="hist-time">${t}</div>` : ''}</td>
         ${valCells}
         <td class="hist-notes">${r.notes || ''}</td>
-      </tr>`;
-    }).join('');
+        <td>${showDel ? `<button class="hist-del-btn" data-id="${r.id}">🗑</button>` : ''}</td>`;
+      tbody.appendChild(tr);
 
-    body.innerHTML = `
-      <table class="hist-table">
-        <thead><tr><th>Date</th>${headCells}<th>Notes</th></tr></thead>
-        <tbody>${bodyRows}</tbody>
-      </table>`;
+      if (showDel) {
+        tr.querySelector('.hist-del-btn').addEventListener('click', async () => {
+          if (!confirm('Delete this reading?')) return;
+          try {
+            await api('DELETE', `/api/history/${type}/${r.id}`);
+            tr.remove();
+            if (!tbody.children.length) {
+              body.innerHTML = '<div class="placeholder-msg" style="padding:16px">No history found.</div>';
+            }
+          } catch (err) {
+            alert('Delete failed: ' + err.message);
+          }
+        });
+      }
+    });
+
+    body.innerHTML = '';
+    body.appendChild(table);
   } catch (err) {
     body.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light);padding:16px">${err.message}</div>`;
   }

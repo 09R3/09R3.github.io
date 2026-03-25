@@ -645,49 +645,95 @@ app.get('/api/history', requireAuth, async (req, res) => {
     const LIMIT = 5;
     if (type === 'pump') {
       ({ rows } = await pool.query(
-        `SELECT reading_date, reading_time, hour_reading AS value, notes
+        `SELECT reading_id AS id, reading_date, reading_time, hour_reading AS value, entered_by, notes
          FROM readings_pump_hours WHERE position_id = $1
          ORDER BY reading_date DESC, reading_time DESC LIMIT $2`, [id, LIMIT]));
     } else if (type === 'compressor') {
       ({ rows } = await pool.query(
-        `SELECT reading_date, reading_time, hour_reading AS value, notes
+        `SELECT reading_id AS id, reading_date, reading_time, hour_reading AS value, entered_by, notes
          FROM readings_compressor_hours WHERE compressor_id = $1
          ORDER BY reading_date DESC, reading_time DESC LIMIT $2`, [id, LIMIT]));
     } else if (type === 'pge') {
       ({ rows } = await pool.query(
-        `SELECT reading_date, reading_time, kwh_reading AS value, notes
+        `SELECT reading_id AS id, reading_date, reading_time, kwh_reading AS value, entered_by, notes
          FROM readings_pge_meters WHERE pge_meter_id = $1
          ORDER BY reading_date DESC, reading_time DESC LIMIT $2`, [id, LIMIT]));
     } else if (type === 'monitor') {
       ({ rows } = await pool.query(
-        `SELECT reading_date, reading_time, kwh_reading AS value, notes
+        `SELECT reading_id AS id, reading_date, reading_time, kwh_reading AS value, entered_by, notes
          FROM readings_power_monitors WHERE monitor_id = $1
          ORDER BY reading_date DESC, reading_time DESC LIMIT $2`, [id, LIMIT]));
     } else if (type === 'well') {
       ({ rows } = await pool.query(
-        `SELECT reading_date, reading_time, hour_reading, flow_cfs, totalizer, notes
+        `SELECT reading_id AS id, reading_date, reading_time, hour_reading, flow_cfs, totalizer, entered_by, notes
          FROM readings_well WHERE well_id = $1
          ORDER BY reading_date DESC, reading_time DESC LIMIT $2`, [id, LIMIT]));
     } else if (type === 'kf') {
       ({ rows } = await pool.query(
-        `SELECT reading_date, reading_time, dtw_reading AS value, plopper_sounder AS method, notes
+        `SELECT kf_reading_id AS id, reading_date, reading_time, dtw_reading AS value, plopper_sounder AS method, NULL AS entered_by, notes
          FROM readings_kf_monthly WHERE well_id = $1
          ORDER BY reading_date DESC, reading_time DESC LIMIT $2`, [id, LIMIT]));
     } else if (type === 'canal') {
       ({ rows } = await pool.query(
-        `SELECT reading_date, reading_time, instantaneous_flow_cfs AS flow,
-                totalizer_reading_af AS totalizer, gate_setting, notes
+        `SELECT reading_id AS id, reading_date, reading_time, instantaneous_flow_cfs AS flow,
+                totalizer_reading_af AS totalizer, gate_setting, entered_by, notes
          FROM readings_canal WHERE structure_id = $1
          ORDER BY reading_date DESC, reading_time DESC LIMIT $2`, [id, LIMIT]));
     } else if (type === 'vehicle') {
       ({ rows } = await pool.query(
-        `SELECT reading_date, reading_time, odometer_miles, engine_hours, notes
+        `SELECT reading_id AS id, reading_date, reading_time, odometer_miles, engine_hours, entered_by, notes
          FROM readings_vehicle_monthly WHERE vehicle_id = $1
          ORDER BY reading_date DESC, reading_time DESC LIMIT $2`, [id, LIMIT]));
     } else {
       return res.status(400).json({ error: 'unknown type' });
     }
     res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Delete History Reading ─────────────────────────────────────────────────────
+app.delete('/api/history/:type/:id', requireAuth, async (req, res) => {
+  const { type, id } = req.params;
+  const TABLE_MAP = {
+    pump:       { table: 'readings_pump_hours',       pk: 'reading_id' },
+    compressor: { table: 'readings_compressor_hours', pk: 'reading_id' },
+    pge:        { table: 'readings_pge_meters',       pk: 'reading_id' },
+    monitor:    { table: 'readings_power_monitors',   pk: 'reading_id' },
+    well:       { table: 'readings_well',             pk: 'reading_id' },
+    kf:         { table: 'readings_kf_monthly',       pk: 'kf_reading_id' },
+    canal:      { table: 'readings_canal',            pk: 'reading_id' },
+    vehicle:    { table: 'readings_vehicle_monthly',  pk: 'reading_id' },
+  };
+  const map = TABLE_MAP[type];
+  if (!map) return res.status(400).json({ error: 'unknown type' });
+
+  const role = req.user.role;
+  const username = req.user.username;
+
+  try {
+    if (role === 'operator') {
+      // Operators may only delete their own readings submitted within the last 24 hours
+      const { rows } = await pool.query(
+        `DELETE FROM ${map.table}
+         WHERE ${map.pk} = $1
+           AND entered_by = $2
+           AND (reading_date + COALESCE(reading_time, '00:00'::time)) >= NOW() - INTERVAL '24 hours'
+         RETURNING ${map.pk}`,
+        [id, username]
+      );
+      if (!rows.length) return res.status(403).json({ error: 'Not authorized or outside 24-hour window' });
+    } else if (role === 'supervisor' || role === 'admin') {
+      const { rows } = await pool.query(
+        `DELETE FROM ${map.table} WHERE ${map.pk} = $1 RETURNING ${map.pk}`,
+        [id]
+      );
+      if (!rows.length) return res.status(404).json({ error: 'Reading not found' });
+    } else {
+      return res.status(403).json({ error: 'Insufficient permissions' });
+    }
+    res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

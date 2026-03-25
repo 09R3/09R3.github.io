@@ -628,6 +628,16 @@ html, body {
 .hist-table tbody tr:hover td { background: var(--surface2); }
 .hist-time { font-size: 0.75rem; color: var(--text-muted); margin-top: 2px; }
 .hist-notes { color: var(--text-dim); font-style: italic; max-width: 160px; }
+.hist-del-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 1rem;
+  padding: 2px 4px;
+  opacity: 0.5;
+  line-height: 1;
+}
+.hist-del-btn:hover { opacity: 1; }
 
 .pp-save-row {
   display: flex;
