@@ -170,7 +170,6 @@ select { cursor: pointer; }
 
 .loading-tables { padding: 20px 16px; color: var(--text-muted); font-size: 13px; }
 
-.sidebar-footer { padding: 12px; border-top: 1px solid var(--border); }
 
 /* ── Main Content ── */
 .main {
