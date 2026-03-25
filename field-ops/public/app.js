@@ -36,8 +36,10 @@ function fmt(val, decimals = 1) {
 
 function fmtDate(dateStr) {
   if (!dateStr) return '';
-  const d = new Date(dateStr);
-  return `${d.getMonth() + 1}/${d.getDate()}/${String(d.getFullYear()).slice(2)}`;
+  // Slice to YYYY-MM-DD first — avoids UTC-midnight timezone shift
+  // when pg returns DATE as a full ISO string like "2026-03-23T00:00:00.000Z"
+  const [y, m, d] = String(dateStr).slice(0, 10).split('-');
+  return `${parseInt(m)}/${parseInt(d)}/${String(y).slice(2)}`;
 }
 
 async function api(method, path, body) {
@@ -92,8 +94,8 @@ function makeCollapsibleSection(title, items) {
 // Returns { diff, cfs, elapsedDays } or null if not computable
 function totalizerCFS(prevVal, prevDate, prevTime, curVal, curDate, curTime) {
   if (prevVal == null || !prevDate || isNaN(curVal)) return null;
-  const prevDT    = new Date(`${prevDate}T${(prevTime || '00:00').slice(0,5)}:00`);
-  const curDT     = new Date(`${curDate}T${(curTime  || '00:00').slice(0,5)}:00`);
+  const prevDT    = new Date(`${String(prevDate).slice(0,10)}T${(prevTime || '00:00').slice(0,5)}:00`);
+  const curDT     = new Date(`${String(curDate).slice(0,10)}T${(curTime  || '00:00').slice(0,5)}:00`);
   const elapsedSec = (curDT - prevDT) / 1000;
   if (elapsedSec <= 0) return null;
   const diff       = curVal - Number(prevVal);
