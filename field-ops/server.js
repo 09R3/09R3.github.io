@@ -803,6 +803,14 @@ app.get('/api/equipment/:type', requireAuth, async (req, res) => {
         WHERE LOWER(ac.status) != 'inactive' OR ac.status IS NULL
         ORDER BY b.building_letter
       `));
+    } else if (type === 'siphon_breaker') {
+      ({ rows } = await pool.query(`
+        SELECT siphon_breaker_id::text AS id,
+          name || CASE WHEN location IS NOT NULL AND location != '' THEN ' (' || location || ')' ELSE '' END AS name
+        FROM siphon_breakers
+        WHERE LOWER(status) != 'inactive' OR status IS NULL
+        ORDER BY name
+      `));
     } else {
       rows = [];
     }
