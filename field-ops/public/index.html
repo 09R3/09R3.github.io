@@ -231,6 +231,7 @@
           <button class="seg-btn active" data-val="equipment">Equipment</button>
           <button class="seg-btn" data-val="vehicle">Vehicle</button>
           <button class="seg-btn" data-val="building">Building</button>
+          <button class="seg-btn" data-val="swap">SB Swap</button>
         </div>
       </div>
 
@@ -329,7 +330,40 @@
         <textarea id="maint-resolution-notes" class="ctrl-textarea" rows="2" placeholder="Describe how the issue was resolved…"></textarea>
       </div>
 
+      <!-- Siphon Breaker Swap fields -->
+      <div id="maint-swap-fields" class="hidden">
+        <p class="swap-info">Swapping a unit updates both records in the database and logs the swap history.</p>
+        <div class="form-group">
+          <label>Swap Date</label>
+          <input type="date" id="swap-date" class="ctrl-input">
+        </div>
+        <div class="form-group">
+          <label>Active Unit Being Removed</label>
+          <select id="swap-remove-select" class="ctrl-select">
+            <option value="">Select active unit…</option>
+          </select>
+          <div id="swap-location-hint" class="swap-location-hint hidden"></div>
+        </div>
+        <div class="form-group">
+          <label>Spare Being Installed</label>
+          <select id="swap-install-select" class="ctrl-select">
+            <option value="">Select spare…</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Performed By</label>
+          <input type="text" id="swap-performed-by" class="ctrl-input" placeholder="Name">
+        </div>
+        <div class="form-group">
+          <label>Notes</label>
+          <textarea id="swap-notes" class="ctrl-textarea" rows="2" placeholder="Optional notes…"></textarea>
+        </div>
+        <div id="swap-error" class="error-msg hidden"></div>
+        <button class="btn btn-save btn-full" id="swap-save-btn">Complete Swap</button>
+      </div>
+
       <!-- Common fields -->
+      <div id="maint-common-fields">
       <div class="two-col">
         <div class="form-group">
           <label>Work Date</label>
@@ -389,6 +423,7 @@
       </div>
       <div id="maint-error" class="error-msg hidden"></div>
       <button class="btn btn-save btn-full" id="maint-save-btn">Save Maintenance Record</button>
+      </div><!-- /maint-common-fields -->
     </div>
   </div>
 

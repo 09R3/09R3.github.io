@@ -820,6 +820,68 @@ app.get('/api/equipment/:type', requireAuth, async (req, res) => {
   }
 });
 
+// ── Siphon Breaker Units (for swap form) ──────────────────────────────────────
+app.get('/api/siphon-breakers/units', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT pump_unit_id AS id, manufacturer, model_number, current_location, status,
+        'SB-' || current_location || ' (' || manufacturer || ' ' || model_number || ')' AS name
+      FROM siphon_breakers
+      WHERE LOWER(status) != 'inactive'
+      ORDER BY status, current_location
+    `);
+    const active = rows.filter(r => r.status?.toLowerCase() === 'active');
+    const spares = rows.filter(r => r.status?.toLowerCase() === 'spare');
+    res.json({ active, spares });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/siphon-breakers/swap', requireAuth, async (req, res) => {
+  const { remove_id, install_id, swap_date, performed_by, notes } = req.body;
+  if (!remove_id || !install_id || !swap_date) {
+    return res.status(400).json({ error: 'remove_id, install_id, and swap_date are required' });
+  }
+  if (remove_id === install_id) {
+    return res.status(400).json({ error: 'Cannot swap a unit with itself' });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    // Get the removed unit's current location
+    const { rows: [removed] } = await client.query(
+      'SELECT current_location FROM siphon_breakers WHERE pump_unit_id = $1', [remove_id]
+    );
+    if (!removed) throw new Error('Removed unit not found');
+    const location = removed.current_location;
+    // Move removed unit to spare
+    await client.query(
+      `UPDATE siphon_breakers SET status = 'Spare', current_location = NULL WHERE pump_unit_id = $1`,
+      [remove_id]
+    );
+    // Install spare at the freed location
+    await client.query(
+      `UPDATE siphon_breakers SET status = 'active', current_location = $1 WHERE pump_unit_id = $2`,
+      [location, install_id]
+    );
+    // Log the swap
+    await client.query(
+      `INSERT INTO siphon_breaker_swaps
+         (swap_date, location, unit_removed_id, unit_installed_id, performed_by, notes, entered_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [swap_date, location, remove_id, install_id, performed_by || null, notes || null, req.user.username]
+    );
+    await client.query('COMMIT');
+    res.json({ ok: true, location });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
 // ── Dashboard stats ───────────────────────────────────────────────────────────
 app.get('/api/dashboard/stats', requireAuth, async (req, res) => {
   try {

@@ -858,6 +858,22 @@ html, body {
   margin-top: 4px;
 }
 
+/* ── Siphon Breaker Swap ─────────────────────────────────────────────────── */
+.swap-info {
+  font-size: 0.83rem;
+  color: var(--text-muted);
+  background: var(--surface2);
+  border-radius: 7px;
+  padding: 9px 12px;
+  margin-bottom: 12px;
+}
+.swap-location-hint {
+  margin-top: 6px;
+  font-size: 0.82rem;
+  color: var(--accent);
+  font-style: italic;
+}
+
 /* ── Pending Sync Card ───────────────────────────────────────────────────── */
 .pending-sync-card {
   background: var(--surface);

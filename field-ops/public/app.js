@@ -1368,6 +1368,7 @@ async function initMaintenanceScreen() {
   if (maintLoaded) return;
   maintLoaded = true;
   el('maint-date').value = todayISO();
+  el('swap-date').value  = todayISO();
 
   // Load vehicles for maintenance dropdown
   try {
@@ -1426,9 +1427,13 @@ document.querySelectorAll('#maint-type-seg .seg-btn').forEach(btn => {
     document.querySelectorAll('#maint-type-seg .seg-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     maintType = btn.dataset.val;
+    const isSwap = maintType === 'swap';
     el('maint-equipment-fields').classList.toggle('hidden', maintType !== 'equipment');
     el('maint-vehicle-fields').classList.toggle('hidden', maintType !== 'vehicle');
     el('maint-building-fields').classList.toggle('hidden', maintType !== 'building');
+    el('maint-swap-fields').classList.toggle('hidden', !isSwap);
+    el('maint-common-fields').classList.toggle('hidden', isSwap);
+    if (isSwap) loadSBUnitsForSwap();
   });
 });
 
@@ -1466,6 +1471,82 @@ el('maint-site-select').addEventListener('change', async () => {
       buildingSel.appendChild(opt);
     });
   } catch { /* non-critical */ }
+});
+
+/* ── Siphon Breaker Swap ─────────────────────────────────────────────────── */
+let sbUnits = { active: [], spares: [] };
+
+async function loadSBUnitsForSwap() {
+  try {
+    sbUnits = await api('GET', '/api/siphon-breakers/units');
+    const removeSel = el('swap-remove-select');
+    const installSel = el('swap-install-select');
+    removeSel.innerHTML = '<option value="">Select active unit…</option>';
+    installSel.innerHTML = '<option value="">Select spare…</option>';
+    sbUnits.active.forEach(u => {
+      const opt = document.createElement('option');
+      opt.value = u.id;
+      opt.textContent = u.name;
+      opt.dataset.location = u.current_location || '';
+      removeSel.appendChild(opt);
+    });
+    sbUnits.spares.forEach(u => {
+      const opt = document.createElement('option');
+      opt.value = u.id;
+      opt.textContent = u.name;
+      installSel.appendChild(opt);
+    });
+  } catch (err) {
+    showToast('Failed to load SB units: ' + err.message, 'error');
+  }
+}
+
+el('swap-remove-select').addEventListener('change', () => {
+  const sel = el('swap-remove-select');
+  const opt = sel.options[sel.selectedIndex];
+  const hint = el('swap-location-hint');
+  if (opt && opt.dataset.location) {
+    hint.textContent = `Will be removed from location ${opt.dataset.location}`;
+    hint.classList.remove('hidden');
+  } else {
+    hint.classList.add('hidden');
+  }
+});
+
+el('swap-save-btn').addEventListener('click', async () => {
+  clearError('swap-error');
+  const remove_id  = parseInt(el('swap-remove-select').value);
+  const install_id = parseInt(el('swap-install-select').value);
+  const swap_date  = el('swap-date').value;
+  if (!remove_id)  return showError('swap-error', 'Select the unit being removed');
+  if (!install_id) return showError('swap-error', 'Select the spare being installed');
+  if (!swap_date)  return showError('swap-error', 'Swap date is required');
+
+  const btn = el('swap-save-btn');
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try {
+    const r = await api('POST', '/api/siphon-breakers/swap', {
+      remove_id, install_id, swap_date,
+      performed_by: el('swap-performed-by').value.trim() || null,
+      notes: el('swap-notes').value.trim() || null,
+    }, 'SB Swap');
+    if (r.queued) {
+      showToast('Swap queued offline — will sync when connected', 'warn');
+    } else {
+      showToast(`Swap complete — SB now at location ${r.location}`, 'success');
+    }
+    // Reset form
+    el('swap-remove-select').value = '';
+    el('swap-install-select').value = '';
+    el('swap-notes').value = '';
+    el('swap-location-hint').classList.add('hidden');
+    // Reload units so dropdowns reflect the change
+    if (!r.queued) loadSBUnitsForSwap();
+  } catch (err) {
+    showError('swap-error', err.message);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Complete Swap';
+  }
 });
 
 el('maint-save-btn').addEventListener('click', async () => {
