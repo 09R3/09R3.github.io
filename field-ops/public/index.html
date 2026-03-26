@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
   <title>Field Ops</title>
+  <link rel="manifest" href="/manifest.json">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -116,6 +117,16 @@
   <!-- ── Dashboard ──────────────────────────────────────────────────────────── -->
   <div id="screen-dashboard" class="screen-content">
     <div id="dashboard-stats" class="stats-grid"></div>
+    <div id="pending-sync-card" class="pending-sync-card hidden">
+      <div class="pending-sync-header">
+        <span>&#128228; Pending Sync &mdash; <strong id="pending-count">0</strong> item(s)</span>
+        <div class="pending-sync-actions">
+          <button id="export-pending-btn" class="btn btn-sm btn-secondary">Export</button>
+          <button id="sync-now-btn" class="btn btn-sm btn-primary">Sync Now</button>
+        </div>
+      </div>
+      <div id="pending-list" class="pending-list"></div>
+    </div>
     <div class="dashboard-grid">
       <button class="dash-tile" data-screen="pumping-plant">
         <span class="dash-icon">&#128167;</span>
@@ -469,5 +480,8 @@
 <div id="toast" class="toast hidden"></div>
 
 <script src="app.js"></script>
+<script>
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');
+</script>
 </body>
 </html>

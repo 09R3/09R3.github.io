@@ -42,14 +42,107 @@ function fmtDate(dateStr) {
   return `${parseInt(m)}/${parseInt(d)}/${String(y).slice(2)}`;
 }
 
-async function api(method, path, body) {
+async function api(method, path, body, offlineLabel) {
   const opts = { method, headers: { 'Content-Type': 'application/json' } };
   if (body !== undefined) opts.body = JSON.stringify(body);
-  const res = await fetch(path, opts);
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-  return data;
+  try {
+    const res = await fetch(path, opts);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    return data;
+  } catch (err) {
+    if (method === 'POST' && offlineLabel && (!navigator.onLine || err instanceof TypeError)) {
+      await offlineEnqueue(path, body, offlineLabel);
+      return { ok: true, queued: true };
+    }
+    throw err;
+  }
 }
+
+/* ── Offline Queue (IndexedDB) ───────────────────────────────────────────── */
+function openOfflineDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open('field-ops-offline', 1);
+    req.onupgradeneeded = e =>
+      e.target.result.createObjectStore('queue', { keyPath: 'id', autoIncrement: true });
+    req.onsuccess = e => resolve(e.target.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function offlineEnqueue(endpoint, body, label) {
+  const db = await openOfflineDB();
+  await new Promise((res, rej) => {
+    const tx = db.transaction('queue', 'readwrite');
+    tx.objectStore('queue').add({
+      endpoint, body, label,
+      queued_at: new Date().toISOString(),
+      username: currentUser?.username,
+    });
+    tx.oncomplete = res; tx.onerror = () => rej(tx.error);
+  });
+  refreshPendingSync();
+}
+async function offlineGetAll() {
+  const db = await openOfflineDB();
+  return new Promise((res, rej) => {
+    const req = db.transaction('queue', 'readonly').objectStore('queue').getAll();
+    req.onsuccess = () => res(req.result);
+    req.onerror = () => rej(req.error);
+  });
+}
+async function offlineRemove(id) {
+  const db = await openOfflineDB();
+  return new Promise((res, rej) => {
+    const tx = db.transaction('queue', 'readwrite');
+    tx.objectStore('queue').delete(id);
+    tx.oncomplete = res; tx.onerror = () => rej(tx.error);
+  });
+}
+async function refreshPendingSync() {
+  try {
+    const items = await offlineGetAll();
+    const card = el('pending-sync-card');
+    if (!items.length) { card.classList.add('hidden'); return; }
+    card.classList.remove('hidden');
+    el('pending-count').textContent = items.length;
+    el('pending-list').innerHTML = items.map(i => {
+      const d = i.queued_at ? fmtDate(i.queued_at.slice(0, 10)) : '';
+      const t = i.queued_at ? i.queued_at.slice(11, 16) : '';
+      return `<div class="pending-item">
+        <span>${i.label}</span>
+        <span class="pending-time">${d}${t ? ' ' + t : ''}</span>
+      </div>`;
+    }).join('');
+  } catch { /* non-critical */ }
+}
+async function syncPendingQueue() {
+  const btn = el('sync-now-btn');
+  btn.disabled = true; btn.textContent = 'Syncing…';
+  try {
+    const items = await offlineGetAll();
+    let synced = 0, failed = 0;
+    for (const item of items) {
+      try {
+        const res = await fetch(item.endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(item.body),
+        });
+        if (res.ok) { await offlineRemove(item.id); synced++; }
+        else { failed++; }
+      } catch { failed++; }
+    }
+    if (synced) showToast(`Synced ${synced} item${synced > 1 ? 's' : ''}`, 'success');
+    if (failed) showToast(`${failed} item${failed > 1 ? 's' : ''} failed to sync`, 'error');
+    await refreshPendingSync();
+  } finally {
+    btn.disabled = false; btn.textContent = 'Sync Now';
+  }
+}
+window.addEventListener('online', () => {
+  showToast('Back online — syncing…', 'warn');
+  syncPendingQueue();
+});
 
 function showToast(msg, type = '') {
   const t = el('toast');
@@ -268,7 +361,19 @@ function onLogin(user) {
 
   showScreen('dashboard');
   loadDashboardStats();
+  refreshPendingSync();
 }
+
+/* ── Pending Sync Buttons ────────────────────────────────────────────────── */
+el('sync-now-btn').addEventListener('click', syncPendingQueue);
+el('export-pending-btn').addEventListener('click', async () => {
+  const items = await offlineGetAll();
+  const blob = new Blob([JSON.stringify(items, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `field-ops-pending-${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+});
 
 /* ── Dashboard Stats ─────────────────────────────────────────────────────── */
 async function loadDashboardStats() {
@@ -681,31 +786,36 @@ async function savePPReadings() {
       reading_date: readingDate,
       reading_time: readingTime,
       pump_readings, compressor_readings, pge_readings, monitor_readings,
-    });
+    }, 'Pumping Plant');
 
-    // Mark saved rows green
-    const savedPumps    = new Set(result.saved.pump.map(r => r.position_id));
-    const savedComps    = new Set(result.saved.compressor.map(r => String(r.compressor_id)));
-    const savedPge      = new Set(result.saved.pge.map(r => String(r.pge_meter_id)));
-    const savedMonitors = new Set(result.saved.monitor.map(r => String(r.monitor_id)));
+    if (result.queued) {
+      status.textContent = '⏳ Saved offline — will sync when connected';
+      status.className = 'save-status warn';
+      showToast(`Pumping Plant queued offline`, 'warn');
+    } else {
+      // Mark saved rows green
+      const savedPumps    = new Set(result.saved.pump.map(r => r.position_id));
+      const savedComps    = new Set(result.saved.compressor.map(r => String(r.compressor_id)));
+      const savedPge      = new Set(result.saved.pge.map(r => String(r.pge_meter_id)));
+      const savedMonitors = new Set(result.saved.monitor.map(r => String(r.monitor_id)));
 
-    document.querySelectorAll('.reading-row').forEach(row => {
-      const type = row.dataset.type;
-      const id   = row.dataset.id;
-      const shouldMark =
-        (type === 'pump'       && savedPumps.has(id)) ||
-        (type === 'compressor' && savedComps.has(id)) ||
-        (type === 'pge'        && savedPge.has(id)) ||
-        (type === 'monitor'    && savedMonitors.has(id));
+      document.querySelectorAll('.reading-row').forEach(row => {
+        const type = row.dataset.type;
+        const id   = row.dataset.id;
+        const shouldMark =
+          (type === 'pump'       && savedPumps.has(id)) ||
+          (type === 'compressor' && savedComps.has(id)) ||
+          (type === 'pge'        && savedPge.has(id)) ||
+          (type === 'monitor'    && savedMonitors.has(id));
+        if (shouldMark) row.classList.add('saved');
+      });
 
-      if (shouldMark) row.classList.add('saved');
-    });
-
-    const count = result.saved.pump.length + result.saved.compressor.length +
-                  result.saved.pge.length + result.saved.monitor.length;
-    status.textContent = `✓ ${count} reading${count !== 1 ? 's' : ''} saved`;
-    status.className = 'save-status success';
-    showToast(`Saved ${count} reading${count !== 1 ? 's' : ''}`, 'success');
+      const count = result.saved.pump.length + result.saved.compressor.length +
+                    result.saved.pge.length + result.saved.monitor.length;
+      status.textContent = `✓ ${count} reading${count !== 1 ? 's' : ''} saved`;
+      status.className = 'save-status success';
+      showToast(`Saved ${count} reading${count !== 1 ? 's' : ''}`, 'success');
+    }
   } catch (err) {
     status.textContent = 'Error: ' + err.message;
     status.className = 'save-status error';
@@ -884,13 +994,13 @@ function createWellItem(w, dateInput, timeInput) {
       notes:        div.querySelector('.w-notes').value || null,
     };
     try {
-      await api('POST', '/api/readings/well', body);
+      const r = await api('POST', '/api/readings/well', body, `Well — ${w.common_name}`);
       div.querySelector('.status-dot').className = 'status-dot done';
-      div.querySelector('.status-badge').textContent = 'Just saved';
+      div.querySelector('.status-badge').textContent = r.queued ? 'Offline' : 'Just saved';
       div.querySelector('.status-badge').className = 'status-badge done';
       div.classList.remove('expanded');
       div.querySelector('.list-item-form').style.display = 'none';
-      showToast(`${w.common_name} saved`, 'success');
+      showToast(r.queued ? `${w.common_name} queued offline` : `${w.common_name} saved`, r.queued ? 'warn' : 'success');
     } catch (err) {
       errEl.textContent = err.message;
       errEl.classList.remove('hidden');
@@ -1049,23 +1159,22 @@ function createCanalItem(s, dateInput, timeInput) {
     };
 
     try {
-      await api('POST', '/api/readings/canal', payload);
-      // Update badge with new flow
+      const r = await api('POST', '/api/readings/canal', payload, `Canal — ${s.structure_name}`);
       const newFlow = payload.instantaneous_flow_cfs;
       const badge   = div.querySelector('.status-badge');
-      if (newFlow) {
-        const fl = `${Number(newFlow).toFixed(2)} cfs`;
-        if (badge) { badge.textContent = fl + ' · now'; badge.className = 'status-badge done'; }
-        else {
-          const b = document.createElement('span');
-          b.className = 'status-badge done';
-          b.textContent = fl + ' · now';
-          div.querySelector('.list-item-header').insertBefore(b, div.querySelector('.expand-chevron'));
-        }
+      const badgeText = r.queued
+        ? 'Offline'
+        : (newFlow ? `${Number(newFlow).toFixed(2)} cfs · now` : 'Saved');
+      if (badge) { badge.textContent = badgeText; badge.className = 'status-badge done'; }
+      else {
+        const b = document.createElement('span');
+        b.className = 'status-badge done';
+        b.textContent = badgeText;
+        div.querySelector('.list-item-header').insertBefore(b, div.querySelector('.expand-chevron'));
       }
       div.classList.remove('expanded');
       div.querySelector('.list-item-form').style.display = 'none';
-      showToast(`${s.structure_name} saved`, 'success');
+      showToast(r.queued ? `${s.structure_name} queued offline` : `${s.structure_name} saved`, r.queued ? 'warn' : 'success');
     } catch (err) {
       errEl.textContent = err.message;
       errEl.classList.remove('hidden');
@@ -1205,20 +1314,20 @@ function createVehicleItem(v, dateInput, timeInput) {
       notes:          div.querySelector('.v-notes').value || null,
     };
     try {
-      await api('POST', '/api/readings/vehicle-monthly', body);
+      const r = await api('POST', '/api/readings/vehicle-monthly', body, `Vehicle — ${label}`);
       div.classList.remove('expanded');
       div.querySelector('.list-item-form').style.display = 'none';
-      // Flip status to green
       div.querySelector('.status-dot').className   = 'status-dot done';
-      div.querySelector('.status-badge').textContent = 'Today';
+      div.querySelector('.status-badge').textContent = r.queued ? 'Offline' : 'Today';
       div.querySelector('.status-badge').className   = 'status-badge done';
-      // Update meta preview
-      const odoVal  = body.odometer_miles ? `${Number(body.odometer_miles).toLocaleString()} mi` : lastOdo;
-      const hrsVal  = body.engine_hours   ? `${Number(body.engine_hours).toFixed(1)} hrs`       : lastHrs;
-      const newPrev = [odoVal, hrsVal].filter(Boolean).join(' / ');
-      const meta = div.querySelector('.list-item-meta span');
-      if (meta && newPrev) meta.textContent = `Prev: ${newPrev}`;
-      showToast(`${label} saved`, 'success');
+      if (!r.queued) {
+        const odoVal  = body.odometer_miles ? `${Number(body.odometer_miles).toLocaleString()} mi` : lastOdo;
+        const hrsVal  = body.engine_hours   ? `${Number(body.engine_hours).toFixed(1)} hrs`       : lastHrs;
+        const newPrev = [odoVal, hrsVal].filter(Boolean).join(' / ');
+        const meta = div.querySelector('.list-item-meta span');
+        if (meta && newPrev) meta.textContent = `Prev: ${newPrev}`;
+      }
+      showToast(r.queued ? `${label} queued offline` : `${label} saved`, r.queued ? 'warn' : 'success');
     } catch (err) {
       errEl.textContent = err.message;
       errEl.classList.remove('hidden');
@@ -1354,36 +1463,37 @@ el('maint-save-btn').addEventListener('click', async () => {
   };
 
   try {
+    let r;
     if (maintType === 'equipment') {
-      await api('POST', '/api/maintenance/equipment', {
+      r = await api('POST', '/api/maintenance/equipment', {
         ...common,
         equipment_type:    el('maint-equip-type').value,
         equipment_id:      parseInt(el('maint-equip-select').value) || null,
         location_at_time:  el('maint-equip-loc').value || null,
         hours_at_service:  el('maint-equip-hours').value || null,
-      });
+      }, 'Maintenance — Equipment');
     } else if (maintType === 'vehicle') {
       const vehicleId = el('maint-vehicle-select').value;
       if (!vehicleId) return showError('maint-error', 'Please select a vehicle');
-      await api('POST', '/api/maintenance/vehicle', {
+      r = await api('POST', '/api/maintenance/vehicle', {
         ...common,
         vehicle_id:               parseInt(vehicleId),
         odometer_at_service:      el('maint-vehicle-odometer').value || null,
         engine_hours_at_service:  el('maint-vehicle-hours').value || null,
-      });
+      }, 'Maintenance — Vehicle');
     } else {
       const buildingId = el('maint-building-select').value;
       if (!buildingId) return showError('maint-error', 'Please select a building');
-      await api('POST', '/api/maintenance/building', {
+      r = await api('POST', '/api/maintenance/building', {
         ...common,
         building_id:      parseInt(buildingId),
         record_type:      el('maint-building-record-type').value,
         severity:         el('maint-severity').value || null,
         status:           el('maint-status').value || null,
         resolution_notes: el('maint-resolution-notes').value || null,
-      });
+      }, 'Maintenance — Building');
     }
-    showToast('Maintenance record saved', 'success');
+    showToast(r.queued ? 'Maintenance queued offline' : 'Maintenance record saved', r.queued ? 'warn' : 'success');
     // Clear key fields
     el('maint-description').value = '';
     el('maint-parts').value = '';
@@ -1594,26 +1704,27 @@ function createKFItem(w, dateInput, timeInput) {
       notes:           div.querySelector('.kf-notes').value || null,
     };
     try {
-      await api('POST', '/api/readings/kf-monthly', body);
+      const r = await api('POST', '/api/readings/kf-monthly', body, `KF — ${w.common_name}`);
       div.querySelector('.status-dot').className = 'status-dot done';
-      div.querySelector('.status-badge').textContent = 'Today';
+      div.querySelector('.status-badge').textContent = r.queued ? 'Offline' : 'Today';
       div.querySelector('.status-badge').className = 'status-badge done';
       div.classList.remove('expanded');
       div.querySelector('.list-item-form').style.display = 'none';
-      // Update prev meta
-      const method = div.querySelector('.kf-method').value;
-      const newPrev = [
-        `${Number(dtw).toFixed(2)} ft`,
-        method ? method.charAt(0).toUpperCase() + method.slice(1) : null,
-      ].filter(Boolean).join(' · ');
-      let meta = div.querySelector('.list-item-meta');
-      if (!meta) {
-        meta = document.createElement('div');
-        meta.className = 'list-item-meta';
-        div.querySelector('.list-item-header').after(meta);
+      if (!r.queued) {
+        const method = div.querySelector('.kf-method').value;
+        const newPrev = [
+          `${Number(dtw).toFixed(2)} ft`,
+          method ? method.charAt(0).toUpperCase() + method.slice(1) : null,
+        ].filter(Boolean).join(' · ');
+        let meta = div.querySelector('.list-item-meta');
+        if (!meta) {
+          meta = document.createElement('div');
+          meta.className = 'list-item-meta';
+          div.querySelector('.list-item-header').after(meta);
+        }
+        meta.innerHTML = `<span>Prev: ${newPrev}</span>`;
       }
-      meta.innerHTML = `<span>Prev: ${newPrev}</span>`;
-      showToast(`${w.common_name} saved`, 'success');
+      showToast(r.queued ? `${w.common_name} queued offline` : `${w.common_name} saved`, r.queued ? 'warn' : 'success');
     } catch (err) {
       errEl.textContent = err.message;
       errEl.classList.remove('hidden');

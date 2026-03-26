@@ -805,6 +805,7 @@ html, body {
 }
 .toast.success { background: #1b3a1b; border-color: var(--green); color: #a5d6a7; }
 .toast.error   { background: #3a1b1b; border-color: var(--red); color: #ef9a9a; }
+.toast.warn    { background: #3a2e0a; border-color: #c77c00; color: #ffd580; }
 
 /* ── Responsive: larger screens ──────────────────────────────────────────── */
 @media (min-width: 520px) {
@@ -856,6 +857,36 @@ html, body {
   letter-spacing: 0.04em;
   margin-top: 4px;
 }
+
+/* ── Pending Sync Card ───────────────────────────────────────────────────── */
+.pending-sync-card {
+  background: var(--surface);
+  border: 1px solid #c77c00;
+  border-radius: 10px;
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+.pending-sync-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 11px 14px;
+  background: rgba(199,124,0,0.12);
+  font-size: 0.9rem;
+  gap: 10px;
+}
+.pending-sync-actions { display: flex; gap: 8px; flex-shrink: 0; }
+.pending-list { padding: 0 14px 6px; }
+.pending-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.83rem;
+}
+.pending-item:last-child { border-bottom: none; }
+.pending-time { color: var(--text-muted); font-size: 0.78rem; white-space: nowrap; margin-left: 8px; }
 
 /* ── List Screens (Wells / Vehicles / KF) ────────────────────────────────── */
 .list-section { margin-bottom: 8px; }
