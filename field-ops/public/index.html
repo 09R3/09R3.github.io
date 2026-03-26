@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <title>Field Ops</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ── Login Screen ─────────────────────────────────────────────────────────── -->
+<div id="screen-login" class="screen active">
+  <div class="login-wrap">
+    <div class="login-card">
+      <div class="login-logo">Field Ops</div>
+      <div class="login-subtitle">Operator Portal</div>
+      <div class="db-status-row">
+        <span class="db-dot" id="db-dot"></span>
+        <span class="db-status-text" id="db-status-text">Checking database…</span>
+        <button class="db-gear-btn" id="db-gear-btn" title="Database Settings">&#9881;</button>
+      </div>
+      <form id="login-form">
+        <div class="form-group">
+          <label>Username</label>
+          <select id="login-username" class="ctrl-select" required>
+            <option value="">Select user…</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Password</label>
+          <input type="password" id="login-password" class="ctrl-input" autocomplete="current-password" required>
+        </div>
+        <div id="login-error" class="error-msg hidden"></div>
+        <button type="submit" class="btn btn-primary btn-full">Sign In</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- ── DB Settings Modal ─────────────────────────────────────────────────────── -->
+<div id="db-modal" class="modal-overlay hidden">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h2>Database Settings</h2>
+      <button class="modal-close" id="db-modal-close">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p class="db-modal-note">
+        Test your connection here. To save changes permanently, update your
+        <code>.env</code> file and redeploy.
+      </p>
+      <div class="two-col">
+        <div class="form-group">
+          <label>Host</label>
+          <input type="text" id="db-host" class="ctrl-input" placeholder="192.168.1.100">
+        </div>
+        <div class="form-group">
+          <label>Port</label>
+          <input type="number" id="db-port" class="ctrl-input" placeholder="5432">
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Database Name</label>
+        <input type="text" id="db-name" class="ctrl-input" placeholder="your_database">
+      </div>
+      <div class="two-col">
+        <div class="form-group">
+          <label>Username</label>
+          <input type="text" id="db-user" class="ctrl-input" autocapitalize="none">
+        </div>
+        <div class="form-group">
+          <label>Password</label>
+          <input type="password" id="db-password" class="ctrl-input">
+        </div>
+      </div>
+      <div id="db-test-result" class="db-test-result hidden"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" id="db-modal-cancel">Close</button>
+      <button class="btn btn-primary" id="db-test-btn">Test Connection</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── App Shell (all authenticated screens) ────────────────────────────────── -->
+<div id="app-shell" class="hidden">
+
+  <!-- Top Navigation Bar -->
+  <header class="app-header">
+    <button class="hamburger" id="menu-toggle" aria-label="Menu">&#9776;</button>
+    <h1 class="app-title" id="screen-title">Field Ops</h1>
+    <div class="user-badge" id="user-badge"></div>
+  </header>
+
+  <!-- Side Drawer -->
+  <div class="drawer-overlay" id="drawer-overlay"></div>
+  <nav class="drawer" id="drawer">
+    <div class="drawer-header">
+      <div class="drawer-user" id="drawer-user"></div>
+    </div>
+    <ul class="drawer-nav">
+      <li><button class="nav-btn" data-screen="dashboard">&#127968; Dashboard</button></li>
+      <li><button class="nav-btn" data-screen="pumping-plant">&#128167; Pumping Plant Readings</button></li>
+      <li><button class="nav-btn" data-screen="wells">&#128204; Well Readings</button></li>
+      <li><button class="nav-btn" data-screen="canal">&#127754; Canal Readings</button></li>
+      <li><button class="nav-btn" data-screen="vehicles">&#128664; Vehicle Monthly</button></li>
+      <li><button class="nav-btn" data-screen="kf-monthly">&#128200; KF Monthly</button></li>
+      <li><button class="nav-btn" data-screen="maintenance">&#128295; Maintenance Log</button></li>
+      <li class="nav-admin hidden" id="nav-admin-item"><button class="nav-btn" data-screen="admin">&#9881;&#65039; Admin</button></li>
+    </ul>
+    <div class="drawer-footer">
+      <button class="nav-btn nav-logout" id="logout-btn">&#x2192; Sign Out</button>
+    </div>
+  </nav>
+
+  <!-- ── Dashboard ──────────────────────────────────────────────────────────── -->
+  <div id="screen-dashboard" class="screen-content">
+    <div id="dashboard-stats" class="stats-grid"></div>
+    <div class="dashboard-grid">
+      <button class="dash-tile" data-screen="pumping-plant">
+        <span class="dash-icon">&#128167;</span>
+        <span class="dash-label">Pumping Plant<br>Readings</span>
+      </button>
+      <button class="dash-tile" data-screen="wells">
+        <span class="dash-icon">&#128204;</span>
+        <span class="dash-label">Well<br>Readings</span>
+      </button>
+      <button class="dash-tile" data-screen="canal">
+        <span class="dash-icon">&#127754;</span>
+        <span class="dash-label">Canal<br>Readings</span>
+      </button>
+      <button class="dash-tile" data-screen="vehicles">
+        <span class="dash-icon">&#128664;</span>
+        <span class="dash-label">Vehicle<br>Monthly</span>
+      </button>
+      <button class="dash-tile" data-screen="kf-monthly">
+        <span class="dash-icon">&#128200;</span>
+        <span class="dash-label">KF Monthly<br>Readings</span>
+      </button>
+      <button class="dash-tile" data-screen="maintenance">
+        <span class="dash-icon">&#128295;</span>
+        <span class="dash-label">Maintenance<br>Log</span>
+      </button>
+      <button class="dash-tile admin-tile hidden" id="dash-admin-tile" data-screen="admin">
+        <span class="dash-icon">&#9881;&#65039;</span>
+        <span class="dash-label">Admin</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- ── Pumping Plant Readings ─────────────────────────────────────────────── -->
+  <div id="screen-pumping-plant" class="screen-content">
+    <div class="date-bar">
+      <span class="ctrl-label">Date</span>
+      <input type="date" id="pp-date" class="ctrl-input ctrl-date">
+      <span class="ctrl-label">Time</span>
+      <input type="time" id="pp-time" class="ctrl-input ctrl-time">
+    </div>
+    <div id="pp-site-tabs" class="set-tabs pp-tabs-inline"></div>
+    <div id="pp-save-bar" class="pp-save-row hidden">
+      <button class="btn btn-save" id="pp-save-btn">Save Readings</button>
+      <span class="save-status" id="pp-save-status"></span>
+    </div>
+    <div id="pp-form-body">
+      <div class="placeholder-msg">Loading plants…</div>
+    </div>
+  </div>
+
+  <!-- ── Well Readings ──────────────────────────────────────────────────────── -->
+  <div id="screen-wells" class="screen-content">
+    <div class="date-bar">
+      <span class="ctrl-label">Date</span>
+      <input type="date" id="well-date" class="ctrl-input ctrl-date">
+      <span class="ctrl-label">Time</span>
+      <input type="time" id="well-time" class="ctrl-input ctrl-time">
+    </div>
+    <div id="well-list-body"><div class="placeholder-msg">Loading wells…</div></div>
+  </div>
+
+  <!-- ── Canal Readings ─────────────────────────────────────────────────────── -->
+  <div id="screen-canal" class="screen-content">
+    <div class="date-bar">
+      <span class="ctrl-label">Date</span>
+      <input type="date" id="canal-date" class="ctrl-input ctrl-date">
+      <span class="ctrl-label">Time</span>
+      <input type="time" id="canal-time" class="ctrl-input ctrl-time">
+    </div>
+    <div id="canal-list-body"><div class="placeholder-msg">Loading structures…</div></div>
+  </div>
+
+  <!-- ── Vehicle Monthly ────────────────────────────────────────────────────── -->
+  <div id="screen-vehicles" class="screen-content">
+    <div class="date-bar">
+      <span class="ctrl-label">Date</span>
+      <input type="date" id="vehicle-date" class="ctrl-input ctrl-date">
+      <span class="ctrl-label">Time</span>
+      <input type="time" id="vehicle-time" class="ctrl-input ctrl-time">
+    </div>
+    <div id="vehicle-list-body"><div class="placeholder-msg">Loading vehicles…</div></div>
+  </div>
+
+  <!-- ── KF Monthly Readings ───────────────────────────────────────────────── -->
+  <div id="screen-kf-monthly" class="screen-content">
+    <div class="date-bar">
+      <span class="ctrl-label">Date</span>
+      <input type="date" id="kf-date" class="ctrl-input ctrl-date">
+      <span class="ctrl-label">Time</span>
+      <input type="time" id="kf-time" class="ctrl-input ctrl-time">
+      <div id="kf-set-tabs" class="set-tabs kf-tabs-inline"></div>
+    </div>
+    <div id="kf-list-body"><div class="placeholder-msg">Loading KF wells…</div></div>
+  </div>
+
+  <!-- ── Maintenance Log ────────────────────────────────────────────────────── -->
+  <div id="screen-maintenance" class="screen-content">
+    <div class="form-card">
+      <div class="form-group">
+        <label>Record Type</label>
+        <div class="seg-group" id="maint-type-seg">
+          <button class="seg-btn active" data-val="equipment">Equipment</button>
+          <button class="seg-btn" data-val="vehicle">Vehicle</button>
+          <button class="seg-btn" data-val="building">Building</button>
+        </div>
+      </div>
+
+      <!-- Equipment fields -->
+      <div id="maint-equipment-fields">
+        <div class="form-group">
+          <label>Equipment Type</label>
+          <select id="maint-equip-type" class="ctrl-select">
+            <option value="pump">Pump</option>
+            <option value="motor">Motor</option>
+            <option value="compressor">Air Compressor</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Equipment</label>
+          <select id="maint-equip-select" class="ctrl-select">
+            <option value="">Select equipment…</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Location at Time</label>
+          <input type="text" id="maint-equip-loc" class="ctrl-input" placeholder="Location">
+        </div>
+        <div class="form-group">
+          <label>Hours at Service</label>
+          <input type="number" id="maint-equip-hours" step="0.1" class="ctrl-input" placeholder="0.0">
+        </div>
+      </div>
+
+      <!-- Vehicle fields -->
+      <div id="maint-vehicle-fields" class="hidden">
+        <div class="form-group">
+          <label>Vehicle</label>
+          <select id="maint-vehicle-select" class="ctrl-select">
+            <option value="">Select vehicle…</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Odometer at Service</label>
+          <input type="number" id="maint-vehicle-odometer" step="1" class="ctrl-input" placeholder="0">
+        </div>
+        <div class="form-group">
+          <label>Engine Hours at Service</label>
+          <input type="number" id="maint-vehicle-hours" step="0.1" class="ctrl-input" placeholder="0.0">
+        </div>
+      </div>
+
+      <!-- Building fields -->
+      <div id="maint-building-fields" class="hidden">
+        <div class="form-group">
+          <label>Site</label>
+          <select id="maint-site-select" class="ctrl-select">
+            <option value="">Select site…</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Building</label>
+          <select id="maint-building-select" class="ctrl-select" disabled>
+            <option value="">Select building…</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Record Type</label>
+          <select id="maint-building-record-type" class="ctrl-select">
+            <option value="repair">Repair</option>
+            <option value="inspection">Inspection</option>
+            <option value="pm">Preventive Maintenance</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Severity</label>
+          <select id="maint-severity" class="ctrl-select">
+            <option value="">None</option>
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+            <option value="critical">Critical</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Work Order Status</label>
+          <select id="maint-status" class="ctrl-select">
+            <option value="open">Open</option>
+            <option value="in_progress">In Progress</option>
+            <option value="on_hold">On Hold</option>
+            <option value="resolved">Resolved</option>
+            <option value="closed">Closed</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-group" id="maint-resolution-group" style="display:none">
+        <label>Resolution Notes</label>
+        <textarea id="maint-resolution-notes" class="ctrl-textarea" rows="2" placeholder="Describe how the issue was resolved…"></textarea>
+      </div>
+
+      <!-- Common fields -->
+      <div class="two-col">
+        <div class="form-group">
+          <label>Work Date</label>
+          <input type="date" id="maint-date" class="ctrl-input">
+        </div>
+        <div class="form-group">
+          <label>Work Type</label>
+          <select id="maint-work-type" class="ctrl-select">
+            <option value="repair">Repair</option>
+            <option value="pm">Preventive Maint.</option>
+            <option value="inspection">Inspection</option>
+            <option value="replacement">Replacement</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+      </div>
+      <div class="two-col">
+        <div class="form-group">
+          <label>Performed By</label>
+          <input type="text" id="maint-performed-by" class="ctrl-input" placeholder="Name">
+        </div>
+        <div class="form-group toggle-row">
+          <label>Contractor?</label>
+          <div class="toggle-group">
+            <button class="toggle-btn" id="maint-contractor-yes" data-val="true">Yes</button>
+            <button class="toggle-btn active" id="maint-contractor-no" data-val="false">No</button>
+          </div>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Description</label>
+        <textarea id="maint-description" class="ctrl-textarea" rows="3" placeholder="Describe the work performed…"></textarea>
+      </div>
+      <div class="two-col">
+        <div class="form-group">
+          <label>Parts Used</label>
+          <input type="text" id="maint-parts" class="ctrl-input" placeholder="Part numbers / description">
+        </div>
+        <div class="form-group">
+          <label>Cost ($)</label>
+          <input type="number" id="maint-cost" step="0.01" class="ctrl-input" placeholder="0.00">
+        </div>
+      </div>
+      <div class="two-col">
+        <div class="form-group">
+          <label>PO Number</label>
+          <input type="text" id="maint-po" class="ctrl-input" placeholder="PO #">
+        </div>
+        <div class="form-group">
+          <label>Next Service Date</label>
+          <input type="date" id="maint-next-service" class="ctrl-input">
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Notes</label>
+        <textarea id="maint-notes" class="ctrl-textarea" rows="2" placeholder="Optional notes…"></textarea>
+      </div>
+      <div id="maint-error" class="error-msg hidden"></div>
+      <button class="btn btn-save btn-full" id="maint-save-btn">Save Maintenance Record</button>
+    </div>
+  </div>
+
+  <!-- ── Admin ──────────────────────────────────────────────────────────────── -->
+  <div id="screen-admin" class="screen-content">
+    <div class="admin-actions">
+      <button class="btn btn-primary" id="admin-add-user-btn">+ Add User</button>
+    </div>
+    <div id="admin-user-list" class="user-list"></div>
+
+    <!-- Add/Edit User Modal -->
+    <div id="user-modal" class="modal-overlay hidden">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h2 id="user-modal-title">Add User</h2>
+          <button class="modal-close" id="user-modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label>Username</label>
+            <input type="text" id="um-username" class="ctrl-input" autocapitalize="none">
+          </div>
+          <div class="form-group">
+            <label>Full Name</label>
+            <input type="text" id="um-fullname" class="ctrl-input">
+          </div>
+          <div class="two-col">
+            <div class="form-group">
+              <label>Initials</label>
+              <input type="text" id="um-initials" class="ctrl-input" maxlength="4">
+            </div>
+            <div class="form-group">
+              <label>Role</label>
+              <select id="um-role" class="ctrl-select">
+                <option value="operator">Operator</option>
+                <option value="supervisor">Supervisor</option>
+                <option value="admin">Admin</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Email</label>
+            <input type="email" id="um-email" class="ctrl-input">
+          </div>
+          <div class="form-group" id="um-password-group">
+            <label>Password</label>
+            <input type="password" id="um-password" class="ctrl-input">
+          </div>
+          <div id="um-error" class="error-msg hidden"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" id="user-modal-cancel">Cancel</button>
+          <button class="btn btn-primary" id="user-modal-save">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /app-shell -->
+
+<!-- Notes Popup Modal -->
+<div id="notes-modal" class="modal-overlay hidden">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h2 id="notes-modal-title">Notes</h2>
+      <button class="modal-close" id="notes-modal-close">&times;</button>
+    </div>
+    <div class="modal-body">
+      <textarea id="notes-modal-text" class="ctrl-textarea notes-ta" rows="5" placeholder="Enter notes…"></textarea>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" id="notes-modal-cancel">Cancel</button>
+      <button class="btn btn-primary" id="notes-modal-ok">OK</button>
+    </div>
+  </div>
+</div>
+
+<!-- History Modal -->
+<div id="history-modal" class="modal-overlay hidden">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h2 id="history-modal-title">Reading History</h2>
+      <button class="modal-close" id="history-modal-close">&times;</button>
+    </div>
+    <div class="modal-body" id="history-modal-body"></div>
+  </div>
+</div>
+
+<!-- Toast notification -->
+<div id="toast" class="toast hidden"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
