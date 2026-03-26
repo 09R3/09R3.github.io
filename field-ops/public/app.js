@@ -1294,6 +1294,7 @@ function createVehicleItem(v, dateInput, timeInput) {
         <div class="form-group">
           <label>Odometer (mi)${lastOdo ? `<span class="prev-hint"> · Prev: ${lastOdo}</span>` : ''}</label>
           <input type="number" class="ctrl-input v-odo" step="1" inputmode="numeric" placeholder="0">
+          <div class="v-service-hint hidden"></div>
         </div>
         <div class="form-group">
           <label>Engine Hours${lastHrs ? `<span class="prev-hint"> · Prev: ${lastHrs}</span>` : ''}</label>
@@ -1312,6 +1313,20 @@ function createVehicleItem(v, dateInput, timeInput) {
     </div>`;
 
   if (v.last_notes) div.querySelector('.v-notes').value = v.last_notes;
+
+  if (v.next_service_miles) {
+    const hint = div.querySelector('.v-service-hint');
+    div.querySelector('.v-odo').addEventListener('input', function() {
+      const cur = parseFloat(this.value);
+      if (isNaN(cur)) { hint.classList.add('hidden'); return; }
+      const remaining = v.next_service_miles - cur;
+      hint.textContent = remaining >= 0
+        ? `${Math.round(remaining).toLocaleString()} mi until service (@ ${Number(v.next_service_miles).toLocaleString()} mi)`
+        : `${Math.abs(Math.round(remaining)).toLocaleString()} mi overdue for service`;
+      hint.className = 'v-service-hint ' + (remaining > 1000 ? 'ok' : remaining >= 0 ? 'due' : 'overdue');
+    });
+  }
+
   div.querySelector('.v-hist-btn').addEventListener('click', e => {
     e.stopPropagation();
     openHistoryModal('vehicle', v.vehicle_id, label);
@@ -1583,6 +1598,7 @@ el('maint-save-btn').addEventListener('click', async () => {
         vehicle_id:               parseInt(vehicleId),
         odometer_at_service:      el('maint-vehicle-odometer').value || null,
         engine_hours_at_service:  el('maint-vehicle-hours').value || null,
+        next_service_miles:       el('maint-vehicle-next-miles').value || null,
       }, 'Maintenance — Vehicle');
     } else {
       const buildingId = el('maint-building-select').value;
@@ -1605,6 +1621,7 @@ el('maint-save-btn').addEventListener('click', async () => {
     el('maint-notes').value = '';
     el('maint-resolution-notes').value = '';
     el('maint-performed-by').value = '';
+    el('maint-vehicle-next-miles').value = '';
   } catch (err) {
     showError('maint-error', err.message);
   }

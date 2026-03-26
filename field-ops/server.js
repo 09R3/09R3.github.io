@@ -749,7 +749,8 @@ app.get('/api/vehicles', requireAuth, async (req, res) => {
         r.odometer_miles  AS last_odometer,
         r.engine_hours    AS last_engine_hours,
         r.reading_date    AS last_reading_date,
-        r.notes           AS last_notes
+        r.notes           AS last_notes,
+        m.next_service_miles
       FROM vehicles v
       LEFT JOIN LATERAL (
         SELECT odometer_miles, engine_hours, reading_date, notes
@@ -758,6 +759,14 @@ app.get('/api/vehicles', requireAuth, async (req, res) => {
         ORDER BY reading_date DESC, reading_time DESC
         LIMIT 1
       ) r ON true
+      LEFT JOIN LATERAL (
+        SELECT next_service_miles
+        FROM maintenance_vehicles
+        WHERE vehicle_id = v.vehicle_id
+          AND next_service_miles IS NOT NULL
+        ORDER BY work_date DESC
+        LIMIT 1
+      ) m ON true
       WHERE LOWER(v.status) != 'inactive' OR v.status IS NULL
       ORDER BY v.vehicle_type, v.vehicle_number
     `);
