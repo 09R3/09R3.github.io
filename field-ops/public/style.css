@@ -166,6 +166,18 @@ html, body {
   flex-shrink: 0;
 }
 .hamburger:hover { background: var(--surface2); }
+.header-refresh-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 1.3rem;
+  cursor: pointer;
+  padding: 8px;
+  border-radius: var(--radius-sm);
+  line-height: 1;
+  flex-shrink: 0;
+}
+.header-refresh-btn:hover { background: var(--surface2); color: var(--text); }
 .app-title {
   flex: 1;
   font-size: 1.1rem;

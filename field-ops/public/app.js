@@ -330,6 +330,7 @@ el('menu-toggle').addEventListener('click', () => {
   el('drawer').classList.contains('open') ? closeDrawer() : openDrawer();
 });
 el('drawer-overlay').addEventListener('click', closeDrawer);
+el('header-refresh-btn').addEventListener('click', () => location.reload());
 
 document.querySelectorAll('.nav-btn[data-screen]').forEach(btn => {
   btn.addEventListener('click', () => showScreen(btn.dataset.screen));
