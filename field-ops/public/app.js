@@ -48,7 +48,13 @@ async function api(method, path, body, offlineLabel) {
   try {
     const res = await fetch(path, opts);
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    if (!res.ok) {
+      if (method === 'POST' && offlineLabel && res.status >= 500) {
+        await offlineEnqueue(path, body, offlineLabel);
+        return { ok: true, queued: true };
+      }
+      throw new Error(data.error || `HTTP ${res.status}`);
+    }
     return data;
   } catch (err) {
     const isNetworkError = !navigator.onLine ||
