@@ -51,7 +51,12 @@ async function api(method, path, body, offlineLabel) {
     if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
     return data;
   } catch (err) {
-    if (method === 'POST' && offlineLabel && (!navigator.onLine || err instanceof TypeError)) {
+    const isNetworkError = !navigator.onLine ||
+      err instanceof TypeError ||
+      err.message?.includes('Failed to fetch') ||
+      err.message?.includes('NetworkError') ||
+      err.message?.includes('Load failed');
+    if (method === 'POST' && offlineLabel && isNetworkError) {
       await offlineEnqueue(path, body, offlineLabel);
       return { ok: true, queued: true };
     }
@@ -295,7 +300,7 @@ function showScreen(name) {
   }
 
   // Lazy-load data on first visit
-  if (name === 'dashboard')     loadDashboardStats();
+  if (name === 'dashboard')     { loadDashboardStats(); refreshPendingSync(); }
   if (name === 'pumping-plant') initPPScreen();
   if (name === 'wells')         initWellsScreen();
   if (name === 'canal')       initCanalScreen();
@@ -348,6 +353,7 @@ el('logout-btn').addEventListener('click', async () => {
 
 function onLogin(user) {
   currentUser = user;
+  localStorage.setItem('field-ops-user', JSON.stringify(user));
   el('screen-login').classList.remove('active');
   el('app-shell').classList.remove('hidden');
   el('user-badge').textContent = user.initials || user.username.slice(0, 2).toUpperCase();
@@ -399,6 +405,7 @@ async function loadDashboardStats() {
 
 function onLogout() {
   currentUser = null;
+  localStorage.removeItem('field-ops-user');
   el('app-shell').classList.add('hidden');
   el('screen-login').classList.add('active');
   el('login-password').value = '';
@@ -417,8 +424,16 @@ async function checkAuth() {
   try {
     const { user } = await api('GET', '/auth/me');
     onLogin(user);
-  } catch {
-    // Not logged in — show login screen (already visible by default)
+  } catch (err) {
+    const isNetworkError = !navigator.onLine ||
+      err instanceof TypeError ||
+      err.message?.includes('Failed to fetch') ||
+      err.message?.includes('Load failed');
+    const cached = localStorage.getItem('field-ops-user');
+    if (isNetworkError && cached) {
+      try { onLogin(JSON.parse(cached)); } catch { /* bad cache, ignore */ }
+    }
+    // Otherwise: not logged in — show login screen (already visible by default)
   }
 }
 
