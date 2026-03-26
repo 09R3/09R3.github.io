@@ -1720,7 +1720,7 @@ async function checkDBStatus() {
     const text = el('db-status-text');
     if (status.connected) {
       dot.className  = 'db-dot connected';
-      text.textContent = `Connected — ${status.host}:${status.port}/${status.database}`;
+      text.textContent = `Connected — ${status.database}`;
     } else {
       dot.className  = 'db-dot disconnected';
       text.textContent = 'Database not connected';
