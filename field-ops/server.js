@@ -1043,7 +1043,7 @@ app.get('/api/maintenance/history', requireAuth, async (req, res) => {
                 parts_used, cost, notes, entered_by
          FROM maintenance_equipment
          WHERE equipment_type = $1 AND equipment_id = $2
-         ORDER BY work_date DESC, created_at DESC LIMIT 15`,
+         ORDER BY work_date DESC LIMIT 15`,
         [equip_type, id]
       ));
     } else if (type === 'vehicle') {
@@ -1053,7 +1053,7 @@ app.get('/api/maintenance/history', requireAuth, async (req, res) => {
                 next_service_miles, next_service_hours, notes, entered_by
          FROM maintenance_vehicles
          WHERE vehicle_id = $1
-         ORDER BY work_date DESC, created_at DESC LIMIT 15`,
+         ORDER BY work_date DESC LIMIT 15`,
         [id]
       ));
     } else if (type === 'building') {
@@ -1062,7 +1062,7 @@ app.get('/api/maintenance/history', requireAuth, async (req, res) => {
                 is_contractor, severity, status, cost, notes, entered_by
          FROM maintenance_buildings
          WHERE building_id = $1
-         ORDER BY work_date DESC, created_at DESC LIMIT 15`,
+         ORDER BY work_date DESC LIMIT 15`,
         [id]
       ));
     } else {

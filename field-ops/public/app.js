@@ -272,9 +272,57 @@ function attachDiffDisplay(inputEl, prevVal, unit, decimals = 1) {
 
 function mapsUrl(lat, lon, label) {
   const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  // Use maps:// deep link in iOS PWA to open Maps app directly (avoids white screen crash)
+  if (isIOS && window.navigator.standalone) return `maps://?ll=${lat},${lon}&q=${encodeURIComponent(label)}`;
   if (isIOS) return `https://maps.apple.com/?ll=${lat},${lon}&q=${encodeURIComponent(label)}`;
   return `https://maps.google.com/maps?q=${lat},${lon}`;
 }
+
+/* ── Location Modal ──────────────────────────────────────────────────────── */
+let _locationModalUrl = '';
+function openLocationModal(lat, lon, name) {
+  _locationModalUrl = mapsUrl(lat, lon, name);
+  el('location-modal-name').textContent = name;
+  el('location-modal-coords').textContent = `${Number(lat).toFixed(6)}, ${Number(lon).toFixed(6)}`;
+  el('location-modal').classList.remove('hidden');
+}
+el('location-modal-close').addEventListener('click', () => el('location-modal').classList.add('hidden'));
+el('location-modal').addEventListener('click', e => { if (e.target === el('location-modal')) el('location-modal').classList.add('hidden'); });
+el('location-modal-open-btn').addEventListener('click', () => {
+  el('location-modal').classList.add('hidden');
+  window.open(_locationModalUrl, '_blank');
+});
+
+/* ── Set Map Modal ───────────────────────────────────────────────────────── */
+let _setLeafletMap = null;
+let _setLeafletMarkers = [];
+
+function openSetMapModal(setName, wells) {
+  const validWells = wells.filter(w => w.gps_latitude && w.gps_longitude);
+  if (!validWells.length) { showToast('No GPS coordinates for this set', 'error'); return; }
+  el('set-map-title').textContent = setName;
+  el('set-map-modal').classList.remove('hidden');
+
+  setTimeout(() => {
+    if (!_setLeafletMap) {
+      _setLeafletMap = L.map('set-map-container');
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap'
+      }).addTo(_setLeafletMap);
+    }
+    _setLeafletMarkers.forEach(m => m.remove());
+    _setLeafletMarkers = validWells.map(w => {
+      const m = L.marker([w.gps_latitude, w.gps_longitude]).addTo(_setLeafletMap);
+      m.bindPopup(`<strong>${w.common_name || 'Well'}</strong>`);
+      return m;
+    });
+    const group = L.featureGroup(_setLeafletMarkers);
+    _setLeafletMap.fitBounds(group.getBounds().pad(0.15));
+    _setLeafletMap.invalidateSize();
+  }, 50);
+}
+el('set-map-close').addEventListener('click', () => el('set-map-modal').classList.add('hidden'));
+el('set-map-modal').addEventListener('click', e => { if (e.target === el('set-map-modal')) el('set-map-modal').classList.add('hidden'); });
 
 /* ── Screen Navigation ───────────────────────────────────────────────────── */
 function showScreen(name) {
@@ -1693,11 +1741,26 @@ async function initKFScreen() {
   const tabsEl = el('kf-set-tabs');
   tabsEl.innerHTML = '';
   const makeTab = (label, setId) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'set-tab-group';
     const btn = document.createElement('button');
     btn.className = 'set-tab' + (setId === null ? ' active' : '');
     btn.textContent = label;
     btn.dataset.setId = setId ?? '';
-    tabsEl.appendChild(btn);
+    wrap.appendChild(btn);
+    if (setId !== null) {
+      const mapBtn = document.createElement('button');
+      mapBtn.className = 'set-tab-map-btn';
+      mapBtn.title = 'View set on map';
+      mapBtn.textContent = '🗺';
+      mapBtn.addEventListener('click', e => {
+        e.stopPropagation();
+        const setWells = kfAllWells.filter(w => String(w.kf_set_id) === String(setId));
+        openSetMapModal(label, setWells);
+      });
+      wrap.appendChild(mapBtn);
+    }
+    tabsEl.appendChild(wrap);
   };
   makeTab('All', null);
   kfSets.forEach(s => makeTab(s.set_name || `Set ${s.set_id}`, s.set_id));
@@ -1817,7 +1880,7 @@ function createKFItem(w, dateInput, timeInput) {
   if (mapBtn) {
     mapBtn.addEventListener('click', e => {
       e.stopPropagation();
-      window.open(mapsUrl(w.gps_latitude, w.gps_longitude, w.common_name), '_blank');
+      openLocationModal(w.gps_latitude, w.gps_longitude, w.common_name);
     });
   }
 
@@ -2195,15 +2258,15 @@ function buildMileageHTML(rows, year, month) {
     <div class="report-title">CVC Mileage</div>
     <div class="report-subtitle">${monthName} ${year}</div>
     <div class="report-section-title">Trucks</div>
-    ${trucks.length ? `<table class="report-table">
-      <colgroup><col style="width:9%"><col style="width:13%"><col style="width:28%"><col style="width:30%"><col style="width:20%"></colgroup>
-      <thead><tr><th>Unit #</th><th>Make</th><th>Model</th><th>Operator</th><th style="text-align:right">Odometer</th></tr></thead>
+    ${trucks.length ? `<table class="report-table trucks">
+      <colgroup><col><col><col><col><col></colgroup>
+      <thead><tr><th>Unit #</th><th>Make</th><th>Model</th><th>Operator</th><th class="report-num">Odometer</th></tr></thead>
       <tbody>${truckRows}</tbody></table>`
     : '<div class="report-empty">No truck readings this month.</div>'}
     <div class="report-section-title">Heavy Equipment</div>
-    ${heavy.length ? `<table class="report-table">
-      <colgroup><col style="width:9%"><col style="width:13%"><col style="width:24%"><col style="width:26%"><col style="width:14%"><col style="width:14%"></colgroup>
-      <thead><tr><th>Unit #</th><th>Make</th><th>Model</th><th>Operator</th><th style="text-align:right">Odometer</th><th style="text-align:right">Eng. Hours</th></tr></thead>
+    ${heavy.length ? `<table class="report-table heavy">
+      <colgroup><col><col><col><col><col><col></colgroup>
+      <thead><tr><th>Unit #</th><th>Make</th><th>Model</th><th>Operator</th><th class="report-num">Odometer</th><th class="report-num">Eng. Hours</th></tr></thead>
       <tbody>${heavyRows}</tbody></table>`
     : '<div class="report-empty">No heavy equipment readings this month.</div>'}`;
 }
@@ -2262,11 +2325,14 @@ el('export-csv-btn').addEventListener('click', () => {
 el('export-xlsx-btn').addEventListener('click', async () => {
   el('export-modal').classList.add('hidden');
   try {
-    // Get a one-time token so the download URL works without session cookie
+    // Get a one-time token so fetch works without relying on session cookie
     const { token } = await api('POST', '/api/reports/download-token',
       { year: reportsYear, month: reportsMonth });
     const url = `/api/reports/mileage/export?format=xlsx&year=${reportsYear}&month=${reportsMonth}&token=${token}`;
-    window.open(url, '_blank');
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('Export failed');
+    const blob = await res.blob();
+    triggerBlobDownload(blob, `CVC_Mileage_${reportsYear}_${reportsMonth}.xlsx`);
   } catch (err) {
     showToast('Export failed: ' + err.message, 'error');
   }

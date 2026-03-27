@@ -6,6 +6,8 @@
   <title>Field Ops</title>
   <link rel="manifest" href="/manifest.json">
   <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <style>
     @media print {
       @page { size: letter landscape; margin: 0; }
@@ -25,9 +27,22 @@
       #print-area .report-title { font-size: 15pt; font-weight: 700; text-align: center; margin: 0 0 1px; }
       #print-area .report-subtitle { font-size: 10pt; text-align: center; margin: 0 0 8px; color: #333; }
       #print-area .report-section-title { font-size: 8pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; margin: 7px 0 2px; border-bottom: 1px solid #000; padding-bottom: 2px; }
-      #print-area table { width: 100%; border-collapse: collapse; font-size: 10pt; table-layout: fixed; }
-      #print-area th { text-align: left; padding: 2px 3px; font-size: 8pt; font-weight: 700; text-transform: uppercase; border-bottom: 1.5px solid #000; }
-      #print-area td { padding: 1px 3px; border-bottom: 0.5px solid #ddd; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      #print-area table { width: 100%; border-collapse: collapse; font-size: 11pt; table-layout: fixed; }
+      #print-area th { text-align: left; padding: 2px 4px; font-size: 8.5pt; font-weight: 700; text-transform: uppercase; border-bottom: 1.5px solid #000; }
+      #print-area td { padding: 1.5px 4px; border-bottom: 0.5px solid #ddd; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      /* Trucks: Unit(7%) Make(11%) Model(30%) Operator(18%) Odometer(14%) */
+      #print-area table.trucks colgroup col:nth-child(1) { width:7%; }
+      #print-area table.trucks colgroup col:nth-child(2) { width:11%; }
+      #print-area table.trucks colgroup col:nth-child(3) { width:50%; }
+      #print-area table.trucks colgroup col:nth-child(4) { width:18%; }
+      #print-area table.trucks colgroup col:nth-child(5) { width:14%; }
+      /* Heavy: Unit(7%) Make(11%) Model(28%) Operator(16%) Odo(12%) Hrs(12%) — wider model, tighter operator */
+      #print-area table.heavy colgroup col:nth-child(1) { width:7%; }
+      #print-area table.heavy colgroup col:nth-child(2) { width:11%; }
+      #print-area table.heavy colgroup col:nth-child(3) { width:42%; }
+      #print-area table.heavy colgroup col:nth-child(4) { width:16%; }
+      #print-area table.heavy colgroup col:nth-child(5) { width:12%; }
+      #print-area table.heavy colgroup col:nth-child(6) { width:12%; }
       #print-area .report-num { text-align: right; }
       #print-area .report-empty { font-style: italic; color: #555; }
     }
@@ -60,7 +75,7 @@
         <div id="login-error" class="error-msg hidden"></div>
         <button type="submit" class="btn btn-primary btn-full">Sign In</button>
       </form>
-      <div class="login-version">v 0.58</div>
+      <div class="login-version">v 0.59</div>
     </div>
   </div>
 </div>
@@ -569,6 +584,31 @@
       <button class="modal-close" id="history-modal-close">&times;</button>
     </div>
     <div class="modal-body" id="history-modal-body"></div>
+  </div>
+</div>
+
+<!-- Location Modal -->
+<div id="location-modal" class="modal-overlay hidden">
+  <div class="modal-card" style="max-width:300px">
+    <div class="modal-header">
+      <h2 id="location-modal-name">Location</h2>
+      <button class="modal-close" id="location-modal-close">&times;</button>
+    </div>
+    <div class="modal-body" style="text-align:center">
+      <div id="location-modal-coords" style="font-size:0.85rem;color:var(--text-dim);margin-bottom:16px"></div>
+      <button class="btn btn-primary btn-full" id="location-modal-open-btn">&#128205; Open in Maps</button>
+    </div>
+  </div>
+</div>
+
+<!-- Set Map Modal -->
+<div id="set-map-modal" class="modal-overlay hidden">
+  <div class="modal-card set-map-card">
+    <div class="modal-header">
+      <h2 id="set-map-title">Set Map</h2>
+      <button class="modal-close" id="set-map-close">&times;</button>
+    </div>
+    <div id="set-map-container" style="height:380px;border-radius:0 0 12px 12px;overflow:hidden"></div>
   </div>
 </div>
 
