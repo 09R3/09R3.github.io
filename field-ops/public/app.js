@@ -276,6 +276,18 @@ function mapsUrl(lat, lon, label) {
   return `https://maps.google.com/maps?q=${lat},${lon}`;
 }
 
+function openLocationModal(lat, lon, name) {
+  el('location-modal-name').textContent = name;
+  el('location-modal-coords').textContent = `${Number(lat).toFixed(6)}, ${Number(lon).toFixed(6)}`;
+  el('location-modal-link').href = mapsUrl(lat, lon, name);
+  el('location-modal').classList.remove('hidden');
+}
+
+el('location-modal-close').addEventListener('click', () => el('location-modal').classList.add('hidden'));
+el('location-modal').addEventListener('click', e => {
+  if (e.target === el('location-modal')) el('location-modal').classList.add('hidden');
+});
+
 /* ── Screen Navigation ───────────────────────────────────────────────────── */
 function showScreen(name) {
   document.querySelectorAll('.screen-content').forEach(s => s.classList.remove('active'));
@@ -1813,12 +1825,12 @@ function createKFItem(w, dateInput, timeInput) {
   }
   if (w.last_notes) div.querySelector('.kf-notes').value = w.last_notes;
 
-  // Map button
+  // Map button — show location popup instead of auto-navigating
   const mapBtn = div.querySelector('.kf-map-btn');
   if (mapBtn) {
     mapBtn.addEventListener('click', e => {
       e.stopPropagation();
-      window.open(mapsUrl(w.gps_latitude, w.gps_longitude, w.common_name), '_blank');
+      openLocationModal(w.gps_latitude, w.gps_longitude, w.common_name);
     });
   }
 
@@ -2235,13 +2247,21 @@ el('export-modal').addEventListener('click', e => {
 async function downloadReport(format) {
   el('export-modal').classList.add('hidden');
   const url = `/api/reports/mileage/export?format=${format}&year=${reportsYear}&month=${reportsMonth}`;
+  const filename = `CVC_Mileage_${reportsYear}_${reportsMonth}.${format}`;
+
+  // iOS PWA (standalone) can't trigger blob downloads — open in Safari instead
+  if (window.navigator.standalone) {
+    window.open(url, '_blank');
+    return;
+  }
+
   try {
     const res = await fetch(url);
     if (!res.ok) throw new Error('Export failed');
     const blob = await res.blob();
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `CVC_Mileage_${reportsYear}_${reportsMonth}.${format}`;
+    a.download = filename;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
