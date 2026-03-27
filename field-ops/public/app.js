@@ -290,7 +290,8 @@ el('location-modal-close').addEventListener('click', () => el('location-modal').
 el('location-modal').addEventListener('click', e => { if (e.target === el('location-modal')) el('location-modal').classList.add('hidden'); });
 el('location-modal-open-btn').addEventListener('click', () => {
   el('location-modal').classList.add('hidden');
-  window.open(_locationModalUrl, '_blank');
+  // Use location.href for maps:// deep links on iOS PWA — window.open() crashes
+  window.location.href = _locationModalUrl;
 });
 
 /* ── Set Map Modal ───────────────────────────────────────────────────────── */
