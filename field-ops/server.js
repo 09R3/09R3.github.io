@@ -750,7 +750,8 @@ app.get('/api/vehicles', requireAuth, async (req, res) => {
         r.engine_hours    AS last_engine_hours,
         r.reading_date    AS last_reading_date,
         r.notes           AS last_notes,
-        m.next_service_miles
+        m.next_service_miles,
+        m.next_service_hours
       FROM vehicles v
       LEFT JOIN LATERAL (
         SELECT odometer_miles, engine_hours, reading_date, notes
@@ -760,10 +761,10 @@ app.get('/api/vehicles', requireAuth, async (req, res) => {
         LIMIT 1
       ) r ON true
       LEFT JOIN LATERAL (
-        SELECT next_service_miles
+        SELECT next_service_miles, next_service_hours
         FROM maintenance_vehicles
         WHERE vehicle_id = v.vehicle_id
-          AND next_service_miles IS NOT NULL
+          AND (next_service_miles IS NOT NULL OR next_service_hours IS NOT NULL)
         ORDER BY work_date DESC
         LIMIT 1
       ) m ON true
@@ -984,19 +985,20 @@ app.post('/api/maintenance/vehicle', requireAuth, async (req, res) => {
   const {
     vehicle_id, work_date, work_type, performed_by, is_contractor,
     description, odometer_at_service, engine_hours_at_service,
-    parts_used, cost, po_number, next_service_date, next_service_miles, notes,
+    parts_used, cost, po_number, next_service_date, next_service_miles, next_service_hours, notes,
   } = req.body;
   try {
     const { rows } = await pool.query(
       `INSERT INTO maintenance_vehicles
          (vehicle_id, work_date, work_type, performed_by, is_contractor, entered_by,
           description, odometer_at_service, engine_hours_at_service, parts_used, cost,
-          po_number, next_service_date, next_service_miles, notes)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING maintenance_id`,
+          po_number, next_service_date, next_service_miles, next_service_hours, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING maintenance_id`,
       [vehicle_id, work_date, work_type, performed_by, is_contractor ?? false,
        req.user.username, description || null, odometer_at_service ?? null,
        engine_hours_at_service ?? null, parts_used || null, cost ?? null,
-       po_number || null, next_service_date || null, next_service_miles ?? null, notes || null]
+       po_number || null, next_service_date || null, next_service_miles ?? null,
+       next_service_hours ?? null, notes || null]
     );
     res.json({ ok: true, maintenance_id: rows[0].maintenance_id });
   } catch (err) {
