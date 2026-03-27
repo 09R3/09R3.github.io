@@ -2232,15 +2232,27 @@ el('export-modal').addEventListener('click', e => {
   if (e.target === el('export-modal')) el('export-modal').classList.add('hidden');
 });
 
-el('export-csv-btn').addEventListener('click', () => {
-  window.location.href = `/api/reports/mileage/export?format=csv&year=${reportsYear}&month=${reportsMonth}`;
+async function downloadReport(format) {
   el('export-modal').classList.add('hidden');
-});
+  const url = `/api/reports/mileage/export?format=${format}&year=${reportsYear}&month=${reportsMonth}`;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('Export failed');
+    const blob = await res.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `CVC_Mileage_${reportsYear}_${reportsMonth}.${format}`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(a.href);
+  } catch (err) {
+    showToast('Export failed: ' + err.message, 'error');
+  }
+}
 
-el('export-xlsx-btn').addEventListener('click', () => {
-  window.location.href = `/api/reports/mileage/export?format=xlsx&year=${reportsYear}&month=${reportsMonth}`;
-  el('export-modal').classList.add('hidden');
-});
+el('export-csv-btn').addEventListener('click',  () => downloadReport('csv'));
+el('export-xlsx-btn').addEventListener('click', () => downloadReport('xlsx'));
 
 el('export-pdf-btn').addEventListener('click', () => {
   // Clone report into a dedicated print area
