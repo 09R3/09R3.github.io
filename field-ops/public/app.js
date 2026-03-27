@@ -276,18 +276,6 @@ function mapsUrl(lat, lon, label) {
   return `https://maps.google.com/maps?q=${lat},${lon}`;
 }
 
-function openLocationModal(lat, lon, name) {
-  el('location-modal-name').textContent = name;
-  el('location-modal-coords').textContent = `${Number(lat).toFixed(6)}, ${Number(lon).toFixed(6)}`;
-  el('location-modal-link').href = mapsUrl(lat, lon, name);
-  el('location-modal').classList.remove('hidden');
-}
-
-el('location-modal-close').addEventListener('click', () => el('location-modal').classList.add('hidden'));
-el('location-modal').addEventListener('click', e => {
-  if (e.target === el('location-modal')) el('location-modal').classList.add('hidden');
-});
-
 /* ── Screen Navigation ───────────────────────────────────────────────────── */
 function showScreen(name) {
   document.querySelectorAll('.screen-content').forEach(s => s.classList.remove('active'));
@@ -1825,12 +1813,11 @@ function createKFItem(w, dateInput, timeInput) {
   }
   if (w.last_notes) div.querySelector('.kf-notes').value = w.last_notes;
 
-  // Map button — show location popup instead of auto-navigating
   const mapBtn = div.querySelector('.kf-map-btn');
   if (mapBtn) {
     mapBtn.addEventListener('click', e => {
       e.stopPropagation();
-      openLocationModal(w.gps_latitude, w.gps_longitude, w.common_name);
+      window.open(mapsUrl(w.gps_latitude, w.gps_longitude, w.common_name), '_blank');
     });
   }
 
@@ -2208,14 +2195,16 @@ function buildMileageHTML(rows, year, month) {
     <div class="report-title">CVC Mileage</div>
     <div class="report-subtitle">${monthName} ${year}</div>
     <div class="report-section-title">Trucks</div>
-    ${trucks.length ? `<table class="report-table"><thead><tr>
-      <th>Unit #</th><th>Make</th><th>Model</th><th>Operator</th><th>Odometer</th>
-    </tr></thead><tbody>${truckRows}</tbody></table>`
+    ${trucks.length ? `<table class="report-table">
+      <colgroup><col style="width:9%"><col style="width:13%"><col style="width:28%"><col style="width:30%"><col style="width:20%"></colgroup>
+      <thead><tr><th>Unit #</th><th>Make</th><th>Model</th><th>Operator</th><th style="text-align:right">Odometer</th></tr></thead>
+      <tbody>${truckRows}</tbody></table>`
     : '<div class="report-empty">No truck readings this month.</div>'}
     <div class="report-section-title">Heavy Equipment</div>
-    ${heavy.length ? `<table class="report-table"><thead><tr>
-      <th>Unit #</th><th>Make</th><th>Model</th><th>Operator</th><th>Odometer</th><th>Eng. Hours</th>
-    </tr></thead><tbody>${heavyRows}</tbody></table>`
+    ${heavy.length ? `<table class="report-table">
+      <colgroup><col style="width:9%"><col style="width:13%"><col style="width:24%"><col style="width:26%"><col style="width:14%"><col style="width:14%"></colgroup>
+      <thead><tr><th>Unit #</th><th>Make</th><th>Model</th><th>Operator</th><th style="text-align:right">Odometer</th><th style="text-align:right">Eng. Hours</th></tr></thead>
+      <tbody>${heavyRows}</tbody></table>`
     : '<div class="report-empty">No heavy equipment readings this month.</div>'}`;
 }
 
@@ -2244,35 +2233,44 @@ el('export-modal').addEventListener('click', e => {
   if (e.target === el('export-modal')) el('export-modal').classList.add('hidden');
 });
 
-async function downloadReport(format) {
+function triggerBlobDownload(blob, filename) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+el('export-csv-btn').addEventListener('click', () => {
   el('export-modal').classList.add('hidden');
-  const url = `/api/reports/mileage/export?format=${format}&year=${reportsYear}&month=${reportsMonth}`;
-  const filename = `CVC_Mileage_${reportsYear}_${reportsMonth}.${format}`;
+  // CSV generated entirely client-side — no server call, no session issues
+  const ac = v => (v.assigned_user && v.assigned_user.trim().toLowerCase() !== 'ops & maint') ? v.assigned_user : '';
+  const trucks = lastReportRows.filter(r => !r.reading_type || r.reading_type === 'odometer');
+  const heavy  = lastReportRows.filter(r => r.reading_type === 'hours' || r.reading_type === 'both');
+  const d = new Date(reportsYear, reportsMonth - 1, 1);
+  const label = d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  const lines = [`CVC Mileage — ${label}`, '', 'TRUCKS', 'Unit #,Make,Model,Operator,Odometer'];
+  trucks.forEach(v => lines.push([v.vehicle_number, v.make, v.model, ac(v), v.odometer_miles ?? ''].join(',')));
+  lines.push('', 'HEAVY EQUIPMENT', 'Unit #,Make,Model,Operator,Odometer,Engine Hours');
+  heavy.forEach(v => lines.push([v.vehicle_number, v.make, v.model, ac(v), v.odometer_miles ?? '', v.engine_hours ?? ''].join(',')));
+  const blob = new Blob([lines.join('\r\n')], { type: 'text/csv' });
+  triggerBlobDownload(blob, `CVC_Mileage_${reportsYear}_${reportsMonth}.csv`);
+});
 
-  // iOS PWA (standalone) can't trigger blob downloads — open in Safari instead
-  if (window.navigator.standalone) {
-    window.open(url, '_blank');
-    return;
-  }
-
+el('export-xlsx-btn').addEventListener('click', async () => {
+  el('export-modal').classList.add('hidden');
   try {
-    const res = await fetch(url);
-    if (!res.ok) throw new Error('Export failed');
-    const blob = await res.blob();
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(a.href);
+    // Get a one-time token so the download URL works without session cookie
+    const { token } = await api('POST', '/api/reports/download-token',
+      { year: reportsYear, month: reportsMonth });
+    const url = `/api/reports/mileage/export?format=xlsx&year=${reportsYear}&month=${reportsMonth}&token=${token}`;
+    window.open(url, '_blank');
   } catch (err) {
     showToast('Export failed: ' + err.message, 'error');
   }
-}
-
-el('export-csv-btn').addEventListener('click',  () => downloadReport('csv'));
-el('export-xlsx-btn').addEventListener('click', () => downloadReport('xlsx'));
+});
 
 el('export-pdf-btn').addEventListener('click', () => {
   // Clone report into a dedicated print area

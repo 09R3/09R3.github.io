@@ -1075,6 +1075,16 @@ app.get('/api/maintenance/history', requireAuth, async (req, res) => {
 });
 
 // ── Reports ────────────────────────────────────────────────────────────────────
+const downloadTokens = new Map();
+
+// Issue a short-lived one-time download token (30s) — solves iOS PWA cookie issue
+app.post('/api/reports/download-token', requireAuth, requireRole('supervisor', 'admin'), (req, res) => {
+  const token = crypto.randomBytes(16).toString('hex');
+  downloadTokens.set(token, { ...req.body, expires: Date.now() + 30000 });
+  setTimeout(() => downloadTokens.delete(token), 30000);
+  res.json({ token });
+});
+
 app.get('/api/reports/mileage', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
   const { year, month } = req.query;
   if (!year || !month) return res.status(400).json({ error: 'year and month required' });
@@ -1097,9 +1107,23 @@ app.get('/api/reports/mileage', requireAuth, requireRole('supervisor', 'admin'),
   }
 });
 
-app.get('/api/reports/mileage/export', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
-  const { year, month, format } = req.query;
+app.get('/api/reports/mileage/export', async (req, res) => {
+  const { year, month, format, token } = req.query;
   if (!year || !month || !format) return res.status(400).json({ error: 'year, month and format required' });
+
+  // Accept either session auth or a valid one-time token
+  if (token) {
+    const t = downloadTokens.get(token);
+    if (!t || Date.now() > t.expires) return res.status(401).json({ error: 'Invalid or expired token' });
+    downloadTokens.delete(token); // one-time use
+  } else {
+    // Fall back to session auth
+    if (!req.cookies?.session_id) return res.status(401).json({ error: 'Unauthorized' });
+    const session = sessions.get(req.cookies.session_id);
+    if (!session || Date.now() > session.expires) return res.status(401).json({ error: 'Unauthorized' });
+    if (session.user.role !== 'admin' && session.user.role !== 'supervisor')
+      return res.status(403).json({ error: 'Forbidden' });
+  }
   try {
     const { rows } = await pool.query(
       `SELECT DISTINCT ON (v.vehicle_id)
