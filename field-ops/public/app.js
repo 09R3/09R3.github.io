@@ -673,7 +673,7 @@ function buildBuildingRows(building) {
   building.compressors.forEach(comp => {
     rows.push(createReadingRow({
       type: 'compressor', id: comp.compressor_id,
-      label: comp.manufacturer ? `Air Compressor (${comp.manufacturer})` : 'Air Compressor Hours',
+      label: 'Air Compressor',
       prev: comp.last_reading, prevDate: comp.last_reading_date,
       prevNotes: comp.last_notes, unit: 'hrs',
     }));
@@ -681,7 +681,7 @@ function buildBuildingRows(building) {
   building.pgeMeters.forEach(m => {
     rows.push(createReadingRow({
       type: 'pge', id: m.pge_meter_id,
-      label: m.meter_name || `PG&E kWh (${m.meter_number || m.pge_meter_id})`,
+      label: 'PG&E kWh',
       prev: m.last_reading, prevDate: m.last_reading_date,
       prevNotes: m.last_notes, unit: 'kWh', decimals: 0,
     }));
@@ -689,7 +689,7 @@ function buildBuildingRows(building) {
   building.powerMonitors.forEach(m => {
     rows.push(createReadingRow({
       type: 'monitor', id: m.monitor_id,
-      label: m.monitor_number ? `Power Monitor kWh (${m.monitor_number})` : 'Power Monitor kWh',
+      label: 'Power Monitor',
       prev: m.last_reading, prevDate: m.last_reading_date,
       prevNotes: m.last_notes, unit: 'kWh', decimals: 0,
     }));
