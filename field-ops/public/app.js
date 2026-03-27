@@ -2235,7 +2235,9 @@ el('report-select').addEventListener('change', runReport);
 
 async function runReport() {
   const report = el('report-select').value;
-  if (report === 'mileage') await renderMileageReport();
+  el('report-export-btn').style.display = report === 'mileage' ? '' : 'none';
+  if (report === 'mileage')      await renderMileageReport();
+  if (report === 'kf-operators') await renderKFOperatorsReport();
 }
 
 let lastReportRows = [];
@@ -2278,6 +2280,46 @@ async function renderMileageReport() {
   try {
     lastReportRows = await api('GET', `/api/reports/mileage?year=${reportsYear}&month=${reportsMonth}`);
     out.innerHTML = `<div class="report-card">${buildMileageHTML(lastReportRows, reportsYear, reportsMonth)}</div>`;
+  } catch (err) {
+    out.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
+  }
+}
+
+async function renderKFOperatorsReport() {
+  const out = el('report-output');
+  out.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const d = new Date(reportsYear, reportsMonth - 1, 1);
+    const monthName = d.toLocaleDateString('en-US', { month: 'long' });
+    const { rows, totalRead, totalWells } = await api('GET',
+      `/api/reports/kf-operators?year=${reportsYear}&month=${reportsMonth}`);
+    if (!rows.length) {
+      out.innerHTML = `<div class="report-card">
+        <div class="report-title">KF Operator Breakdown</div>
+        <div class="report-subtitle">${monthName} ${reportsYear}</div>
+        <div class="report-empty">No KF readings for this month.</div>
+      </div>`;
+      return;
+    }
+    const rowsHTML = rows.map(r => {
+      const pct = totalWells > 0 ? (parseInt(r.wells_read) / totalWells * 100).toFixed(1) : '0.0';
+      return `<tr>
+        <td>${r.operator}</td>
+        <td class="report-num">${r.wells_read}</td>
+        <td class="report-num">${pct}%</td>
+        <td><div class="kf-op-bar-wrap"><div class="kf-op-bar" style="width:${pct}%"></div></div></td>
+      </tr>`;
+    }).join('');
+    out.innerHTML = `<div class="report-card">
+      <div class="report-title">KF Operator Breakdown</div>
+      <div class="report-subtitle">${monthName} ${reportsYear}</div>
+      <div class="report-section-title">Wells Read by Operator</div>
+      <div class="report-meta">${totalRead} readings across ${totalWells} active KF wells</div>
+      <table class="report-table">
+        <thead><tr><th>Operator</th><th class="report-num">Wells Read</th><th class="report-num">% of Total</th><th></th></tr></thead>
+        <tbody>${rowsHTML}</tbody>
+      </table>
+    </div>`;
   } catch (err) {
     out.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
   }

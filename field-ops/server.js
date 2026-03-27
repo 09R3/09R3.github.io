@@ -899,15 +899,20 @@ app.get('/api/dashboard/stats', requireAuth, async (req, res) => {
     const [kf, wells] = await Promise.all([
       pool.query(`
         SELECT
-          COUNT(*)                                                    AS total,
-          COUNT(*) FILTER (WHERE days_since <= 25)                    AS done,
-          COUNT(*) FILTER (WHERE days_since IS NULL OR days_since > 25) AS due
+          COUNT(*)                              AS total,
+          COUNT(*) FILTER (WHERE is_done)       AS done,
+          COUNT(*) FILTER (WHERE NOT is_done)   AS due
         FROM (
           SELECT w.well_id,
-            (CURRENT_DATE - (
-              SELECT reading_date FROM readings_kf_monthly
-              WHERE well_id = w.well_id ORDER BY reading_date DESC LIMIT 1
-            ))::int AS days_since
+            EXISTS (
+              SELECT 1 FROM readings_kf_monthly r
+              WHERE r.well_id = w.well_id AND (
+                date_trunc('month', r.reading_date) = date_trunc('month', CURRENT_DATE)
+                OR r.reading_date BETWEEN
+                  (date_trunc('month', CURRENT_DATE) - INTERVAL '1 day')::date - INTERVAL '7 days'
+                  AND (date_trunc('month', CURRENT_DATE) - INTERVAL '1 day')::date
+              )
+            ) AS is_done
           FROM wells w
           WHERE w.kf_set_id IS NOT NULL
             AND (LOWER(w.status) != 'inactive' OR w.status IS NULL)
@@ -1196,6 +1201,37 @@ app.get('/api/reports/mileage/export', async (req, res) => {
     }
 
     res.status(400).json({ error: 'Invalid format' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── KF Operator Breakdown Report ──────────────────────────────────────────────
+app.get('/api/reports/kf-operators', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+  const { year, month } = req.query;
+  if (!year || !month) return res.status(400).json({ error: 'year and month required' });
+  try {
+    const { rows } = await pool.query(
+      `WITH total_wells AS (
+         SELECT COUNT(*) AS cnt
+         FROM wells
+         WHERE kf_set_id IS NOT NULL
+           AND (LOWER(status) != 'inactive' OR status IS NULL)
+       )
+       SELECT
+         COALESCE(r.operator, '(no operator)') AS operator,
+         COUNT(DISTINCT r.well_id)             AS wells_read,
+         (SELECT cnt FROM total_wells)         AS total_wells
+       FROM readings_kf_monthly r
+       WHERE EXTRACT(YEAR  FROM r.reading_date) = $1
+         AND EXTRACT(MONTH FROM r.reading_date) = $2
+       GROUP BY r.operator
+       ORDER BY wells_read DESC`,
+      [parseInt(year), parseInt(month)]
+    );
+    // Also include total distinct wells read this month
+    const totalRead = rows.reduce((s, r) => s + parseInt(r.wells_read), 0);
+    res.json({ rows, totalRead, totalWells: rows[0]?.total_wells ? parseInt(rows[0].total_wells) : 0 });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

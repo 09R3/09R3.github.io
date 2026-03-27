@@ -1205,6 +1205,9 @@ html, body {
 .report-table tr:last-child td { border-bottom: none; }
 .report-table .report-num { text-align: right; font-variant-numeric: tabular-nums; }
 .report-empty { font-size: 0.88rem; color: var(--text-dim); font-style: italic; padding: 8px 0; }
+.report-meta  { font-size: 0.82rem; color: var(--text-dim); margin: 0 0 8px; }
+.kf-op-bar-wrap { background: var(--surface2); border-radius: 4px; height: 8px; min-width: 80px; overflow: hidden; }
+.kf-op-bar { background: var(--accent); height: 100%; border-radius: 4px; transition: width 0.4s ease; }
 
 /* ── Export Modal ────────────────────────────────────────────────────────── */
 .export-modal-card { max-width: 300px; width: 90vw; }
