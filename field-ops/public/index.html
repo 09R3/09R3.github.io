@@ -34,7 +34,7 @@
         <div id="login-error" class="error-msg hidden"></div>
         <button type="submit" class="btn btn-primary btn-full">Sign In</button>
       </form>
-      <div class="login-version">v 0.52</div>
+      <div class="login-version">v 0.53</div>
     </div>
   </div>
 </div>
@@ -109,6 +109,7 @@
       <li><button class="nav-btn" data-screen="vehicles">&#128664; Vehicle Monthly</button></li>
       <li><button class="nav-btn" data-screen="kf-monthly">&#128200; KF Monthly</button></li>
       <li><button class="nav-btn" data-screen="maintenance">&#128295; Maintenance Log</button></li>
+      <li class="nav-reports hidden" id="nav-reports-item"><button class="nav-btn" data-screen="reports">&#128202; Reports</button></li>
       <li class="nav-admin hidden" id="nav-admin-item"><button class="nav-btn" data-screen="admin">&#9881;&#65039; Admin</button></li>
     </ul>
     <div class="drawer-footer">
@@ -153,6 +154,10 @@
       <button class="dash-tile" data-screen="maintenance">
         <span class="dash-icon">&#128295;</span>
         <span class="dash-label">Maintenance<br>Log</span>
+      </button>
+      <button class="dash-tile reports-tile hidden" id="dash-reports-tile" data-screen="reports">
+        <span class="dash-icon">&#128202;</span>
+        <span class="dash-label">Reports</span>
       </button>
       <button class="dash-tile admin-tile hidden" id="dash-admin-tile" data-screen="admin">
         <span class="dash-icon">&#9881;&#65039;</span>
@@ -254,6 +259,7 @@
           <select id="maint-equip-select" class="ctrl-select">
             <option value="">Select equipment…</option>
           </select>
+          <button type="button" class="btn btn-secondary btn-sm maint-hist-btn" id="maint-equip-hist-btn" style="margin-top:8px">&#128200; View History</button>
         </div>
         <div class="form-group">
           <label>Location at Time</label>
@@ -272,6 +278,7 @@
           <select id="maint-vehicle-select" class="ctrl-select">
             <option value="">Select vehicle…</option>
           </select>
+          <button type="button" class="btn btn-secondary btn-sm maint-hist-btn" id="maint-vehicle-hist-btn" style="margin-top:8px">&#128200; View History</button>
         </div>
         <div class="form-group">
           <label>Odometer at Service</label>
@@ -304,6 +311,7 @@
           <select id="maint-building-select" class="ctrl-select" disabled>
             <option value="">Select building…</option>
           </select>
+          <button type="button" class="btn btn-secondary btn-sm maint-hist-btn" id="maint-building-hist-btn" style="margin-top:8px">&#128200; View History</button>
         </div>
         <div class="form-group">
           <label>Record Type</label>
@@ -437,6 +445,21 @@
     </div>
   </div>
 
+  <!-- ── Reports ───────────────────────────────────────────────────────────── -->
+  <div id="screen-reports" class="screen-content">
+    <div class="report-toolbar">
+      <select id="report-select" class="ctrl-select" style="max-width:220px">
+        <option value="mileage">CVC Mileage</option>
+      </select>
+      <div class="report-month-nav">
+        <button class="btn btn-secondary btn-sm" id="report-prev-month">&#8592;</button>
+        <span id="report-month-label" class="report-month-label"></span>
+        <button class="btn btn-secondary btn-sm" id="report-next-month">&#8594;</button>
+      </div>
+    </div>
+    <div id="report-output"></div>
+  </div>
+
   <!-- ── Admin ──────────────────────────────────────────────────────────────── -->
   <div id="screen-admin" class="screen-content">
     <div class="admin-actions">
@@ -519,6 +542,17 @@
       <button class="modal-close" id="history-modal-close">&times;</button>
     </div>
     <div class="modal-body" id="history-modal-body"></div>
+  </div>
+</div>
+
+<!-- Maintenance History Modal -->
+<div id="maint-history-modal" class="modal-overlay hidden">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h2 id="maint-history-title">Maintenance History</h2>
+      <button class="modal-close" id="maint-history-close">&times;</button>
+    </div>
+    <div class="modal-body" id="maint-history-body"></div>
   </div>
 </div>
 

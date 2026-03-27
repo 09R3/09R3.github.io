@@ -1030,6 +1030,72 @@ app.post('/api/maintenance/building', requireAuth, async (req, res) => {
   }
 });
 
+// ── Maintenance History ────────────────────────────────────────────────────────
+app.get('/api/maintenance/history', requireAuth, async (req, res) => {
+  const { type, id, equip_type } = req.query;
+  if (!type || !id) return res.status(400).json({ error: 'type and id required' });
+  try {
+    let rows;
+    if (type === 'equipment') {
+      ({ rows } = await pool.query(
+        `SELECT work_date, work_type, description, performed_by, is_contractor,
+                parts_used, cost, notes, entered_by
+         FROM maintenance_equipment
+         WHERE equipment_type = $1 AND equipment_id = $2
+         ORDER BY work_date DESC, created_at DESC LIMIT 15`,
+        [equip_type, id]
+      ));
+    } else if (type === 'vehicle') {
+      ({ rows } = await pool.query(
+        `SELECT work_date, work_type, description, performed_by, is_contractor,
+                parts_used, cost, odometer_at_service, engine_hours_at_service,
+                next_service_miles, next_service_hours, notes, entered_by
+         FROM maintenance_vehicles
+         WHERE vehicle_id = $1
+         ORDER BY work_date DESC, created_at DESC LIMIT 15`,
+        [id]
+      ));
+    } else if (type === 'building') {
+      ({ rows } = await pool.query(
+        `SELECT work_date, work_type, record_type, description, performed_by,
+                is_contractor, severity, status, cost, notes, entered_by
+         FROM maintenance_buildings
+         WHERE building_id = $1
+         ORDER BY work_date DESC, created_at DESC LIMIT 15`,
+        [id]
+      ));
+    } else {
+      return res.status(400).json({ error: 'Invalid type' });
+    }
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Reports ────────────────────────────────────────────────────────────────────
+app.get('/api/reports/mileage', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+  const { year, month } = req.query;
+  if (!year || !month) return res.status(400).json({ error: 'year and month required' });
+  try {
+    const { rows } = await pool.query(
+      `SELECT DISTINCT ON (v.vehicle_id)
+         v.vehicle_id, v.vehicle_number, v.make, v.model, v.assigned_user,
+         v.reading_type, r.odometer_miles, r.engine_hours, r.reading_date
+       FROM readings_vehicle_monthly r
+       JOIN vehicles v ON v.vehicle_id = r.vehicle_id
+       WHERE EXTRACT(YEAR  FROM r.reading_date) = $1
+         AND EXTRACT(MONTH FROM r.reading_date) = $2
+         AND (LOWER(v.status) != 'inactive' OR v.status IS NULL)
+       ORDER BY v.vehicle_id, r.reading_date DESC, r.reading_time DESC`,
+      [parseInt(year), parseInt(month)]
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── User Management ───────────────────────────────────────────────────────────
 app.get('/api/users', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
   try {

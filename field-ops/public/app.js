@@ -297,8 +297,8 @@ function showScreen(name) {
   el('screen-title').textContent = titles[name] || 'Field Ops';
   closeDrawer();
 
-  // Block admin screen for operators
-  if (name === 'admin') {
+  // Block supervisor/admin-only screens for operators
+  if (name === 'admin' || name === 'reports') {
     if (!currentUser || (currentUser.role !== 'admin' && currentUser.role !== 'supervisor')) {
       showScreen('dashboard');
       return;
@@ -309,11 +309,12 @@ function showScreen(name) {
   if (name === 'dashboard')     { loadDashboardStats(); refreshPendingSync(); }
   if (name === 'pumping-plant') initPPScreen();
   if (name === 'wells')         initWellsScreen();
-  if (name === 'canal')       initCanalScreen();
-  if (name === 'vehicles')    initVehiclesScreen();
-  if (name === 'kf-monthly')  initKFScreen();
-  if (name === 'maintenance') initMaintenanceScreen();
-  if (name === 'admin')       initAdminScreen();
+  if (name === 'canal')         initCanalScreen();
+  if (name === 'vehicles')      initVehiclesScreen();
+  if (name === 'kf-monthly')    initKFScreen();
+  if (name === 'maintenance')   initMaintenanceScreen();
+  if (name === 'reports')       initReportsScreen();
+  if (name === 'admin')         initAdminScreen();
 }
 
 /* ── Drawer ──────────────────────────────────────────────────────────────── */
@@ -366,8 +367,10 @@ function onLogin(user) {
   el('user-badge').textContent = user.initials || user.username.slice(0, 2).toUpperCase();
   el('drawer-user').innerHTML = `<strong>${user.full_name || user.username}</strong>${user.role}`;
 
-  // Show admin nav if applicable
+  // Show reports + admin nav for supervisor/admin
   if (user.role === 'admin' || user.role === 'supervisor') {
+    el('nav-reports-item').classList.remove('hidden');
+    el('dash-reports-tile').classList.remove('hidden');
     el('nav-admin-item').classList.remove('hidden');
     el('dash-admin-tile').classList.remove('hidden');
   }
@@ -2064,6 +2067,174 @@ el('db-test-btn').addEventListener('click', async () => {
     btn.textContent = 'Test Connection';
   }
 });
+
+/* ── Maintenance History ─────────────────────────────────────────────────── */
+el('maint-history-close').addEventListener('click', () => {
+  el('maint-history-modal').classList.add('hidden');
+});
+el('maint-history-modal').addEventListener('click', e => {
+  if (e.target === el('maint-history-modal')) el('maint-history-modal').classList.add('hidden');
+});
+
+async function openMaintHistoryModal(type, id, label, equip_type) {
+  el('maint-history-title').textContent = `Maintenance — ${label}`;
+  const body = el('maint-history-body');
+  body.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  el('maint-history-modal').classList.remove('hidden');
+
+  try {
+    let url = `/api/maintenance/history?type=${type}&id=${id}`;
+    if (equip_type) url += `&equip_type=${encodeURIComponent(equip_type)}`;
+    const rows = await api('GET', url);
+
+    if (!rows.length) {
+      body.innerHTML = '<div class="placeholder-msg">No maintenance records found.</div>';
+      return;
+    }
+
+    body.innerHTML = rows.map(r => {
+      const details = [];
+      if (r.odometer_at_service) details.push(`${Number(r.odometer_at_service).toLocaleString()} mi`);
+      if (r.engine_hours_at_service) details.push(`${r.engine_hours_at_service} hrs`);
+      if (r.hours_at_service) details.push(`${r.hours_at_service} hrs`);
+      if (r.cost) details.push(`$${Number(r.cost).toFixed(2)}`);
+      if (r.parts_used) details.push(`Parts: ${r.parts_used}`);
+      if (r.next_service_miles) details.push(`Next svc: ${Number(r.next_service_miles).toLocaleString()} mi`);
+      if (r.next_service_hours) details.push(`Next svc: ${r.next_service_hours} hrs`);
+      return `
+        <div class="maint-hist-row">
+          <div class="maint-hist-header">
+            <span class="maint-hist-date">${String(r.work_date).slice(0,10)}</span>
+            <span class="maint-hist-type">${r.work_type || ''}${r.record_type ? ` · ${r.record_type}` : ''}${r.is_contractor ? ' · Contractor' : ''}</span>
+          </div>
+          ${r.description ? `<div class="maint-hist-desc">${r.description}</div>` : ''}
+          ${details.length ? `<div class="maint-hist-details">${details.join(' · ')}</div>` : ''}
+          ${r.notes ? `<div class="maint-hist-notes">${r.notes}</div>` : ''}
+          <div class="maint-hist-by">By: ${r.performed_by || r.entered_by || '—'}</div>
+        </div>`;
+    }).join('');
+  } catch (err) {
+    body.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
+  }
+}
+
+el('maint-equip-hist-btn').addEventListener('click', () => {
+  const id = el('maint-equip-select').value;
+  const label = el('maint-equip-select').options[el('maint-equip-select').selectedIndex]?.text;
+  const equip_type = el('maint-equip-type').value;
+  if (!id) return showToast('Select an equipment item first', 'error');
+  openMaintHistoryModal('equipment', id, label, equip_type);
+});
+
+el('maint-vehicle-hist-btn').addEventListener('click', () => {
+  const id = el('maint-vehicle-select').value;
+  const label = el('maint-vehicle-select').options[el('maint-vehicle-select').selectedIndex]?.text;
+  if (!id) return showToast('Select a vehicle first', 'error');
+  openMaintHistoryModal('vehicle', id, label);
+});
+
+el('maint-building-hist-btn').addEventListener('click', () => {
+  const id = el('maint-building-select').value;
+  const label = el('maint-building-select').options[el('maint-building-select').selectedIndex]?.text;
+  if (!id) return showToast('Select a building first', 'error');
+  openMaintHistoryModal('building', id, label);
+});
+
+/* ── Reports ─────────────────────────────────────────────────────────────── */
+let reportsMonth = new Date().getMonth() + 1;
+let reportsYear  = new Date().getFullYear();
+
+function initReportsScreen() {
+  updateReportsMonthLabel();
+  runReport();
+}
+
+function updateReportsMonthLabel() {
+  const d = new Date(reportsYear, reportsMonth - 1, 1);
+  el('report-month-label').textContent = d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+}
+
+el('report-prev-month').addEventListener('click', () => {
+  reportsMonth--;
+  if (reportsMonth < 1) { reportsMonth = 12; reportsYear--; }
+  updateReportsMonthLabel();
+  runReport();
+});
+
+el('report-next-month').addEventListener('click', () => {
+  reportsMonth++;
+  if (reportsMonth > 12) { reportsMonth = 1; reportsYear++; }
+  updateReportsMonthLabel();
+  runReport();
+});
+
+el('report-select').addEventListener('change', runReport);
+
+async function runReport() {
+  const report = el('report-select').value;
+  if (report === 'mileage') await renderMileageReport();
+}
+
+async function renderMileageReport() {
+  const out = el('report-output');
+  out.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const rows = await api('GET', `/api/reports/mileage?year=${reportsYear}&month=${reportsMonth}`);
+    const d = new Date(reportsYear, reportsMonth - 1, 1);
+    const monthName = d.toLocaleDateString('en-US', { month: 'long' });
+
+    const trucks = rows.filter(r => !r.reading_type || r.reading_type === 'odometer');
+    const heavy  = rows.filter(r => r.reading_type === 'hours' || r.reading_type === 'both');
+
+    const assignedCell = v => (v.assigned_user && v.assigned_user.trim().toLowerCase() !== 'ops & maint')
+      ? v.assigned_user : '';
+
+    const truckRows = trucks.map(v => `
+      <tr>
+        <td>${v.vehicle_number || ''}</td>
+        <td>${v.make || ''}</td>
+        <td>${v.model || ''}</td>
+        <td>${assignedCell(v)}</td>
+        <td class="report-num">${v.odometer_miles != null ? Number(v.odometer_miles).toLocaleString() : '—'}</td>
+      </tr>`).join('');
+
+    const heavyRows = heavy.map(v => `
+      <tr>
+        <td>${v.vehicle_number || ''}</td>
+        <td>${v.make || ''}</td>
+        <td>${v.model || ''}</td>
+        <td>${assignedCell(v)}</td>
+        <td class="report-num">${v.odometer_miles != null ? Number(v.odometer_miles).toLocaleString() : '—'}</td>
+        <td class="report-num">${v.engine_hours != null ? Number(v.engine_hours).toFixed(1) : '—'}</td>
+      </tr>`).join('');
+
+    out.innerHTML = `
+      <div class="report-card">
+        <div class="report-title">CVC Mileage</div>
+        <div class="report-subtitle">${monthName} ${reportsYear}</div>
+
+        <div class="report-section-title">Trucks</div>
+        ${trucks.length ? `
+        <table class="report-table">
+          <thead><tr>
+            <th>Unit #</th><th>Make</th><th>Model</th><th>Operator</th><th>Odometer</th>
+          </tr></thead>
+          <tbody>${truckRows}</tbody>
+        </table>` : '<div class="report-empty">No truck readings this month.</div>'}
+
+        <div class="report-section-title">Heavy Equipment</div>
+        ${heavy.length ? `
+        <table class="report-table">
+          <thead><tr>
+            <th>Unit #</th><th>Make</th><th>Model</th><th>Operator</th><th>Odometer</th><th>Eng. Hours</th>
+          </tr></thead>
+          <tbody>${heavyRows}</tbody>
+        </table>` : '<div class="report-empty">No heavy equipment readings this month.</div>'}
+      </div>`;
+  } catch (err) {
+    out.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
+  }
+}
 
 /* ── Init ────────────────────────────────────────────────────────────────── */
 checkDBStatus();
