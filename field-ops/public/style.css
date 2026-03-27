@@ -1205,3 +1205,15 @@ html, body {
 .report-table tr:last-child td { border-bottom: none; }
 .report-table .report-num { text-align: right; font-variant-numeric: tabular-nums; }
 .report-empty { font-size: 0.88rem; color: var(--text-dim); font-style: italic; padding: 8px 0; }
+
+/* ── Export Modal ────────────────────────────────────────────────────────── */
+.export-modal-card { max-width: 680px; width: 95vw; }
+.export-actions {
+  display: flex;
+  gap: 10px;
+  padding: 14px 0 4px;
+  border-top: 1px solid var(--border);
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+.export-actions .btn { flex: 1; min-width: 130px; }

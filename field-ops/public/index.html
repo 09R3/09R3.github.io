@@ -6,6 +6,20 @@
   <title>Field Ops</title>
   <link rel="manifest" href="/manifest.json">
   <link rel="stylesheet" href="style.css">
+  <style>
+    @media print {
+      body > *:not(#print-area) { display: none !important; }
+      #print-area { display: block !important; font-family: sans-serif; color: #000; }
+      #print-area .report-title { font-size: 1.4rem; font-weight: 700; text-align: center; margin-bottom: 2px; }
+      #print-area .report-subtitle { font-size: 1rem; text-align: center; margin-bottom: 16px; color: #555; }
+      #print-area .report-section-title { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; margin: 16px 0 6px; border-bottom: 1px solid #ccc; padding-bottom: 3px; }
+      #print-area table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+      #print-area th { text-align: left; padding: 4px 6px; font-size: 0.7rem; text-transform: uppercase; border-bottom: 2px solid #000; }
+      #print-area td { padding: 4px 6px; border-bottom: 1px solid #ddd; }
+      #print-area .report-num { text-align: right; }
+      #print-area .report-empty { font-style: italic; color: #777; }
+    }
+  </style>
 </head>
 <body>
 
@@ -34,7 +48,7 @@
         <div id="login-error" class="error-msg hidden"></div>
         <button type="submit" class="btn btn-primary btn-full">Sign In</button>
       </form>
-      <div class="login-version">v 0.53</div>
+      <div class="login-version">v 0.54</div>
     </div>
   </div>
 </div>
@@ -456,6 +470,7 @@
         <span id="report-month-label" class="report-month-label"></span>
         <button class="btn btn-secondary btn-sm" id="report-next-month">&#8594;</button>
       </div>
+      <button class="btn btn-secondary btn-sm" id="report-export-btn" style="margin-left:auto">&#8615; Export</button>
     </div>
     <div id="report-output"></div>
   </div>
@@ -542,6 +557,24 @@
       <button class="modal-close" id="history-modal-close">&times;</button>
     </div>
     <div class="modal-body" id="history-modal-body"></div>
+  </div>
+</div>
+
+<!-- Export Modal -->
+<div id="export-modal" class="modal-overlay hidden">
+  <div class="modal-card export-modal-card">
+    <div class="modal-header">
+      <h2 id="export-modal-title">Export Report</h2>
+      <button class="modal-close" id="export-modal-close">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div id="export-preview"></div>
+      <div class="export-actions">
+        <button class="btn btn-secondary" id="export-csv-btn">&#128196; Download CSV</button>
+        <button class="btn btn-secondary" id="export-xlsx-btn">&#128200; Download Excel</button>
+        <button class="btn btn-primary"   id="export-pdf-btn">&#128438; Print / PDF</button>
+      </div>
+    </div>
   </div>
 </div>
 

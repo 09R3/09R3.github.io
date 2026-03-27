@@ -2175,66 +2175,84 @@ async function runReport() {
   if (report === 'mileage') await renderMileageReport();
 }
 
+let lastReportRows = [];
+
+function buildMileageHTML(rows, year, month) {
+  const d = new Date(year, month - 1, 1);
+  const monthName = d.toLocaleDateString('en-US', { month: 'long' });
+  const trucks = rows.filter(r => !r.reading_type || r.reading_type === 'odometer');
+  const heavy  = rows.filter(r => r.reading_type === 'hours' || r.reading_type === 'both');
+  const ac = v => (v.assigned_user && v.assigned_user.trim().toLowerCase() !== 'ops & maint') ? v.assigned_user : '';
+  const truckRows = trucks.map(v => `<tr>
+    <td>${v.vehicle_number||''}</td><td>${v.make||''}</td><td>${v.model||''}</td><td>${ac(v)}</td>
+    <td class="report-num">${v.odometer_miles!=null?Number(v.odometer_miles).toLocaleString():'—'}</td>
+  </tr>`).join('');
+  const heavyRows = heavy.map(v => `<tr>
+    <td>${v.vehicle_number||''}</td><td>${v.make||''}</td><td>${v.model||''}</td><td>${ac(v)}</td>
+    <td class="report-num">${v.odometer_miles!=null?Number(v.odometer_miles).toLocaleString():'—'}</td>
+    <td class="report-num">${v.engine_hours!=null?Number(v.engine_hours).toFixed(1):'—'}</td>
+  </tr>`).join('');
+  return `
+    <div class="report-title">CVC Mileage</div>
+    <div class="report-subtitle">${monthName} ${year}</div>
+    <div class="report-section-title">Trucks</div>
+    ${trucks.length ? `<table class="report-table"><thead><tr>
+      <th>Unit #</th><th>Make</th><th>Model</th><th>Operator</th><th>Odometer</th>
+    </tr></thead><tbody>${truckRows}</tbody></table>`
+    : '<div class="report-empty">No truck readings this month.</div>'}
+    <div class="report-section-title">Heavy Equipment</div>
+    ${heavy.length ? `<table class="report-table"><thead><tr>
+      <th>Unit #</th><th>Make</th><th>Model</th><th>Operator</th><th>Odometer</th><th>Eng. Hours</th>
+    </tr></thead><tbody>${heavyRows}</tbody></table>`
+    : '<div class="report-empty">No heavy equipment readings this month.</div>'}`;
+}
+
 async function renderMileageReport() {
   const out = el('report-output');
   out.innerHTML = '<div class="placeholder-msg">Loading…</div>';
   try {
-    const rows = await api('GET', `/api/reports/mileage?year=${reportsYear}&month=${reportsMonth}`);
-    const d = new Date(reportsYear, reportsMonth - 1, 1);
-    const monthName = d.toLocaleDateString('en-US', { month: 'long' });
-
-    const trucks = rows.filter(r => !r.reading_type || r.reading_type === 'odometer');
-    const heavy  = rows.filter(r => r.reading_type === 'hours' || r.reading_type === 'both');
-
-    const assignedCell = v => (v.assigned_user && v.assigned_user.trim().toLowerCase() !== 'ops & maint')
-      ? v.assigned_user : '';
-
-    const truckRows = trucks.map(v => `
-      <tr>
-        <td>${v.vehicle_number || ''}</td>
-        <td>${v.make || ''}</td>
-        <td>${v.model || ''}</td>
-        <td>${assignedCell(v)}</td>
-        <td class="report-num">${v.odometer_miles != null ? Number(v.odometer_miles).toLocaleString() : '—'}</td>
-      </tr>`).join('');
-
-    const heavyRows = heavy.map(v => `
-      <tr>
-        <td>${v.vehicle_number || ''}</td>
-        <td>${v.make || ''}</td>
-        <td>${v.model || ''}</td>
-        <td>${assignedCell(v)}</td>
-        <td class="report-num">${v.odometer_miles != null ? Number(v.odometer_miles).toLocaleString() : '—'}</td>
-        <td class="report-num">${v.engine_hours != null ? Number(v.engine_hours).toFixed(1) : '—'}</td>
-      </tr>`).join('');
-
-    out.innerHTML = `
-      <div class="report-card">
-        <div class="report-title">CVC Mileage</div>
-        <div class="report-subtitle">${monthName} ${reportsYear}</div>
-
-        <div class="report-section-title">Trucks</div>
-        ${trucks.length ? `
-        <table class="report-table">
-          <thead><tr>
-            <th>Unit #</th><th>Make</th><th>Model</th><th>Operator</th><th>Odometer</th>
-          </tr></thead>
-          <tbody>${truckRows}</tbody>
-        </table>` : '<div class="report-empty">No truck readings this month.</div>'}
-
-        <div class="report-section-title">Heavy Equipment</div>
-        ${heavy.length ? `
-        <table class="report-table">
-          <thead><tr>
-            <th>Unit #</th><th>Make</th><th>Model</th><th>Operator</th><th>Odometer</th><th>Eng. Hours</th>
-          </tr></thead>
-          <tbody>${heavyRows}</tbody>
-        </table>` : '<div class="report-empty">No heavy equipment readings this month.</div>'}
-      </div>`;
+    lastReportRows = await api('GET', `/api/reports/mileage?year=${reportsYear}&month=${reportsMonth}`);
+    out.innerHTML = `<div class="report-card">${buildMileageHTML(lastReportRows, reportsYear, reportsMonth)}</div>`;
   } catch (err) {
     out.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
   }
 }
+
+/* ── Export Modal ────────────────────────────────────────────────────────── */
+el('report-export-btn').addEventListener('click', () => {
+  if (!lastReportRows.length) return showToast('No report data to export', 'error');
+  el('export-modal-title').textContent = `Export — CVC Mileage`;
+  el('export-preview').innerHTML = `<div class="report-card" style="max-height:55vh;overflow-y:auto">${buildMileageHTML(lastReportRows, reportsYear, reportsMonth)}</div>`;
+  el('export-modal').classList.remove('hidden');
+});
+
+el('export-modal-close').addEventListener('click', () => el('export-modal').classList.add('hidden'));
+el('export-modal').addEventListener('click', e => {
+  if (e.target === el('export-modal')) el('export-modal').classList.add('hidden');
+});
+
+el('export-csv-btn').addEventListener('click', () => {
+  window.location.href = `/api/reports/mileage/export?format=csv&year=${reportsYear}&month=${reportsMonth}`;
+  el('export-modal').classList.add('hidden');
+});
+
+el('export-xlsx-btn').addEventListener('click', () => {
+  window.location.href = `/api/reports/mileage/export?format=xlsx&year=${reportsYear}&month=${reportsMonth}`;
+  el('export-modal').classList.add('hidden');
+});
+
+el('export-pdf-btn').addEventListener('click', () => {
+  // Clone report into a dedicated print area
+  let printArea = document.getElementById('print-area');
+  if (!printArea) {
+    printArea = document.createElement('div');
+    printArea.id = 'print-area';
+    document.body.appendChild(printArea);
+  }
+  printArea.innerHTML = buildMileageHTML(lastReportRows, reportsYear, reportsMonth);
+  el('export-modal').classList.add('hidden');
+  setTimeout(() => window.print(), 100);
+});
 
 /* ── Init ────────────────────────────────────────────────────────────────── */
 checkDBStatus();

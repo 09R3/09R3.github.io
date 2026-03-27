@@ -1,10 +1,11 @@
 require('dotenv').config();
-const express = require('express');
-const { Pool } = require('pg');
-const bcrypt = require('bcryptjs');
-const crypto = require('crypto');
+const express      = require('express');
+const { Pool }     = require('pg');
+const bcrypt       = require('bcryptjs');
+const crypto       = require('crypto');
 const cookieParser = require('cookie-parser');
-const path = require('path');
+const path         = require('path');
+const XLSX         = require('xlsx');
 
 const app = express();
 app.use(express.json());
@@ -1091,6 +1092,86 @@ app.get('/api/reports/mileage', requireAuth, requireRole('supervisor', 'admin'),
       [parseInt(year), parseInt(month)]
     );
     res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/reports/mileage/export', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+  const { year, month, format } = req.query;
+  if (!year || !month || !format) return res.status(400).json({ error: 'year, month and format required' });
+  try {
+    const { rows } = await pool.query(
+      `SELECT DISTINCT ON (v.vehicle_id)
+         v.vehicle_id, v.vehicle_number, v.make, v.model, v.assigned_user,
+         v.reading_type, r.odometer_miles, r.engine_hours, r.reading_date
+       FROM readings_vehicle_monthly r
+       JOIN vehicles v ON v.vehicle_id = r.vehicle_id
+       WHERE EXTRACT(YEAR  FROM r.reading_date) = $1
+         AND EXTRACT(MONTH FROM r.reading_date) = $2
+         AND (LOWER(v.status) != 'inactive' OR v.status IS NULL)
+       ORDER BY v.vehicle_id, r.reading_date DESC, r.reading_time DESC`,
+      [parseInt(year), parseInt(month)]
+    );
+
+    const monthName = new Date(parseInt(year), parseInt(month) - 1, 1)
+      .toLocaleString('en-US', { month: 'long' });
+    const label = `${monthName} ${year}`;
+
+    const assignedVal = u => (u && u.trim().toLowerCase() !== 'ops & maint') ? u : '';
+
+    const trucks = rows.filter(r => !r.reading_type || r.reading_type === 'odometer');
+    const heavy  = rows.filter(r => r.reading_type === 'hours' || r.reading_type === 'both');
+
+    if (format === 'csv') {
+      const lines = [`CVC Mileage — ${label}`, ''];
+      lines.push('TRUCKS');
+      lines.push('Unit #,Make,Model,Operator,Odometer');
+      trucks.forEach(v => lines.push(
+        [v.vehicle_number, v.make, v.model, assignedVal(v.assigned_user),
+         v.odometer_miles ?? ''].join(',')
+      ));
+      lines.push('');
+      lines.push('HEAVY EQUIPMENT');
+      lines.push('Unit #,Make,Model,Operator,Odometer,Engine Hours');
+      heavy.forEach(v => lines.push(
+        [v.vehicle_number, v.make, v.model, assignedVal(v.assigned_user),
+         v.odometer_miles ?? '', v.engine_hours ?? ''].join(',')
+      ));
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', `attachment; filename="CVC_Mileage_${year}_${month}.csv"`);
+      return res.send(lines.join('\r\n'));
+    }
+
+    if (format === 'xlsx') {
+      const wb = XLSX.utils.book_new();
+
+      const truckData = [
+        [`CVC Mileage — ${label}`],
+        ['TRUCKS'],
+        ['Unit #', 'Make', 'Model', 'Operator', 'Odometer'],
+        ...trucks.map(v => [v.vehicle_number, v.make || '', v.model || '',
+          assignedVal(v.assigned_user), v.odometer_miles != null ? Number(v.odometer_miles) : '']),
+        [],
+        ['HEAVY EQUIPMENT'],
+        ['Unit #', 'Make', 'Model', 'Operator', 'Odometer', 'Engine Hours'],
+        ...heavy.map(v => [v.vehicle_number, v.make || '', v.model || '',
+          assignedVal(v.assigned_user),
+          v.odometer_miles != null ? Number(v.odometer_miles) : '',
+          v.engine_hours   != null ? Number(v.engine_hours)   : '']),
+      ];
+
+      const ws = XLSX.utils.aoa_to_sheet(truckData);
+      ws['!cols'] = [{ wch: 10 }, { wch: 14 }, { wch: 16 }, { wch: 18 }, { wch: 12 }, { wch: 12 }];
+      XLSX.utils.book_append_sheet(wb, ws, 'Mileage');
+
+      const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="CVC_Mileage_${year}_${month}.xlsx"`);
+      return res.send(buf);
+    }
+
+    res.status(400).json({ error: 'Invalid format' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
