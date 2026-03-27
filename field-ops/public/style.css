@@ -875,6 +875,10 @@ html, body {
 .v-service-hint.ok      { color: var(--green); }
 .v-service-hint.due     { color: #f5a623; }
 .v-service-hint.overdue { color: var(--red-light); }
+.v-service-hrs-hint { font-size: 0.82rem; margin-top: 5px; font-style: italic; }
+.v-service-hrs-hint.ok      { color: var(--green); }
+.v-service-hrs-hint.due     { color: #f5a623; }
+.v-service-hrs-hint.overdue { color: var(--red-light); }
 
 /* ── Siphon Breaker Swap ─────────────────────────────────────────────────── */
 .swap-info {

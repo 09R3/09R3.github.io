@@ -1277,6 +1277,23 @@ function createVehicleItem(v, dateInput, timeInput) {
   const sc    = days == null ? 'due' : days <= 7 ? 'done' : days <= 25 ? 'due' : 'overdue';
   const badge = days == null ? 'Not read' : days === 0 ? 'Today' : `${days}d ago`;
 
+  const rt = v.reading_type;
+  const showOdo = !rt || rt === 'odometer' || rt === 'both';
+  const showHrs = !rt || rt === 'hours' || rt === 'both';
+  const odoField = `<div class="form-group">
+    <label>Odometer (mi)${lastOdo ? `<span class="prev-hint"> · Prev: ${lastOdo}</span>` : ''}</label>
+    <input type="number" class="ctrl-input v-odo" step="1" inputmode="numeric" placeholder="0">
+    <div class="v-service-hint hidden"></div>
+  </div>`;
+  const hrsField = `<div class="form-group">
+    <label>Engine Hours${lastHrs ? `<span class="prev-hint"> · Prev: ${lastHrs}</span>` : ''}</label>
+    <input type="number" class="ctrl-input v-hrs" step="0.1" inputmode="decimal" placeholder="0.0">
+    <div class="v-service-hrs-hint hidden"></div>
+  </div>`;
+  const fieldsHtml = (showOdo && showHrs)
+    ? `<div class="two-col">${odoField}${hrsField}</div>`
+    : `${showOdo ? odoField : ''}${showHrs ? hrsField : ''}`;
+
   div.innerHTML = `
     <div class="list-item-header">
       <span class="status-dot ${sc}"></span>
@@ -1290,17 +1307,7 @@ function createVehicleItem(v, dateInput, timeInput) {
       ${v.license_plate ? `<span>Plate: ${v.license_plate}</span>` : ''}
     </div>
     <div class="list-item-form">
-      <div class="two-col">
-        <div class="form-group">
-          <label>Odometer (mi)${lastOdo ? `<span class="prev-hint"> · Prev: ${lastOdo}</span>` : ''}</label>
-          <input type="number" class="ctrl-input v-odo" step="1" inputmode="numeric" placeholder="0">
-          <div class="v-service-hint hidden"></div>
-        </div>
-        <div class="form-group">
-          <label>Engine Hours${lastHrs ? `<span class="prev-hint"> · Prev: ${lastHrs}</span>` : ''}</label>
-          <input type="number" class="ctrl-input v-hrs" step="0.1" inputmode="decimal" placeholder="0.0">
-        </div>
-      </div>
+      ${fieldsHtml}
       <div class="form-group">
         <label>Notes</label>
         <textarea class="ctrl-textarea v-notes" rows="2" placeholder="Optional notes…"></textarea>
@@ -1316,7 +1323,7 @@ function createVehicleItem(v, dateInput, timeInput) {
 
   if (v.next_service_miles) {
     const hint = div.querySelector('.v-service-hint');
-    div.querySelector('.v-odo').addEventListener('input', function() {
+    div.querySelector('.v-odo')?.addEventListener('input', function() {
       const cur = parseFloat(this.value);
       if (isNaN(cur)) { hint.classList.add('hidden'); return; }
       const remaining = v.next_service_miles - cur;
@@ -1324,6 +1331,19 @@ function createVehicleItem(v, dateInput, timeInput) {
         ? `${Math.round(remaining).toLocaleString()} mi until service (@ ${Number(v.next_service_miles).toLocaleString()} mi)`
         : `${Math.abs(Math.round(remaining)).toLocaleString()} mi overdue for service`;
       hint.className = 'v-service-hint ' + (remaining > 1000 ? 'ok' : remaining >= 0 ? 'due' : 'overdue');
+    });
+  }
+
+  if (v.next_service_hours) {
+    const hint = div.querySelector('.v-service-hrs-hint');
+    div.querySelector('.v-hrs')?.addEventListener('input', function() {
+      const cur = parseFloat(this.value);
+      if (isNaN(cur)) { hint.classList.add('hidden'); return; }
+      const remaining = v.next_service_hours - cur;
+      hint.textContent = remaining >= 0
+        ? `${Math.round(remaining).toLocaleString()} hrs until service (@ ${Number(v.next_service_hours).toLocaleString()} hrs)`
+        : `${Math.abs(Math.round(remaining)).toLocaleString()} hrs overdue for service`;
+      hint.className = 'v-service-hrs-hint ' + (remaining > 50 ? 'ok' : remaining >= 0 ? 'due' : 'overdue');
     });
   }
 
@@ -1346,8 +1366,8 @@ function createVehicleItem(v, dateInput, timeInput) {
       vehicle_number: v.vehicle_number,
       reading_date:   dateInput.value,
       reading_time:   timeInput.value,
-      odometer_miles: div.querySelector('.v-odo').value || null,
-      engine_hours:   div.querySelector('.v-hrs').value || null,
+      odometer_miles: div.querySelector('.v-odo')?.value || null,
+      engine_hours:   div.querySelector('.v-hrs')?.value || null,
       notes:          div.querySelector('.v-notes').value || null,
     };
     try {
@@ -1379,6 +1399,7 @@ function createVehicleItem(v, dateInput, timeInput) {
 let maintLoaded   = false;
 let maintType     = 'equipment';
 let maintContractor = false;
+let maintVehicles = [];
 
 async function initMaintenanceScreen() {
   if (maintLoaded) return;
@@ -1389,6 +1410,7 @@ async function initMaintenanceScreen() {
   // Load vehicles for maintenance dropdown
   try {
     const vehicles = await api('GET', '/api/vehicles');
+    maintVehicles = vehicles;
     const sel = el('maint-vehicle-select');
     sel.innerHTML = '<option value="">Select vehicle…</option>';
     vehicles.forEach(v => {
@@ -1451,6 +1473,17 @@ document.querySelectorAll('#maint-type-seg .seg-btn').forEach(btn => {
     el('maint-common-fields').classList.toggle('hidden', isSwap);
     if (isSwap) loadSBUnitsForSwap();
   });
+});
+
+// Show/hide next service fields based on vehicle reading_type
+el('maint-vehicle-select').addEventListener('change', () => {
+  const vid = parseInt(el('maint-vehicle-select').value);
+  const v = maintVehicles.find(x => x.vehicle_id === vid);
+  const rt = v?.reading_type;
+  const showMiles = !rt || rt === 'odometer' || rt === 'both';
+  const showHours = !rt || rt === 'hours' || rt === 'both';
+  el('maint-next-miles-group').classList.toggle('hidden', !showMiles);
+  el('maint-next-hours-group').classList.toggle('hidden', !showHours);
 });
 
 // Show/hide resolution notes based on status selection
@@ -1599,6 +1632,7 @@ el('maint-save-btn').addEventListener('click', async () => {
         odometer_at_service:      el('maint-vehicle-odometer').value || null,
         engine_hours_at_service:  el('maint-vehicle-hours').value || null,
         next_service_miles:       el('maint-vehicle-next-miles').value || null,
+        next_service_hours:       el('maint-vehicle-next-hours').value || null,
       }, 'Maintenance — Vehicle');
     } else {
       const buildingId = el('maint-building-select').value;
@@ -1622,6 +1656,7 @@ el('maint-save-btn').addEventListener('click', async () => {
     el('maint-resolution-notes').value = '';
     el('maint-performed-by').value = '';
     el('maint-vehicle-next-miles').value = '';
+    el('maint-vehicle-next-hours').value = '';
   } catch (err) {
     showError('maint-error', err.message);
   }
