@@ -8,16 +8,24 @@
   <link rel="stylesheet" href="style.css">
   <style>
     @media print {
+      @page { size: letter landscape; margin: 0.6in; }
+      * { background: white !important; color: black !important; box-shadow: none !important; }
       body > *:not(#print-area) { display: none !important; }
-      #print-area { display: block !important; font-family: sans-serif; color: #000; }
-      #print-area .report-title { font-size: 1.4rem; font-weight: 700; text-align: center; margin-bottom: 2px; }
-      #print-area .report-subtitle { font-size: 1rem; text-align: center; margin-bottom: 16px; color: #555; }
-      #print-area .report-section-title { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; margin: 16px 0 6px; border-bottom: 1px solid #ccc; padding-bottom: 3px; }
-      #print-area table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-      #print-area th { text-align: left; padding: 4px 6px; font-size: 0.7rem; text-transform: uppercase; border-bottom: 2px solid #000; }
-      #print-area td { padding: 4px 6px; border-bottom: 1px solid #ddd; }
+      #print-area {
+        display: block !important;
+        font-family: Arial, sans-serif;
+        font-size: 10pt;
+        color: #000;
+        background: white;
+      }
+      #print-area .report-title { font-size: 16pt; font-weight: 700; text-align: center; margin-bottom: 2px; }
+      #print-area .report-subtitle { font-size: 11pt; text-align: center; margin-bottom: 14px; color: #333; }
+      #print-area .report-section-title { font-size: 8pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; margin: 14px 0 4px; border-bottom: 1.5px solid #000; padding-bottom: 2px; }
+      #print-area table { width: 100%; border-collapse: collapse; font-size: 9pt; page-break-inside: avoid; }
+      #print-area th { text-align: left; padding: 3px 6px; font-size: 8pt; font-weight: 700; text-transform: uppercase; border-bottom: 2px solid #000; }
+      #print-area td { padding: 3px 6px; border-bottom: 1px solid #ccc; }
       #print-area .report-num { text-align: right; }
-      #print-area .report-empty { font-style: italic; color: #777; }
+      #print-area .report-empty { font-style: italic; color: #555; }
     }
   </style>
 </head>
@@ -48,7 +56,7 @@
         <div id="login-error" class="error-msg hidden"></div>
         <button type="submit" class="btn btn-primary btn-full">Sign In</button>
       </form>
-      <div class="login-version">v 0.54</div>
+      <div class="login-version">v 0.55</div>
     </div>
   </div>
 </div>
@@ -564,15 +572,15 @@
 <div id="export-modal" class="modal-overlay hidden">
   <div class="modal-card export-modal-card">
     <div class="modal-header">
-      <h2 id="export-modal-title">Export Report</h2>
+      <h2 id="export-modal-title">Export</h2>
       <button class="modal-close" id="export-modal-close">&times;</button>
     </div>
     <div class="modal-body">
-      <div id="export-preview"></div>
+      <p id="export-modal-subtitle" class="export-subtitle"></p>
       <div class="export-actions">
-        <button class="btn btn-secondary" id="export-csv-btn">&#128196; Download CSV</button>
-        <button class="btn btn-secondary" id="export-xlsx-btn">&#128200; Download Excel</button>
-        <button class="btn btn-primary"   id="export-pdf-btn">&#128438; Print / PDF</button>
+        <button class="btn btn-secondary export-fmt-btn" id="export-csv-btn">&#128196; CSV</button>
+        <button class="btn btn-secondary export-fmt-btn" id="export-xlsx-btn">&#128200; Excel</button>
+        <button class="btn btn-primary   export-fmt-btn" id="export-pdf-btn">&#128438; Print / PDF</button>
       </div>
     </div>
   </div>

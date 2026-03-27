@@ -2221,8 +2221,9 @@ async function renderMileageReport() {
 /* ── Export Modal ────────────────────────────────────────────────────────── */
 el('report-export-btn').addEventListener('click', () => {
   if (!lastReportRows.length) return showToast('No report data to export', 'error');
-  el('export-modal-title').textContent = `Export — CVC Mileage`;
-  el('export-preview').innerHTML = `<div class="report-card" style="max-height:55vh;overflow-y:auto">${buildMileageHTML(lastReportRows, reportsYear, reportsMonth)}</div>`;
+  const d = new Date(reportsYear, reportsMonth - 1, 1);
+  const label = d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  el('export-modal-subtitle').textContent = `CVC Mileage — ${label}`;
   el('export-modal').classList.remove('hidden');
 });
 
