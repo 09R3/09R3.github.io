@@ -75,6 +75,13 @@ html, body {
   font-size: 0.9rem;
   margin: 4px 0 12px;
 }
+.login-version {
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  margin-top: 16px;
+  opacity: 0.6;
+}
 
 /* DB status row on login page */
 .db-status-row {
