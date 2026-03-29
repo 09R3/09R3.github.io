@@ -195,6 +195,26 @@ html, body {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+.app-header .app-title { margin-right: 0; }
+.sync-badge {
+  font-size: 0.72rem;
+  font-weight: 700;
+  border-radius: 12px;
+  padding: 3px 8px;
+  min-width: 22px;
+  text-align: center;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.sync-pending { background: #e65100; color: #fff; }
+.sync-error   { background: var(--red); color: #fff; }
+
 .user-badge {
   background: var(--accent);
   color: #fff;

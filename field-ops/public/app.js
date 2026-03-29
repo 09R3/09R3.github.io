@@ -112,8 +112,14 @@ async function offlineRemove(id) {
 async function refreshPendingSync() {
   try {
     const items = await offlineGetAll();
-    const card = el('pending-sync-card');
-    if (!items.length) { card.classList.add('hidden'); return; }
+    const card  = el('pending-sync-card');
+    const badge = el('sync-status-badge');
+    if (!items.length) {
+      card.classList.add('hidden');
+      // Only clear the badge if it isn't showing an error
+      if (!badge.classList.contains('sync-error')) badge.classList.add('hidden');
+      return;
+    }
     card.classList.remove('hidden');
     el('pending-count').textContent = items.length;
     el('pending-list').innerHTML = items.map(i => {
@@ -124,6 +130,8 @@ async function refreshPendingSync() {
         <span class="pending-time">${d}${t ? ' ' + t : ''}</span>
       </div>`;
     }).join('');
+    badge.textContent = items.length;
+    badge.className = 'sync-badge sync-pending';
   } catch { /* non-critical */ }
 }
 async function syncPendingQueue() {
@@ -144,7 +152,12 @@ async function syncPendingQueue() {
       } catch { failed++; }
     }
     if (synced) showToast(`Synced ${synced} item${synced > 1 ? 's' : ''}`, 'success');
-    if (failed) showToast(`${failed} item${failed > 1 ? 's' : ''} failed to sync`, 'error');
+    if (failed) {
+      showToast(`${failed} item${failed > 1 ? 's' : ''} failed to sync`, 'error');
+      const badge = el('sync-status-badge');
+      badge.textContent = '!';
+      badge.className = 'sync-badge sync-error';
+    }
     await refreshPendingSync();
   } finally {
     btn.disabled = false; btn.textContent = 'Sync Now';

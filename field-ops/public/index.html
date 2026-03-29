@@ -75,7 +75,7 @@
         <div id="login-error" class="error-msg hidden"></div>
         <button type="submit" class="btn btn-primary btn-full">Sign In</button>
       </form>
-      <div class="login-version">v 0.70</div>
+      <div class="login-version">v 0.71</div>
     </div>
   </div>
 </div>
@@ -132,8 +132,11 @@
   <header class="app-header">
     <button class="hamburger" id="menu-toggle" aria-label="Menu">&#9776;</button>
     <h1 class="app-title" id="screen-title">Field Ops</h1>
-    <button class="header-refresh-btn" id="header-refresh-btn" title="Refresh">&#8635;</button>
-    <div class="user-badge" id="user-badge"></div>
+    <div class="header-right">
+      <button class="header-refresh-btn" id="header-refresh-btn" title="Refresh">&#8635;</button>
+      <div id="sync-status-badge" class="sync-badge hidden"></div>
+      <div class="user-badge" id="user-badge"></div>
+    </div>
   </header>
 
   <!-- Side Drawer -->
@@ -604,7 +607,7 @@
       <button class="settings-back-btn">‹ Settings</button>
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value">v 0.70</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value">v 0.71</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>
