@@ -308,8 +308,8 @@ function openSetMapModal(setName, wells) {
   setTimeout(() => {
     if (!_setLeafletMap) {
       _setLeafletMap = L.map('set-map-container');
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '© OpenStreetMap'
+      L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+        attribution: '© Esri, Maxar, Earthstar Geographics'
       }).addTo(_setLeafletMap);
     }
     _setLeafletMarkers.forEach(m => m.remove());
