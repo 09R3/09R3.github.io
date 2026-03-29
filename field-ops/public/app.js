@@ -297,6 +297,7 @@ el('location-modal-open-btn').addEventListener('click', () => {
 /* ── Set Map Modal ───────────────────────────────────────────────────────── */
 let _setLeafletMap = null;
 let _setLeafletMarkers = [];
+let _setLocationMarker = null;
 
 function openSetMapModal(setName, wells) {
   const validWells = wells.filter(w => w.gps_latitude && w.gps_longitude);
@@ -312,14 +313,37 @@ function openSetMapModal(setName, wells) {
       }).addTo(_setLeafletMap);
     }
     _setLeafletMarkers.forEach(m => m.remove());
+    if (_setLocationMarker) { _setLocationMarker.remove(); _setLocationMarker = null; }
+
     _setLeafletMarkers = validWells.map(w => {
       const m = L.marker([w.gps_latitude, w.gps_longitude]).addTo(_setLeafletMap);
       m.bindPopup(`<strong>${w.common_name || 'Well'}</strong>`);
       return m;
     });
+
     const group = L.featureGroup(_setLeafletMarkers);
     _setLeafletMap.fitBounds(group.getBounds().pad(0.15));
     _setLeafletMap.invalidateSize();
+
+    // Add current location if available
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(pos => {
+        if (_setLocationMarker) _setLocationMarker.remove();
+        const { latitude, longitude } = pos.coords;
+        const locationIcon = L.divIcon({
+          className: '',
+          html: '<div class="map-my-location"></div>',
+          iconSize: [18, 18],
+          iconAnchor: [9, 9],
+        });
+        _setLocationMarker = L.marker([latitude, longitude], { icon: locationIcon })
+          .addTo(_setLeafletMap);
+        _setLocationMarker.bindPopup('<strong>You are here</strong>');
+        // Re-fit bounds to include current location
+        const allMarkers = [..._setLeafletMarkers, _setLocationMarker];
+        _setLeafletMap.fitBounds(L.featureGroup(allMarkers).getBounds().pad(0.15));
+      }, () => { /* permission denied or unavailable — silent */ });
+    }
   }, 50);
 }
 el('set-map-close').addEventListener('click', () => el('set-map-modal').classList.add('hidden'));
