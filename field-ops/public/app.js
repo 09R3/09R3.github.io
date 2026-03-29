@@ -2095,8 +2095,15 @@ async function loadTodayReadings() {
     list.querySelectorAll('.today-reading-del').forEach(btn => {
       btn.addEventListener('click', async () => {
         if (!confirm('Delete this reading?')) return;
+        const typeToPath = {
+          well: 'well', kf: 'kf-monthly',
+          pump: 'pump-hours', compressor: 'compressor-hours',
+          pge: 'pge-meters', monitor: 'power-monitors',
+          vehicle: 'vehicle-monthly',
+        };
+        const path = typeToPath[btn.dataset.type] || btn.dataset.type;
         try {
-          await api('DELETE', `/api/readings/${btn.dataset.type}/${btn.dataset.id}`);
+          await api('DELETE', `/api/readings/${path}/${btn.dataset.id}`);
           btn.closest('.today-reading-row').remove();
           if (!list.querySelector('.today-reading-row'))
             list.innerHTML = '<div class="settings-row"><span class="settings-label" style="font-style:italic">No readings entered today.</span></div>';
