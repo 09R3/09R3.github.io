@@ -1237,6 +1237,110 @@ app.get('/api/reports/kf-operators', requireAuth, requireRole('supervisor', 'adm
   }
 });
 
+// ── Change Password ────────────────────────────────────────────────────────────
+app.post('/api/auth/change-password', requireAuth, async (req, res) => {
+  const { current_password, new_password } = req.body;
+  if (!current_password || !new_password) return res.status(400).json({ error: 'current_password and new_password required' });
+  if (new_password.length < 4) return res.status(400).json({ error: 'New password must be at least 4 characters' });
+  try {
+    const { rows } = await pool.query('SELECT password FROM users WHERE user_id = $1', [req.user.user_id]);
+    if (!rows.length) return res.status(404).json({ error: 'User not found' });
+    const stored = rows[0].password;
+    let valid = false;
+    if (stored && stored.startsWith('$2')) {
+      valid = await bcrypt.compare(current_password, stored);
+    } else {
+      valid = stored === current_password;
+    }
+    if (!valid) return res.status(401).json({ error: 'Current password is incorrect' });
+    const hashed = await bcrypt.hash(new_password, 10);
+    await pool.query('UPDATE users SET password = $1 WHERE user_id = $2', [hashed, req.user.user_id]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Today's Readings ───────────────────────────────────────────────────────────
+app.get('/api/readings/today', requireAuth, async (req, res) => {
+  const username = req.user.username;
+  try {
+    const { rows } = await pool.query(`
+      SELECT type, id, name, reading_time, summary FROM (
+        SELECT 'well' AS type, reading_id::text AS id, common_name AS name, reading_time,
+          CONCAT_WS(' / ',
+            CASE WHEN hour_reading IS NOT NULL THEN 'Hrs: '||hour_reading END,
+            CASE WHEN flow_cfs IS NOT NULL THEN 'Flow: '||flow_cfs||' cfs' END,
+            CASE WHEN totalizer IS NOT NULL THEN 'Total: '||totalizer END
+          ) AS summary
+        FROM readings_well
+        WHERE reading_date = CURRENT_DATE AND entered_by = $1
+
+        UNION ALL
+
+        SELECT 'kf', kf_reading_id::text, common_name, reading_time,
+          'DTW: '||dtw_reading
+        FROM readings_kf_monthly
+        WHERE reading_date = CURRENT_DATE AND operator = $1
+
+        UNION ALL
+
+        SELECT 'pump', rph.reading_id::text,
+          COALESCE(s.site_name,'Plant')||' — Pump '||pp.pump_letter,
+          rph.reading_time, 'Hrs: '||rph.hour_reading
+        FROM readings_pump_hours rph
+        JOIN pump_positions pp ON pp.position_id = rph.position_id
+        LEFT JOIN sites s ON s.site_id = pp.site_id
+        WHERE rph.reading_date = CURRENT_DATE AND rph.entered_by = $1
+
+        UNION ALL
+
+        SELECT 'compressor', rch.reading_id::text,
+          COALESCE(ac.manufacturer,'Air Compressor'),
+          rch.reading_time, 'Hrs: '||rch.hour_reading
+        FROM readings_compressor_hours rch
+        JOIN air_compressors ac ON ac.compressor_id = rch.compressor_id
+        WHERE rch.reading_date = CURRENT_DATE AND rch.entered_by = $1
+
+        UNION ALL
+
+        SELECT 'pge', rpm.reading_id::text,
+          COALESCE(pm.meter_name,'PG&E Meter'),
+          rpm.reading_time, 'kWh: '||rpm.kwh_reading
+        FROM readings_pge_meters rpm
+        JOIN pge_meters pm ON pm.pge_meter_id = rpm.pge_meter_id
+        WHERE rpm.reading_date = CURRENT_DATE AND rpm.entered_by = $1
+
+        UNION ALL
+
+        SELECT 'monitor', rmon.reading_id::text,
+          COALESCE(pmon.manufacturer,'Power Monitor'),
+          rmon.reading_time, 'kWh: '||rmon.kwh_reading
+        FROM readings_power_monitors rmon
+        JOIN power_monitors pmon ON pmon.monitor_id = rmon.monitor_id
+        WHERE rmon.reading_date = CURRENT_DATE AND rmon.entered_by = $1
+
+        UNION ALL
+
+        SELECT 'vehicle', rvm.reading_id::text,
+          v.vehicle_number||' '||COALESCE(v.make,'')||' '||COALESCE(v.model,''),
+          rvm.reading_time,
+          CONCAT_WS(' / ',
+            CASE WHEN rvm.odometer_miles IS NOT NULL THEN 'Odo: '||to_char(rvm.odometer_miles,'FM999,999') END,
+            CASE WHEN rvm.engine_hours IS NOT NULL THEN 'Hrs: '||rvm.engine_hours END
+          )
+        FROM readings_vehicle_monthly rvm
+        JOIN vehicles v ON v.vehicle_id = rvm.vehicle_id
+        WHERE rvm.reading_date = CURRENT_DATE AND rvm.entered_by = $1
+      ) t
+      ORDER BY reading_time DESC NULLS LAST
+    `, [username]);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── User Management ───────────────────────────────────────────────────────────
 app.get('/api/users', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
   try {

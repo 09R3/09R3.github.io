@@ -1259,3 +1259,49 @@ html, body {
 .settings-row:last-child { border-bottom: none; }
 .settings-label { color: var(--text-dim); font-size: 0.9rem; }
 .settings-value { font-size: 0.9rem; font-weight: 500; }
+
+/* ── Settings extras ─────────────────────────────────────────────────────── */
+.settings-pad { padding: 14px; }
+.settings-pad .form-group:last-of-type { margin-bottom: 12px; }
+
+/* Text size buttons */
+.text-size-btns { display: flex; gap: 6px; }
+.text-size-btn {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  cursor: pointer;
+  padding: 4px 10px;
+  font-size: 0.95rem;
+  transition: background var(--transition), border-color var(--transition);
+}
+.text-size-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+/* Today's readings list */
+.today-reading-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.today-reading-row:last-child { border-bottom: none; }
+.today-reading-name { font-size: 0.9rem; font-weight: 500; }
+.today-reading-meta { font-size: 0.78rem; color: var(--text-dim); margin-top: 1px; }
+.today-reading-del {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 1.3rem;
+  cursor: pointer;
+  padding: 4px 6px;
+  line-height: 1;
+  flex-shrink: 0;
+  transition: color var(--transition);
+}
+.today-reading-del:hover { color: var(--red-light); }

@@ -363,7 +363,7 @@ function showScreen(name) {
   if (name === 'kf-monthly')    initKFScreen();
   if (name === 'maintenance')   initMaintenanceScreen();
   if (name === 'reports')       initReportsScreen();
-  if (name === 'admin')         initAdminScreen();
+  if (name === 'admin')         { initAdminScreen(); initSettingsScreen(); }
 }
 
 /* ── Drawer ──────────────────────────────────────────────────────────────── */
@@ -416,7 +416,10 @@ function onLogin(user) {
   el('user-badge').textContent = user.initials || user.username.slice(0, 2).toUpperCase();
   el('drawer-user').innerHTML = `<strong>${user.full_name || user.username}</strong>${user.role}`;
 
-  // Show reports nav for supervisor/admin
+  // Reset all role-gated elements before applying role
+  el('nav-reports-item').classList.add('hidden');
+  el('dash-reports-tile').classList.add('hidden');
+  el('settings-admin-section').classList.add('hidden');
   if (user.role === 'admin' || user.role === 'supervisor') {
     el('nav-reports-item').classList.remove('hidden');
     el('dash-reports-tile').classList.remove('hidden');
@@ -472,6 +475,10 @@ function onLogout() {
   el('screen-login').classList.add('active');
   el('login-password').value = '';
   el('login-username').value = '';
+  // Hide role-gated elements so next login starts clean
+  el('nav-reports-item').classList.add('hidden');
+  el('dash-reports-tile').classList.add('hidden');
+  el('settings-admin-section').classList.add('hidden');
   // Reset pumping plant
   pp.sites = []; pp.buildings = {}; pp.loadedSites = new Set(); pp.activeTab = null;
   ppLoaded = false;
@@ -1957,6 +1964,101 @@ function createKFItem(w, dateInput, timeInput) {
 
   div.querySelector('.list-item-form').style.display = 'none';
   return div;
+}
+
+/* ── Settings Screen ─────────────────────────────────────────────────────── */
+
+// Text size preference
+(function applyTextSize() {
+  const saved = localStorage.getItem('field-ops-text-size');
+  if (saved) document.documentElement.style.fontSize = saved + 'px';
+})();
+
+document.querySelectorAll('.text-size-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const size = btn.dataset.size;
+    document.documentElement.style.fontSize = size + 'px';
+    localStorage.setItem('field-ops-text-size', size);
+    updateTextSizeBtns();
+    showToast('Text size updated', 'success');
+  });
+});
+
+function updateTextSizeBtns() {
+  const current = parseInt(localStorage.getItem('field-ops-text-size') || '16');
+  document.querySelectorAll('.text-size-btn').forEach(b => {
+    b.classList.toggle('active', parseInt(b.dataset.size) === current);
+  });
+}
+
+// Change password
+el('pw-save-btn').addEventListener('click', async () => {
+  const cur = el('pw-current').value;
+  const nw  = el('pw-new').value;
+  const con = el('pw-confirm').value;
+  const errEl = el('pw-error');
+  errEl.classList.add('hidden');
+  if (!cur || !nw || !con) { errEl.textContent = 'All fields are required.'; errEl.classList.remove('hidden'); return; }
+  if (nw !== con) { errEl.textContent = 'New passwords do not match.'; errEl.classList.remove('hidden'); return; }
+  try {
+    await api('POST', '/api/auth/change-password', { current_password: cur, new_password: nw });
+    el('pw-current').value = '';
+    el('pw-new').value = '';
+    el('pw-confirm').value = '';
+    showToast('Password updated', 'success');
+  } catch (err) {
+    errEl.textContent = err.message;
+    errEl.classList.remove('hidden');
+  }
+});
+
+async function initSettingsScreen() {
+  updateTextSizeBtns();
+  // App info — last sync
+  const ls = localStorage.getItem('field-ops-last-sync');
+  el('settings-last-sync').textContent = ls ? new Date(ls).toLocaleString() : 'Never';
+  // DB status
+  const dot = el('db-dot');
+  el('settings-db-status').textContent = dot.classList.contains('db-dot-ok') ? 'Connected' : 'Disconnected';
+  // Today's readings
+  await loadTodayReadings();
+}
+
+async function loadTodayReadings() {
+  const list = el('today-readings-list');
+  list.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const rows = await api('GET', '/api/readings/today');
+    if (!rows.length) {
+      list.innerHTML = '<div class="settings-row"><span class="settings-label" style="font-style:italic">No readings entered today.</span></div>';
+      return;
+    }
+    list.innerHTML = rows.map(r => `
+      <div class="today-reading-row" data-type="${r.type}" data-id="${r.id}">
+        <div class="today-reading-info">
+          <div class="today-reading-name">${r.name}</div>
+          <div class="today-reading-meta">${r.reading_time ? r.reading_time.slice(0,5) : ''} &bull; ${r.summary || ''}</div>
+        </div>
+        <button class="today-reading-del" data-type="${r.type}" data-id="${r.id}" title="Delete">&times;</button>
+      </div>
+    `).join('');
+    list.querySelectorAll('.today-reading-del').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        if (!confirm('Delete this reading?')) return;
+        try {
+          await api('DELETE', `/api/readings/${btn.dataset.type}/${btn.dataset.id}`);
+          btn.closest('.today-reading-row').remove();
+          if (!list.querySelector('.today-reading-row'))
+            list.innerHTML = '<div class="settings-row"><span class="settings-label" style="font-style:italic">No readings entered today.</span></div>';
+          showToast('Reading deleted', 'success');
+        } catch (err) {
+          showToast(err.message, 'error');
+        }
+      });
+    });
+  } catch (err) {
+    list.innerHTML = `<div class="settings-row"><span class="settings-label" style="color:var(--red-light)">${err.message}</span></div>`;
+  }
 }
 
 /* ── Admin ───────────────────────────────────────────────────────────────── */

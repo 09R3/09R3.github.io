@@ -75,7 +75,7 @@
         <div id="login-error" class="error-msg hidden"></div>
         <button type="submit" class="btn btn-primary btn-full">Sign In</button>
       </form>
-      <div class="login-version">v 0.63</div>
+      <div class="login-version">v 0.64</div>
     </div>
   </div>
 </div>
@@ -513,6 +513,62 @@
         <div class="settings-row"><span class="settings-label">Name</span><span id="settings-full-name" class="settings-value"></span></div>
         <div class="settings-row"><span class="settings-label">Username</span><span id="settings-username" class="settings-value"></span></div>
         <div class="settings-row"><span class="settings-label">Role</span><span id="settings-role" class="settings-value"></span></div>
+      </div>
+    </div>
+
+    <!-- Change Password -->
+    <div class="settings-section">
+      <div class="settings-section-title">Change Password</div>
+      <div class="settings-card">
+        <div class="settings-pad">
+          <div class="form-group">
+            <label>Current Password</label>
+            <input type="password" id="pw-current" class="ctrl-input" autocomplete="current-password">
+          </div>
+          <div class="form-group">
+            <label>New Password</label>
+            <input type="password" id="pw-new" class="ctrl-input" autocomplete="new-password">
+          </div>
+          <div class="form-group">
+            <label>Confirm New Password</label>
+            <input type="password" id="pw-confirm" class="ctrl-input" autocomplete="new-password">
+          </div>
+          <div id="pw-error" class="error-msg hidden"></div>
+          <button class="btn btn-primary" id="pw-save-btn">Update Password</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Text Size -->
+    <div class="settings-section">
+      <div class="settings-section-title">Text Size</div>
+      <div class="settings-card">
+        <div class="settings-row">
+          <span class="settings-label">Adjust app text size</span>
+          <div class="text-size-btns">
+            <button class="text-size-btn" data-size="14">A<small>-</small></button>
+            <button class="text-size-btn" data-size="16">A</button>
+            <button class="text-size-btn" data-size="18">A<big>+</big></button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Today's Readings -->
+    <div class="settings-section">
+      <div class="settings-section-title">Today's Readings</div>
+      <div id="today-readings-list" class="settings-card">
+        <div class="placeholder-msg">Loading…</div>
+      </div>
+    </div>
+
+    <!-- App Info -->
+    <div class="settings-section">
+      <div class="settings-section-title">App Info</div>
+      <div class="settings-card">
+        <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value">v 0.64</span></div>
+        <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
+        <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
       </div>
     </div>
 
