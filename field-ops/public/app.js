@@ -1968,21 +1968,11 @@ function createKFItem(w, dateInput, timeInput) {
 
 /* ── Settings Screen ─────────────────────────────────────────────────────── */
 
-// Text size preference
+// Text size preference — apply on load
 (function applyTextSize() {
   const saved = localStorage.getItem('field-ops-text-size');
   if (saved) document.documentElement.style.fontSize = saved + 'px';
 })();
-
-document.querySelectorAll('.text-size-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    const size = btn.dataset.size;
-    document.documentElement.style.fontSize = size + 'px';
-    localStorage.setItem('field-ops-text-size', size);
-    updateTextSizeBtns();
-    showToast('Text size updated', 'success');
-  });
-});
 
 function updateTextSizeBtns() {
   const current = parseInt(localStorage.getItem('field-ops-text-size') || '16');
@@ -1990,6 +1980,41 @@ function updateTextSizeBtns() {
     b.classList.toggle('active', parseInt(b.dataset.size) === current);
   });
 }
+
+document.querySelectorAll('.text-size-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const size = btn.dataset.size;
+    document.documentElement.style.fontSize = size + 'px';
+    localStorage.setItem('field-ops-text-size', size);
+    updateTextSizeBtns();
+  });
+});
+
+// Settings panel navigation
+function openSettingsPanel(panelId) {
+  el('settings-main').classList.add('hidden');
+  document.querySelectorAll('.settings-panel').forEach(p => p.classList.add('hidden'));
+  el('settings-panel-' + panelId).classList.remove('hidden');
+  if (panelId === 'readings') loadTodayReadings();
+  if (panelId === 'appinfo') {
+    const ls = localStorage.getItem('field-ops-last-sync');
+    el('settings-last-sync').textContent = ls ? new Date(ls).toLocaleString() : 'Never';
+    el('settings-db-status').textContent = el('db-dot').classList.contains('db-dot-ok') ? 'Connected' : 'Disconnected';
+  }
+}
+
+function closeSettingsPanel() {
+  document.querySelectorAll('.settings-panel').forEach(p => p.classList.add('hidden'));
+  el('settings-main').classList.remove('hidden');
+}
+
+document.querySelectorAll('.settings-menu-row').forEach(btn => {
+  btn.addEventListener('click', () => openSettingsPanel(btn.dataset.panel));
+});
+
+document.querySelectorAll('.settings-back-btn').forEach(btn => {
+  btn.addEventListener('click', closeSettingsPanel);
+});
 
 // Change password
 el('pw-save-btn').addEventListener('click', async () => {
@@ -2012,16 +2037,10 @@ el('pw-save-btn').addEventListener('click', async () => {
   }
 });
 
-async function initSettingsScreen() {
+function initSettingsScreen() {
+  // Always return to main menu when entering Settings
+  closeSettingsPanel();
   updateTextSizeBtns();
-  // App info — last sync
-  const ls = localStorage.getItem('field-ops-last-sync');
-  el('settings-last-sync').textContent = ls ? new Date(ls).toLocaleString() : 'Never';
-  // DB status
-  const dot = el('db-dot');
-  el('settings-db-status').textContent = dot.classList.contains('db-dot-ok') ? 'Connected' : 'Disconnected';
-  // Today's readings
-  await loadTodayReadings();
 }
 
 async function loadTodayReadings() {

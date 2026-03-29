@@ -1264,22 +1264,69 @@ html, body {
 .settings-pad { padding: 14px; }
 .settings-pad .form-group:last-of-type { margin-bottom: 12px; }
 
-/* Text size buttons */
-.text-size-btns { display: flex; gap: 6px; }
+/* Settings menu (main list) */
+.settings-menu-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+.settings-menu-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 14px 16px;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  font-size: 0.95rem;
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--transition);
+}
+.settings-menu-row:last-child { border-bottom: none; }
+.settings-menu-row:active { background: var(--surface2); }
+.settings-chevron { color: var(--text-muted); font-size: 1.2rem; line-height: 1; }
+
+/* Settings sub-panels */
+.settings-panel .settings-section { margin-top: 0; }
+.settings-back-btn {
+  display: inline-flex;
+  align-items: center;
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 0.95rem;
+  cursor: pointer;
+  padding: 0 0 14px;
+}
+
+/* Text size controls */
+.text-size-row { display: flex; gap: 8px; margin-bottom: 16px; }
 .text-size-btn {
+  flex: 1;
   background: var(--surface2);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--text);
   cursor: pointer;
-  padding: 4px 10px;
+  padding: 10px 4px;
   font-size: 0.95rem;
+  font-weight: 600;
   transition: background var(--transition), border-color var(--transition);
 }
 .text-size-btn.active {
   background: var(--accent);
   border-color: var(--accent);
   color: #fff;
+}
+.text-size-preview {
+  color: var(--text-dim);
+  padding: 10px 0 4px;
+  border-top: 1px solid var(--border);
 }
 
 /* Today's readings list */

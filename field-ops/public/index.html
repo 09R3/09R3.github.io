@@ -506,75 +506,114 @@
   <!-- ── Settings ─────────────────────────────────────────────────────────── -->
   <div id="screen-admin" class="screen-content">
 
-    <!-- Account — visible to all users -->
-    <div class="settings-section">
-      <div class="settings-section-title">Account</div>
-      <div class="settings-card">
-        <div class="settings-row"><span class="settings-label">Name</span><span id="settings-full-name" class="settings-value"></span></div>
-        <div class="settings-row"><span class="settings-label">Username</span><span id="settings-username" class="settings-value"></span></div>
-        <div class="settings-row"><span class="settings-label">Role</span><span id="settings-role" class="settings-value"></span></div>
+    <!-- Main menu list -->
+    <div id="settings-main">
+      <div class="settings-menu-card">
+        <button class="settings-menu-row" data-panel="account">
+          <span>Account</span><span class="settings-chevron">›</span>
+        </button>
+        <button class="settings-menu-row" data-panel="password">
+          <span>Change Password</span><span class="settings-chevron">›</span>
+        </button>
+        <button class="settings-menu-row" data-panel="textsize">
+          <span>Text Size</span><span class="settings-chevron">›</span>
+        </button>
+        <button class="settings-menu-row" data-panel="readings">
+          <span>Today's Readings</span><span class="settings-chevron">›</span>
+        </button>
+        <button class="settings-menu-row" data-panel="appinfo">
+          <span>App Info</span><span class="settings-chevron">›</span>
+        </button>
+      </div>
+      <div class="settings-menu-card hidden" id="settings-admin-section">
+        <button class="settings-menu-row" data-panel="usermgmt">
+          <span>User Management</span><span class="settings-chevron">›</span>
+        </button>
       </div>
     </div>
 
-    <!-- Change Password -->
-    <div class="settings-section">
-      <div class="settings-section-title">Change Password</div>
-      <div class="settings-card">
-        <div class="settings-pad">
-          <div class="form-group">
-            <label>Current Password</label>
-            <input type="password" id="pw-current" class="ctrl-input" autocomplete="current-password">
-          </div>
-          <div class="form-group">
-            <label>New Password</label>
-            <input type="password" id="pw-new" class="ctrl-input" autocomplete="new-password">
-          </div>
-          <div class="form-group">
-            <label>Confirm New Password</label>
-            <input type="password" id="pw-confirm" class="ctrl-input" autocomplete="new-password">
-          </div>
-          <div id="pw-error" class="error-msg hidden"></div>
-          <button class="btn btn-primary" id="pw-save-btn">Update Password</button>
+    <!-- Account panel -->
+    <div id="settings-panel-account" class="settings-panel hidden">
+      <button class="settings-back-btn">‹ Settings</button>
+      <div class="settings-section">
+        <div class="settings-card">
+          <div class="settings-row"><span class="settings-label">Name</span><span id="settings-full-name" class="settings-value"></span></div>
+          <div class="settings-row"><span class="settings-label">Username</span><span id="settings-username" class="settings-value"></span></div>
+          <div class="settings-row"><span class="settings-label">Role</span><span id="settings-role" class="settings-value"></span></div>
         </div>
       </div>
     </div>
 
-    <!-- Text Size -->
-    <div class="settings-section">
-      <div class="settings-section-title">Text Size</div>
-      <div class="settings-card">
-        <div class="settings-row">
-          <span class="settings-label">Adjust app text size</span>
-          <div class="text-size-btns">
-            <button class="text-size-btn" data-size="14">A<small>-</small></button>
-            <button class="text-size-btn" data-size="16">A</button>
-            <button class="text-size-btn" data-size="18">A<big>+</big></button>
+    <!-- Change Password panel -->
+    <div id="settings-panel-password" class="settings-panel hidden">
+      <button class="settings-back-btn">‹ Settings</button>
+      <div class="settings-section">
+        <div class="settings-card">
+          <div class="settings-pad">
+            <div class="form-group">
+              <label>Current Password</label>
+              <input type="password" id="pw-current" class="ctrl-input" autocomplete="current-password">
+            </div>
+            <div class="form-group">
+              <label>New Password</label>
+              <input type="password" id="pw-new" class="ctrl-input" autocomplete="new-password">
+            </div>
+            <div class="form-group">
+              <label>Confirm New Password</label>
+              <input type="password" id="pw-confirm" class="ctrl-input" autocomplete="new-password">
+            </div>
+            <div id="pw-error" class="error-msg hidden"></div>
+            <button class="btn btn-primary" id="pw-save-btn">Update Password</button>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- Today's Readings -->
-    <div class="settings-section">
-      <div class="settings-section-title">Today's Readings</div>
-      <div id="today-readings-list" class="settings-card">
-        <div class="placeholder-msg">Loading…</div>
+    <!-- Text Size panel -->
+    <div id="settings-panel-textsize" class="settings-panel hidden">
+      <button class="settings-back-btn">‹ Settings</button>
+      <div class="settings-section">
+        <div class="settings-card">
+          <div class="settings-pad">
+            <p style="color:var(--text-dim);font-size:0.88rem;margin-bottom:14px">Choose a text size for the app. Saved automatically.</p>
+            <div class="text-size-row">
+              <button class="text-size-btn" data-size="13">1</button>
+              <button class="text-size-btn" data-size="14">2</button>
+              <button class="text-size-btn" data-size="16">3</button>
+              <button class="text-size-btn" data-size="18">4</button>
+              <button class="text-size-btn" data-size="20">5</button>
+            </div>
+            <div class="text-size-preview">The quick brown fox jumps over the lazy dog.</div>
+          </div>
+        </div>
       </div>
     </div>
 
-    <!-- App Info -->
-    <div class="settings-section">
-      <div class="settings-section-title">App Info</div>
-      <div class="settings-card">
-        <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value">v 0.64</span></div>
-        <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
-        <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
+    <!-- Today's Readings panel -->
+    <div id="settings-panel-readings" class="settings-panel hidden">
+      <button class="settings-back-btn">‹ Settings</button>
+      <div class="settings-section">
+        <div id="today-readings-list" class="settings-card">
+          <div class="placeholder-msg">Loading…</div>
+        </div>
       </div>
     </div>
 
-    <!-- User Management — admin / supervisor only -->
-    <div class="settings-section hidden" id="settings-admin-section">
-      <div class="settings-section-title">User Management</div>
+    <!-- App Info panel -->
+    <div id="settings-panel-appinfo" class="settings-panel hidden">
+      <button class="settings-back-btn">‹ Settings</button>
+      <div class="settings-section">
+        <div class="settings-card">
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value">v 0.64</span></div>
+          <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
+          <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- User Management panel -->
+    <div id="settings-panel-usermgmt" class="settings-panel hidden">
+      <button class="settings-back-btn">‹ Settings</button>
       <div class="admin-actions">
         <button class="btn btn-primary" id="admin-add-user-btn">+ Add User</button>
       </div>
