@@ -428,8 +428,8 @@ html, body {
   padding: 10px 14px;
   margin-bottom: 12px;
 }
-.ctrl-input.ctrl-date { width: 140px; flex-shrink: 0; }
-.ctrl-input.ctrl-time { width: 110px; flex-shrink: 0; }
+.ctrl-input.ctrl-date { flex: 1.5; min-width: 0; }
+.ctrl-input.ctrl-time { flex: 1; min-width: 0; }
 .kf-tabs-inline { width: 100%; margin-top: 4px; }
 
 /* ── Pumping Plant site tabs + site-header divider ───────────────────────── */
