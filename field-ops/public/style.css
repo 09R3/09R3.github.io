@@ -23,12 +23,14 @@
   --transition:  0.15s ease;
 }
 
+html { font-size: 16px; }
+
 html, body {
   height: 100%;
   background: var(--bg);
   color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-  font-size: 16px;
+  font-size: 1rem;
   line-height: 1.5;
   -webkit-tap-highlight-color: transparent;
 }
@@ -1294,14 +1296,19 @@ html, body {
 /* Settings sub-panels */
 .settings-panel .settings-section { margin-top: 0; }
 .settings-back-btn {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  background: none;
-  border: none;
+  gap: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   color: var(--accent);
   font-size: 0.95rem;
+  font-weight: 500;
   cursor: pointer;
-  padding: 0 0 14px;
+  padding: 10px 16px;
+  margin-bottom: 16px;
+  width: 100%;
 }
 
 /* Text size controls */
@@ -1324,6 +1331,7 @@ html, body {
   color: #fff;
 }
 .text-size-preview {
+  font-size: 1rem;
   color: var(--text-dim);
   padding: 10px 0 4px;
   border-top: 1px solid var(--border);

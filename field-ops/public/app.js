@@ -1975,10 +1975,17 @@ function createKFItem(w, dateInput, timeInput) {
 })();
 
 function updateTextSizeBtns() {
-  const current = parseInt(localStorage.getItem('field-ops-text-size') || '16');
-  document.querySelectorAll('.text-size-btn').forEach(b => {
-    b.classList.toggle('active', parseInt(b.dataset.size) === current);
+  const saved = localStorage.getItem('field-ops-text-size');
+  const current = saved ? parseInt(saved) : 16;
+  // Find closest button (in case saved size doesn't exactly match a button)
+  const btns = [...document.querySelectorAll('.text-size-btn')];
+  let closest = btns[0];
+  let minDiff = Infinity;
+  btns.forEach(b => {
+    const diff = Math.abs(parseInt(b.dataset.size) - current);
+    if (diff < minDiff) { minDiff = diff; closest = b; }
   });
+  btns.forEach(b => b.classList.toggle('active', b === closest));
 }
 
 document.querySelectorAll('.text-size-btn').forEach(btn => {
@@ -1999,7 +2006,7 @@ function openSettingsPanel(panelId) {
   if (panelId === 'appinfo') {
     const ls = localStorage.getItem('field-ops-last-sync');
     el('settings-last-sync').textContent = ls ? new Date(ls).toLocaleString() : 'Never';
-    el('settings-db-status').textContent = el('db-dot').classList.contains('db-dot-ok') ? 'Connected' : 'Disconnected';
+    el('settings-db-status').textContent = el('db-dot').classList.contains('connected') ? 'Connected' : 'Disconnected';
   }
 }
 
