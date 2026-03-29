@@ -1232,3 +1232,30 @@ html, body {
   line-height: 1;
 }
 .set-tab-map-btn:hover { opacity: 1; }
+
+/* ── Settings Screen ─────────────────────────────────────────────────────── */
+.settings-section { margin-bottom: 20px; }
+.settings-section-title {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+.settings-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.settings-row:last-child { border-bottom: none; }
+.settings-label { color: var(--text-dim); font-size: 0.9rem; }
+.settings-value { font-size: 0.9rem; font-weight: 500; }

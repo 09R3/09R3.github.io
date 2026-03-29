@@ -75,7 +75,7 @@
         <div id="login-error" class="error-msg hidden"></div>
         <button type="submit" class="btn btn-primary btn-full">Sign In</button>
       </form>
-      <div class="login-version">v 0.62</div>
+      <div class="login-version">v 0.63</div>
     </div>
   </div>
 </div>
@@ -151,7 +151,7 @@
       <li><button class="nav-btn" data-screen="kf-monthly">&#128200; KF Monthly</button></li>
       <li><button class="nav-btn" data-screen="maintenance">&#128295; Maintenance Log</button></li>
       <li class="nav-reports hidden" id="nav-reports-item"><button class="nav-btn" data-screen="reports">&#128202; Reports</button></li>
-      <li class="nav-admin hidden" id="nav-admin-item"><button class="nav-btn" data-screen="admin">&#9881;&#65039; Admin</button></li>
+      <li class="nav-item" id="nav-admin-item"><button class="nav-btn" data-screen="admin">&#9881; Settings</button></li>
     </ul>
     <div class="drawer-footer">
       <button class="nav-btn nav-logout" id="logout-btn">&#x2192; Sign Out</button>
@@ -200,9 +200,9 @@
         <span class="dash-icon">&#128202;</span>
         <span class="dash-label">Reports</span>
       </button>
-      <button class="dash-tile admin-tile hidden" id="dash-admin-tile" data-screen="admin">
-        <span class="dash-icon">&#9881;&#65039;</span>
-        <span class="dash-label">Admin</span>
+      <button class="dash-tile" id="dash-admin-tile" data-screen="admin">
+        <span class="dash-icon">&#9881;</span>
+        <span class="dash-label">Settings</span>
       </button>
     </div>
   </div>
@@ -503,12 +503,27 @@
     <div id="report-output"></div>
   </div>
 
-  <!-- ── Admin ──────────────────────────────────────────────────────────────── -->
+  <!-- ── Settings ─────────────────────────────────────────────────────────── -->
   <div id="screen-admin" class="screen-content">
-    <div class="admin-actions">
-      <button class="btn btn-primary" id="admin-add-user-btn">+ Add User</button>
+
+    <!-- Account — visible to all users -->
+    <div class="settings-section">
+      <div class="settings-section-title">Account</div>
+      <div class="settings-card">
+        <div class="settings-row"><span class="settings-label">Name</span><span id="settings-full-name" class="settings-value"></span></div>
+        <div class="settings-row"><span class="settings-label">Username</span><span id="settings-username" class="settings-value"></span></div>
+        <div class="settings-row"><span class="settings-label">Role</span><span id="settings-role" class="settings-value"></span></div>
+      </div>
     </div>
-    <div id="admin-user-list" class="user-list"></div>
+
+    <!-- User Management — admin / supervisor only -->
+    <div class="settings-section hidden" id="settings-admin-section">
+      <div class="settings-section-title">User Management</div>
+      <div class="admin-actions">
+        <button class="btn btn-primary" id="admin-add-user-btn">+ Add User</button>
+      </div>
+      <div id="admin-user-list" class="user-list"></div>
+    </div>
 
     <!-- Add/Edit User Modal -->
     <div id="user-modal" class="modal-overlay hidden">

@@ -341,7 +341,7 @@ function showScreen(name) {
     vehicles:       'Vehicle Monthly',
     'kf-monthly':   'KF Monthly Readings',
     maintenance:    'Maintenance Log',
-    admin:          'Admin',
+    admin:          'Settings',
   };
   el('screen-title').textContent = titles[name] || 'Field Ops';
   closeDrawer();
@@ -416,13 +416,16 @@ function onLogin(user) {
   el('user-badge').textContent = user.initials || user.username.slice(0, 2).toUpperCase();
   el('drawer-user').innerHTML = `<strong>${user.full_name || user.username}</strong>${user.role}`;
 
-  // Show reports + admin nav for supervisor/admin
+  // Show reports nav for supervisor/admin
   if (user.role === 'admin' || user.role === 'supervisor') {
     el('nav-reports-item').classList.remove('hidden');
     el('dash-reports-tile').classList.remove('hidden');
-    el('nav-admin-item').classList.remove('hidden');
-    el('dash-admin-tile').classList.remove('hidden');
+    el('settings-admin-section').classList.remove('hidden');
   }
+  // Populate account info on settings screen
+  el('settings-full-name').textContent = user.full_name || '—';
+  el('settings-username').textContent  = user.username;
+  el('settings-role').textContent      = user.role.charAt(0).toUpperCase() + user.role.slice(1);
 
   showScreen('dashboard');
   loadDashboardStats();
