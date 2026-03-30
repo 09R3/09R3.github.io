@@ -384,7 +384,7 @@ function showScreen(name) {
   closeDrawer();
 
   // Block supervisor/admin-only screens for operators
-  if (name === 'admin' || name === 'reports') {
+  if (name === 'reports') {
     if (!currentUser || (currentUser.role !== 'admin' && currentUser.role !== 'supervisor')) {
       showScreen('dashboard');
       return;
