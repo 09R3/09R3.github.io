@@ -827,7 +827,7 @@ function createReadingRow({ type, id, label, prev, prevDate, prevNotes, unit, de
     </div>
     <div class="rr-field-group rr-cur-wrap">
       <span class="rr-col-hd">Current</span>
-      <input type="number" class="rr-input current rr-current" step="0.1" inputmode="decimal" placeholder="—">
+      <input type="number" class="rr-input current rr-current" step="0.1" placeholder="—">
     </div>
     <div class="rr-field-group rr-diff-wrap">
       <span class="rr-col-hd">Diff</span>
@@ -1033,26 +1033,26 @@ function createWellItem(w, dateInput, timeInput) {
       <div class="two-col">
         <div class="form-group">
           <label>Hours</label>
-          <input type="number" class="ctrl-input w-hours" step="0.1" inputmode="decimal" placeholder="0.0">
+          <input type="number" class="ctrl-input w-hours" step="0.1" placeholder="0.0">
         </div>
         <div class="form-group">
           <label>Flow (cfs)</label>
-          <input type="number" class="ctrl-input w-flow" step="0.01" inputmode="decimal" placeholder="0.00">
+          <input type="number" class="ctrl-input w-flow" step="0.01" placeholder="0.00">
         </div>
       </div>
       <div class="two-col">
         <div class="form-group">
           <label>Totalizer (AF)</label>
-          <input type="number" class="ctrl-input w-totalizer" step="1" inputmode="decimal" placeholder="0">
+          <input type="number" class="ctrl-input w-totalizer" step="1" placeholder="0">
         </div>
         <div class="form-group">
           <label>Dripper Oil</label>
-          <input type="number" class="ctrl-input w-dripperoil" step="0.01" inputmode="decimal" placeholder="0.00">
+          <input type="number" class="ctrl-input w-dripperoil" step="0.01" placeholder="0.00">
         </div>
       </div>
       <div class="form-group">
         <label>PG&amp;E kWh</label>
-        <input type="number" class="ctrl-input w-pge" step="1" inputmode="decimal" placeholder="0">
+        <input type="number" class="ctrl-input w-pge" step="1" placeholder="0">
       </div>
       <div class="form-group">
         <label>Notes</label>
@@ -1224,15 +1224,15 @@ function createCanalItem(s, dateInput, timeInput) {
     ${typeDisp ? `<div class="list-item-meta"><span>${typeDisp}</span></div>` : ''}
     <div class="list-item-form">
       ${f.flow ? `<div class="form-group"><label>Flow (cfs)</label>
-        <input type="number" class="ctrl-input c-flow" step="0.01" inputmode="decimal" placeholder="0.00"></div>` : ''}
+        <input type="number" class="ctrl-input c-flow" step="0.01" placeholder="0.00"></div>` : ''}
       ${f.totalizer ? `<div class="form-group"><label>Totalizer (AF)</label>
-        <input type="number" class="ctrl-input c-totalizer" step="0.01" inputmode="decimal" placeholder="0.00"></div>` : ''}
+        <input type="number" class="ctrl-input c-totalizer" step="0.01" placeholder="0.00"></div>` : ''}
       ${f.gate ? `<div class="form-group"><label>Gate Setting</label>
         <input type="text" class="ctrl-input c-gate" inputmode="decimal" placeholder="e.g. 2.5"></div>` : ''}
       ${f.head ? `<div class="form-group"><label>${f.headLabel || 'Head (ft)'}</label>
-        <input type="number" class="ctrl-input c-head" step="0.01" inputmode="decimal" placeholder="0.00"></div>` : ''}
+        <input type="number" class="ctrl-input c-head" step="0.01" placeholder="0.00"></div>` : ''}
       ${f.derived ? `<div class="form-group"><label>Derived Flow (cfs)</label>
-        <input type="number" class="ctrl-input c-derived" step="0.01" inputmode="decimal" placeholder="0.00"></div>` : ''}
+        <input type="number" class="ctrl-input c-derived" step="0.01" placeholder="0.00"></div>` : ''}
       <div class="form-group"><label>Notes</label>
         <textarea class="ctrl-textarea c-notes" rows="2" placeholder="Optional notes…"></textarea></div>
       <div class="lif-error error-msg hidden"></div>
@@ -1396,12 +1396,12 @@ function createVehicleItem(v, dateInput, timeInput) {
   const showHrs = !rt || rt === 'hours' || rt === 'both';
   const odoField = `<div class="form-group">
     <label>Odometer (mi)${lastOdo ? `<span class="prev-hint"> · Prev: ${lastOdo}</span>` : ''}</label>
-    <input type="number" class="ctrl-input v-odo" step="1" inputmode="numeric" placeholder="0">
+    <input type="number" class="ctrl-input v-odo" step="1" placeholder="0">
     <div class="v-service-hint hidden"></div>
   </div>`;
   const hrsField = `<div class="form-group">
     <label>Engine Hours${lastHrs ? `<span class="prev-hint"> · Prev: ${lastHrs}</span>` : ''}</label>
-    <input type="number" class="ctrl-input v-hrs" step="0.1" inputmode="decimal" placeholder="0.0">
+    <input type="number" class="ctrl-input v-hrs" step="0.1" placeholder="0.0">
     <div class="v-service-hrs-hint hidden"></div>
   </div>`;
   const fieldsHtml = (showOdo && showHrs)
@@ -1896,7 +1896,7 @@ function createKFItem(w, dateInput, timeInput) {
     <div class="list-item-form">
       <div class="form-group">
         <label>Depth to Water (ft)${prevDTW ? `<span class="prev-hint"> · Prev: ${prevDTW}</span>` : ''}</label>
-        <input type="number" class="ctrl-input kf-dtw" step="0.01" inputmode="decimal" placeholder="0.00">
+        <input type="number" class="ctrl-input kf-dtw" step="0.01" placeholder="0.00">
       </div>
       <div class="form-group toggle-row">
         <label>Status</label>
