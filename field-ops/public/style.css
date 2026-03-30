@@ -64,12 +64,12 @@ html, body {
   border-radius: var(--radius);
   padding: 36px 28px;
 }
-.login-logo {
-  font-size: 2rem;
-  font-weight: 700;
-  color: var(--accent);
-  text-align: center;
-  letter-spacing: -0.5px;
+.login-logo-img {
+  display: block;
+  width: 120px;
+  height: 120px;
+  margin: 0 auto 4px;
+  border-radius: 50%;
 }
 .login-subtitle {
   text-align: center;
