@@ -23,6 +23,23 @@ const pool = new Pool({
   max: 10,
 });
 
+// ── Auto-migration ────────────────────────────────────────────────────────────
+pool.query(`
+  CREATE TABLE IF NOT EXISTS bug_reports (
+    report_id    SERIAL PRIMARY KEY,
+    submitted_by VARCHAR(100) NOT NULL,
+    submitted_at TIMESTAMP DEFAULT NOW(),
+    screen_area  VARCHAR(100),
+    severity     VARCHAR(20) DEFAULT 'minor',
+    is_repeatable BOOLEAN DEFAULT FALSE,
+    description  TEXT NOT NULL,
+    app_version  VARCHAR(20),
+    resolved     BOOLEAN DEFAULT FALSE,
+    resolved_by  VARCHAR(100),
+    resolved_at  TIMESTAMP
+  )
+`).catch(err => console.error('Migration error:', err.message));
+
 // ── Auth / Sessions ───────────────────────────────────────────────────────────
 const SESSION_TTL = 8 * 60 * 60 * 1000; // 8 hours
 const sessions = new Map();
@@ -1339,6 +1356,43 @@ app.get('/api/readings/today', requireAuth, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// ── Bug Reports ───────────────────────────────────────────────────────────────
+app.post('/api/bug-reports', requireAuth, async (req, res) => {
+  const { screen_area, severity, is_repeatable, description, app_version } = req.body;
+  if (!description || !description.trim()) return res.status(400).json({ error: 'Description is required' });
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO bug_reports (submitted_by, screen_area, severity, is_repeatable, description, app_version)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING report_id`,
+      [req.user.username, screen_area || null, severity || 'minor',
+       is_repeatable ?? false, description.trim(), app_version || null]
+    );
+    res.json({ ok: true, report_id: rows[0].report_id });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/bug-reports', requireAuth, requireRole('admin', 'supervisor'), async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT report_id, submitted_by, submitted_at, screen_area, severity,
+              is_repeatable, description, app_version, resolved, resolved_by, resolved_at
+       FROM bug_reports ORDER BY resolved ASC, submitted_at DESC`
+    );
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/bug-reports/:id/resolve', requireAuth, requireRole('admin', 'supervisor'), async (req, res) => {
+  const { resolved } = req.body;
+  try {
+    await pool.query(
+      `UPDATE bug_reports SET resolved=$1, resolved_by=$2, resolved_at=$3 WHERE report_id=$4`,
+      [resolved, resolved ? req.user.username : null, resolved ? new Date() : null, parseInt(req.params.id)]
+    );
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // ── User Management ───────────────────────────────────────────────────────────

@@ -1392,3 +1392,59 @@ html, body {
   border-radius: 50%;
   box-shadow: 0 0 0 2px #2196f3, 0 2px 6px rgba(0,0,0,0.4);
 }
+
+/* ── Bug Report ──────────────────────────────────────────────────────────── */
+.nav-bug-report { color: var(--text-dim); font-size: 0.9rem; }
+
+.bug-group-title {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-dim);
+  padding: 14px 0 6px;
+}
+.bug-report-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  margin-bottom: 10px;
+}
+.bug-report-card.bug-resolved { opacity: 0.55; }
+.bug-report-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.bug-severity { font-size: 0.72rem; font-weight: 700; letter-spacing: 0.05em; }
+.bug-area {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 2px 8px;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+.bug-tag {
+  background: var(--accent-dark);
+  border-radius: 10px;
+  padding: 2px 8px;
+  font-size: 0.75rem;
+  color: #fff;
+}
+.bug-meta { font-size: 0.75rem; color: var(--text-muted); margin-left: auto; }
+.bug-description { font-size: 0.9rem; line-height: 1.4; margin-bottom: 8px; }
+.bug-version { font-size: 0.72rem; color: var(--text-muted); margin-bottom: 8px; }
+.bug-resolve-row { border-top: 1px solid var(--border); padding-top: 8px; }
+.bug-resolve-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.bug-resolve-check { width: 16px; height: 16px; cursor: pointer; accent-color: var(--green); }

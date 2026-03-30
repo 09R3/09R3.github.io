@@ -2039,7 +2039,8 @@ function openSettingsPanel(panelId) {
   el('settings-main').classList.add('hidden');
   document.querySelectorAll('.settings-panel').forEach(p => p.classList.add('hidden'));
   el('settings-panel-' + panelId).classList.remove('hidden');
-  if (panelId === 'readings') loadTodayReadings();
+  if (panelId === 'readings')   loadTodayReadings();
+  if (panelId === 'bugreports') loadBugReports();
   if (panelId === 'appinfo') {
     const ls = localStorage.getItem('field-ops-last-sync');
     el('settings-last-sync').textContent = ls ? new Date(ls).toLocaleString() : 'Never';
@@ -2128,6 +2129,105 @@ async function loadTodayReadings() {
     });
   } catch (err) {
     list.innerHTML = `<div class="settings-row"><span class="settings-label" style="color:var(--red-light)">${err.message}</span></div>`;
+  }
+}
+
+/* ── Bug Reports ─────────────────────────────────────────────────────────── */
+const BUG_VERSION = document.querySelector('.login-version')?.textContent?.trim() || '';
+
+// Seg button wiring for repeatable
+document.querySelectorAll('#bug-repeatable-seg .seg-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#bug-repeatable-seg .seg-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+  });
+});
+
+el('bug-report-btn').addEventListener('click', () => {
+  closeDrawer();
+  el('bug-error').classList.add('hidden');
+  el('bug-description').value = '';
+  el('bug-screen').value = '';
+  el('bug-severity').value = 'minor';
+  document.querySelectorAll('#bug-repeatable-seg .seg-btn').forEach(b => b.classList.toggle('active', b.dataset.val === 'false'));
+  el('bug-report-modal').classList.remove('hidden');
+});
+el('bug-modal-close').addEventListener('click',  () => el('bug-report-modal').classList.add('hidden'));
+el('bug-modal-cancel').addEventListener('click', () => el('bug-report-modal').classList.add('hidden'));
+el('bug-report-modal').addEventListener('click', e => { if (e.target === el('bug-report-modal')) el('bug-report-modal').classList.add('hidden'); });
+
+el('bug-modal-submit').addEventListener('click', async () => {
+  const description = el('bug-description').value.trim();
+  const errEl = el('bug-error');
+  errEl.classList.add('hidden');
+  if (!description) { errEl.textContent = 'Please describe the issue.'; errEl.classList.remove('hidden'); return; }
+  const is_repeatable = document.querySelector('#bug-repeatable-seg .seg-btn.active')?.dataset.val === 'true';
+  el('bug-modal-submit').disabled = true;
+  try {
+    await api('POST', '/api/bug-reports', {
+      screen_area: el('bug-screen').value || null,
+      severity: el('bug-severity').value,
+      is_repeatable,
+      description,
+      app_version: BUG_VERSION,
+    });
+    el('bug-report-modal').classList.add('hidden');
+    showToast('Bug report submitted — thank you!', 'success');
+  } catch (err) {
+    errEl.textContent = err.message;
+    errEl.classList.remove('hidden');
+  } finally {
+    el('bug-modal-submit').disabled = false;
+  }
+});
+
+async function loadBugReports() {
+  const list = el('bug-reports-list');
+  list.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const rows = await api('GET', '/api/bug-reports');
+    if (!rows.length) {
+      list.innerHTML = '<div class="placeholder-msg">No bug reports yet.</div>';
+      return;
+    }
+    const sevColor = { minor: 'var(--text-dim)', major: 'var(--yellow)', blocking: 'var(--red-light)' };
+    const open   = rows.filter(r => !r.resolved);
+    const closed = rows.filter(r =>  r.resolved);
+    const renderGroup = (items, title) => {
+      if (!items.length) return '';
+      return `<div class="bug-group-title">${title}</div>` + items.map(r => `
+        <div class="bug-report-card ${r.resolved ? 'bug-resolved' : ''}">
+          <div class="bug-report-header">
+            <span class="bug-severity" style="color:${sevColor[r.severity] || sevColor.minor}">${r.severity.toUpperCase()}</span>
+            ${r.screen_area ? `<span class="bug-area">${r.screen_area}</span>` : ''}
+            ${r.is_repeatable ? '<span class="bug-tag">Repeatable</span>' : ''}
+            <span class="bug-meta">${r.submitted_by} &bull; ${new Date(r.submitted_at).toLocaleDateString()}</span>
+          </div>
+          <div class="bug-description">${r.description}</div>
+          ${r.app_version ? `<div class="bug-version">${r.app_version}</div>` : ''}
+          <div class="bug-resolve-row">
+            <label class="bug-resolve-label">
+              <input type="checkbox" class="bug-resolve-check" data-id="${r.report_id}" ${r.resolved ? 'checked' : ''}>
+              ${r.resolved ? `Resolved by ${r.resolved_by} on ${new Date(r.resolved_at).toLocaleDateString()}` : 'Mark resolved'}
+            </label>
+          </div>
+        </div>
+      `).join('');
+    };
+    list.innerHTML = renderGroup(open, `Open (${open.length})`) + renderGroup(closed, `Resolved (${closed.length})`);
+    list.querySelectorAll('.bug-resolve-check').forEach(chk => {
+      chk.addEventListener('change', async () => {
+        try {
+          await api('PUT', `/api/bug-reports/${chk.dataset.id}/resolve`, { resolved: chk.checked });
+          loadBugReports();
+        } catch (err) {
+          showToast(err.message, 'error');
+          chk.checked = !chk.checked;
+        }
+      });
+    });
+  } catch (err) {
+    list.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
   }
 }
 

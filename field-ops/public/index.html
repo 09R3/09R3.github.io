@@ -77,7 +77,7 @@
         <div id="login-error" class="error-msg hidden"></div>
         <button type="submit" class="btn btn-primary btn-full">Sign In</button>
       </form>
-      <div class="login-version">v 0.73</div>
+      <div class="login-version">v 0.74</div>
     </div>
   </div>
 </div>
@@ -159,9 +159,64 @@
       <li class="nav-item" id="nav-admin-item"><button class="nav-btn" data-screen="admin">&#9881; Settings</button></li>
     </ul>
     <div class="drawer-footer">
+      <button class="nav-btn nav-bug-report" id="bug-report-btn">&#128030; Report a Bug</button>
       <button class="nav-btn nav-logout" id="logout-btn">&#x2192; Sign Out</button>
     </div>
   </nav>
+
+  <!-- ── Bug Report Modal ──────────────────────────────────────────────────── -->
+  <div id="bug-report-modal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2>Report a Bug</h2>
+        <button class="modal-close" id="bug-modal-close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Screen / Area</label>
+          <select id="bug-screen" class="ctrl-select">
+            <option value="">— Select area —</option>
+            <option value="Dashboard">Dashboard</option>
+            <option value="Pumping Plant">Pumping Plant</option>
+            <option value="Well Readings">Well Readings</option>
+            <option value="Canal Readings">Canal Readings</option>
+            <option value="Vehicle Monthly">Vehicle Monthly</option>
+            <option value="KF Monthly">KF Monthly</option>
+            <option value="Maintenance Log">Maintenance Log</option>
+            <option value="Reports">Reports</option>
+            <option value="Settings">Settings</option>
+            <option value="Other">Other</option>
+          </select>
+        </div>
+        <div class="two-col">
+          <div class="form-group">
+            <label>Severity</label>
+            <select id="bug-severity" class="ctrl-select">
+              <option value="minor">Minor</option>
+              <option value="major">Major</option>
+              <option value="blocking">Blocking</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Repeatable?</label>
+            <div class="seg-group" id="bug-repeatable-seg">
+              <button class="seg-btn active" data-val="false">No</button>
+              <button class="seg-btn" data-val="true">Yes</button>
+            </div>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Description</label>
+          <textarea id="bug-description" class="ctrl-input ctrl-textarea" rows="4" placeholder="Describe what happened and what you expected…"></textarea>
+        </div>
+        <div id="bug-error" class="error-msg hidden"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="bug-modal-cancel">Cancel</button>
+        <button class="btn btn-primary" id="bug-modal-submit">Submit Report</button>
+      </div>
+    </div>
+  </div>
 
   <!-- ── Dashboard ──────────────────────────────────────────────────────────── -->
   <div id="screen-dashboard" class="screen-content">
@@ -531,6 +586,9 @@
         </button>
       </div>
       <div class="settings-menu-card hidden" id="settings-admin-section">
+        <button class="settings-menu-row" data-panel="bugreports">
+          <span>Bug Reports</span><span class="settings-chevron">›</span>
+        </button>
         <button class="settings-menu-row" data-panel="usermgmt">
           <span>User Management</span><span class="settings-chevron">›</span>
         </button>
@@ -609,11 +667,17 @@
       <button class="settings-back-btn">‹ Settings</button>
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value">v 0.73</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value">v 0.74</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>
       </div>
+    </div>
+
+    <!-- Bug Reports panel -->
+    <div id="settings-panel-bugreports" class="settings-panel hidden">
+      <button class="settings-back-btn">‹ Settings</button>
+      <div id="bug-reports-list"></div>
     </div>
 
     <!-- User Management panel -->
