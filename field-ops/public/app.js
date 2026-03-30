@@ -1530,7 +1530,11 @@ async function initMaintenanceScreen() {
     vehicles.forEach(v => {
       const opt = document.createElement('option');
       opt.value = v.vehicle_id;
-      opt.textContent = `${v.vehicle_number} — ${v.make || ''} ${v.model || ''}`.trim();
+      const isShared = !v.assigned_user ||
+        v.assigned_user.toLowerCase().replace(/\s/g, '') === 'ops&main';
+      const parts = [v.vehicle_number, v.model || ''];
+      if (!isShared) parts.push(v.assigned_user);
+      opt.textContent = parts.filter(Boolean).join(' — ');
       sel.appendChild(opt);
     });
   } catch { /* non-critical */ }
@@ -1589,10 +1593,41 @@ document.querySelectorAll('#maint-type-seg .seg-btn').forEach(btn => {
   });
 });
 
-// Show/hide next service fields based on vehicle reading_type
+// Show/hide next service fields and hints based on selected vehicle
 el('maint-vehicle-select').addEventListener('change', () => {
   const vid = parseInt(el('maint-vehicle-select').value);
   const v = maintVehicles.find(x => x.vehicle_id === vid);
+
+  // VIN / plate hint
+  const vHint = el('maint-vehicle-hint');
+  if (v && (v.vin || v.license_plate)) {
+    const parts = [];
+    if (v.vin)           parts.push(`VIN: ${v.vin}`);
+    if (v.license_plate) parts.push(`Plate: ${v.license_plate}`);
+    vHint.textContent = parts.join(' · ');
+    vHint.classList.remove('hidden');
+  } else {
+    vHint.classList.add('hidden');
+  }
+
+  // Previous odometer hint
+  const odoHint = el('maint-odo-hint');
+  if (v?.last_odometer != null) {
+    odoHint.textContent = `Previous: ${Number(v.last_odometer).toLocaleString()} mi`;
+    odoHint.classList.remove('hidden');
+  } else {
+    odoHint.classList.add('hidden');
+  }
+
+  // Previous engine hours hint
+  const hrsHint = el('maint-hrs-hint');
+  if (v?.last_engine_hours != null) {
+    hrsHint.textContent = `Previous: ${v.last_engine_hours} hrs`;
+    hrsHint.classList.remove('hidden');
+  } else {
+    hrsHint.classList.add('hidden');
+  }
+
   const rt = v?.reading_type;
   const showMiles = !rt || rt === 'odometer' || rt === 'both';
   const showHours = !rt || rt === 'hours' || rt === 'both';
@@ -1761,7 +1796,7 @@ el('maint-save-btn').addEventListener('click', async () => {
       }, 'Maintenance — Building');
     }
     showToast(r.queued ? 'Maintenance queued offline' : 'Maintenance record saved', r.queued ? 'warn' : 'success');
-    // Clear key fields
+    // Clear entry fields (keep vehicle selected so user can quickly view history)
     el('maint-description').value = '';
     el('maint-parts').value = '';
     el('maint-cost').value  = '';
@@ -1769,8 +1804,11 @@ el('maint-save-btn').addEventListener('click', async () => {
     el('maint-notes').value = '';
     el('maint-resolution-notes').value = '';
     el('maint-performed-by').value = '';
+    el('maint-vehicle-odometer').value = '';
+    el('maint-vehicle-hours').value = '';
     el('maint-vehicle-next-miles').value = '';
     el('maint-vehicle-next-hours').value = '';
+    el('maint-next-service').value = '';
   } catch (err) {
     showError('maint-error', err.message);
   }

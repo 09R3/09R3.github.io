@@ -450,6 +450,8 @@ html, body {
 }
 .ctrl-input.ctrl-date { flex: 1.5; min-width: 0; }
 .ctrl-input.ctrl-time { flex: 1; min-width: 0; }
+input[type="date"].ctrl-input { min-height: 44px; }
+.form-hint { font-size: 0.78rem; color: var(--text-dim); margin-top: 5px; line-height: 1.4; }
 .kf-tabs-inline { width: 100%; margin-top: 4px; }
 
 /* ── Pumping Plant site tabs + site-header divider ───────────────────────── */
@@ -554,7 +556,7 @@ html, body {
 }
 .rr-cur-wrap  { width: 72px; }
 .rr-diff-wrap { width: 58px; }
-.rr-prev-wrap { width: 58px; }
+.rr-prev-wrap { min-width: 64px; flex: 1.2; max-width: 110px; }
 
 .rr-input {
   width: 100%;
@@ -854,7 +856,7 @@ html, body {
   .rr-label     { width: 130px; font-size: 0.85rem; }
   .rr-cur-wrap  { width: 82px; }
   .rr-diff-wrap { width: 68px; }
-  .rr-prev-wrap { width: 68px; }
+  .rr-prev-wrap { min-width: 72px; max-width: 120px; }
   .rr-input     { font-size: 0.95rem; padding: 6px 8px; }
 }
 
@@ -864,7 +866,7 @@ html, body {
   .rr-label     { width: 160px; }
   .rr-cur-wrap  { width: 92px; }
   .rr-diff-wrap { width: 76px; }
-  .rr-prev-wrap { width: 76px; }
+  .rr-prev-wrap { min-width: 80px; max-width: 130px; }
 }
 
 /* ── Dashboard Stats ─────────────────────────────────────────────────────── */
