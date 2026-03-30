@@ -401,6 +401,20 @@ function showScreen(name) {
   if (name === 'maintenance')   initMaintenanceScreen();
   if (name === 'reports')       initReportsScreen();
   if (name === 'admin')         { initAdminScreen(); initSettingsScreen(); }
+
+  // Refresh time to current on every screen visit
+  const screenTimeIds = {
+    'pumping-plant': 'pp-time',
+    'wells':         'well-time',
+    'canal':         'canal-time',
+    'vehicles':      'vehicle-time',
+    'kf-monthly':    'kf-time',
+  };
+  const timeFieldId = screenTimeIds[name];
+  if (timeFieldId) {
+    const tf = el(timeFieldId);
+    if (tf) tf.value = nowHHMM();
+  }
 }
 
 /* ── Drawer ──────────────────────────────────────────────────────────────── */
@@ -690,6 +704,7 @@ async function initPPScreen() {
     tabsEl.querySelectorAll('.set-tab').forEach(t => t.classList.remove('active'));
     tab.classList.add('active');
     pp.activeTab = tab.dataset.siteId || null;
+    el('pp-time').value = nowHHMM();
     await renderPPBody();
   });
 
@@ -1213,7 +1228,7 @@ function createCanalItem(s, dateInput, timeInput) {
       ${f.totalizer ? `<div class="form-group"><label>Totalizer (AF)</label>
         <input type="number" class="ctrl-input c-totalizer" step="0.01" inputmode="decimal" placeholder="0.00"></div>` : ''}
       ${f.gate ? `<div class="form-group"><label>Gate Setting</label>
-        <input type="text" class="ctrl-input c-gate" placeholder="e.g. 2.5"></div>` : ''}
+        <input type="text" class="ctrl-input c-gate" inputmode="decimal" placeholder="e.g. 2.5"></div>` : ''}
       ${f.head ? `<div class="form-group"><label>${f.headLabel || 'Head (ft)'}</label>
         <input type="number" class="ctrl-input c-head" step="0.01" inputmode="decimal" placeholder="0.00"></div>` : ''}
       ${f.derived ? `<div class="form-group"><label>Derived Flow (cfs)</label>
@@ -1819,6 +1834,7 @@ async function initKFScreen() {
     tabsEl.querySelectorAll('.set-tab').forEach(t => t.classList.remove('active'));
     tab.classList.add('active');
     kfActiveSet = tab.dataset.setId || null;
+    el('kf-time').value = nowHHMM();
     renderKFList();
   });
 
