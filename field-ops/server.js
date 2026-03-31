@@ -1623,6 +1623,136 @@ app.get('/api/reports/kf-operators', requireAuth, requireRole('supervisor', 'adm
   }
 });
 
+// ── Pesticides ────────────────────────────────────────────────────────────────
+
+// List pesticides (active only for operators; all for supervisor/admin)
+app.get('/api/pesticides', requireAuth, async (req, res) => {
+  try {
+    const supervisorRoles = ['supervisor', 'admin'];
+    const showAll = supervisorRoles.includes(req.user.role);
+    const { rows } = await pool.query(
+      `SELECT pesticide_id, name, epa_reg_number, unit_of_measure, active, created_at
+       FROM pesticides
+       ${showAll ? '' : 'WHERE active = TRUE'}
+       ORDER BY name`
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Add a new pesticide (all roles)
+app.post('/api/pesticides', requireAuth, async (req, res) => {
+  const { name, epa_reg_number, unit_of_measure } = req.body;
+  if (!name || !unit_of_measure) return res.status(400).json({ error: 'name and unit_of_measure required' });
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO pesticides (name, epa_reg_number, unit_of_measure)
+       VALUES ($1, $2, $3)
+       RETURNING *`,
+      [name.trim(), epa_reg_number?.trim() || null, unit_of_measure.trim()]
+    );
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Deactivate / reactivate a pesticide (supervisor/admin only)
+app.patch('/api/pesticides/:id', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+  const { active } = req.body;
+  if (active === undefined) return res.status(400).json({ error: 'active required' });
+  try {
+    const { rows } = await pool.query(
+      `UPDATE pesticides SET active = $1 WHERE pesticide_id = $2 RETURNING *`,
+      [active, req.params.id]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Not found' });
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// List usage entries (most recent first, joined with pesticide name)
+app.get('/api/pesticide-usage', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT u.usage_id, u.pesticide_id, p.name AS pesticide_name, p.unit_of_measure,
+              u.used_date, u.used_time, u.applied_by,
+              usr.full_name AS applicator_name,
+              u.quantity, u.location_description, u.notes, u.created_at
+       FROM pesticide_usage u
+       JOIN pesticides p ON p.pesticide_id = u.pesticide_id
+       LEFT JOIN users usr ON usr.user_id = u.applied_by
+       ORDER BY u.used_date DESC, u.used_time DESC
+       LIMIT 200`
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Log new usage entry (date/time/user auto from server)
+app.post('/api/pesticide-usage', requireAuth, async (req, res) => {
+  const { pesticide_id, quantity } = req.body;
+  if (!pesticide_id || quantity == null) return res.status(400).json({ error: 'pesticide_id and quantity required' });
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO pesticide_usage (pesticide_id, quantity, applied_by)
+       VALUES ($1, $2, $3)
+       RETURNING *`,
+      [pesticide_id, quantity, req.user.user_id]
+    );
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Update location/notes on a usage entry
+app.patch('/api/pesticide-usage/:id', requireAuth, async (req, res) => {
+  const { location_description, notes } = req.body;
+  try {
+    const { rows } = await pool.query(
+      `UPDATE pesticide_usage
+       SET location_description = $1, notes = $2
+       WHERE usage_id = $3
+       RETURNING *`,
+      [location_description || null, notes || null, req.params.id]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Not found' });
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Monthly totals report
+app.get('/api/pesticide-usage/monthly', requireAuth, async (req, res) => {
+  const { year, month } = req.query;
+  if (!year || !month) return res.status(400).json({ error: 'year and month required' });
+  try {
+    const { rows } = await pool.query(
+      `SELECT p.name AS pesticide_name, p.unit_of_measure,
+              SUM(u.quantity) AS total_quantity,
+              COUNT(*) AS entry_count
+       FROM pesticide_usage u
+       JOIN pesticides p ON p.pesticide_id = u.pesticide_id
+       WHERE EXTRACT(YEAR  FROM u.used_date) = $1
+         AND EXTRACT(MONTH FROM u.used_date) = $2
+       GROUP BY p.pesticide_id, p.name, p.unit_of_measure
+       ORDER BY p.name`,
+      [parseInt(year), parseInt(month)]
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Change Password ────────────────────────────────────────────────────────────
 app.post('/api/auth/change-password', requireAuth, async (req, res) => {
   const { current_password, new_password } = req.body;

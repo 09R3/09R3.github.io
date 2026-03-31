@@ -155,6 +155,7 @@
       <li><button class="nav-btn" data-screen="vehicles">&#128664; Vehicle Monthly</button></li>
       <li><button class="nav-btn" data-screen="kf-monthly">&#128200; KF Monthly</button></li>
       <li><button class="nav-btn" data-screen="maintenance">&#128295; Maintenance Log</button></li>
+      <li><button class="nav-btn" data-screen="pesticides">&#127807; Pesticides</button></li>
       <li class="nav-reports hidden" id="nav-reports-item"><button class="nav-btn" data-screen="reports">&#128202; Reports</button></li>
       <li class="nav-item" id="nav-admin-item"><button class="nav-btn" data-screen="admin">&#9881; Settings</button></li>
     </ul>
@@ -256,6 +257,10 @@
         <span class="dash-icon">&#128295;</span>
         <span class="dash-label">Maintenance<br>Log</span>
         <span class="maint-badge hidden" id="maint-main-badge">0</span>
+      </button>
+      <button class="dash-tile" id="dash-pesticides-tile" data-screen="pesticides">
+        <span class="dash-icon">&#127807;</span>
+        <span class="dash-label">Pesticides</span>
       </button>
       <button class="dash-tile reports-tile hidden" id="dash-reports-tile" data-screen="reports">
         <span class="dash-icon">&#128202;</span>
@@ -668,6 +673,140 @@
     </div>
 
   </div><!-- /screen-maintenance -->
+
+  <!-- ── Pesticides ───────────────────────────────────────────────────────── -->
+  <div id="screen-pesticides" class="screen-content">
+
+    <!-- Sub-dashboard: 4 section tiles -->
+    <div id="pest-main">
+      <div class="dashboard-grid">
+        <button class="dash-tile" data-pest-panel="usage">
+          <span class="dash-icon">&#128200;</span>
+          <span class="dash-label">Usage</span>
+        </button>
+        <button class="dash-tile" data-pest-panel="location">
+          <span class="dash-icon">&#128205;</span>
+          <span class="dash-label">Location</span>
+        </button>
+        <button class="dash-tile" data-pest-panel="reports">
+          <span class="dash-icon">&#128202;</span>
+          <span class="dash-label">Reports</span>
+        </button>
+        <button class="dash-tile" data-pest-panel="products">
+          <span class="dash-icon">&#127797;</span>
+          <span class="dash-label">Products</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Usage panel -->
+    <div id="pest-panel-usage" class="maint-panel hidden">
+      <button class="maint-back-btn">&#8249; Pesticides</button>
+      <h2 class="panel-heading">Usage Log</h2>
+      <div class="issue-toolbar">
+        <button class="btn btn-primary btn-sm" id="pest-usage-new-btn">+ Log Usage</button>
+      </div>
+
+      <!-- New usage form -->
+      <div id="pest-usage-form" class="settings-card hidden" style="margin-bottom:14px">
+        <div class="settings-pad">
+          <div class="form-group">
+            <label>Pesticide</label>
+            <select id="pest-usage-select" class="ctrl-select"></select>
+          </div>
+          <div class="form-group">
+            <label>Quantity <span id="pest-usage-uom-label" style="color:var(--text-dim);font-weight:400"></span></label>
+            <input type="number" id="pest-usage-qty" class="ctrl-input" step="0.01" min="0" placeholder="0.00">
+          </div>
+          <div class="form-row">
+            <button class="btn btn-primary" id="pest-usage-save-btn">Save</button>
+            <button class="btn btn-secondary" id="pest-usage-cancel-btn">Cancel</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="pest-usage-list"></div>
+    </div>
+
+    <!-- Location panel -->
+    <div id="pest-panel-location" class="maint-panel hidden">
+      <button class="maint-back-btn">&#8249; Pesticides</button>
+      <h2 class="panel-heading">Application Location</h2>
+      <p class="placeholder-msg" style="font-style:normal;color:var(--text-dim);margin-bottom:12px">Tap an entry to add where the pesticide was applied.</p>
+      <div id="pest-location-list"></div>
+    </div>
+
+    <!-- Reports panel -->
+    <div id="pest-panel-reports" class="maint-panel hidden">
+      <button class="maint-back-btn">&#8249; Pesticides</button>
+      <h2 class="panel-heading">Monthly Report</h2>
+      <div class="report-month-nav" style="margin-bottom:14px">
+        <button class="btn btn-secondary btn-sm" id="pest-report-prev">&#8592;</button>
+        <span id="pest-report-label" class="report-month-label"></span>
+        <button class="btn btn-secondary btn-sm" id="pest-report-next">&#8594;</button>
+      </div>
+      <div id="pest-report-output"></div>
+    </div>
+
+    <!-- Products panel -->
+    <div id="pest-panel-products" class="maint-panel hidden">
+      <button class="maint-back-btn">&#8249; Pesticides</button>
+      <h2 class="panel-heading">Products</h2>
+      <div class="issue-toolbar">
+        <button class="btn btn-primary btn-sm" id="pest-product-new-btn">+ Add Product</button>
+      </div>
+
+      <!-- New product form -->
+      <div id="pest-product-form" class="settings-card hidden" style="margin-bottom:14px">
+        <div class="settings-pad">
+          <div class="form-group">
+            <label>Product Name</label>
+            <input type="text" id="pest-product-name" class="ctrl-input" placeholder="e.g. Aquathol K">
+          </div>
+          <div class="form-group">
+            <label>EPA Reg. Number <span style="color:var(--text-dim);font-weight:400">(optional)</span></label>
+            <input type="text" id="pest-product-epa" class="ctrl-input" placeholder="e.g. 12345-67">
+          </div>
+          <div class="form-group">
+            <label>Unit of Measure</label>
+            <input type="text" id="pest-product-uom" class="ctrl-input" placeholder="e.g. fl oz, lbs, gal">
+          </div>
+          <div class="form-row">
+            <button class="btn btn-primary" id="pest-product-save-btn">Save</button>
+            <button class="btn btn-secondary" id="pest-product-cancel-btn">Cancel</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="pest-product-list"></div>
+    </div>
+
+    <!-- Location edit modal -->
+    <div id="pest-location-modal" class="modal-overlay hidden">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h2>Application Location</h2>
+          <button class="modal-close" id="pest-location-modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div id="pest-location-modal-meta" style="font-size:0.85rem;color:var(--text-dim);margin-bottom:12px"></div>
+          <div class="form-group">
+            <label>Location Description</label>
+            <textarea id="pest-location-desc" class="ctrl-input" rows="3" placeholder="Describe where the pesticide was applied…"></textarea>
+          </div>
+          <div class="form-group">
+            <label>Notes <span style="color:var(--text-dim);font-weight:400">(optional)</span></label>
+            <textarea id="pest-location-notes" class="ctrl-input" rows="2" placeholder="Any additional notes…"></textarea>
+          </div>
+          <div class="form-row">
+            <button class="btn btn-primary" id="pest-location-save-btn">Save</button>
+            <button class="btn btn-secondary" id="pest-location-cancel-btn">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /screen-pesticides -->
 
   <!-- ── Reports ───────────────────────────────────────────────────────────── -->
   <div id="screen-reports" class="screen-content">

@@ -399,6 +399,7 @@ function showScreen(name) {
   if (name === 'vehicles')      initVehiclesScreen();
   if (name === 'kf-monthly')    initKFScreen();
   if (name === 'maintenance')   initMaintenanceScreen();
+  if (name === 'pesticides')    initPesticideScreen();
   if (name === 'reports')       initReportsScreen();
   if (name === 'admin')         { initAdminScreen(); initSettingsScreen(); }
 
@@ -3191,6 +3192,329 @@ el('maint-building-hist-btn').addEventListener('click', () => {
   if (!id) return showToast('Select a building first', 'error');
   openMaintHistoryModal('building', id, label);
 });
+
+/* ── Pesticides ──────────────────────────────────────────────────────────── */
+let pestUsageLoaded   = false;
+let pestLocationLoaded = false;
+let pestReportLoaded  = false;
+let pestProductsLoaded = false;
+let pestReportMonth   = new Date().getMonth() + 1;
+let pestReportYear    = new Date().getFullYear();
+let pestLocationEditId = null;
+
+function openPestPanel(panelId) {
+  el('pest-main').classList.add('hidden');
+  document.querySelectorAll('.maint-panel[id^="pest-panel-"]').forEach(p => p.classList.add('hidden'));
+  el(`pest-panel-${panelId}`).classList.remove('hidden');
+  if (panelId === 'usage')    initPestUsagePanel();
+  if (panelId === 'location') initPestLocationPanel();
+  if (panelId === 'reports')  initPestReportsPanel();
+  if (panelId === 'products') initPestProductsPanel();
+}
+
+function closePestPanel() {
+  document.querySelectorAll('.maint-panel[id^="pest-panel-"]').forEach(p => p.classList.add('hidden'));
+  el('pest-main').classList.remove('hidden');
+}
+
+function initPesticideScreen() {
+  closePestPanel();
+}
+
+// Sub-tile click
+document.querySelectorAll('[data-pest-panel]').forEach(btn => {
+  btn.addEventListener('click', () => openPestPanel(btn.dataset.pestPanel));
+});
+
+// Back buttons inside pest panels
+document.querySelectorAll('#screen-pesticides .maint-back-btn').forEach(btn => {
+  btn.addEventListener('click', closePestPanel);
+});
+
+// ── Usage Panel ───────────────────────────────────────────────────────────────
+async function initPestUsagePanel() {
+  if (pestUsageLoaded) return;
+  pestUsageLoaded = true;
+  await loadPestUsageList();
+  await populatePestUsageSelect();
+}
+
+async function populatePestUsageSelect() {
+  const products = await api('GET', '/api/pesticides');
+  const sel = el('pest-usage-select');
+  sel.innerHTML = '<option value="">— select pesticide —</option>' +
+    products.filter(p => p.active).map(p =>
+      `<option value="${p.pesticide_id}" data-uom="${escHtml(p.unit_of_measure)}">${escHtml(p.name)}</option>`
+    ).join('');
+}
+
+el('pest-usage-select').addEventListener('change', () => {
+  const opt = el('pest-usage-select').selectedOptions[0];
+  el('pest-usage-uom-label').textContent = opt?.dataset.uom ? `(${opt.dataset.uom})` : '';
+});
+
+el('pest-usage-new-btn').addEventListener('click', () => {
+  el('pest-usage-form').classList.remove('hidden');
+  el('pest-usage-select').value = '';
+  el('pest-usage-qty').value = '';
+  el('pest-usage-uom-label').textContent = '';
+  el('pest-usage-new-btn').style.display = 'none';
+});
+
+el('pest-usage-cancel-btn').addEventListener('click', () => {
+  el('pest-usage-form').classList.add('hidden');
+  el('pest-usage-new-btn').style.display = '';
+});
+
+el('pest-usage-save-btn').addEventListener('click', async () => {
+  const pesticide_id = el('pest-usage-select').value;
+  const quantity = parseFloat(el('pest-usage-qty').value);
+  if (!pesticide_id) return showToast('Select a pesticide', 'error');
+  if (!quantity || quantity <= 0) return showToast('Enter a valid quantity', 'error');
+  try {
+    await api('POST', '/api/pesticide-usage', { pesticide_id: parseInt(pesticide_id), quantity });
+    el('pest-usage-form').classList.add('hidden');
+    el('pest-usage-new-btn').style.display = '';
+    pestUsageLoaded = false;
+    pestLocationLoaded = false;
+    await loadPestUsageList();
+    pestUsageLoaded = true;
+    showToast('Usage logged');
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+});
+
+async function loadPestUsageList() {
+  const list = el('pest-usage-list');
+  list.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const rows = await api('GET', '/api/pesticide-usage');
+    if (!rows.length) { list.innerHTML = '<div class="issue-empty">No usage entries yet.</div>'; return; }
+    list.innerHTML = rows.map(r => {
+      const d = new Date(r.used_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      const t = r.used_time ? r.used_time.slice(0, 5) : '';
+      return `<div class="pest-usage-item">
+        <div class="pest-usage-main">
+          <span class="pest-usage-name">${escHtml(r.pesticide_name)}</span>
+          <span class="pest-usage-qty">${Number(r.quantity).toLocaleString()} ${escHtml(r.unit_of_measure)}</span>
+        </div>
+        <div class="pest-usage-meta">${d}${t ? ' · ' + t : ''} · ${escHtml(r.applicator_name || 'Unknown')}</div>
+      </div>`;
+    }).join('');
+  } catch (err) {
+    list.innerHTML = `<div class="issue-empty" style="color:var(--red-light)">${err.message}</div>`;
+  }
+}
+
+// ── Location Panel ────────────────────────────────────────────────────────────
+async function initPestLocationPanel() {
+  if (pestLocationLoaded) return;
+  pestLocationLoaded = true;
+  await loadPestLocationList();
+}
+
+async function loadPestLocationList() {
+  const list = el('pest-location-list');
+  list.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const rows = await api('GET', '/api/pesticide-usage');
+    if (!rows.length) { list.innerHTML = '<div class="issue-empty">No usage entries yet.</div>'; return; }
+    list.innerHTML = rows.map(r => {
+      const d = new Date(r.used_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      const hasLoc = !!r.location_description;
+      return `<div class="pest-loc-item ${hasLoc ? 'has-location' : 'no-location'}" data-id="${r.usage_id}">
+        <div class="pest-usage-main">
+          <span class="pest-usage-name">${escHtml(r.pesticide_name)}</span>
+          <span class="pest-usage-qty">${Number(r.quantity).toLocaleString()} ${escHtml(r.unit_of_measure)}</span>
+        </div>
+        <div class="pest-usage-meta">${d} · ${escHtml(r.applicator_name || 'Unknown')}</div>
+        <div class="pest-loc-desc">${hasLoc ? escHtml(r.location_description) : '<em style="color:var(--text-dim)">No location added — tap to add</em>'}</div>
+        ${r.notes ? `<div class="pest-loc-notes">${escHtml(r.notes)}</div>` : ''}
+      </div>`;
+    }).join('');
+    // Attach click handlers
+    list.querySelectorAll('.pest-loc-item').forEach(item => {
+      item.addEventListener('click', () => openLocationModal(item.dataset.id, rows.find(r => r.usage_id == item.dataset.id)));
+    });
+  } catch (err) {
+    list.innerHTML = `<div class="issue-empty" style="color:var(--red-light)">${err.message}</div>`;
+  }
+}
+
+function openLocationModal(usageId, row) {
+  pestLocationEditId = usageId;
+  const d = new Date(row.used_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  el('pest-location-modal-meta').textContent =
+    `${row.pesticide_name} · ${Number(row.quantity).toLocaleString()} ${row.unit_of_measure} · ${d}`;
+  el('pest-location-desc').value  = row.location_description || '';
+  el('pest-location-notes').value = row.notes || '';
+  el('pest-location-modal').classList.remove('hidden');
+}
+
+el('pest-location-modal-close').addEventListener('click', () => el('pest-location-modal').classList.add('hidden'));
+el('pest-location-cancel-btn').addEventListener('click', () => el('pest-location-modal').classList.add('hidden'));
+el('pest-location-modal').addEventListener('click', e => {
+  if (e.target === el('pest-location-modal')) el('pest-location-modal').classList.add('hidden');
+});
+
+el('pest-location-save-btn').addEventListener('click', async () => {
+  const location_description = el('pest-location-desc').value.trim();
+  const notes = el('pest-location-notes').value.trim();
+  try {
+    await api('PATCH', `/api/pesticide-usage/${pestLocationEditId}`, { location_description, notes });
+    el('pest-location-modal').classList.add('hidden');
+    pestLocationLoaded = false;
+    await loadPestLocationList();
+    pestLocationLoaded = true;
+    showToast('Location saved');
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+});
+
+// ── Reports Panel ─────────────────────────────────────────────────────────────
+function updatePestReportLabel() {
+  const d = new Date(pestReportYear, pestReportMonth - 1, 1);
+  el('pest-report-label').textContent = d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+}
+
+el('pest-report-prev').addEventListener('click', () => {
+  pestReportMonth--;
+  if (pestReportMonth < 1) { pestReportMonth = 12; pestReportYear--; }
+  updatePestReportLabel();
+  pestReportLoaded = false;
+  loadPestReport();
+});
+
+el('pest-report-next').addEventListener('click', () => {
+  pestReportMonth++;
+  if (pestReportMonth > 12) { pestReportMonth = 1; pestReportYear++; }
+  updatePestReportLabel();
+  pestReportLoaded = false;
+  loadPestReport();
+});
+
+async function initPestReportsPanel() {
+  updatePestReportLabel();
+  if (pestReportLoaded) return;
+  pestReportLoaded = true;
+  await loadPestReport();
+}
+
+async function loadPestReport() {
+  const out = el('pest-report-output');
+  out.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const rows = await api('GET', `/api/pesticide-usage/monthly?year=${pestReportYear}&month=${pestReportMonth}`);
+    if (!rows.length) {
+      out.innerHTML = '<div class="issue-empty">No usage recorded for this month.</div>';
+      return;
+    }
+    const tbody = rows.map(r =>
+      `<tr>
+        <td>${escHtml(r.pesticide_name)}</td>
+        <td class="report-num">${Number(r.total_quantity).toLocaleString()}</td>
+        <td>${escHtml(r.unit_of_measure)}</td>
+        <td class="report-num">${r.entry_count}</td>
+      </tr>`
+    ).join('');
+    out.innerHTML = `<table class="report-table">
+      <thead><tr>
+        <th>Pesticide</th>
+        <th class="report-num">Total Used</th>
+        <th>Unit</th>
+        <th class="report-num">Entries</th>
+      </tr></thead>
+      <tbody>${tbody}</tbody>
+    </table>`;
+  } catch (err) {
+    out.innerHTML = `<div class="issue-empty" style="color:var(--red-light)">${err.message}</div>`;
+  }
+}
+
+// ── Products Panel ────────────────────────────────────────────────────────────
+async function initPestProductsPanel() {
+  if (pestProductsLoaded) return;
+  pestProductsLoaded = true;
+  await loadPestProductList();
+}
+
+el('pest-product-new-btn').addEventListener('click', () => {
+  el('pest-product-form').classList.remove('hidden');
+  el('pest-product-name').value = '';
+  el('pest-product-epa').value  = '';
+  el('pest-product-uom').value  = '';
+  el('pest-product-new-btn').style.display = 'none';
+});
+
+el('pest-product-cancel-btn').addEventListener('click', () => {
+  el('pest-product-form').classList.add('hidden');
+  el('pest-product-new-btn').style.display = '';
+});
+
+el('pest-product-save-btn').addEventListener('click', async () => {
+  const name = el('pest-product-name').value.trim();
+  const epa_reg_number = el('pest-product-epa').value.trim();
+  const unit_of_measure = el('pest-product-uom').value.trim();
+  if (!name) return showToast('Product name is required', 'error');
+  if (!unit_of_measure) return showToast('Unit of measure is required', 'error');
+  try {
+    await api('POST', '/api/pesticides', { name, epa_reg_number, unit_of_measure });
+    el('pest-product-form').classList.add('hidden');
+    el('pest-product-new-btn').style.display = '';
+    pestProductsLoaded = false;
+    await loadPestProductList();
+    pestProductsLoaded = true;
+    showToast('Product added');
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+});
+
+async function loadPestProductList() {
+  const list = el('pest-product-list');
+  list.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const products = await api('GET', '/api/pesticides');
+    if (!products.length) { list.innerHTML = '<div class="issue-empty">No products added yet.</div>'; return; }
+    const isSupervisor = currentUser && (currentUser.role === 'supervisor' || currentUser.role === 'admin');
+    list.innerHTML = products.map(p => `
+      <div class="pest-product-item ${p.active ? '' : 'pest-product-inactive'}">
+        <div class="pest-product-main">
+          <span class="pest-product-name">${escHtml(p.name)}</span>
+          ${!p.active ? '<span class="pest-inactive-badge">Inactive</span>' : ''}
+        </div>
+        <div class="pest-product-meta">
+          ${p.epa_reg_number ? `EPA: ${escHtml(p.epa_reg_number)} · ` : ''}${escHtml(p.unit_of_measure)}
+        </div>
+        ${isSupervisor ? `<div class="pest-product-actions">
+          <button class="btn btn-secondary btn-xs pest-toggle-btn" data-id="${p.pesticide_id}" data-active="${p.active}">
+            ${p.active ? 'Deactivate' : 'Reactivate'}
+          </button>
+        </div>` : ''}
+      </div>`
+    ).join('');
+    if (isSupervisor) {
+      list.querySelectorAll('.pest-toggle-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const newActive = btn.dataset.active === 'true' ? false : true;
+          try {
+            await api('PATCH', `/api/pesticides/${btn.dataset.id}`, { active: newActive });
+            pestProductsLoaded = false;
+            pestUsageLoaded = false; // refresh select on next open
+            await loadPestProductList();
+            pestProductsLoaded = true;
+          } catch (err) {
+            showToast(err.message, 'error');
+          }
+        });
+      });
+    }
+  } catch (err) {
+    list.innerHTML = `<div class="issue-empty" style="color:var(--red-light)">${err.message}</div>`;
+  }
+}
 
 /* ── Reports ─────────────────────────────────────────────────────────────── */
 let reportsMonth = new Date().getMonth() + 1;

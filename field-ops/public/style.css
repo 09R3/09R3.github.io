@@ -1274,6 +1274,53 @@ input[type="date"].ctrl-input { min-height: 44px; }
   color: var(--text);
 }
 
+/* ── Pesticides ──────────────────────────────────────────────────────────── */
+.pest-usage-item,
+.pest-loc-item,
+.pest-product-item {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+.pest-usage-main {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+.pest-usage-name  { font-weight: 600; }
+.pest-usage-qty   { font-variant-numeric: tabular-nums; color: var(--accent); font-weight: 600; white-space: nowrap; }
+.pest-usage-meta  { font-size: 0.8rem; color: var(--text-dim); }
+
+.pest-loc-item    { cursor: pointer; transition: background 0.15s; }
+.pest-loc-item:hover { background: var(--surface2); }
+.pest-loc-desc    { font-size: 0.85rem; margin-top: 4px; }
+.pest-loc-notes   { font-size: 0.8rem; color: var(--text-dim); margin-top: 2px; }
+.no-location      { border-left: 3px solid var(--border); }
+.has-location     { border-left: 3px solid var(--accent); }
+
+.pest-product-main    { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
+.pest-product-name    { font-weight: 600; }
+.pest-product-meta    { font-size: 0.8rem; color: var(--text-dim); }
+.pest-product-actions { margin-top: 6px; }
+.pest-product-inactive { opacity: 0.6; }
+.pest-inactive-badge  {
+  font-size: 0.7rem;
+  background: var(--surface2);
+  color: var(--text-dim);
+  border-radius: 10px;
+  padding: 1px 7px;
+  font-weight: 500;
+}
+.btn-xs {
+  padding: 3px 10px;
+  font-size: 0.78rem;
+  border-radius: var(--radius);
+}
+
 /* ── Export Modal ────────────────────────────────────────────────────────── */
 .export-modal-card { max-width: 300px; width: 90vw; }
 .export-subtitle { color: var(--text-dim); font-size: 0.88rem; margin: 0 0 16px; }
