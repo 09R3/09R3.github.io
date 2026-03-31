@@ -1528,6 +1528,192 @@ function createVehicleItem(v, dateInput, timeInput) {
   return div;
 }
 
+/* ── Well Issues ─────────────────────────────────────────────────────────── */
+let wellIssuesLoaded  = false;
+let wellIssues        = [];
+let wellShowResolved  = false;
+
+function initMaintWellsPanel() {
+  if (wellIssuesLoaded) return;
+  wellIssuesLoaded = true;
+  el('well-issue-date').value = todayISO();
+  loadWellIssues();
+  // Populate well dropdown
+  api('GET', '/api/wells').then(wells => {
+    const sel = el('well-issue-select');
+    sel.innerHTML = '<option value="">Select well…</option>';
+    wells.forEach(w => {
+      const opt = document.createElement('option');
+      opt.value = w.well_id;
+      opt.dataset.area = w.area || '';
+      opt.textContent  = w.area ? `${w.common_name} (${w.area})` : w.common_name;
+      sel.appendChild(opt);
+    });
+  }).catch(() => {});
+}
+
+async function loadWellIssues() {
+  try {
+    wellIssues = await api('GET', `/api/well-issues?include_resolved=${wellShowResolved}`);
+    renderWellIssues();
+    updateWellBadge();
+  } catch {
+    el('well-issue-list').innerHTML = `<div class="issue-empty">Failed to load issues</div>`;
+  }
+}
+
+function updateWellBadge() {
+  const count = wellIssues.filter(i => i.status === 'open' || i.status === 'in_progress').length;
+  const badge = el('maint-badge-wells');
+  badge.textContent = count;
+  badge.classList.toggle('hidden', count === 0);
+}
+
+function renderWellIssues() {
+  const list = el('well-issue-list');
+  if (!wellIssues.length) {
+    list.innerHTML = `<div class="issue-empty">No ${wellShowResolved ? '' : 'open '}issues</div>`;
+    return;
+  }
+  list.innerHTML = wellIssues.map(issue => {
+    const statusClass = issue.status.replace('_', '-');
+    const title   = issue.well_area ? `${issue.well_name} (${issue.well_area})` : (issue.well_name || 'Unknown Well');
+    const snippet = (issue.description || '').slice(0, 80) + (issue.description?.length > 80 ? '…' : '');
+    const showResNotes = issue.status === 'resolved' || issue.status === 'in_progress';
+    return `
+      <div class="equip-issue-item" data-issue-id="${issue.issue_id}">
+        <div class="equip-issue-header">
+          <div class="equip-issue-meta">
+            <div class="equip-issue-name">${escHtml(title)}</div>
+            <div class="equip-issue-snippet">${escHtml(snippet)}</div>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+            <span class="status-pill ${statusClass}">${issue.status.replace('_',' ')}</span>
+            <span class="equip-issue-date">${issue.reported_date?.slice(0,10) || ''}</span>
+          </div>
+        </div>
+        <div class="equip-issue-body hidden">
+          <div class="form-group">
+            <label>Description</label>
+            <div style="font-size:0.9rem;padding:6px 0">${escHtml(issue.description)}</div>
+          </div>
+          <div class="form-group">
+            <label>Status</label>
+            <select class="ctrl-select issue-status-select">
+              <option value="open"        ${issue.status==='open'        ?'selected':''}>Open</option>
+              <option value="in_progress" ${issue.status==='in_progress' ?'selected':''}>In Progress</option>
+              <option value="resolved"    ${issue.status==='resolved'    ?'selected':''}>Resolved</option>
+            </select>
+          </div>
+          <div class="form-group issue-res-notes-group" style="${showResNotes ? '' : 'display:none'}">
+            <label>Resolution Notes</label>
+            <textarea class="ctrl-textarea issue-res-notes" rows="2" placeholder="Describe how it was resolved…">${escHtml(issue.resolution_notes || '')}</textarea>
+          </div>
+          <div class="form-group">
+            <label>Assigned To</label>
+            <input type="text" class="ctrl-input issue-assigned" value="${escHtml(issue.assigned_to || '')}" placeholder="Optional">
+          </div>
+          <div class="error-msg hidden issue-update-error"></div>
+          <button class="btn btn-save btn-full issue-save-btn">Save Changes</button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+// New issue form toggle
+el('well-new-issue-btn').addEventListener('click', () => {
+  el('well-new-issue-form').classList.remove('hidden');
+  el('well-new-issue-btn').classList.add('hidden');
+});
+el('well-cancel-btn').addEventListener('click', () => {
+  el('well-new-issue-form').classList.add('hidden');
+  el('well-new-issue-btn').classList.remove('hidden');
+  el('well-new-error').classList.add('hidden');
+});
+
+// Submit new well issue
+el('well-submit-btn').addEventListener('click', async () => {
+  clearError('well-new-error');
+  const desc = el('well-issue-desc').value.trim();
+  if (!desc) return showError('well-new-error', 'Issue description is required');
+
+  const sel      = el('well-issue-select');
+  const wellId   = sel.value || null;
+  const wellName = sel.options[sel.selectedIndex]?.textContent?.replace(/\s*\(.*\)$/, '').trim() || null;
+  const wellArea = sel.options[sel.selectedIndex]?.dataset.area || null;
+  if (!wellId) return showError('well-new-error', 'Please select a well');
+
+  el('well-submit-btn').disabled = true;
+  try {
+    await api('POST', '/api/well-issues', {
+      well_id:       parseInt(wellId),
+      well_name:     wellName,
+      well_area:     wellArea || null,
+      description:   desc,
+      reported_date: el('well-issue-date').value || null,
+      assigned_to:   el('well-issue-assigned').value.trim() || null,
+    });
+    el('well-issue-desc').value     = '';
+    el('well-issue-assigned').value = '';
+    el('well-issue-date').value     = todayISO();
+    el('well-issue-select').value   = '';
+    el('well-new-issue-form').classList.add('hidden');
+    el('well-new-issue-btn').classList.remove('hidden');
+    wellIssuesLoaded = false;
+    await loadWellIssues();
+    showToast('Issue submitted', 'success');
+  } catch (err) {
+    showError('well-new-error', err.message);
+  } finally {
+    el('well-submit-btn').disabled = false;
+  }
+});
+
+// Show/hide resolved toggle
+el('well-show-resolved-btn').addEventListener('click', () => {
+  wellShowResolved = !wellShowResolved;
+  el('well-show-resolved-btn').textContent = wellShowResolved ? 'Hide Resolved' : 'Show Resolved';
+  wellIssuesLoaded = false;
+  loadWellIssues();
+});
+
+// Issue list interactions (delegated)
+el('well-issue-list').addEventListener('click', async e => {
+  const item = e.target.closest('.equip-issue-item');
+  if (!item) return;
+
+  if (e.target.closest('.equip-issue-header')) {
+    item.querySelector('.equip-issue-body').classList.toggle('hidden');
+    return;
+  }
+
+  if (e.target.classList.contains('issue-status-select')) {
+    const resGroup = item.querySelector('.issue-res-notes-group');
+    resGroup.style.display = (e.target.value === 'resolved' || e.target.value === 'in_progress') ? '' : 'none';
+    return;
+  }
+
+  if (e.target.classList.contains('issue-save-btn')) {
+    const issueId  = item.dataset.issueId;
+    const status   = item.querySelector('.issue-status-select').value;
+    const resNotes = item.querySelector('.issue-res-notes').value.trim() || null;
+    const assigned = item.querySelector('.issue-assigned').value.trim() || null;
+    const errEl    = item.querySelector('.issue-update-error');
+    errEl.classList.add('hidden');
+    e.target.disabled = true;
+    try {
+      await api('PATCH', `/api/well-issues/${issueId}`, { status, resolution_notes: resNotes, assigned_to: assigned });
+      wellIssuesLoaded = false;
+      await loadWellIssues();
+      showToast('Issue updated', 'success');
+    } catch (err) {
+      errEl.textContent = err.message;
+      errEl.classList.remove('hidden');
+      e.target.disabled = false;
+    }
+  }
+});
+
 /* ── Building Issues ─────────────────────────────────────────────────────── */
 let bldgIssuesLoaded  = false;
 let bldgIssues        = [];
@@ -1970,6 +2156,7 @@ function openMaintPanel(panelId) {
   el('maint-panel-' + panelId).classList.remove('hidden');
   if (panelId === 'equipment') initMaintEquipmentPanel();
   if (panelId === 'buildings') initMaintBuildingsPanel();
+  if (panelId === 'wells')     initMaintWellsPanel();
   if (panelId === 'vehicles')  initMaintVehiclesPanel();
   if (panelId === 'swaps')     initMaintSwapsPanel();
 }

@@ -577,10 +577,44 @@
       </div>
     </div>
 
-    <!-- Wells Panel — placeholder -->
+    <!-- Wells Panel — fully functional -->
     <div id="maint-panel-wells" class="maint-panel hidden">
       <button class="maint-back-btn">&#8249; Maintenance</button>
-      <div class="placeholder-msg">Well issue tracking coming in a future update.</div>
+
+      <div class="issue-toolbar">
+        <button class="btn btn-secondary btn-sm" id="well-show-resolved-btn">Show Resolved</button>
+        <button class="btn btn-save btn-sm" id="well-new-issue-btn">+ New Issue</button>
+      </div>
+
+      <!-- New issue form -->
+      <div id="well-new-issue-form" class="form-card hidden">
+        <div class="form-group">
+          <label>Well</label>
+          <select id="well-issue-select" class="ctrl-select">
+            <option value="">Select well…</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Issue Description</label>
+          <textarea id="well-issue-desc" class="ctrl-textarea" rows="3" placeholder="Describe the problem…"></textarea>
+        </div>
+        <div class="form-group">
+          <label>Reported Date</label>
+          <input type="date" id="well-issue-date" class="ctrl-input">
+        </div>
+        <div class="form-group">
+          <label>Assigned To</label>
+          <input type="text" id="well-issue-assigned" class="ctrl-input" placeholder="Optional">
+        </div>
+        <div id="well-new-error" class="error-msg hidden"></div>
+        <div class="two-col">
+          <button class="btn btn-secondary" id="well-cancel-btn">Cancel</button>
+          <button class="btn btn-save" id="well-submit-btn">Submit Issue</button>
+        </div>
+      </div>
+
+      <!-- Issue list -->
+      <div id="well-issue-list"></div>
     </div>
 
     <!-- Swaps Panel — fully functional -->
