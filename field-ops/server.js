@@ -1251,6 +1251,29 @@ app.post('/api/equipment-swaps', requireAuth, async (req, res) => {
   }
 });
 
+// ── Maintenance badge counts ──────────────────────────────────────────────────
+app.get('/api/maintenance/badge-counts', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        (SELECT COUNT(*) FROM equipment_issues
+         WHERE status IN ('open','in_progress')) AS equipment,
+        (SELECT COUNT(*) FROM building_issues
+         WHERE status IN ('open','in_progress')) AS buildings,
+        (SELECT COUNT(*) FROM well_issues
+         WHERE status IN ('open','in_progress')) AS wells
+    `);
+    const counts = rows[0];
+    res.json({
+      equipment: parseInt(counts.equipment) || 0,
+      buildings: parseInt(counts.buildings) || 0,
+      wells:     parseInt(counts.wells)     || 0,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Dashboard stats ───────────────────────────────────────────────────────────
 app.get('/api/dashboard/stats', requireAuth, async (req, res) => {
   try {

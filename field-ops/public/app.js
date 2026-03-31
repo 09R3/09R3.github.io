@@ -392,7 +392,7 @@ function showScreen(name) {
   }
 
   // Lazy-load data on first visit
-  if (name === 'dashboard')     { loadDashboardStats(); refreshPendingSync(); }
+  if (name === 'dashboard')     { loadDashboardStats(); refreshPendingSync(); refreshMaintenanceBadges(); }
   if (name === 'pumping-plant') initPPScreen();
   if (name === 'wells')         initWellsScreen();
   if (name === 'canal')         initCanalScreen();
@@ -1564,9 +1564,7 @@ async function loadWellIssues() {
 
 function updateWellBadge() {
   const count = wellIssues.filter(i => i.status === 'open' || i.status === 'in_progress').length;
-  const badge = el('maint-badge-wells');
-  badge.textContent = count;
-  badge.classList.toggle('hidden', count === 0);
+  setBadge('maint-badge-wells', count);
 }
 
 function renderWellIssues() {
@@ -1662,6 +1660,7 @@ el('well-submit-btn').addEventListener('click', async () => {
     wellIssuesLoaded = false;
     await loadWellIssues();
     showToast('Issue submitted', 'success');
+    refreshMaintenanceBadges();
   } catch (err) {
     showError('well-new-error', err.message);
   } finally {
@@ -1706,6 +1705,7 @@ el('well-issue-list').addEventListener('click', async e => {
       wellIssuesLoaded = false;
       await loadWellIssues();
       showToast('Issue updated', 'success');
+      refreshMaintenanceBadges();
     } catch (err) {
       errEl.textContent = err.message;
       errEl.classList.remove('hidden');
@@ -1749,9 +1749,7 @@ async function loadBldgIssues() {
 
 function updateBldgBadge() {
   const count = bldgIssues.filter(i => i.status === 'open' || i.status === 'in_progress').length;
-  const badge = el('maint-badge-buildings');
-  badge.textContent = count;
-  badge.classList.toggle('hidden', count === 0);
+  setBadge('maint-badge-buildings', count);
 }
 
 function renderBldgIssues() {
@@ -1869,6 +1867,7 @@ el('bldg-submit-btn').addEventListener('click', async () => {
     bldgIssuesLoaded = false;
     await loadBldgIssues();
     showToast('Issue submitted', 'success');
+    refreshMaintenanceBadges();
   } catch (err) {
     showError('bldg-new-error', err.message);
   } finally {
@@ -1913,6 +1912,7 @@ el('bldg-issue-list').addEventListener('click', async e => {
       bldgIssuesLoaded = false;
       await loadBldgIssues();
       showToast('Issue updated', 'success');
+      refreshMaintenanceBadges();
     } catch (err) {
       errEl.textContent = err.message;
       errEl.classList.remove('hidden');
@@ -1947,12 +1947,7 @@ async function loadEquipIssues() {
 
 function updateEquipBadge() {
   const count = equipIssues.filter(i => i.status === 'open' || i.status === 'in_progress').length;
-  const badge = el('maint-badge-equipment');
-  const mainBadge = el('maint-main-badge');
-  badge.textContent = count;
-  badge.classList.toggle('hidden', count === 0);
-  mainBadge.textContent = count;
-  mainBadge.classList.toggle('hidden', count === 0);
+  setBadge('maint-badge-equipment', count);
 }
 
 function renderEquipIssues() {
@@ -2087,6 +2082,7 @@ el('equip-submit-btn').addEventListener('click', async () => {
     equipIssuesLoaded = false; // force reload
     await loadEquipIssues();
     showToast('Issue submitted', 'success');
+    refreshMaintenanceBadges();
   } catch (err) {
     showError('equip-new-error', err.message);
   } finally {
@@ -2136,6 +2132,7 @@ el('equip-issue-list').addEventListener('click', async e => {
       equipIssuesLoaded = false;
       await loadEquipIssues();
       showToast('Issue updated', 'success');
+      refreshMaintenanceBadges();
     } catch (err) {
       errEl.textContent = err.message;
       errEl.classList.remove('hidden');
@@ -2169,6 +2166,24 @@ function closeMaintPanel() {
 function initMaintenanceScreen() {
   // Always reset to the sub-dashboard view on each visit
   closeMaintPanel();
+  refreshMaintenanceBadges();
+}
+
+function setBadge(id, count) {
+  const b = el(id);
+  if (!b) return;
+  b.textContent = count;
+  b.classList.toggle('hidden', count === 0);
+}
+
+async function refreshMaintenanceBadges() {
+  try {
+    const counts = await api('GET', '/api/maintenance/badge-counts');
+    setBadge('maint-badge-equipment', counts.equipment);
+    setBadge('maint-badge-buildings', counts.buildings);
+    setBadge('maint-badge-wells',     counts.wells);
+    setBadge('maint-main-badge', counts.equipment + counts.buildings + counts.wells);
+  } catch { /* non-critical — badges stay at last known value */ }
 }
 
 document.querySelectorAll('[data-maint-panel]').forEach(btn => {
