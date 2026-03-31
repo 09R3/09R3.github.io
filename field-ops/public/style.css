@@ -1235,6 +1235,45 @@ input[type="date"].ctrl-input { min-height: 44px; }
 .kf-op-bar-wrap { background: var(--surface2); border-radius: 4px; height: 8px; min-width: 80px; overflow: hidden; }
 .kf-op-bar { background: var(--accent); height: 100%; border-radius: 4px; transition: width 0.4s ease; }
 
+.report-date-range {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ctrl-input-sm {
+  padding: 6px 8px;
+  font-size: 0.85rem;
+  width: auto;
+  max-width: 140px;
+}
+.report-date-sep { color: var(--text-dim); font-weight: 500; }
+
+.kf-complete-banner {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  background: var(--surface2);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  margin-bottom: 14px;
+}
+.kf-complete-fraction {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.kf-complete-label {
+  font-size: 0.88rem;
+  color: var(--text-dim);
+  flex: 1;
+}
+.kf-complete-pct {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
 /* ── Export Modal ────────────────────────────────────────────────────────── */
 .export-modal-card { max-width: 300px; width: 90vw; }
 .export-subtitle { color: var(--text-dim); font-size: 0.88rem; margin: 0 0 16px; }

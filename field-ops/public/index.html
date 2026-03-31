@@ -674,12 +674,17 @@
     <div class="report-toolbar">
       <select id="report-select" class="ctrl-select" style="max-width:220px">
         <option value="mileage">CVC Mileage</option>
-        <option value="kf-operators">KF Operator Breakdown</option>
+        <option value="kf-operators">KF Breakdown</option>
       </select>
       <div class="report-month-nav">
         <button class="btn btn-secondary btn-sm" id="report-prev-month">&#8592;</button>
         <span id="report-month-label" class="report-month-label"></span>
         <button class="btn btn-secondary btn-sm" id="report-next-month">&#8594;</button>
+      </div>
+      <div class="report-date-range hidden" id="report-date-range">
+        <input type="date" id="report-start-date" class="ctrl-input ctrl-input-sm">
+        <span class="report-date-sep">–</span>
+        <input type="date" id="report-end-date" class="ctrl-input ctrl-input-sm">
       </div>
       <button class="btn btn-secondary btn-sm" id="report-export-btn" style="margin-left:auto">&#8615; Export</button>
     </div>

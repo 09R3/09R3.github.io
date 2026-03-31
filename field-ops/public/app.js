@@ -3195,9 +3195,33 @@ el('maint-building-hist-btn').addEventListener('click', () => {
 /* ── Reports ─────────────────────────────────────────────────────────────── */
 let reportsMonth = new Date().getMonth() + 1;
 let reportsYear  = new Date().getFullYear();
+let kfStartDate  = '';
+let kfEndDate    = '';
+
+function kfMonthBounds() {
+  const y = reportsYear, m = reportsMonth;
+  const pad = n => String(n).padStart(2, '0');
+  const lastDay = new Date(y, m, 0).getDate();
+  kfStartDate = `${y}-${pad(m)}-01`;
+  kfEndDate   = `${y}-${pad(m)}-${pad(lastDay)}`;
+  el('report-start-date').value = kfStartDate;
+  el('report-end-date').value   = kfEndDate;
+}
+
+function syncKfDatesFromInputs() {
+  kfStartDate = el('report-start-date').value;
+  kfEndDate   = el('report-end-date').value;
+}
+
+function updateReportControls() {
+  const isKF = el('report-select').value === 'kf-operators';
+  el('report-date-range').classList.toggle('hidden', !isKF);
+}
 
 function initReportsScreen() {
   updateReportsMonthLabel();
+  kfMonthBounds();
+  updateReportControls();
   runReport();
 }
 
@@ -3210,6 +3234,7 @@ el('report-prev-month').addEventListener('click', () => {
   reportsMonth--;
   if (reportsMonth < 1) { reportsMonth = 12; reportsYear--; }
   updateReportsMonthLabel();
+  kfMonthBounds();
   runReport();
 });
 
@@ -3217,10 +3242,14 @@ el('report-next-month').addEventListener('click', () => {
   reportsMonth++;
   if (reportsMonth > 12) { reportsMonth = 1; reportsYear++; }
   updateReportsMonthLabel();
+  kfMonthBounds();
   runReport();
 });
 
-el('report-select').addEventListener('change', runReport);
+el('report-start-date').addEventListener('change', () => { syncKfDatesFromInputs(); runReport(); });
+el('report-end-date').addEventListener('change',   () => { syncKfDatesFromInputs(); runReport(); });
+
+el('report-select').addEventListener('change', () => { updateReportControls(); runReport(); });
 
 async function runReport() {
   const report = el('report-select').value;
@@ -3275,18 +3304,24 @@ async function renderMileageReport() {
 }
 
 async function renderKFOperatorsReport() {
+  if (!kfStartDate || !kfEndDate) kfMonthBounds();
   const out = el('report-output');
   out.innerHTML = '<div class="placeholder-msg">Loading…</div>';
   try {
-    const d = new Date(reportsYear, reportsMonth - 1, 1);
-    const monthName = d.toLocaleDateString('en-US', { month: 'long' });
-    const { rows, totalRead, totalWells } = await api('GET',
-      `/api/reports/kf-operators?year=${reportsYear}&month=${reportsMonth}`);
+    const fmtDate = s => {
+      const [y, m, d] = s.split('-');
+      return new Date(+y, +m - 1, +d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    };
+    const subtitle = kfStartDate === kfEndDate
+      ? fmtDate(kfStartDate)
+      : `${fmtDate(kfStartDate)} – ${fmtDate(kfEndDate)}`;
+    const { rows, distinctRead, totalWells } = await api('GET',
+      `/api/reports/kf-operators?start_date=${kfStartDate}&end_date=${kfEndDate}`);
     if (!rows.length) {
       out.innerHTML = `<div class="report-card">
-        <div class="report-title">KF Operator Breakdown</div>
-        <div class="report-subtitle">${monthName} ${reportsYear}</div>
-        <div class="report-empty">No KF readings for this month.</div>
+        <div class="report-title">KF Breakdown</div>
+        <div class="report-subtitle">${subtitle}</div>
+        <div class="report-empty">No KF readings for this period.</div>
       </div>`;
       return;
     }
@@ -3299,13 +3334,18 @@ async function renderKFOperatorsReport() {
         <td><div class="kf-op-bar-wrap"><div class="kf-op-bar" style="width:${pct}%"></div></div></td>
       </tr>`;
     }).join('');
+    const completePct = totalWells > 0 ? (distinctRead / totalWells * 100).toFixed(0) : 0;
     out.innerHTML = `<div class="report-card">
-      <div class="report-title">KF Operator Breakdown</div>
-      <div class="report-subtitle">${monthName} ${reportsYear}</div>
+      <div class="report-title">KF Breakdown</div>
+      <div class="report-subtitle">${subtitle}</div>
+      <div class="kf-complete-banner">
+        <span class="kf-complete-fraction">${distinctRead} / ${totalWells}</span>
+        <span class="kf-complete-label">wells complete</span>
+        <span class="kf-complete-pct">${completePct}%</span>
+      </div>
       <div class="report-section-title">Wells Read by Operator</div>
-      <div class="report-meta">${totalRead} readings across ${totalWells} active KF wells</div>
       <table class="report-table">
-        <thead><tr><th>Operator</th><th class="report-num">Wells Read</th><th class="report-num">% of Total</th><th></th></tr></thead>
+        <thead><tr><th>Operator</th><th class="report-num">Wells</th><th class="report-num">% of Total</th><th></th></tr></thead>
         <tbody>${rowsHTML}</tbody>
       </table>
     </div>`;

@@ -1587,10 +1587,10 @@ app.get('/api/reports/mileage/export', async (req, res) => {
   }
 });
 
-// ── KF Operator Breakdown Report ──────────────────────────────────────────────
+// ── KF Breakdown Report ───────────────────────────────────────────────────────
 app.get('/api/reports/kf-operators', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
-  const { year, month } = req.query;
-  if (!year || !month) return res.status(400).json({ error: 'year and month required' });
+  const { start_date, end_date } = req.query;
+  if (!start_date || !end_date) return res.status(400).json({ error: 'start_date and end_date required' });
   try {
     const { rows } = await pool.query(
       `WITH total_wells AS (
@@ -1598,21 +1598,26 @@ app.get('/api/reports/kf-operators', requireAuth, requireRole('supervisor', 'adm
          FROM wells
          WHERE kf_set_id IS NOT NULL
            AND (LOWER(status) != 'inactive' OR status IS NULL)
+       ),
+       distinct_read AS (
+         SELECT COUNT(DISTINCT well_id) AS cnt
+         FROM readings_kf_monthly
+         WHERE reading_date BETWEEN $1 AND $2
        )
        SELECT
          COALESCE(r.operator, '(no operator)') AS operator,
          COUNT(DISTINCT r.well_id)             AS wells_read,
-         (SELECT cnt FROM total_wells)         AS total_wells
+         (SELECT cnt FROM total_wells)         AS total_wells,
+         (SELECT cnt FROM distinct_read)       AS distinct_read
        FROM readings_kf_monthly r
-       WHERE EXTRACT(YEAR  FROM r.reading_date) = $1
-         AND EXTRACT(MONTH FROM r.reading_date) = $2
+       WHERE r.reading_date BETWEEN $1 AND $2
        GROUP BY r.operator
        ORDER BY wells_read DESC`,
-      [parseInt(year), parseInt(month)]
+      [start_date, end_date]
     );
-    // Also include total distinct wells read this month
-    const totalRead = rows.reduce((s, r) => s + parseInt(r.wells_read), 0);
-    res.json({ rows, totalRead, totalWells: rows[0]?.total_wells ? parseInt(rows[0].total_wells) : 0 });
+    const totalWells = rows[0]?.total_wells ? parseInt(rows[0].total_wells) : 0;
+    const distinctRead = rows[0]?.distinct_read ? parseInt(rows[0].distinct_read) : 0;
+    res.json({ rows, distinctRead, totalWells });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
