@@ -1352,6 +1352,54 @@ input[type="date"].ctrl-input { min-height: 44px; }
   width: 100%;
 }
 
+/* ── Maintenance Dashboard ───────────────────────────────────────────────── */
+.maint-back-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--accent);
+  font-size: 0.95rem;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 10px 16px;
+  margin-bottom: 16px;
+  width: 100%;
+}
+
+.maint-panel { padding: 0; }
+
+.dash-tile { position: relative; }
+
+.maint-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: var(--red-light, #e53935);
+  color: white;
+  font-size: 0.7rem;
+  font-weight: 700;
+  border-radius: 10px;
+  padding: 2px 6px;
+  min-width: 18px;
+  text-align: center;
+  line-height: 1.4;
+}
+
+.dash-tile-disabled {
+  opacity: 0.45;
+  cursor: default;
+  pointer-events: none;
+}
+
+.placeholder-msg {
+  padding: 24px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
 /* Text size controls */
 .text-size-row { display: flex; gap: 8px; margin-bottom: 16px; }
 .text-size-btn {

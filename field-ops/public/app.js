@@ -1529,18 +1529,47 @@ function createVehicleItem(v, dateInput, timeInput) {
 }
 
 /* ── Maintenance ─────────────────────────────────────────────────────────── */
-let maintLoaded   = false;
-let maintType     = 'equipment';
+let maintType       = 'vehicle';
 let maintContractor = false;
-let maintVehicles = [];
+let maintVehicles   = [];
+let maintVehiclesLoaded = false;
 
-async function initMaintenanceScreen() {
-  if (maintLoaded) return;
-  maintLoaded = true;
+function openMaintPanel(panelId) {
+  el('maint-main').classList.add('hidden');
+  document.querySelectorAll('.maint-panel').forEach(p => p.classList.add('hidden'));
+  el('maint-panel-' + panelId).classList.remove('hidden');
+  if (panelId === 'vehicles') initMaintVehiclesPanel();
+}
+
+function closeMaintPanel() {
+  document.querySelectorAll('.maint-panel').forEach(p => p.classList.add('hidden'));
+  el('maint-main').classList.remove('hidden');
+}
+
+function initMaintenanceScreen() {
+  // Always reset to the sub-dashboard view on each visit
+  closeMaintPanel();
+}
+
+document.querySelectorAll('[data-maint-panel]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const panel = btn.dataset.maintPanel;
+    if (panel === 'pms') return; // disabled tile
+    openMaintPanel(panel);
+  });
+});
+
+document.querySelectorAll('.maint-back-btn').forEach(btn => {
+  btn.addEventListener('click', closeMaintPanel);
+});
+
+async function initMaintVehiclesPanel() {
+  if (maintVehiclesLoaded) return;
+  maintVehiclesLoaded = true;
+  maintType = 'vehicle';
+
   el('maint-date').value = todayISO();
-  el('swap-date').value  = todayISO();
 
-  // Load vehicles for maintenance dropdown
   try {
     const vehicles = await api('GET', '/api/vehicles');
     maintVehicles = vehicles;
@@ -1557,60 +1586,7 @@ async function initMaintenanceScreen() {
       sel.appendChild(opt);
     });
   } catch { /* non-critical */ }
-
-  // Load sites for building maintenance
-  try {
-    const sites = await api('GET', '/api/sites');
-    const sel = el('maint-site-select');
-    sel.innerHTML = '<option value="">Select site…</option>';
-    sites.forEach(s => {
-      const opt = document.createElement('option');
-      opt.value = s.site_id;
-      opt.textContent = s.site_name;
-      sel.appendChild(opt);
-    });
-  } catch { /* non-critical */ }
-
-  // Load equipment for the equipment dropdown (default: pump)
-  await loadMaintEquipment(el('maint-equip-type').value);
 }
-
-async function loadMaintEquipment(type) {
-  const sel = el('maint-equip-select');
-  sel.innerHTML = '<option value="">Loading…</option>';
-  try {
-    const list = await api('GET', `/api/equipment/${type}`);
-    sel.innerHTML = '<option value="">Select equipment…</option>';
-    list.forEach(e => {
-      const opt = document.createElement('option');
-      opt.value = e.id;
-      opt.textContent = e.name;
-      sel.appendChild(opt);
-    });
-  } catch {
-    sel.innerHTML = '<option value="">Select equipment…</option>';
-  }
-}
-
-el('maint-equip-type').addEventListener('change', () => {
-  loadMaintEquipment(el('maint-equip-type').value);
-});
-
-// Maintenance type segmented control
-document.querySelectorAll('#maint-type-seg .seg-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('#maint-type-seg .seg-btn').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    maintType = btn.dataset.val;
-    const isSwap = maintType === 'swap';
-    el('maint-equipment-fields').classList.toggle('hidden', maintType !== 'equipment');
-    el('maint-vehicle-fields').classList.toggle('hidden', maintType !== 'vehicle');
-    el('maint-building-fields').classList.toggle('hidden', maintType !== 'building');
-    el('maint-swap-fields').classList.toggle('hidden', !isSwap);
-    el('maint-common-fields').classList.toggle('hidden', isSwap);
-    if (isSwap) loadSBUnitsForSwap();
-  });
-});
 
 // Show/hide next service fields and hints based on selected vehicle
 el('maint-vehicle-select').addEventListener('change', () => {

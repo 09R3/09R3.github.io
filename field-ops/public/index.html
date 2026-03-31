@@ -252,9 +252,10 @@
         <span class="dash-icon">&#128200;</span>
         <span class="dash-label">KF Monthly<br>Readings</span>
       </button>
-      <button class="dash-tile" data-screen="maintenance">
+      <button class="dash-tile" data-screen="maintenance" id="dash-maintenance-tile">
         <span class="dash-icon">&#128295;</span>
         <span class="dash-label">Maintenance<br>Log</span>
+        <span class="maint-badge hidden" id="maint-main-badge">0</span>
       </button>
       <button class="dash-tile reports-tile hidden" id="dash-reports-tile" data-screen="reports">
         <span class="dash-icon">&#128202;</span>
@@ -332,54 +333,50 @@
 
   <!-- ── Maintenance Log ────────────────────────────────────────────────────── -->
   <div id="screen-maintenance" class="screen-content">
-    <div class="form-card">
-      <div class="form-group">
-        <label>Record Type</label>
-        <div class="seg-group" id="maint-type-seg">
-          <button class="seg-btn active" data-val="equipment">Equipment</button>
-          <button class="seg-btn" data-val="vehicle">Vehicle</button>
-          <button class="seg-btn" data-val="building">Building</button>
-          <button class="seg-btn" data-val="swap">SB Swap</button>
-        </div>
-      </div>
 
-      <!-- Equipment fields -->
-      <div id="maint-equipment-fields">
-        <div class="form-group">
-          <label>Equipment Type</label>
-          <select id="maint-equip-type" class="ctrl-select">
-            <option value="pump">Pump</option>
-            <option value="motor">Motor</option>
-            <option value="compressor">Air Compressor</option>
-            <option value="siphon_breaker">Siphon Breaker</option>
-            <option value="other">Other</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label>Equipment</label>
-          <select id="maint-equip-select" class="ctrl-select">
-            <option value="">Select equipment…</option>
-          </select>
-          <button type="button" class="btn btn-secondary btn-sm maint-hist-btn" id="maint-equip-hist-btn" style="margin-top:8px">&#128200; View History</button>
-        </div>
-        <div class="form-group">
-          <label>Location at Time</label>
-          <input type="text" id="maint-equip-loc" class="ctrl-input" placeholder="Location">
-        </div>
-        <div class="form-group">
-          <label>Hours at Service</label>
-          <input type="number" id="maint-equip-hours" step="0.1" class="ctrl-input" placeholder="0.0">
-        </div>
+    <!-- Sub-dashboard: 6 section tiles -->
+    <div id="maint-main">
+      <div class="dashboard-grid">
+        <button class="dash-tile" data-maint-panel="equipment">
+          <span class="dash-icon">&#9881;</span>
+          <span class="dash-label">Equipment</span>
+          <span class="maint-badge hidden" id="maint-badge-equipment">0</span>
+        </button>
+        <button class="dash-tile" data-maint-panel="vehicles">
+          <span class="dash-icon">&#128664;</span>
+          <span class="dash-label">Vehicles</span>
+        </button>
+        <button class="dash-tile" data-maint-panel="buildings">
+          <span class="dash-icon">&#127970;</span>
+          <span class="dash-label">Buildings</span>
+          <span class="maint-badge hidden" id="maint-badge-buildings">0</span>
+        </button>
+        <button class="dash-tile" data-maint-panel="wells">
+          <span class="dash-icon">&#128204;</span>
+          <span class="dash-label">Wells</span>
+          <span class="maint-badge hidden" id="maint-badge-wells">0</span>
+        </button>
+        <button class="dash-tile" data-maint-panel="swaps">
+          <span class="dash-icon">&#128260;</span>
+          <span class="dash-label">Equipment<br>Swaps</span>
+        </button>
+        <button class="dash-tile dash-tile-disabled" data-maint-panel="pms">
+          <span class="dash-icon">&#128203;</span>
+          <span class="dash-label">PMs</span>
+        </button>
       </div>
+    </div>
 
-      <!-- Vehicle fields -->
-      <div id="maint-vehicle-fields" class="hidden">
+    <!-- Vehicles Panel — fully functional -->
+    <div id="maint-panel-vehicles" class="maint-panel hidden">
+      <button class="maint-back-btn">&#8249; Maintenance</button>
+      <div class="form-card">
         <div class="form-group">
           <label>Vehicle</label>
           <select id="maint-vehicle-select" class="ctrl-select">
             <option value="">Select vehicle…</option>
           </select>
-          <button type="button" class="btn btn-secondary btn-sm maint-hist-btn" id="maint-vehicle-hist-btn" style="margin-top:8px">&#128200; View History</button>
+          <button type="button" class="btn btn-secondary btn-sm" id="maint-vehicle-hist-btn" style="margin-top:8px">&#128200; View History</button>
           <div id="maint-vehicle-hint" class="form-hint hidden"></div>
         </div>
         <div class="form-group">
@@ -400,152 +397,132 @@
           <label>Next Service Hours</label>
           <input type="number" id="maint-vehicle-next-hours" step="1" class="ctrl-input" placeholder="e.g. 2500">
         </div>
-      </div>
-
-      <!-- Building fields -->
-      <div id="maint-building-fields" class="hidden">
-        <div class="form-group">
-          <label>Site</label>
-          <select id="maint-site-select" class="ctrl-select">
-            <option value="">Select site…</option>
-          </select>
+        <div class="two-col">
+          <div class="form-group">
+            <label>Work Date</label>
+            <input type="date" id="maint-date" class="ctrl-input">
+          </div>
+          <div class="form-group">
+            <label>Work Type</label>
+            <select id="maint-work-type" class="ctrl-select">
+              <option value="repair">Repair</option>
+              <option value="pm">Preventive Maint.</option>
+              <option value="inspection">Inspection</option>
+              <option value="replacement">Replacement</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+        </div>
+        <div class="two-col">
+          <div class="form-group">
+            <label>Performed By</label>
+            <input type="text" id="maint-performed-by" class="ctrl-input" placeholder="Name">
+          </div>
+          <div class="form-group toggle-row">
+            <label>Contractor?</label>
+            <div class="toggle-group">
+              <button class="toggle-btn" id="maint-contractor-yes" data-val="true">Yes</button>
+              <button class="toggle-btn active" id="maint-contractor-no" data-val="false">No</button>
+            </div>
+          </div>
         </div>
         <div class="form-group">
-          <label>Building</label>
-          <select id="maint-building-select" class="ctrl-select" disabled>
-            <option value="">Select building…</option>
-          </select>
-          <button type="button" class="btn btn-secondary btn-sm maint-hist-btn" id="maint-building-hist-btn" style="margin-top:8px">&#128200; View History</button>
+          <label>Description / Work Performed</label>
+          <textarea id="maint-description" class="ctrl-textarea" rows="3" placeholder="Describe the work performed…"></textarea>
+        </div>
+        <div class="two-col">
+          <div class="form-group">
+            <label>Parts Used</label>
+            <input type="text" id="maint-parts" class="ctrl-input" placeholder="Part numbers / description">
+          </div>
+          <div class="form-group">
+            <label>Cost ($)</label>
+            <input type="number" id="maint-cost" step="0.01" class="ctrl-input" placeholder="0.00">
+          </div>
         </div>
         <div class="form-group">
-          <label>Record Type</label>
-          <select id="maint-building-record-type" class="ctrl-select">
-            <option value="repair">Repair</option>
-            <option value="inspection">Inspection</option>
-            <option value="pm">Preventive Maintenance</option>
-            <option value="other">Other</option>
-          </select>
+          <label>PO Number</label>
+          <input type="text" id="maint-po" class="ctrl-input" placeholder="PO #">
         </div>
         <div class="form-group">
-          <label>Severity</label>
-          <select id="maint-severity" class="ctrl-select">
-            <option value="">None</option>
-            <option value="low">Low</option>
-            <option value="medium">Medium</option>
-            <option value="high">High</option>
-            <option value="critical">Critical</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label>Work Order Status</label>
-          <select id="maint-status" class="ctrl-select">
-            <option value="open">Open</option>
-            <option value="in_progress">In Progress</option>
-            <option value="on_hold">On Hold</option>
-            <option value="resolved">Resolved</option>
-            <option value="closed">Closed</option>
-          </select>
-        </div>
-      </div>
-      <div class="form-group" id="maint-resolution-group" style="display:none">
-        <label>Resolution Notes</label>
-        <textarea id="maint-resolution-notes" class="ctrl-textarea" rows="2" placeholder="Describe how the issue was resolved…"></textarea>
-      </div>
-
-      <!-- Siphon Breaker Swap fields -->
-      <div id="maint-swap-fields" class="hidden">
-        <p class="swap-info">Swapping a unit updates both records in the database and logs the swap history.</p>
-        <div class="form-group">
-          <label>Swap Date</label>
-          <input type="date" id="swap-date" class="ctrl-input">
-        </div>
-        <div class="form-group">
-          <label>Active Unit Being Removed</label>
-          <select id="swap-remove-select" class="ctrl-select">
-            <option value="">Select active unit…</option>
-          </select>
-          <div id="swap-location-hint" class="swap-location-hint hidden"></div>
-        </div>
-        <div class="form-group">
-          <label>Spare Being Installed</label>
-          <select id="swap-install-select" class="ctrl-select">
-            <option value="">Select spare…</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label>Performed By</label>
-          <input type="text" id="swap-performed-by" class="ctrl-input" placeholder="Name">
+          <label>Next Service Date</label>
+          <input type="date" id="maint-next-service" class="ctrl-input">
         </div>
         <div class="form-group">
           <label>Notes</label>
-          <textarea id="swap-notes" class="ctrl-textarea" rows="2" placeholder="Optional notes…"></textarea>
+          <textarea id="maint-notes" class="ctrl-textarea" rows="2" placeholder="Optional notes…"></textarea>
         </div>
-        <div id="swap-error" class="error-msg hidden"></div>
-        <button class="btn btn-save btn-full" id="swap-save-btn">Complete Swap</button>
+        <div id="maint-error" class="error-msg hidden"></div>
+        <button class="btn btn-save btn-full" id="maint-save-btn">Save Vehicle Record</button>
       </div>
-
-      <!-- Common fields -->
-      <div id="maint-common-fields">
-      <div class="two-col">
-        <div class="form-group">
-          <label>Work Date</label>
-          <input type="date" id="maint-date" class="ctrl-input">
-        </div>
-        <div class="form-group">
-          <label>Work Type</label>
-          <select id="maint-work-type" class="ctrl-select">
-            <option value="repair">Repair</option>
-            <option value="pm">Preventive Maint.</option>
-            <option value="inspection">Inspection</option>
-            <option value="replacement">Replacement</option>
-            <option value="other">Other</option>
-          </select>
-        </div>
-      </div>
-      <div class="two-col">
-        <div class="form-group">
-          <label>Performed By</label>
-          <input type="text" id="maint-performed-by" class="ctrl-input" placeholder="Name">
-        </div>
-        <div class="form-group toggle-row">
-          <label>Contractor?</label>
-          <div class="toggle-group">
-            <button class="toggle-btn" id="maint-contractor-yes" data-val="true">Yes</button>
-            <button class="toggle-btn active" id="maint-contractor-no" data-val="false">No</button>
-          </div>
-        </div>
-      </div>
-      <div class="form-group">
-        <label>Description</label>
-        <textarea id="maint-description" class="ctrl-textarea" rows="3" placeholder="Describe the work performed…"></textarea>
-      </div>
-      <div class="two-col">
-        <div class="form-group">
-          <label>Parts Used</label>
-          <input type="text" id="maint-parts" class="ctrl-input" placeholder="Part numbers / description">
-        </div>
-        <div class="form-group">
-          <label>Cost ($)</label>
-          <input type="number" id="maint-cost" step="0.01" class="ctrl-input" placeholder="0.00">
-        </div>
-      </div>
-      <div class="form-group">
-        <label>PO Number</label>
-        <input type="text" id="maint-po" class="ctrl-input" placeholder="PO #">
-      </div>
-      <div class="form-group">
-        <label>Next Service Date</label>
-        <input type="date" id="maint-next-service" class="ctrl-input">
-      </div>
-      <div class="form-group">
-        <label>Notes</label>
-        <textarea id="maint-notes" class="ctrl-textarea" rows="2" placeholder="Optional notes…"></textarea>
-      </div>
-      <div id="maint-error" class="error-msg hidden"></div>
-      <button class="btn btn-save btn-full" id="maint-save-btn">Save Maintenance Record</button>
-      </div><!-- /maint-common-fields -->
     </div>
-  </div>
+
+    <!-- Equipment Panel — placeholder (hidden stubs preserve module-level event listeners) -->
+    <div id="maint-panel-equipment" class="maint-panel hidden">
+      <button class="maint-back-btn">&#8249; Maintenance</button>
+      <div class="placeholder-msg">Equipment issue tracking coming in a future update.</div>
+      <div class="hidden">
+        <select id="maint-equip-type" class="ctrl-select">
+          <option value="pump">Pump</option><option value="motor">Motor</option>
+          <option value="compressor">Air Compressor</option>
+          <option value="siphon_breaker">Siphon Breaker</option>
+          <option value="other">Other</option>
+        </select>
+        <select id="maint-equip-select" class="ctrl-select"><option value="">Select…</option></select>
+        <input type="text" id="maint-equip-loc" class="ctrl-input">
+        <input type="number" id="maint-equip-hours" class="ctrl-input">
+        <button id="maint-equip-hist-btn" type="button"></button>
+      </div>
+    </div>
+
+    <!-- Buildings Panel — placeholder (hidden stubs preserve module-level event listeners) -->
+    <div id="maint-panel-buildings" class="maint-panel hidden">
+      <button class="maint-back-btn">&#8249; Maintenance</button>
+      <div class="placeholder-msg">Building issue tracking coming in a future update.</div>
+      <div class="hidden">
+        <select id="maint-site-select" class="ctrl-select"><option value="">Select site…</option></select>
+        <select id="maint-building-select" class="ctrl-select" disabled><option value="">Select building…</option></select>
+        <button id="maint-building-hist-btn" type="button"></button>
+        <select id="maint-building-record-type" class="ctrl-select"></select>
+        <select id="maint-severity" class="ctrl-select"></select>
+        <select id="maint-status" class="ctrl-select">
+          <option value="open">Open</option><option value="resolved">Resolved</option>
+        </select>
+      </div>
+      <div id="maint-resolution-group" class="hidden">
+        <textarea id="maint-resolution-notes" class="ctrl-textarea"></textarea>
+      </div>
+    </div>
+
+    <!-- Wells Panel — placeholder -->
+    <div id="maint-panel-wells" class="maint-panel hidden">
+      <button class="maint-back-btn">&#8249; Maintenance</button>
+      <div class="placeholder-msg">Well issue tracking coming in a future update.</div>
+    </div>
+
+    <!-- Swaps Panel — placeholder (hidden stubs preserve module-level event listeners) -->
+    <div id="maint-panel-swaps" class="maint-panel hidden">
+      <button class="maint-back-btn">&#8249; Maintenance</button>
+      <div class="placeholder-msg">Equipment swaps coming in a future update.</div>
+      <div class="hidden">
+        <input type="date" id="swap-date">
+        <select id="swap-remove-select"><option value="">Select…</option></select>
+        <select id="swap-install-select"><option value="">Select…</option></select>
+        <input type="text" id="swap-performed-by">
+        <textarea id="swap-notes"></textarea>
+        <div id="swap-error"></div>
+        <div id="swap-location-hint"></div>
+        <button id="swap-save-btn" type="button"></button>
+      </div>
+    </div>
+
+    <!-- PMs Panel — placeholder -->
+    <div id="maint-panel-pms" class="maint-panel hidden">
+      <button class="maint-back-btn">&#8249; Maintenance</button>
+      <div class="placeholder-msg">PM checklists coming in a future update.</div>
+    </div>
+
+  </div><!-- /screen-maintenance -->
 
   <!-- ── Reports ───────────────────────────────────────────────────────────── -->
   <div id="screen-reports" class="screen-content">
