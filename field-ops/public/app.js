@@ -928,8 +928,14 @@ async function savePPReadings() {
       status.textContent = '⏳ Saved offline — will sync when connected';
       status.className = 'save-status warn';
       showToast(`Pumping Plant queued offline`, 'warn');
+      // Clear all filled inputs so they can't be re-submitted
+      document.querySelectorAll('.reading-row').forEach(row => {
+        row.querySelector('.rr-current').value = '';
+        row.querySelector('.rr-notes').value = '';
+        row.classList.add('saved');
+      });
     } else {
-      // Mark saved rows green
+      // Mark saved rows green and clear their inputs
       const savedPumps    = new Set(result.saved.pump.map(r => r.position_id));
       const savedComps    = new Set(result.saved.compressor.map(r => String(r.compressor_id)));
       const savedPge      = new Set(result.saved.pge.map(r => String(r.pge_meter_id)));
@@ -943,7 +949,11 @@ async function savePPReadings() {
           (type === 'compressor' && savedComps.has(id)) ||
           (type === 'pge'        && savedPge.has(id)) ||
           (type === 'monitor'    && savedMonitors.has(id));
-        if (shouldMark) row.classList.add('saved');
+        if (shouldMark) {
+          row.classList.add('saved');
+          row.querySelector('.rr-current').value = '';
+          row.querySelector('.rr-notes').value = '';
+        }
       });
 
       const count = result.saved.pump.length + result.saved.compressor.length +
