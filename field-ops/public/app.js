@@ -685,18 +685,30 @@ async function initPPScreen() {
     return;
   }
 
-  // Build site tabs
+  // Sort O&M to end
+  pp.sites.sort((a, b) => {
+    const aOm = /o\s*&\s*m/i.test(a.site_name);
+    const bOm = /o\s*&\s*m/i.test(b.site_name);
+    return aOm - bOm;
+  });
+
+  // Build site tabs — no "All" tab
   const tabsEl = el('pp-site-tabs');
   tabsEl.innerHTML = '';
   const makeTab = (label, siteId) => {
     const btn = document.createElement('button');
-    btn.className = 'set-tab' + (siteId === null ? ' active' : '');
+    btn.className = 'set-tab';
     btn.textContent = label;
-    btn.dataset.siteId = siteId ?? '';
+    btn.dataset.siteId = String(siteId);
     tabsEl.appendChild(btn);
   };
-  makeTab('All', null);
   pp.sites.forEach(s => makeTab(s.site_name.replace('Site', 'Plant'), s.site_id));
+
+  // Default to first tab
+  if (tabsEl.children.length) {
+    tabsEl.children[0].classList.add('active');
+    pp.activeTab = tabsEl.children[0].dataset.siteId;
+  }
 
   tabsEl.addEventListener('click', async e => {
     const tab = e.target.closest('.set-tab');
@@ -748,21 +760,15 @@ async function renderPPBody() {
   sitesToShow.forEach(site => {
     const buildings = pp.buildings[site.site_id] || [];
 
-    // Site header divider when showing all plants
-    if (!pp.activeTab && pp.sites.length > 1) {
-      const hdr = document.createElement('div');
-      hdr.className = 'pp-site-header';
-      hdr.textContent = site.site_name.replace('Site', 'Plant');
-      body.appendChild(hdr);
-    }
-
     buildings.forEach(building => {
       const items = buildBuildingRows(building);
       if (!items.length) return;
-      body.appendChild(makeCollapsibleSection(
+      const section = makeCollapsibleSection(
         building.building_name || (building.building_letter + ' Plant'),
         items
-      ));
+      );
+      section.classList.remove('collapsed'); // auto-expand when viewing a specific plant
+      body.appendChild(section);
     });
   });
 
@@ -1120,6 +1126,7 @@ function createWellItem(w, dateInput, timeInput) {
   div.querySelector('.list-item-header').addEventListener('click', () => {
     const open = div.classList.toggle('expanded');
     div.querySelector('.list-item-form').style.display = open ? '' : 'none';
+    if (open) el('well-time').value = nowHHMM();
   });
 
   div.querySelector('.w-save-btn').addEventListener('click', async e => {
@@ -1285,6 +1292,7 @@ function createCanalItem(s, dateInput, timeInput) {
   div.querySelector('.list-item-header').addEventListener('click', () => {
     const open = div.classList.toggle('expanded');
     div.querySelector('.list-item-form').style.display = open ? '' : 'none';
+    if (open) el('canal-time').value = nowHHMM();
   });
 
   div.querySelector('.c-save-btn').addEventListener('click', async e => {
@@ -1479,6 +1487,7 @@ function createVehicleItem(v, dateInput, timeInput) {
   div.querySelector('.list-item-header').addEventListener('click', () => {
     const open = div.classList.toggle('expanded');
     div.querySelector('.list-item-form').style.display = open ? '' : 'none';
+    if (open) el('vehicle-time').value = nowHHMM();
   });
 
   div.querySelector('.v-save-btn').addEventListener('click', async e => {
@@ -1848,33 +1857,27 @@ async function initKFScreen() {
     return;
   }
 
-  // Build set tabs
+  // Build set tabs — no "All" tab, map button moves to title card
   const tabsEl = el('kf-set-tabs');
   tabsEl.innerHTML = '';
   const makeTab = (label, setId) => {
-    const wrap = document.createElement('div');
-    wrap.className = 'set-tab-group';
     const btn = document.createElement('button');
-    btn.className = 'set-tab' + (setId === null ? ' active' : '');
+    btn.className = 'set-tab';
     btn.textContent = label;
-    btn.dataset.setId = setId ?? '';
-    wrap.appendChild(btn);
-    if (setId !== null) {
-      const mapBtn = document.createElement('button');
-      mapBtn.className = 'set-tab-map-btn';
-      mapBtn.title = 'View set on map';
-      mapBtn.textContent = '🗺';
-      mapBtn.addEventListener('click', e => {
-        e.stopPropagation();
-        const setWells = kfAllWells.filter(w => String(w.kf_set_id) === String(setId));
-        openSetMapModal(label, setWells);
-      });
-      wrap.appendChild(mapBtn);
-    }
-    tabsEl.appendChild(wrap);
+    btn.dataset.setId = String(setId);
+    tabsEl.appendChild(btn);
   };
-  makeTab('All', null);
-  kfSets.forEach(s => makeTab(s.set_name || `Set ${s.set_id}`, s.set_id));
+  kfSets.forEach(s => {
+    const raw = s.set_name || String(s.set_id);
+    const label = /^set\s/i.test(raw) ? raw : `Set ${raw}`;
+    makeTab(label, s.set_id);
+  });
+
+  // Default to first set
+  if (tabsEl.children.length) {
+    tabsEl.children[0].classList.add('active');
+    kfActiveSet = tabsEl.children[0].dataset.setId;
+  }
 
   tabsEl.addEventListener('click', e => {
     const tab = e.target.closest('.set-tab');
@@ -1904,21 +1907,29 @@ function renderKFList() {
 
   body.innerHTML = '';
 
-  if (!kfActiveSet) {
-    // Group by set with collapsible sections
-    const bySets = {};
-    filtered.forEach(w => {
-      const key = w.set_name || 'No Set';
-      if (!bySets[key]) bySets[key] = [];
-      bySets[key].push(w);
+  // Set title card with count and map button
+  const currentSet = kfSets.find(s => String(s.set_id) === String(kfActiveSet));
+  if (currentSet) {
+    const raw = currentSet.set_name || String(currentSet.set_id);
+    const setLabel = /^set\s/i.test(raw) ? raw : `Set ${raw}`;
+    const doneCount = filtered.filter(w => w.days_since_reading != null && w.days_since_reading <= 25).length;
+    const totalCount = filtered.length;
+
+    const card = document.createElement('div');
+    card.className = 'kf-set-title-card';
+    card.innerHTML = `
+      <div class="kf-set-title-info">
+        <span class="kf-set-title-name">${setLabel}</span>
+        <span class="kf-set-title-count">${doneCount} / ${totalCount} complete</span>
+      </div>
+      <button class="btn btn-secondary btn-sm kf-set-map-card-btn">&#128506; Map</button>`;
+    card.querySelector('.kf-set-map-card-btn').addEventListener('click', () => {
+      openSetMapModal(setLabel, filtered);
     });
-    Object.entries(bySets).forEach(([setName, wells]) => {
-      const items = wells.map(w => createKFItem(w, dateIn, timeIn));
-      body.appendChild(makeCollapsibleSection(setName, items));
-    });
-  } else {
-    filtered.forEach(w => body.appendChild(createKFItem(w, dateIn, timeIn)));
+    body.appendChild(card);
   }
+
+  filtered.forEach(w => body.appendChild(createKFItem(w, dateIn, timeIn)));
 }
 
 function createKFItem(w, dateInput, timeInput) {
@@ -2016,6 +2027,7 @@ function createKFItem(w, dateInput, timeInput) {
   div.querySelector('.list-item-header').addEventListener('click', () => {
     const open = div.classList.toggle('expanded');
     div.querySelector('.list-item-form').style.display = open ? '' : 'none';
+    if (open) el('kf-time').value = nowHHMM();
   });
 
   div.querySelector('.kf-save').addEventListener('click', async e => {
