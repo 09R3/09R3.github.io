@@ -457,20 +457,65 @@
       </div>
     </div>
 
-    <!-- Equipment Panel — placeholder (hidden stubs preserve module-level event listeners) -->
+    <!-- Equipment Panel — fully functional -->
     <div id="maint-panel-equipment" class="maint-panel hidden">
       <button class="maint-back-btn">&#8249; Maintenance</button>
-      <div class="placeholder-msg">Equipment issue tracking coming in a future update.</div>
+
+      <div class="issue-toolbar">
+        <button class="btn btn-secondary btn-sm" id="equip-show-resolved-btn">Show Resolved</button>
+        <button class="btn btn-save btn-sm" id="equip-new-issue-btn">+ New Issue</button>
+      </div>
+
+      <!-- New issue form -->
+      <div id="equip-new-issue-form" class="form-card hidden">
+        <div class="form-group">
+          <label>Equipment Type</label>
+          <div class="seg-group" id="equip-type-seg">
+            <button class="seg-btn active" data-val="pump">Pump</button>
+            <button class="seg-btn" data-val="motor">Motor</button>
+            <button class="seg-btn" data-val="compressor">Compressor</button>
+            <button class="seg-btn" data-val="siphon_breaker">SB</button>
+            <button class="seg-btn" data-val="other">Other</button>
+          </div>
+        </div>
+        <div class="form-group" id="equip-select-group">
+          <label>Equipment</label>
+          <select id="equip-issue-select" class="ctrl-select">
+            <option value="">Select equipment…</option>
+          </select>
+        </div>
+        <div class="form-group hidden" id="equip-other-group">
+          <label>Equipment Description</label>
+          <input type="text" id="equip-issue-other" class="ctrl-input" placeholder="e.g. Fuel tank, gate valve…">
+        </div>
+        <div class="form-group">
+          <label>Issue Description</label>
+          <textarea id="equip-issue-desc" class="ctrl-textarea" rows="3" placeholder="Describe the problem…"></textarea>
+        </div>
+        <div class="form-group">
+          <label>Reported Date</label>
+          <input type="date" id="equip-issue-date" class="ctrl-input">
+        </div>
+        <div class="form-group">
+          <label>Assigned To</label>
+          <input type="text" id="equip-issue-assigned" class="ctrl-input" placeholder="Optional">
+        </div>
+        <div id="equip-new-error" class="error-msg hidden"></div>
+        <div class="two-col">
+          <button class="btn btn-secondary" id="equip-cancel-btn">Cancel</button>
+          <button class="btn btn-save" id="equip-submit-btn">Submit Issue</button>
+        </div>
+      </div>
+
+      <!-- Issue list -->
+      <div id="equip-issue-list"></div>
+
+      <!-- Hidden stubs — preserve existing module-level event listener IDs -->
       <div class="hidden">
-        <select id="maint-equip-type" class="ctrl-select">
-          <option value="pump">Pump</option><option value="motor">Motor</option>
-          <option value="compressor">Air Compressor</option>
-          <option value="siphon_breaker">Siphon Breaker</option>
-          <option value="other">Other</option>
-        </select>
-        <select id="maint-equip-select" class="ctrl-select"><option value="">Select…</option></select>
-        <input type="text" id="maint-equip-loc" class="ctrl-input">
-        <input type="number" id="maint-equip-hours" class="ctrl-input">
+        <select id="maint-equip-type"><option value="pump">Pump</option><option value="motor">Motor</option><option value="compressor">Air Compressor</option><option value="siphon_breaker">Siphon Breaker</option><option value="other">Other</option></select>
+        <select id="maint-equip-select"><option value="">Select…</option></select>
+        <input type="text" id="maint-equip-loc">
+        <input type="number" id="maint-equip-hours">
         <button id="maint-equip-hist-btn" type="button"></button>
       </div>
     </div>

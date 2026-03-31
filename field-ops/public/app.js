@@ -1528,6 +1528,229 @@ function createVehicleItem(v, dateInput, timeInput) {
   return div;
 }
 
+/* ── Equipment Issues ────────────────────────────────────────────────────── */
+let equipIssuesLoaded = false;
+let equipIssues       = [];
+let equipShowResolved = false;
+let equipNewType      = 'pump';
+
+function initMaintEquipmentPanel() {
+  if (equipIssuesLoaded) return;
+  equipIssuesLoaded = true;
+  el('equip-issue-date').value = todayISO();
+  loadEquipIssues();
+  loadEquipForNewIssue(equipNewType);
+}
+
+async function loadEquipIssues() {
+  try {
+    equipIssues = await api('GET', `/api/equipment-issues?include_resolved=${equipShowResolved}`);
+    renderEquipIssues();
+    updateEquipBadge();
+  } catch (err) {
+    el('equip-issue-list').innerHTML = `<div class="issue-empty">Failed to load issues</div>`;
+  }
+}
+
+function updateEquipBadge() {
+  const count = equipIssues.filter(i => i.status === 'open' || i.status === 'in_progress').length;
+  const badge = el('maint-badge-equipment');
+  const mainBadge = el('maint-main-badge');
+  badge.textContent = count;
+  badge.classList.toggle('hidden', count === 0);
+  mainBadge.textContent = count;
+  mainBadge.classList.toggle('hidden', count === 0);
+}
+
+function renderEquipIssues() {
+  const list = el('equip-issue-list');
+  if (!equipIssues.length) {
+    list.innerHTML = `<div class="issue-empty">No ${equipShowResolved ? '' : 'open '}issues</div>`;
+    return;
+  }
+  list.innerHTML = equipIssues.map(issue => {
+    const statusClass = issue.status.replace('_', '-');
+    const snippet = (issue.description || '').slice(0, 80) + (issue.description?.length > 80 ? '…' : '');
+    const showResNotes = issue.status === 'resolved' || issue.status === 'in_progress';
+    return `
+      <div class="equip-issue-item" data-issue-id="${issue.issue_id}">
+        <div class="equip-issue-header">
+          <div class="equip-issue-meta">
+            <div class="equip-issue-name">${escHtml(issue.equipment_name || issue.equipment_type)}</div>
+            <div class="equip-issue-snippet">${escHtml(snippet)}</div>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+            <span class="status-pill ${statusClass}">${issue.status.replace('_',' ')}</span>
+            <span class="equip-issue-date">${issue.reported_date?.slice(0,10) || ''}</span>
+          </div>
+        </div>
+        <div class="equip-issue-body hidden">
+          <div class="form-group">
+            <label>Description</label>
+            <div style="font-size:0.9rem;padding:6px 0">${escHtml(issue.description)}</div>
+          </div>
+          <div class="form-group">
+            <label>Status</label>
+            <select class="ctrl-select issue-status-select">
+              <option value="open"        ${issue.status==='open'        ?'selected':''}>Open</option>
+              <option value="in_progress" ${issue.status==='in_progress' ?'selected':''}>In Progress</option>
+              <option value="resolved"    ${issue.status==='resolved'    ?'selected':''}>Resolved</option>
+            </select>
+          </div>
+          <div class="form-group issue-res-notes-group" style="${showResNotes ? '' : 'display:none'}">
+            <label>Resolution Notes</label>
+            <textarea class="ctrl-textarea issue-res-notes" rows="2" placeholder="Describe how it was resolved…">${escHtml(issue.resolution_notes || '')}</textarea>
+          </div>
+          <div class="form-group">
+            <label>Assigned To</label>
+            <input type="text" class="ctrl-input issue-assigned" value="${escHtml(issue.assigned_to || '')}" placeholder="Optional">
+          </div>
+          <div class="error-msg hidden issue-update-error"></div>
+          <button class="btn btn-save btn-full issue-save-btn">Save Changes</button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function escHtml(str) {
+  return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+async function loadEquipForNewIssue(type) {
+  const isOther = type === 'other';
+  el('equip-select-group').classList.toggle('hidden', isOther);
+  el('equip-other-group').classList.toggle('hidden', !isOther);
+  if (isOther) return;
+  const sel = el('equip-issue-select');
+  sel.innerHTML = '<option value="">Loading…</option>';
+  try {
+    const list = await api('GET', `/api/equipment/${type}`);
+    sel.innerHTML = '<option value="">Select equipment…</option>';
+    list.forEach(e => {
+      const opt = document.createElement('option');
+      opt.value = e.id;
+      opt.textContent = e.name;
+      sel.appendChild(opt);
+    });
+  } catch {
+    sel.innerHTML = '<option value="">Failed to load</option>';
+  }
+}
+
+// New issue form toggle
+el('equip-new-issue-btn').addEventListener('click', () => {
+  el('equip-new-issue-form').classList.remove('hidden');
+  el('equip-new-issue-btn').classList.add('hidden');
+});
+el('equip-cancel-btn').addEventListener('click', () => {
+  el('equip-new-issue-form').classList.add('hidden');
+  el('equip-new-issue-btn').classList.remove('hidden');
+  el('equip-new-error').classList.add('hidden');
+});
+
+// Equipment type seg for new issue form
+document.querySelectorAll('#equip-type-seg .seg-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#equip-type-seg .seg-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    equipNewType = btn.dataset.val;
+    loadEquipForNewIssue(equipNewType);
+  });
+});
+
+// Submit new issue
+el('equip-submit-btn').addEventListener('click', async () => {
+  clearError('equip-new-error');
+  const desc = el('equip-issue-desc').value.trim();
+  if (!desc) return showError('equip-new-error', 'Issue description is required');
+
+  let equipId = null, equipName = null;
+  if (equipNewType === 'other') {
+    equipName = el('equip-issue-other').value.trim() || 'Other';
+  } else {
+    const sel = el('equip-issue-select');
+    equipId   = sel.value || null;
+    equipName = sel.options[sel.selectedIndex]?.textContent || null;
+    if (!equipId) return showError('equip-new-error', 'Please select equipment');
+  }
+
+  el('equip-submit-btn').disabled = true;
+  try {
+    await api('POST', '/api/equipment-issues', {
+      equipment_type: equipNewType,
+      equipment_id:   equipId,
+      equipment_name: equipName,
+      description:    desc,
+      reported_date:  el('equip-issue-date').value || null,
+      assigned_to:    el('equip-issue-assigned').value.trim() || null,
+    });
+    // Reset form
+    el('equip-issue-desc').value     = '';
+    el('equip-issue-other').value    = '';
+    el('equip-issue-assigned').value = '';
+    el('equip-issue-date').value     = todayISO();
+    el('equip-new-issue-form').classList.add('hidden');
+    el('equip-new-issue-btn').classList.remove('hidden');
+    equipIssuesLoaded = false; // force reload
+    await loadEquipIssues();
+    showToast('Issue submitted', 'success');
+  } catch (err) {
+    showError('equip-new-error', err.message);
+  } finally {
+    el('equip-submit-btn').disabled = false;
+  }
+});
+
+// Show/hide resolved toggle
+el('equip-show-resolved-btn').addEventListener('click', () => {
+  equipShowResolved = !equipShowResolved;
+  el('equip-show-resolved-btn').textContent = equipShowResolved ? 'Hide Resolved' : 'Show Resolved';
+  equipIssuesLoaded = false;
+  loadEquipIssues();
+});
+
+// Issue list interactions (delegated)
+el('equip-issue-list').addEventListener('click', async e => {
+  const item = e.target.closest('.equip-issue-item');
+  if (!item) return;
+
+  // Toggle expand on header click
+  if (e.target.closest('.equip-issue-header')) {
+    const body = item.querySelector('.equip-issue-body');
+    body.classList.toggle('hidden');
+    return;
+  }
+
+  // Show/hide resolution notes when status changes
+  if (e.target.classList.contains('issue-status-select')) {
+    const resGroup = item.querySelector('.issue-res-notes-group');
+    const show = e.target.value === 'resolved' || e.target.value === 'in_progress';
+    resGroup.style.display = show ? '' : 'none';
+    return;
+  }
+
+  // Save changes
+  if (e.target.classList.contains('issue-save-btn')) {
+    const issueId  = item.dataset.issueId;
+    const status   = item.querySelector('.issue-status-select').value;
+    const resNotes = item.querySelector('.issue-res-notes').value.trim() || null;
+    const assigned = item.querySelector('.issue-assigned').value.trim() || null;
+    const errEl    = item.querySelector('.issue-update-error');
+    errEl.classList.add('hidden');
+    e.target.disabled = true;
+    try {
+      await api('PATCH', `/api/equipment-issues/${issueId}`, { status, resolution_notes: resNotes, assigned_to: assigned });
+      equipIssuesLoaded = false;
+      await loadEquipIssues();
+      showToast('Issue updated', 'success');
+    } catch (err) {
+      errEl.textContent = err.message;
+      errEl.classList.remove('hidden');
+      e.target.disabled = false;
+    }
+  }
+});
+
 /* ── Maintenance ─────────────────────────────────────────────────────────── */
 let maintType       = 'vehicle';
 let maintContractor = false;
@@ -1538,6 +1761,7 @@ function openMaintPanel(panelId) {
   el('maint-main').classList.add('hidden');
   document.querySelectorAll('.maint-panel').forEach(p => p.classList.add('hidden'));
   el('maint-panel-' + panelId).classList.remove('hidden');
+  if (panelId === 'equipment') initMaintEquipmentPanel();
   if (panelId === 'vehicles') initMaintVehiclesPanel();
   if (panelId === 'swaps')    initMaintSwapsPanel();
 }

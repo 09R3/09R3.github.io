@@ -917,6 +917,69 @@ app.post('/api/siphon-breakers/swap', requireAuth, async (req, res) => {
   }
 });
 
+// ── Equipment Issues ──────────────────────────────────────────────────────────
+app.get('/api/equipment-issues', requireAuth, async (req, res) => {
+  const includeResolved = req.query.include_resolved === 'true';
+  try {
+    const { rows } = await pool.query(`
+      SELECT issue_id, equipment_type, equipment_id, equipment_name,
+             status, description, reported_date, resolved_date,
+             resolution_notes, entered_by, assigned_to, notes, created_at
+      FROM equipment_issues
+      WHERE $1 OR status != 'resolved'
+      ORDER BY
+        CASE status WHEN 'open' THEN 1 WHEN 'in_progress' THEN 2 ELSE 3 END,
+        reported_date DESC
+    `, [includeResolved]);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/equipment-issues', requireAuth, async (req, res) => {
+  const { equipment_type, equipment_id, equipment_name, description,
+          reported_date, assigned_to, notes } = req.body;
+  if (!equipment_type || !description) {
+    return res.status(400).json({ error: 'equipment_type and description are required' });
+  }
+  try {
+    const { rows } = await pool.query(`
+      INSERT INTO equipment_issues
+        (equipment_type, equipment_id, equipment_name, description,
+         reported_date, assigned_to, notes, entered_by)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+      RETURNING issue_id
+    `, [equipment_type, equipment_id || null, equipment_name || null, description,
+        reported_date || null, assigned_to || null, notes || null, req.user.username]);
+    res.json({ ok: true, issue_id: rows[0].issue_id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch('/api/equipment-issues/:id', requireAuth, async (req, res) => {
+  const { id } = req.params;
+  const { status, resolution_notes, assigned_to, notes } = req.body;
+  try {
+    await pool.query(`
+      UPDATE equipment_issues SET
+        status           = COALESCE($1, status),
+        resolution_notes = COALESCE($2, resolution_notes),
+        assigned_to      = COALESCE($3, assigned_to),
+        notes            = COALESCE($4, notes),
+        resolved_date    = CASE WHEN $1 = 'resolved' THEN CURRENT_DATE
+                                WHEN $1 IN ('open','in_progress') THEN NULL
+                                ELSE resolved_date END,
+        updated_at       = NOW()
+      WHERE issue_id = $5
+    `, [status || null, resolution_notes ?? null, assigned_to ?? null, notes ?? null, id]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Equipment Swap Units (unified, by category) ───────────────────────────────
 app.get('/api/equipment-swap-units/:category', requireAuth, async (req, res) => {
   const { category } = req.params;

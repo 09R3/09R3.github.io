@@ -1400,6 +1400,63 @@ input[type="date"].ctrl-input { min-height: 44px; }
   color: var(--text-muted);
 }
 
+/* ── Equipment Issues ────────────────────────────────────────────────────── */
+.issue-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  gap: 8px;
+}
+
+.equip-issue-item {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+
+.equip-issue-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 12px;
+  cursor: pointer;
+  gap: 8px;
+}
+.equip-issue-header:active { background: var(--surface2); }
+
+.equip-issue-meta { flex: 1; min-width: 0; }
+.equip-issue-name { font-weight: 600; font-size: 0.9rem; }
+.equip-issue-snippet {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.equip-issue-date { font-size: 0.78rem; color: var(--text-dim); white-space: nowrap; }
+
+.equip-issue-body { padding: 12px; border-top: 1px solid var(--border); }
+
+.status-pill {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 700;
+  border-radius: 10px;
+  padding: 2px 8px;
+  white-space: nowrap;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.status-pill.open        { background: var(--red-light, #e53935); color: #fff; }
+.status-pill.in-progress { background: #f59e0b; color: #fff; }
+.status-pill.resolved    { background: #43a047; color: #fff; }
+
+.issue-empty { text-align: center; color: var(--text-muted); padding: 24px; }
+
 /* Text size controls */
 .text-size-row { display: flex; gap: 8px; margin-bottom: 16px; }
 .text-size-btn {
