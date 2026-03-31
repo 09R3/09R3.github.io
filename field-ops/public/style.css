@@ -23,12 +23,14 @@
   --transition:  0.15s ease;
 }
 
+html { font-size: 16px; }
+
 html, body {
   height: 100%;
   background: var(--bg);
   color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-  font-size: 16px;
+  font-size: 1rem;
   line-height: 1.5;
   -webkit-tap-highlight-color: transparent;
 }
@@ -62,18 +64,25 @@ html, body {
   border-radius: var(--radius);
   padding: 36px 28px;
 }
-.login-logo {
-  font-size: 2rem;
-  font-weight: 700;
-  color: var(--accent);
-  text-align: center;
-  letter-spacing: -0.5px;
+.login-logo-img {
+  display: block;
+  width: 120px;
+  height: 120px;
+  margin: 0 auto 4px;
+  border-radius: 50%;
 }
 .login-subtitle {
   text-align: center;
   color: var(--text-dim);
   font-size: 0.9rem;
   margin: 4px 0 12px;
+}
+.login-version {
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  margin-top: 16px;
+  opacity: 0.6;
 }
 
 /* DB status row on login page */
@@ -166,6 +175,18 @@ html, body {
   flex-shrink: 0;
 }
 .hamburger:hover { background: var(--surface2); }
+.header-refresh-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 1.3rem;
+  cursor: pointer;
+  padding: 8px;
+  border-radius: var(--radius-sm);
+  line-height: 1;
+  flex-shrink: 0;
+}
+.header-refresh-btn:hover { background: var(--surface2); color: var(--text); }
 .app-title {
   flex: 1;
   font-size: 1.1rem;
@@ -174,6 +195,26 @@ html, body {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+.app-header .app-title { margin-right: 0; }
+.sync-badge {
+  font-size: 0.72rem;
+  font-weight: 700;
+  border-radius: 12px;
+  padding: 3px 8px;
+  min-width: 22px;
+  text-align: center;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.sync-pending { background: #e65100; color: #fff; }
+.sync-error   { background: var(--red); color: #fff; }
+
 .user-badge {
   background: var(--accent);
   color: #fff;
@@ -318,6 +359,7 @@ html, body {
 }
 .ctrl-textarea { resize: vertical; }
 .ctrl-select {
+  display: block;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%238fa3bc' stroke-width='2' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 12px center;
@@ -407,9 +449,11 @@ html, body {
   padding: 10px 14px;
   margin-bottom: 12px;
 }
-.ctrl-input.ctrl-date { width: 140px; flex-shrink: 0; }
-.ctrl-input.ctrl-time { width: 110px; flex-shrink: 0; }
-.kf-tabs-inline { flex: 1; margin-top: 0; }
+.ctrl-input.ctrl-date { flex: 1.5; min-width: 0; }
+.ctrl-input.ctrl-time { flex: 1; min-width: 0; }
+input[type="date"].ctrl-input { min-height: 44px; }
+.form-hint { font-size: 0.78rem; color: var(--text-dim); margin-top: 5px; line-height: 1.4; }
+.kf-tabs-inline { width: 100%; margin-top: 4px; }
 
 /* ── Pumping Plant site tabs + site-header divider ───────────────────────── */
 .pp-tabs-inline { flex: 1; margin-top: 0; padding: 8px 12px; }
@@ -471,7 +515,7 @@ html, body {
 /* Compact horizontal layout: Label | Current | Diff | Prev | Notes [+] */
 .reading-row {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: 5px;
   border-bottom: 1px solid var(--border);
   padding: 7px 10px;
@@ -513,7 +557,7 @@ html, body {
 }
 .rr-cur-wrap  { width: 72px; }
 .rr-diff-wrap { width: 58px; }
-.rr-prev-wrap { width: 58px; }
+.rr-prev-wrap { min-width: 64px; flex: 1.2; max-width: 110px; }
 
 .rr-input {
   width: 100%;
@@ -542,6 +586,7 @@ html, body {
 }
 .rr-notes-input {
   flex: 1;
+  height: 34px;
   background: var(--surface2);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -805,6 +850,7 @@ html, body {
 }
 .toast.success { background: #1b3a1b; border-color: var(--green); color: #a5d6a7; }
 .toast.error   { background: #3a1b1b; border-color: var(--red); color: #ef9a9a; }
+.toast.warn    { background: #3a2e0a; border-color: #c77c00; color: #ffd580; }
 
 /* ── Responsive: larger screens ──────────────────────────────────────────── */
 @media (min-width: 520px) {
@@ -812,7 +858,7 @@ html, body {
   .rr-label     { width: 130px; font-size: 0.85rem; }
   .rr-cur-wrap  { width: 82px; }
   .rr-diff-wrap { width: 68px; }
-  .rr-prev-wrap { width: 68px; }
+  .rr-prev-wrap { min-width: 72px; max-width: 120px; }
   .rr-input     { font-size: 0.95rem; padding: 6px 8px; }
 }
 
@@ -822,7 +868,7 @@ html, body {
   .rr-label     { width: 160px; }
   .rr-cur-wrap  { width: 92px; }
   .rr-diff-wrap { width: 76px; }
-  .rr-prev-wrap { width: 76px; }
+  .rr-prev-wrap { min-width: 80px; max-width: 130px; }
 }
 
 /* ── Dashboard Stats ─────────────────────────────────────────────────────── */
@@ -856,6 +902,62 @@ html, body {
   letter-spacing: 0.04em;
   margin-top: 4px;
 }
+
+/* ── Vehicle Service Hint ────────────────────────────────────────────────── */
+.v-service-hint { font-size: 0.82rem; margin-top: 5px; font-style: italic; }
+.v-service-hint.ok      { color: var(--green); }
+.v-service-hint.due     { color: #f5a623; }
+.v-service-hint.overdue { color: var(--red-light); }
+.v-service-hrs-hint { font-size: 0.82rem; margin-top: 5px; font-style: italic; }
+.v-service-hrs-hint.ok      { color: var(--green); }
+.v-service-hrs-hint.due     { color: #f5a623; }
+.v-service-hrs-hint.overdue { color: var(--red-light); }
+
+/* ── Siphon Breaker Swap ─────────────────────────────────────────────────── */
+.swap-info {
+  font-size: 0.83rem;
+  color: var(--text-muted);
+  background: var(--surface2);
+  border-radius: 7px;
+  padding: 9px 12px;
+  margin-bottom: 12px;
+}
+.swap-location-hint {
+  margin-top: 6px;
+  font-size: 0.82rem;
+  color: var(--accent);
+  font-style: italic;
+}
+
+/* ── Pending Sync Card ───────────────────────────────────────────────────── */
+.pending-sync-card {
+  background: var(--surface);
+  border: 1px solid #c77c00;
+  border-radius: 10px;
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+.pending-sync-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 11px 14px;
+  background: rgba(199,124,0,0.12);
+  font-size: 0.9rem;
+  gap: 10px;
+}
+.pending-sync-actions { display: flex; gap: 8px; flex-shrink: 0; }
+.pending-list { padding: 0 14px 6px; }
+.pending-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.83rem;
+}
+.pending-item:last-child { border-bottom: none; }
+.pending-time { color: var(--text-muted); font-size: 0.78rem; white-space: nowrap; margin-left: 8px; }
 
 /* ── List Screens (Wells / Vehicles / KF) ────────────────────────────────── */
 .list-section { margin-bottom: 8px; }
@@ -1038,3 +1140,330 @@ html, body {
   letter-spacing: 0;
 }
 .btn-sm { min-height: 38px; padding: 8px 14px; font-size: 0.875rem; }
+
+/* ── Maintenance History Modal ───────────────────────────────────────────── */
+.maint-hist-row {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+.maint-hist-row:last-child { border-bottom: none; }
+.maint-hist-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 4px;
+}
+.maint-hist-date { font-weight: 600; font-size: 0.9rem; }
+.maint-hist-type { font-size: 0.78rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.04em; }
+.maint-hist-desc { font-size: 0.92rem; margin-bottom: 4px; }
+.maint-hist-details { font-size: 0.8rem; color: var(--accent); margin-bottom: 3px; }
+.maint-hist-notes  { font-size: 0.8rem; color: var(--text-muted); font-style: italic; margin-bottom: 3px; }
+.maint-hist-by     { font-size: 0.75rem; color: var(--text-dim); }
+
+/* ── Reports Screen ──────────────────────────────────────────────────────── */
+.report-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.report-month-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.report-month-label {
+  font-weight: 600;
+  font-size: 0.95rem;
+  min-width: 130px;
+  text-align: center;
+}
+.report-card {
+  padding: 16px;
+  max-width: 700px;
+  margin: 0 auto;
+}
+.report-title {
+  font-size: 1.4rem;
+  font-weight: 700;
+  text-align: center;
+  margin-bottom: 2px;
+}
+.report-subtitle {
+  font-size: 1rem;
+  color: var(--text-dim);
+  text-align: center;
+  margin-bottom: 20px;
+}
+.report-section-title {
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  margin: 20px 0 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+.report-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+.report-table th {
+  text-align: left;
+  padding: 6px 8px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+}
+.report-table td {
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+.report-table tr:last-child td { border-bottom: none; }
+.report-table .report-num { text-align: right; font-variant-numeric: tabular-nums; }
+.report-empty { font-size: 0.88rem; color: var(--text-dim); font-style: italic; padding: 8px 0; }
+.report-meta  { font-size: 0.82rem; color: var(--text-dim); margin: 0 0 8px; }
+.kf-op-bar-wrap { background: var(--surface2); border-radius: 4px; height: 8px; min-width: 80px; overflow: hidden; }
+.kf-op-bar { background: var(--accent); height: 100%; border-radius: 4px; transition: width 0.4s ease; }
+
+/* ── Export Modal ────────────────────────────────────────────────────────── */
+.export-modal-card { max-width: 300px; width: 90vw; }
+.export-subtitle { color: var(--text-dim); font-size: 0.88rem; margin: 0 0 16px; }
+.export-actions { display: flex; flex-direction: column; gap: 10px; }
+.export-fmt-btn { width: 100%; justify-content: center; }
+
+/* ── Set Map Modal ───────────────────────────────────────────────────────── */
+.set-map-card { max-width: none; width: 100%; height: 96vh; padding-bottom: 0; border-radius: var(--radius) var(--radius) 0 0; }
+.set-map-card .modal-body { padding: 0; flex: 1; }
+#set-map-modal { padding: 0 !important; align-items: flex-end !important; }
+#set-map-modal .set-map-card #set-map-container { flex: 1; height: auto; border-radius: 0; }
+
+/* ── KF Set Title Card ───────────────────────────────────────────────────── */
+.kf-set-title-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  margin-bottom: 8px;
+  border: 1px solid var(--border);
+}
+.kf-set-title-info { display: flex; flex-direction: column; gap: 3px; }
+.kf-set-title-name { font-weight: 600; font-size: 1rem; color: var(--text); }
+.kf-set-title-count { font-size: 0.82rem; color: var(--text-dim); }
+
+/* ── KF Set Tab Map Buttons ──────────────────────────────────────────────── */
+.set-tab-group { display: inline-flex; align-items: center; gap: 2px; }
+.set-tab-map-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 1rem;
+  padding: 2px 4px;
+  opacity: 0.6;
+  transition: opacity var(--transition);
+  line-height: 1;
+}
+.set-tab-map-btn:hover { opacity: 1; }
+
+/* ── Settings Screen ─────────────────────────────────────────────────────── */
+.settings-section { margin-bottom: 20px; }
+.settings-section-title {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+.settings-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.settings-row:last-child { border-bottom: none; }
+.settings-label { color: var(--text-dim); font-size: 0.9rem; }
+.settings-value { font-size: 0.9rem; font-weight: 500; }
+
+/* ── Settings extras ─────────────────────────────────────────────────────── */
+.settings-pad { padding: 14px; }
+.settings-pad .form-group:last-of-type { margin-bottom: 12px; }
+
+/* Settings menu (main list) */
+.settings-menu-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+.settings-menu-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 14px 16px;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  font-size: 0.95rem;
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--transition);
+}
+.settings-menu-row:last-child { border-bottom: none; }
+.settings-menu-row:active { background: var(--surface2); }
+.settings-chevron { color: var(--text-muted); font-size: 1.2rem; line-height: 1; }
+
+/* Settings sub-panels */
+.settings-panel .settings-section { margin-top: 0; }
+.settings-back-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--accent);
+  font-size: 0.95rem;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 10px 16px;
+  margin-bottom: 16px;
+  width: 100%;
+}
+
+/* Text size controls */
+.text-size-row { display: flex; gap: 8px; margin-bottom: 16px; }
+.text-size-btn {
+  flex: 1;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  cursor: pointer;
+  padding: 10px 4px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  transition: background var(--transition), border-color var(--transition);
+}
+.text-size-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.text-size-preview {
+  font-size: 1rem;
+  color: var(--text-dim);
+  padding: 10px 0 4px;
+  border-top: 1px solid var(--border);
+}
+
+/* Today's readings list */
+.today-reading-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.today-reading-row:last-child { border-bottom: none; }
+.today-reading-name { font-size: 0.9rem; font-weight: 500; }
+.today-reading-meta { font-size: 0.78rem; color: var(--text-dim); margin-top: 1px; }
+.today-reading-del {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 1.3rem;
+  cursor: pointer;
+  padding: 4px 6px;
+  line-height: 1;
+  flex-shrink: 0;
+  transition: color var(--transition);
+}
+.today-reading-del:hover { color: var(--red-light); }
+
+/* ── Map — current location dot ─────────────────────────────────────────── */
+.map-my-location {
+  width: 18px;
+  height: 18px;
+  background: #2196f3;
+  border: 3px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px #2196f3, 0 2px 6px rgba(0,0,0,0.4);
+}
+
+/* ── Bug Report ──────────────────────────────────────────────────────────── */
+.nav-bug-report { color: var(--text-dim); font-size: 0.9rem; }
+
+.bug-group-title {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-dim);
+  padding: 14px 0 6px;
+}
+.bug-report-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  margin-bottom: 10px;
+}
+.bug-report-card.bug-resolved { opacity: 0.55; }
+.bug-report-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.bug-severity { font-size: 0.72rem; font-weight: 700; letter-spacing: 0.05em; }
+.bug-area {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 2px 8px;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+.bug-tag {
+  background: var(--accent-dark);
+  border-radius: 10px;
+  padding: 2px 8px;
+  font-size: 0.75rem;
+  color: #fff;
+}
+.bug-meta { font-size: 0.75rem; color: var(--text-muted); margin-left: auto; }
+.bug-description { font-size: 0.9rem; line-height: 1.4; margin-bottom: 8px; }
+.bug-version { font-size: 0.72rem; color: var(--text-muted); margin-bottom: 8px; }
+.bug-resolve-row { border-top: 1px solid var(--border); padding-top: 8px; }
+.bug-resolve-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.bug-resolve-check { width: 16px; height: 16px; cursor: pointer; accent-color: var(--green); }

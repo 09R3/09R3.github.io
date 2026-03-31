@@ -4,7 +4,51 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
   <title>Field Ops</title>
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" type="image/png" href="/icons/kcwa-seal-32.png">
+  <link rel="apple-touch-icon" href="/icons/kcwa-seal-192.png">
   <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    @media print {
+      @page { size: letter landscape; margin: 0; }
+      * { background: white !important; color: black !important; box-shadow: none !important; }
+      body > *:not(#print-area) { display: none !important; }
+      #print-area {
+        display: block !important;
+        font-family: Arial, sans-serif;
+        color: #000;
+        background: white;
+        padding: 0.3in 0.4in;
+        box-sizing: border-box;
+        width: 11in;
+        height: 8.5in;
+        overflow: hidden;
+      }
+      #print-area .report-title { font-size: 15pt; font-weight: 700; text-align: center; margin: 0 0 1px; }
+      #print-area .report-subtitle { font-size: 10pt; text-align: center; margin: 0 0 8px; color: #333; }
+      #print-area .report-section-title { font-size: 8pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; margin: 7px 0 2px; border-bottom: 1px solid #000; padding-bottom: 2px; }
+      #print-area table { width: 100%; border-collapse: collapse; font-size: 11pt; table-layout: fixed; }
+      #print-area th { text-align: left; padding: 2px 4px; font-size: 8.5pt; font-weight: 700; text-transform: uppercase; border-bottom: 1.5px solid #000; }
+      #print-area td { padding: 1.5px 4px; border-bottom: 0.5px solid #ddd; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      /* Trucks: Unit(7%) Make(12%) Model(27%) Operator(38%) Odometer(16%) */
+      #print-area table.trucks colgroup col:nth-child(1) { width:7%; }
+      #print-area table.trucks colgroup col:nth-child(2) { width:12%; }
+      #print-area table.trucks colgroup col:nth-child(3) { width:27%; }
+      #print-area table.trucks colgroup col:nth-child(4) { width:38%; }
+      #print-area table.trucks colgroup col:nth-child(5) { width:16%; }
+      /* Heavy: Unit(7%) Make(12%) Model(33%) Operator(22%) Odo(13%) Hrs(13%) */
+      #print-area table.heavy colgroup col:nth-child(1) { width:7%; }
+      #print-area table.heavy colgroup col:nth-child(2) { width:12%; }
+      #print-area table.heavy colgroup col:nth-child(3) { width:33%; }
+      #print-area table.heavy colgroup col:nth-child(4) { width:22%; }
+      #print-area table.heavy colgroup col:nth-child(5) { width:13%; }
+      #print-area table.heavy colgroup col:nth-child(6) { width:13%; }
+      #print-area .report-num { text-align: right; }
+      #print-area .report-empty { font-style: italic; color: #555; }
+    }
+  </style>
 </head>
 <body>
 
@@ -12,8 +56,8 @@
 <div id="screen-login" class="screen active">
   <div class="login-wrap">
     <div class="login-card">
-      <div class="login-logo">Field Ops</div>
-      <div class="login-subtitle">Operator Portal</div>
+      <img src="/icons/kcwa-seal-192.png" alt="KCWA" class="login-logo-img">
+      <div class="login-subtitle">Field Ops — Operator Portal</div>
       <div class="db-status-row">
         <span class="db-dot" id="db-dot"></span>
         <span class="db-status-text" id="db-status-text">Checking database…</span>
@@ -33,6 +77,7 @@
         <div id="login-error" class="error-msg hidden"></div>
         <button type="submit" class="btn btn-primary btn-full">Sign In</button>
       </form>
+      <div class="login-version">v 0.81</div>
     </div>
   </div>
 </div>
@@ -89,7 +134,11 @@
   <header class="app-header">
     <button class="hamburger" id="menu-toggle" aria-label="Menu">&#9776;</button>
     <h1 class="app-title" id="screen-title">Field Ops</h1>
-    <div class="user-badge" id="user-badge"></div>
+    <div class="header-right">
+      <button class="header-refresh-btn" id="header-refresh-btn" title="Refresh">&#8635;</button>
+      <div id="sync-status-badge" class="sync-badge hidden"></div>
+      <div class="user-badge" id="user-badge"></div>
+    </div>
   </header>
 
   <!-- Side Drawer -->
@@ -106,16 +155,82 @@
       <li><button class="nav-btn" data-screen="vehicles">&#128664; Vehicle Monthly</button></li>
       <li><button class="nav-btn" data-screen="kf-monthly">&#128200; KF Monthly</button></li>
       <li><button class="nav-btn" data-screen="maintenance">&#128295; Maintenance Log</button></li>
-      <li class="nav-admin hidden" id="nav-admin-item"><button class="nav-btn" data-screen="admin">&#9881;&#65039; Admin</button></li>
+      <li class="nav-reports hidden" id="nav-reports-item"><button class="nav-btn" data-screen="reports">&#128202; Reports</button></li>
+      <li class="nav-item" id="nav-admin-item"><button class="nav-btn" data-screen="admin">&#9881; Settings</button></li>
     </ul>
     <div class="drawer-footer">
+      <button class="nav-btn nav-bug-report" id="bug-report-btn">&#128030; Report a Bug</button>
       <button class="nav-btn nav-logout" id="logout-btn">&#x2192; Sign Out</button>
     </div>
   </nav>
 
+  <!-- ── Bug Report Modal ──────────────────────────────────────────────────── -->
+  <div id="bug-report-modal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2>Report a Bug</h2>
+        <button class="modal-close" id="bug-modal-close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Screen / Area</label>
+          <select id="bug-screen" class="ctrl-select">
+            <option value="">— Select area —</option>
+            <option value="Dashboard">Dashboard</option>
+            <option value="Pumping Plant">Pumping Plant</option>
+            <option value="Well Readings">Well Readings</option>
+            <option value="Canal Readings">Canal Readings</option>
+            <option value="Vehicle Monthly">Vehicle Monthly</option>
+            <option value="KF Monthly">KF Monthly</option>
+            <option value="Maintenance Log">Maintenance Log</option>
+            <option value="Reports">Reports</option>
+            <option value="Settings">Settings</option>
+            <option value="Other">Other</option>
+          </select>
+        </div>
+        <div class="two-col">
+          <div class="form-group">
+            <label>Severity</label>
+            <select id="bug-severity" class="ctrl-select">
+              <option value="minor">Minor</option>
+              <option value="major">Major</option>
+              <option value="blocking">Blocking</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Repeatable?</label>
+            <div class="seg-group" id="bug-repeatable-seg">
+              <button class="seg-btn active" data-val="false">No</button>
+              <button class="seg-btn" data-val="true">Yes</button>
+            </div>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Description</label>
+          <textarea id="bug-description" class="ctrl-input ctrl-textarea" rows="4" placeholder="Describe what happened and what you expected…"></textarea>
+        </div>
+        <div id="bug-error" class="error-msg hidden"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="bug-modal-cancel">Cancel</button>
+        <button class="btn btn-primary" id="bug-modal-submit">Submit Report</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ── Dashboard ──────────────────────────────────────────────────────────── -->
   <div id="screen-dashboard" class="screen-content">
     <div id="dashboard-stats" class="stats-grid"></div>
+    <div id="pending-sync-card" class="pending-sync-card hidden">
+      <div class="pending-sync-header">
+        <span>&#128228; Pending Sync &mdash; <strong id="pending-count">0</strong> item(s)</span>
+        <div class="pending-sync-actions">
+          <button id="export-pending-btn" class="btn btn-sm btn-secondary">Export</button>
+          <button id="sync-now-btn" class="btn btn-sm btn-primary">Sync Now</button>
+        </div>
+      </div>
+      <div id="pending-list" class="pending-list"></div>
+    </div>
     <div class="dashboard-grid">
       <button class="dash-tile" data-screen="pumping-plant">
         <span class="dash-icon">&#128167;</span>
@@ -141,9 +256,13 @@
         <span class="dash-icon">&#128295;</span>
         <span class="dash-label">Maintenance<br>Log</span>
       </button>
-      <button class="dash-tile admin-tile hidden" id="dash-admin-tile" data-screen="admin">
-        <span class="dash-icon">&#9881;&#65039;</span>
-        <span class="dash-label">Admin</span>
+      <button class="dash-tile reports-tile hidden" id="dash-reports-tile" data-screen="reports">
+        <span class="dash-icon">&#128202;</span>
+        <span class="dash-label">Reports</span>
+      </button>
+      <button class="dash-tile" id="dash-admin-tile" data-screen="admin">
+        <span class="dash-icon">&#9881;</span>
+        <span class="dash-label">Settings</span>
       </button>
     </div>
   </div>
@@ -220,6 +339,7 @@
           <button class="seg-btn active" data-val="equipment">Equipment</button>
           <button class="seg-btn" data-val="vehicle">Vehicle</button>
           <button class="seg-btn" data-val="building">Building</button>
+          <button class="seg-btn" data-val="swap">SB Swap</button>
         </div>
       </div>
 
@@ -231,6 +351,7 @@
             <option value="pump">Pump</option>
             <option value="motor">Motor</option>
             <option value="compressor">Air Compressor</option>
+            <option value="siphon_breaker">Siphon Breaker</option>
             <option value="other">Other</option>
           </select>
         </div>
@@ -239,6 +360,7 @@
           <select id="maint-equip-select" class="ctrl-select">
             <option value="">Select equipment…</option>
           </select>
+          <button type="button" class="btn btn-secondary btn-sm maint-hist-btn" id="maint-equip-hist-btn" style="margin-top:8px">&#128200; View History</button>
         </div>
         <div class="form-group">
           <label>Location at Time</label>
@@ -257,14 +379,26 @@
           <select id="maint-vehicle-select" class="ctrl-select">
             <option value="">Select vehicle…</option>
           </select>
+          <button type="button" class="btn btn-secondary btn-sm maint-hist-btn" id="maint-vehicle-hist-btn" style="margin-top:8px">&#128200; View History</button>
+          <div id="maint-vehicle-hint" class="form-hint hidden"></div>
         </div>
         <div class="form-group">
           <label>Odometer at Service</label>
           <input type="number" id="maint-vehicle-odometer" step="1" class="ctrl-input" placeholder="0">
+          <div id="maint-odo-hint" class="form-hint hidden"></div>
         </div>
         <div class="form-group">
           <label>Engine Hours at Service</label>
           <input type="number" id="maint-vehicle-hours" step="0.1" class="ctrl-input" placeholder="0.0">
+          <div id="maint-hrs-hint" class="form-hint hidden"></div>
+        </div>
+        <div class="form-group" id="maint-next-miles-group">
+          <label>Next Service Mileage</label>
+          <input type="number" id="maint-vehicle-next-miles" step="1" class="ctrl-input" placeholder="e.g. 125000">
+        </div>
+        <div class="form-group hidden" id="maint-next-hours-group">
+          <label>Next Service Hours</label>
+          <input type="number" id="maint-vehicle-next-hours" step="1" class="ctrl-input" placeholder="e.g. 2500">
         </div>
       </div>
 
@@ -281,6 +415,7 @@
           <select id="maint-building-select" class="ctrl-select" disabled>
             <option value="">Select building…</option>
           </select>
+          <button type="button" class="btn btn-secondary btn-sm maint-hist-btn" id="maint-building-hist-btn" style="margin-top:8px">&#128200; View History</button>
         </div>
         <div class="form-group">
           <label>Record Type</label>
@@ -317,7 +452,40 @@
         <textarea id="maint-resolution-notes" class="ctrl-textarea" rows="2" placeholder="Describe how the issue was resolved…"></textarea>
       </div>
 
+      <!-- Siphon Breaker Swap fields -->
+      <div id="maint-swap-fields" class="hidden">
+        <p class="swap-info">Swapping a unit updates both records in the database and logs the swap history.</p>
+        <div class="form-group">
+          <label>Swap Date</label>
+          <input type="date" id="swap-date" class="ctrl-input">
+        </div>
+        <div class="form-group">
+          <label>Active Unit Being Removed</label>
+          <select id="swap-remove-select" class="ctrl-select">
+            <option value="">Select active unit…</option>
+          </select>
+          <div id="swap-location-hint" class="swap-location-hint hidden"></div>
+        </div>
+        <div class="form-group">
+          <label>Spare Being Installed</label>
+          <select id="swap-install-select" class="ctrl-select">
+            <option value="">Select spare…</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Performed By</label>
+          <input type="text" id="swap-performed-by" class="ctrl-input" placeholder="Name">
+        </div>
+        <div class="form-group">
+          <label>Notes</label>
+          <textarea id="swap-notes" class="ctrl-textarea" rows="2" placeholder="Optional notes…"></textarea>
+        </div>
+        <div id="swap-error" class="error-msg hidden"></div>
+        <button class="btn btn-save btn-full" id="swap-save-btn">Complete Swap</button>
+      </div>
+
       <!-- Common fields -->
+      <div id="maint-common-fields">
       <div class="two-col">
         <div class="form-group">
           <label>Work Date</label>
@@ -361,15 +529,13 @@
           <input type="number" id="maint-cost" step="0.01" class="ctrl-input" placeholder="0.00">
         </div>
       </div>
-      <div class="two-col">
-        <div class="form-group">
-          <label>PO Number</label>
-          <input type="text" id="maint-po" class="ctrl-input" placeholder="PO #">
-        </div>
-        <div class="form-group">
-          <label>Next Service Date</label>
-          <input type="date" id="maint-next-service" class="ctrl-input">
-        </div>
+      <div class="form-group">
+        <label>PO Number</label>
+        <input type="text" id="maint-po" class="ctrl-input" placeholder="PO #">
+      </div>
+      <div class="form-group">
+        <label>Next Service Date</label>
+        <input type="date" id="maint-next-service" class="ctrl-input">
       </div>
       <div class="form-group">
         <label>Notes</label>
@@ -377,15 +543,152 @@
       </div>
       <div id="maint-error" class="error-msg hidden"></div>
       <button class="btn btn-save btn-full" id="maint-save-btn">Save Maintenance Record</button>
+      </div><!-- /maint-common-fields -->
     </div>
   </div>
 
-  <!-- ── Admin ──────────────────────────────────────────────────────────────── -->
-  <div id="screen-admin" class="screen-content">
-    <div class="admin-actions">
-      <button class="btn btn-primary" id="admin-add-user-btn">+ Add User</button>
+  <!-- ── Reports ───────────────────────────────────────────────────────────── -->
+  <div id="screen-reports" class="screen-content">
+    <div class="report-toolbar">
+      <select id="report-select" class="ctrl-select" style="max-width:220px">
+        <option value="mileage">CVC Mileage</option>
+        <option value="kf-operators">KF Operator Breakdown</option>
+      </select>
+      <div class="report-month-nav">
+        <button class="btn btn-secondary btn-sm" id="report-prev-month">&#8592;</button>
+        <span id="report-month-label" class="report-month-label"></span>
+        <button class="btn btn-secondary btn-sm" id="report-next-month">&#8594;</button>
+      </div>
+      <button class="btn btn-secondary btn-sm" id="report-export-btn" style="margin-left:auto">&#8615; Export</button>
     </div>
-    <div id="admin-user-list" class="user-list"></div>
+    <div id="report-output"></div>
+  </div>
+
+  <!-- ── Settings ─────────────────────────────────────────────────────────── -->
+  <div id="screen-admin" class="screen-content">
+
+    <!-- Main menu list -->
+    <div id="settings-main">
+      <div class="settings-menu-card">
+        <button class="settings-menu-row" data-panel="account">
+          <span>Account</span><span class="settings-chevron">›</span>
+        </button>
+        <button class="settings-menu-row" data-panel="password">
+          <span>Change Password</span><span class="settings-chevron">›</span>
+        </button>
+        <button class="settings-menu-row" data-panel="textsize">
+          <span>Text Size</span><span class="settings-chevron">›</span>
+        </button>
+        <button class="settings-menu-row" data-panel="readings">
+          <span>Today's Readings</span><span class="settings-chevron">›</span>
+        </button>
+        <button class="settings-menu-row" data-panel="appinfo">
+          <span>App Info</span><span class="settings-chevron">›</span>
+        </button>
+      </div>
+      <div class="settings-menu-card hidden" id="settings-admin-section">
+        <button class="settings-menu-row" data-panel="bugreports">
+          <span>Bug Reports</span><span class="settings-chevron">›</span>
+        </button>
+        <button class="settings-menu-row" data-panel="usermgmt">
+          <span>User Management</span><span class="settings-chevron">›</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Account panel -->
+    <div id="settings-panel-account" class="settings-panel hidden">
+      <button class="settings-back-btn">‹ Settings</button>
+      <div class="settings-section">
+        <div class="settings-card">
+          <div class="settings-row"><span class="settings-label">Name</span><span id="settings-full-name" class="settings-value"></span></div>
+          <div class="settings-row"><span class="settings-label">Username</span><span id="settings-username" class="settings-value"></span></div>
+          <div class="settings-row"><span class="settings-label">Role</span><span id="settings-role" class="settings-value"></span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Change Password panel -->
+    <div id="settings-panel-password" class="settings-panel hidden">
+      <button class="settings-back-btn">‹ Settings</button>
+      <div class="settings-section">
+        <div class="settings-card">
+          <div class="settings-pad">
+            <div class="form-group">
+              <label>Current Password</label>
+              <input type="password" id="pw-current" class="ctrl-input" autocomplete="current-password">
+            </div>
+            <div class="form-group">
+              <label>New Password</label>
+              <input type="password" id="pw-new" class="ctrl-input" autocomplete="new-password">
+            </div>
+            <div class="form-group">
+              <label>Confirm New Password</label>
+              <input type="password" id="pw-confirm" class="ctrl-input" autocomplete="new-password">
+            </div>
+            <div id="pw-error" class="error-msg hidden"></div>
+            <button class="btn btn-primary" id="pw-save-btn">Update Password</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Text Size panel -->
+    <div id="settings-panel-textsize" class="settings-panel hidden">
+      <button class="settings-back-btn">‹ Settings</button>
+      <div class="settings-section">
+        <div class="settings-card">
+          <div class="settings-pad">
+            <p style="color:var(--text-dim);font-size:0.88rem;margin-bottom:14px">Choose a text size for the app. Saved automatically.</p>
+            <div class="text-size-row">
+              <button class="text-size-btn" data-size="13">1</button>
+              <button class="text-size-btn" data-size="17">2</button>
+              <button class="text-size-btn" data-size="21">3</button>
+              <button class="text-size-btn" data-size="25">4</button>
+              <button class="text-size-btn" data-size="30">5</button>
+            </div>
+            <div class="text-size-preview">The quick brown fox jumps over the lazy dog.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Today's Readings panel -->
+    <div id="settings-panel-readings" class="settings-panel hidden">
+      <button class="settings-back-btn">‹ Settings</button>
+      <div class="settings-section">
+        <div id="today-readings-list" class="settings-card">
+          <div class="placeholder-msg">Loading…</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- App Info panel -->
+    <div id="settings-panel-appinfo" class="settings-panel hidden">
+      <button class="settings-back-btn">‹ Settings</button>
+      <div class="settings-section">
+        <div class="settings-card">
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value">v 0.81</span></div>
+          <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
+          <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bug Reports panel -->
+    <div id="settings-panel-bugreports" class="settings-panel hidden">
+      <button class="settings-back-btn">‹ Settings</button>
+      <div id="bug-reports-list"></div>
+    </div>
+
+    <!-- User Management panel -->
+    <div id="settings-panel-usermgmt" class="settings-panel hidden">
+      <button class="settings-back-btn">‹ Settings</button>
+      <div class="admin-actions">
+        <button class="btn btn-primary" id="admin-add-user-btn">+ Add User</button>
+      </div>
+      <div id="admin-user-list" class="user-list"></div>
+    </div>
 
     <!-- Add/Edit User Modal -->
     <div id="user-modal" class="modal-overlay hidden">
@@ -465,9 +768,80 @@
   </div>
 </div>
 
+<!-- Location Modal -->
+<div id="location-modal" class="modal-overlay hidden">
+  <div class="modal-card" style="max-width:300px">
+    <div class="modal-header">
+      <h2 id="location-modal-name">Location</h2>
+      <button class="modal-close" id="location-modal-close">&times;</button>
+    </div>
+    <div class="modal-body" style="text-align:center">
+      <div id="location-modal-coords" style="font-size:0.85rem;color:var(--text-dim);margin-bottom:16px"></div>
+      <button class="btn btn-primary btn-full" id="location-modal-open-btn">&#128205; Open in Maps</button>
+    </div>
+  </div>
+</div>
+
+<!-- Set Map Modal -->
+<div id="set-map-modal" class="modal-overlay hidden">
+  <div class="modal-card set-map-card">
+    <div class="modal-header">
+      <h2 id="set-map-title">Set Map</h2>
+      <button class="modal-close" id="set-map-close">&times;</button>
+    </div>
+    <div id="set-map-container" style="overflow:hidden"></div>
+  </div>
+</div>
+
+<!-- Export Modal -->
+<div id="export-modal" class="modal-overlay hidden">
+  <div class="modal-card export-modal-card">
+    <div class="modal-header">
+      <h2 id="export-modal-title">Export</h2>
+      <button class="modal-close" id="export-modal-close">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p id="export-modal-subtitle" class="export-subtitle"></p>
+      <div class="export-actions">
+        <button class="btn btn-secondary export-fmt-btn" id="export-csv-btn">&#128196; CSV</button>
+        <button class="btn btn-secondary export-fmt-btn" id="export-xlsx-btn">&#128200; Excel</button>
+        <button class="btn btn-primary   export-fmt-btn" id="export-pdf-btn">&#128438; Print / PDF</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Location Modal -->
+<div id="location-modal" class="modal-overlay hidden">
+  <div class="modal-card" style="max-width:300px">
+    <div class="modal-header">
+      <h2 id="location-modal-name">Location</h2>
+      <button class="modal-close" id="location-modal-close">&times;</button>
+    </div>
+    <div class="modal-body" style="text-align:center">
+      <div id="location-modal-coords" style="font-size:0.85rem;color:var(--text-dim);margin-bottom:16px"></div>
+      <a id="location-modal-link" class="btn btn-primary btn-full" target="_blank" rel="noopener">&#128205; Open in Maps</a>
+    </div>
+  </div>
+</div>
+
+<!-- Maintenance History Modal -->
+<div id="maint-history-modal" class="modal-overlay hidden">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h2 id="maint-history-title">Maintenance History</h2>
+      <button class="modal-close" id="maint-history-close">&times;</button>
+    </div>
+    <div class="modal-body" id="maint-history-body"></div>
+  </div>
+</div>
+
 <!-- Toast notification -->
 <div id="toast" class="toast hidden"></div>
 
 <script src="app.js"></script>
+<script>
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');
+</script>
 </body>
 </html>

@@ -1,10 +1,11 @@
 require('dotenv').config();
-const express = require('express');
-const { Pool } = require('pg');
-const bcrypt = require('bcryptjs');
-const crypto = require('crypto');
+const express      = require('express');
+const { Pool }     = require('pg');
+const bcrypt       = require('bcryptjs');
+const crypto       = require('crypto');
 const cookieParser = require('cookie-parser');
-const path = require('path');
+const path         = require('path');
+const XLSX         = require('xlsx');
 
 const app = express();
 app.use(express.json());
@@ -21,6 +22,23 @@ const pool = new Pool({
   connectionTimeoutMillis: 5000,
   max: 10,
 });
+
+// ── Auto-migration ────────────────────────────────────────────────────────────
+pool.query(`
+  CREATE TABLE IF NOT EXISTS bug_reports (
+    report_id    SERIAL PRIMARY KEY,
+    submitted_by VARCHAR(100) NOT NULL,
+    submitted_at TIMESTAMP DEFAULT NOW(),
+    screen_area  VARCHAR(100),
+    severity     VARCHAR(20) DEFAULT 'minor',
+    is_repeatable BOOLEAN DEFAULT FALSE,
+    description  TEXT NOT NULL,
+    app_version  VARCHAR(20),
+    resolved     BOOLEAN DEFAULT FALSE,
+    resolved_by  VARCHAR(100),
+    resolved_at  TIMESTAMP
+  )
+`).catch(err => console.error('Migration error:', err.message));
 
 // ── Auth / Sessions ───────────────────────────────────────────────────────────
 const SESSION_TTL = 8 * 60 * 60 * 1000; // 8 hours
@@ -606,7 +624,7 @@ app.get('/api/canal-structures', requireAuth, async (req, res) => {
         LIMIT 1
       ) r ON true
       WHERE cs.in_service = true
-      ORDER BY cs.flow_direction, cs.structure_id
+      ORDER BY cs.structure_id
     `);
     res.json(rows);
   } catch (err) {
@@ -670,7 +688,7 @@ app.get('/api/history', requireAuth, async (req, res) => {
          ORDER BY reading_date DESC, reading_time DESC LIMIT $2`, [id, LIMIT]));
     } else if (type === 'kf') {
       ({ rows } = await pool.query(
-        `SELECT kf_reading_id AS id, reading_date, reading_time, dtw_reading AS value, plopper_sounder AS method, NULL AS entered_by, notes
+        `SELECT kf_reading_id AS id, reading_date, reading_time, dtw_reading AS value, plopper_sounder AS method, operator AS entered_by, notes
          FROM readings_kf_monthly WHERE well_id = $1
          ORDER BY reading_date DESC, reading_time DESC LIMIT $2`, [id, LIMIT]));
     } else if (type === 'canal') {
@@ -749,7 +767,9 @@ app.get('/api/vehicles', requireAuth, async (req, res) => {
         r.odometer_miles  AS last_odometer,
         r.engine_hours    AS last_engine_hours,
         r.reading_date    AS last_reading_date,
-        r.notes           AS last_notes
+        r.notes           AS last_notes,
+        m.next_service_miles,
+        m.next_service_hours
       FROM vehicles v
       LEFT JOIN LATERAL (
         SELECT odometer_miles, engine_hours, reading_date, notes
@@ -758,8 +778,23 @@ app.get('/api/vehicles', requireAuth, async (req, res) => {
         ORDER BY reading_date DESC, reading_time DESC
         LIMIT 1
       ) r ON true
+      LEFT JOIN LATERAL (
+        SELECT next_service_miles, next_service_hours
+        FROM maintenance_vehicles
+        WHERE vehicle_id = v.vehicle_id
+          AND (next_service_miles IS NOT NULL OR next_service_hours IS NOT NULL)
+        ORDER BY work_date DESC
+        LIMIT 1
+      ) m ON true
       WHERE LOWER(v.status) != 'inactive' OR v.status IS NULL
-      ORDER BY v.vehicle_type, v.vehicle_number
+      ORDER BY
+        CASE LOWER(v.vehicle_type)
+          WHEN 'truck'           THEN 1
+          WHEN 'heavy_equipment' THEN 2
+          WHEN 'trailer'         THEN 99
+          ELSE 3
+        END,
+        v.vehicle_number
     `);
     res.json(rows);
   } catch (err) {
@@ -803,6 +838,14 @@ app.get('/api/equipment/:type', requireAuth, async (req, res) => {
         WHERE LOWER(ac.status) != 'inactive' OR ac.status IS NULL
         ORDER BY b.building_letter
       `));
+    } else if (type === 'siphon_breaker') {
+      ({ rows } = await pool.query(`
+        SELECT pump_unit_id::text AS id,
+          'SB-' || current_location || ' (' || manufacturer || ' ' || model_number || ')' AS name
+        FROM siphon_breakers
+        WHERE LOWER(status) != 'inactive' OR status IS NULL
+        ORDER BY current_location
+      `));
     } else {
       rows = [];
     }
@@ -812,21 +855,88 @@ app.get('/api/equipment/:type', requireAuth, async (req, res) => {
   }
 });
 
+// ── Siphon Breaker Units (for swap form) ──────────────────────────────────────
+app.get('/api/siphon-breakers/units', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT pump_unit_id AS id, manufacturer, model_number, current_location, status,
+        'SB-' || current_location || ' (' || manufacturer || ' ' || model_number || ')' AS name
+      FROM siphon_breakers
+      WHERE LOWER(status) != 'inactive'
+      ORDER BY status, current_location
+    `);
+    const active = rows.filter(r => r.status?.toLowerCase() === 'active');
+    const spares = rows.filter(r => r.status?.toLowerCase() === 'spare');
+    res.json({ active, spares });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/siphon-breakers/swap', requireAuth, async (req, res) => {
+  const { remove_id, install_id, swap_date, performed_by, notes } = req.body;
+  if (!remove_id || !install_id || !swap_date) {
+    return res.status(400).json({ error: 'remove_id, install_id, and swap_date are required' });
+  }
+  if (remove_id === install_id) {
+    return res.status(400).json({ error: 'Cannot swap a unit with itself' });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    // Get the removed unit's current location
+    const { rows: [removed] } = await client.query(
+      'SELECT current_location FROM siphon_breakers WHERE pump_unit_id = $1', [remove_id]
+    );
+    if (!removed) throw new Error('Removed unit not found');
+    const location = removed.current_location;
+    // Move removed unit to spare
+    await client.query(
+      `UPDATE siphon_breakers SET status = 'Spare', current_location = NULL WHERE pump_unit_id = $1`,
+      [remove_id]
+    );
+    // Install spare at the freed location
+    await client.query(
+      `UPDATE siphon_breakers SET status = 'active', current_location = $1 WHERE pump_unit_id = $2`,
+      [location, install_id]
+    );
+    // Log the swap
+    await client.query(
+      `INSERT INTO siphon_breaker_swaps
+         (swap_date, location, unit_removed_id, unit_installed_id, performed_by, notes, entered_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [swap_date, location, remove_id, install_id, performed_by || null, notes || null, req.user.username]
+    );
+    await client.query('COMMIT');
+    res.json({ ok: true, location });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
 // ── Dashboard stats ───────────────────────────────────────────────────────────
 app.get('/api/dashboard/stats', requireAuth, async (req, res) => {
   try {
     const [kf, wells] = await Promise.all([
       pool.query(`
         SELECT
-          COUNT(*)                                                    AS total,
-          COUNT(*) FILTER (WHERE days_since <= 25)                    AS done,
-          COUNT(*) FILTER (WHERE days_since IS NULL OR days_since > 25) AS due
+          COUNT(*)                              AS total,
+          COUNT(*) FILTER (WHERE is_done)       AS done,
+          COUNT(*) FILTER (WHERE NOT is_done)   AS due
         FROM (
           SELECT w.well_id,
-            (CURRENT_DATE - (
-              SELECT reading_date FROM readings_kf_monthly
-              WHERE well_id = w.well_id ORDER BY reading_date DESC LIMIT 1
-            ))::int AS days_since
+            EXISTS (
+              SELECT 1 FROM readings_kf_monthly r
+              WHERE r.well_id = w.well_id AND (
+                date_trunc('month', r.reading_date) = date_trunc('month', CURRENT_DATE)
+                OR r.reading_date BETWEEN
+                  (date_trunc('month', CURRENT_DATE) - INTERVAL '1 day')::date - INTERVAL '7 days'
+                  AND (date_trunc('month', CURRENT_DATE) - INTERVAL '1 day')::date
+              )
+            ) AS is_done
           FROM wells w
           WHERE w.kf_set_id IS NOT NULL
             AND (LOWER(w.status) != 'inactive' OR w.status IS NULL)
@@ -905,19 +1015,20 @@ app.post('/api/maintenance/vehicle', requireAuth, async (req, res) => {
   const {
     vehicle_id, work_date, work_type, performed_by, is_contractor,
     description, odometer_at_service, engine_hours_at_service,
-    parts_used, cost, po_number, next_service_date, next_service_miles, notes,
+    parts_used, cost, po_number, next_service_date, next_service_miles, next_service_hours, notes,
   } = req.body;
   try {
     const { rows } = await pool.query(
       `INSERT INTO maintenance_vehicles
          (vehicle_id, work_date, work_type, performed_by, is_contractor, entered_by,
           description, odometer_at_service, engine_hours_at_service, parts_used, cost,
-          po_number, next_service_date, next_service_miles, notes)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING maintenance_id`,
+          po_number, next_service_date, next_service_miles, next_service_hours, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING maintenance_id`,
       [vehicle_id, work_date, work_type, performed_by, is_contractor ?? false,
        req.user.username, description || null, odometer_at_service ?? null,
        engine_hours_at_service ?? null, parts_used || null, cost ?? null,
-       po_number || null, next_service_date || null, next_service_miles ?? null, notes || null]
+       po_number || null, next_service_date || null, next_service_miles ?? null,
+       next_service_hours ?? null, notes || null]
     );
     res.json({ ok: true, maintenance_id: rows[0].maintenance_id });
   } catch (err) {
@@ -947,6 +1058,348 @@ app.post('/api/maintenance/building', requireAuth, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// ── Maintenance History ────────────────────────────────────────────────────────
+app.get('/api/maintenance/history', requireAuth, async (req, res) => {
+  const { type, id, equip_type } = req.query;
+  if (!type || !id) return res.status(400).json({ error: 'type and id required' });
+  try {
+    let rows;
+    if (type === 'equipment') {
+      ({ rows } = await pool.query(
+        `SELECT work_date, work_type, description, performed_by, is_contractor,
+                parts_used, cost, notes, entered_by
+         FROM maintenance_equipment
+         WHERE equipment_type = $1 AND equipment_id = $2
+         ORDER BY work_date DESC LIMIT 15`,
+        [equip_type, id]
+      ));
+    } else if (type === 'vehicle') {
+      ({ rows } = await pool.query(
+        `SELECT work_date, work_type, description, performed_by, is_contractor,
+                parts_used, cost, odometer_at_service, engine_hours_at_service,
+                next_service_miles, next_service_hours, notes, entered_by
+         FROM maintenance_vehicles
+         WHERE vehicle_id = $1
+         ORDER BY work_date DESC LIMIT 15`,
+        [id]
+      ));
+    } else if (type === 'building') {
+      ({ rows } = await pool.query(
+        `SELECT work_date, work_type, record_type, description, performed_by,
+                is_contractor, severity, status, cost, notes, entered_by
+         FROM maintenance_buildings
+         WHERE building_id = $1
+         ORDER BY work_date DESC LIMIT 15`,
+        [id]
+      ));
+    } else {
+      return res.status(400).json({ error: 'Invalid type' });
+    }
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Reports ────────────────────────────────────────────────────────────────────
+const downloadTokens = new Map();
+
+// Issue a short-lived one-time download token (30s) — solves iOS PWA cookie issue
+app.post('/api/reports/download-token', requireAuth, requireRole('supervisor', 'admin'), (req, res) => {
+  const token = crypto.randomBytes(16).toString('hex');
+  downloadTokens.set(token, { ...req.body, expires: Date.now() + 30000 });
+  setTimeout(() => downloadTokens.delete(token), 30000);
+  res.json({ token });
+});
+
+app.get('/api/reports/mileage', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+  const { year, month } = req.query;
+  if (!year || !month) return res.status(400).json({ error: 'year and month required' });
+  try {
+    const { rows } = await pool.query(
+      `SELECT DISTINCT ON (v.vehicle_id)
+         v.vehicle_id, v.vehicle_number, v.make, v.model, v.assigned_user,
+         v.reading_type, r.odometer_miles, r.engine_hours, r.reading_date
+       FROM readings_vehicle_monthly r
+       JOIN vehicles v ON v.vehicle_id = r.vehicle_id
+       WHERE EXTRACT(YEAR  FROM r.reading_date) = $1
+         AND EXTRACT(MONTH FROM r.reading_date) = $2
+         AND (LOWER(v.status) != 'inactive' OR v.status IS NULL)
+       ORDER BY v.vehicle_id, r.reading_date DESC, r.reading_time DESC`,
+      [parseInt(year), parseInt(month)]
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/reports/mileage/export', async (req, res) => {
+  const { year, month, format, token } = req.query;
+  if (!year || !month || !format) return res.status(400).json({ error: 'year, month and format required' });
+
+  // Accept either session auth or a valid one-time token
+  if (token) {
+    const t = downloadTokens.get(token);
+    if (!t || Date.now() > t.expires) return res.status(401).json({ error: 'Invalid or expired token' });
+    downloadTokens.delete(token); // one-time use
+  } else {
+    // Fall back to session auth
+    if (!req.cookies?.session_id) return res.status(401).json({ error: 'Unauthorized' });
+    const session = sessions.get(req.cookies.session_id);
+    if (!session || Date.now() > session.expires) return res.status(401).json({ error: 'Unauthorized' });
+    if (session.user.role !== 'admin' && session.user.role !== 'supervisor')
+      return res.status(403).json({ error: 'Forbidden' });
+  }
+  try {
+    const { rows } = await pool.query(
+      `SELECT DISTINCT ON (v.vehicle_id)
+         v.vehicle_id, v.vehicle_number, v.make, v.model, v.assigned_user,
+         v.reading_type, r.odometer_miles, r.engine_hours, r.reading_date
+       FROM readings_vehicle_monthly r
+       JOIN vehicles v ON v.vehicle_id = r.vehicle_id
+       WHERE EXTRACT(YEAR  FROM r.reading_date) = $1
+         AND EXTRACT(MONTH FROM r.reading_date) = $2
+         AND (LOWER(v.status) != 'inactive' OR v.status IS NULL)
+       ORDER BY v.vehicle_id, r.reading_date DESC, r.reading_time DESC`,
+      [parseInt(year), parseInt(month)]
+    );
+
+    const monthName = new Date(parseInt(year), parseInt(month) - 1, 1)
+      .toLocaleString('en-US', { month: 'long' });
+    const label = `${monthName} ${year}`;
+
+    const assignedVal = u => (u && u.trim().toLowerCase() !== 'ops & maint') ? u : '';
+
+    const trucks = rows.filter(r => !r.reading_type || r.reading_type === 'odometer');
+    const heavy  = rows.filter(r => r.reading_type === 'hours' || r.reading_type === 'both');
+
+    if (format === 'csv') {
+      const lines = [`CVC Mileage — ${label}`, ''];
+      lines.push('TRUCKS');
+      lines.push('Unit #,Make,Model,Operator,Odometer');
+      trucks.forEach(v => lines.push(
+        [v.vehicle_number, v.make, v.model, assignedVal(v.assigned_user),
+         v.odometer_miles ?? ''].join(',')
+      ));
+      lines.push('');
+      lines.push('HEAVY EQUIPMENT');
+      lines.push('Unit #,Make,Model,Operator,Odometer,Engine Hours');
+      heavy.forEach(v => lines.push(
+        [v.vehicle_number, v.make, v.model, assignedVal(v.assigned_user),
+         v.odometer_miles ?? '', v.engine_hours ?? ''].join(',')
+      ));
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', `attachment; filename="CVC_Mileage_${year}_${month}.csv"`);
+      return res.send(lines.join('\r\n'));
+    }
+
+    if (format === 'xlsx') {
+      const wb = XLSX.utils.book_new();
+
+      const truckData = [
+        [`CVC Mileage — ${label}`],
+        ['TRUCKS'],
+        ['Unit #', 'Make', 'Model', 'Operator', 'Odometer'],
+        ...trucks.map(v => [v.vehicle_number, v.make || '', v.model || '',
+          assignedVal(v.assigned_user), v.odometer_miles != null ? Number(v.odometer_miles) : '']),
+        [],
+        ['HEAVY EQUIPMENT'],
+        ['Unit #', 'Make', 'Model', 'Operator', 'Odometer', 'Engine Hours'],
+        ...heavy.map(v => [v.vehicle_number, v.make || '', v.model || '',
+          assignedVal(v.assigned_user),
+          v.odometer_miles != null ? Number(v.odometer_miles) : '',
+          v.engine_hours   != null ? Number(v.engine_hours)   : '']),
+      ];
+
+      const ws = XLSX.utils.aoa_to_sheet(truckData);
+      ws['!cols'] = [{ wch: 10 }, { wch: 14 }, { wch: 16 }, { wch: 18 }, { wch: 12 }, { wch: 12 }];
+      XLSX.utils.book_append_sheet(wb, ws, 'Mileage');
+
+      const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="CVC_Mileage_${year}_${month}.xlsx"`);
+      return res.send(buf);
+    }
+
+    res.status(400).json({ error: 'Invalid format' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── KF Operator Breakdown Report ──────────────────────────────────────────────
+app.get('/api/reports/kf-operators', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+  const { year, month } = req.query;
+  if (!year || !month) return res.status(400).json({ error: 'year and month required' });
+  try {
+    const { rows } = await pool.query(
+      `WITH total_wells AS (
+         SELECT COUNT(*) AS cnt
+         FROM wells
+         WHERE kf_set_id IS NOT NULL
+           AND (LOWER(status) != 'inactive' OR status IS NULL)
+       )
+       SELECT
+         COALESCE(r.operator, '(no operator)') AS operator,
+         COUNT(DISTINCT r.well_id)             AS wells_read,
+         (SELECT cnt FROM total_wells)         AS total_wells
+       FROM readings_kf_monthly r
+       WHERE EXTRACT(YEAR  FROM r.reading_date) = $1
+         AND EXTRACT(MONTH FROM r.reading_date) = $2
+       GROUP BY r.operator
+       ORDER BY wells_read DESC`,
+      [parseInt(year), parseInt(month)]
+    );
+    // Also include total distinct wells read this month
+    const totalRead = rows.reduce((s, r) => s + parseInt(r.wells_read), 0);
+    res.json({ rows, totalRead, totalWells: rows[0]?.total_wells ? parseInt(rows[0].total_wells) : 0 });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Change Password ────────────────────────────────────────────────────────────
+app.post('/api/auth/change-password', requireAuth, async (req, res) => {
+  const { current_password, new_password } = req.body;
+  if (!current_password || !new_password) return res.status(400).json({ error: 'current_password and new_password required' });
+  if (new_password.length < 4) return res.status(400).json({ error: 'New password must be at least 4 characters' });
+  try {
+    const { rows } = await pool.query('SELECT password FROM users WHERE user_id = $1', [req.user.user_id]);
+    if (!rows.length) return res.status(404).json({ error: 'User not found' });
+    const stored = rows[0].password;
+    let valid = false;
+    if (stored && stored.startsWith('$2')) {
+      valid = await bcrypt.compare(current_password, stored);
+    } else {
+      valid = stored === current_password;
+    }
+    if (!valid) return res.status(401).json({ error: 'Current password is incorrect' });
+    const hashed = await bcrypt.hash(new_password, 10);
+    await pool.query('UPDATE users SET password = $1 WHERE user_id = $2', [hashed, req.user.user_id]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Today's Readings ───────────────────────────────────────────────────────────
+app.get('/api/readings/today', requireAuth, async (req, res) => {
+  const username = req.user.username;
+  try {
+    const { rows } = await pool.query(`
+      SELECT type, id, name, reading_time, summary FROM (
+        SELECT 'well' AS type, reading_id::text AS id, common_name AS name, reading_time,
+          CONCAT_WS(' / ',
+            CASE WHEN hour_reading IS NOT NULL THEN 'Hrs: '||hour_reading END,
+            CASE WHEN flow_cfs IS NOT NULL THEN 'Flow: '||flow_cfs||' cfs' END,
+            CASE WHEN totalizer IS NOT NULL THEN 'Total: '||totalizer END
+          ) AS summary
+        FROM readings_well
+        WHERE reading_date = CURRENT_DATE AND entered_by = $1
+
+        UNION ALL
+
+        SELECT 'kf', kf_reading_id::text, common_name, reading_time,
+          'DTW: '||dtw_reading
+        FROM readings_kf_monthly
+        WHERE reading_date = CURRENT_DATE AND operator = $1
+
+        UNION ALL
+
+        SELECT 'pump', rph.reading_id::text,
+          COALESCE(s.site_name,'Plant')||' — Pump '||pp.pump_letter,
+          rph.reading_time, 'Hrs: '||rph.hour_reading
+        FROM readings_pump_hours rph
+        JOIN pump_positions pp ON pp.position_id = rph.position_id
+        LEFT JOIN sites s ON s.site_id = pp.site_id
+        WHERE rph.reading_date = CURRENT_DATE AND rph.entered_by = $1
+
+        UNION ALL
+
+        SELECT 'compressor', rch.reading_id::text,
+          COALESCE(ac.manufacturer,'Air Compressor'),
+          rch.reading_time, 'Hrs: '||rch.hour_reading
+        FROM readings_compressor_hours rch
+        JOIN air_compressors ac ON ac.compressor_id = rch.compressor_id
+        WHERE rch.reading_date = CURRENT_DATE AND rch.entered_by = $1
+
+        UNION ALL
+
+        SELECT 'pge', rpm.reading_id::text,
+          COALESCE(pm.meter_name,'PG&E Meter'),
+          rpm.reading_time, 'kWh: '||rpm.kwh_reading
+        FROM readings_pge_meters rpm
+        JOIN pge_meters pm ON pm.pge_meter_id = rpm.pge_meter_id
+        WHERE rpm.reading_date = CURRENT_DATE AND rpm.entered_by = $1
+
+        UNION ALL
+
+        SELECT 'monitor', rmon.reading_id::text,
+          COALESCE(pmon.manufacturer,'Power Monitor'),
+          rmon.reading_time, 'kWh: '||rmon.kwh_reading
+        FROM readings_power_monitors rmon
+        JOIN power_monitors pmon ON pmon.monitor_id = rmon.monitor_id
+        WHERE rmon.reading_date = CURRENT_DATE AND rmon.entered_by = $1
+
+        UNION ALL
+
+        SELECT 'vehicle', rvm.reading_id::text,
+          v.vehicle_number||' '||COALESCE(v.make,'')||' '||COALESCE(v.model,''),
+          rvm.reading_time,
+          CONCAT_WS(' / ',
+            CASE WHEN rvm.odometer_miles IS NOT NULL THEN 'Odo: '||to_char(rvm.odometer_miles,'FM999,999') END,
+            CASE WHEN rvm.engine_hours IS NOT NULL THEN 'Hrs: '||rvm.engine_hours END
+          )
+        FROM readings_vehicle_monthly rvm
+        JOIN vehicles v ON v.vehicle_id = rvm.vehicle_id
+        WHERE rvm.reading_date = CURRENT_DATE AND rvm.entered_by = $1
+      ) t
+      ORDER BY reading_time DESC NULLS LAST
+    `, [username]);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Bug Reports ───────────────────────────────────────────────────────────────
+app.post('/api/bug-reports', requireAuth, async (req, res) => {
+  const { screen_area, severity, is_repeatable, description, app_version } = req.body;
+  if (!description || !description.trim()) return res.status(400).json({ error: 'Description is required' });
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO bug_reports (submitted_by, screen_area, severity, is_repeatable, description, app_version)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING report_id`,
+      [req.user.username, screen_area || null, severity || 'minor',
+       is_repeatable ?? false, description.trim(), app_version || null]
+    );
+    res.json({ ok: true, report_id: rows[0].report_id });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/bug-reports', requireAuth, requireRole('admin', 'supervisor'), async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT report_id, submitted_by, submitted_at, screen_area, severity,
+              is_repeatable, description, app_version, resolved, resolved_by, resolved_at
+       FROM bug_reports ORDER BY resolved ASC, submitted_at DESC`
+    );
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/bug-reports/:id/resolve', requireAuth, requireRole('admin', 'supervisor'), async (req, res) => {
+  const { resolved } = req.body;
+  try {
+    await pool.query(
+      `UPDATE bug_reports SET resolved=$1, resolved_by=$2, resolved_at=$3 WHERE report_id=$4`,
+      [resolved, resolved ? req.user.username : null, resolved ? new Date() : null, parseInt(req.params.id)]
+    );
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // ── User Management ───────────────────────────────────────────────────────────
