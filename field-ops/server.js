@@ -917,6 +917,115 @@ app.post('/api/siphon-breakers/swap', requireAuth, async (req, res) => {
   }
 });
 
+// ── Equipment Swap Units (unified, by category) ───────────────────────────────
+app.get('/api/equipment-swap-units/:category', requireAuth, async (req, res) => {
+  const { category } = req.params;
+
+  const TABLE_MAP = {
+    siphon_breaker: { table: 'siphon_breakers', id: 'pump_unit_id' },
+    motor:          { table: 'motors',          id: 'motor_id' },
+    pp_pump:        { table: 'pp_pumps',        id: 'pump_id' },
+    well_motor:     { table: 'well_motors',     id: 'well_motor_id' },
+    well_meter:     { table: 'well_meters',     id: 'well_meter_id' },
+  };
+
+  const mapping = TABLE_MAP[category];
+  if (!mapping) return res.status(400).json({ error: 'Unknown category' });
+
+  try {
+    let nameExpr;
+    if (category === 'siphon_breaker') {
+      nameExpr = `'SB-' || COALESCE(current_location,'?') || ' (' || COALESCE(manufacturer,'') || ' ' || COALESCE(model_number,'') || ')'`;
+    } else {
+      nameExpr = `COALESCE(manufacturer,'') || ' ' || COALESCE(model_number,'') ||
+        CASE WHEN current_location IS NOT NULL AND current_location != ''
+             THEN ' (' || current_location || ')' ELSE ' (spare)' END`;
+    }
+
+    const { rows } = await pool.query(`
+      SELECT ${mapping.id} AS id, manufacturer, model_number, current_location, status,
+        ${nameExpr} AS name
+      FROM ${mapping.table}
+      WHERE LOWER(status) != 'inactive'
+      ORDER BY status, current_location, manufacturer, model_number
+    `);
+
+    const active = rows.filter(r => r.status?.toLowerCase() === 'active');
+    const spares = rows.filter(r => r.status?.toLowerCase() !== 'active');
+    res.json({ active, spares });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Equipment Swap — unified (siphon_breaker / motor / pp_pump / well_motor / well_meter)
+app.post('/api/equipment-swaps', requireAuth, async (req, res) => {
+  const { category, remove_id, install_id, swap_date, performed_by, notes } = req.body;
+  if (!category || !remove_id || !install_id || !swap_date) {
+    return res.status(400).json({ error: 'category, remove_id, install_id, and swap_date are required' });
+  }
+  if (remove_id === install_id) {
+    return res.status(400).json({ error: 'Cannot swap a unit with itself' });
+  }
+
+  const TABLE_MAP = {
+    siphon_breaker: { table: 'siphon_breakers', id: 'pump_unit_id' },
+    motor:          { table: 'motors',          id: 'motor_id' },
+    pp_pump:        { table: 'pp_pumps',        id: 'pump_id' },
+    well_motor:     { table: 'well_motors',     id: 'well_motor_id' },
+    well_meter:     { table: 'well_meters',     id: 'well_meter_id' },
+  };
+
+  const mapping = TABLE_MAP[category];
+  if (!mapping) return res.status(400).json({ error: 'Unknown category' });
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const { rows: [removed] } = await client.query(
+      `SELECT current_location, manufacturer, model_number FROM ${mapping.table} WHERE ${mapping.id} = $1`,
+      [remove_id]
+    );
+    if (!removed) throw new Error('Unit being removed not found');
+    const location = removed.current_location;
+    const removedDesc = `${removed.manufacturer || ''} ${removed.model_number || ''} from ${location}`.trim();
+
+    const { rows: [installed] } = await client.query(
+      `SELECT manufacturer, model_number FROM ${mapping.table} WHERE ${mapping.id} = $1`,
+      [install_id]
+    );
+    if (!installed) throw new Error('Unit being installed not found');
+    const installedDesc = `${installed.manufacturer || ''} ${installed.model_number || ''}`.trim();
+
+    await client.query(
+      `UPDATE ${mapping.table} SET status = 'spare', current_location = NULL WHERE ${mapping.id} = $1`,
+      [remove_id]
+    );
+    await client.query(
+      `UPDATE ${mapping.table} SET status = 'active', current_location = $1 WHERE ${mapping.id} = $2`,
+      [location, install_id]
+    );
+
+    await client.query(
+      `INSERT INTO equipment_swaps
+         (category, swap_date, location, item_removed_id, item_installed_id,
+          removed_description, installed_description, performed_by, notes, entered_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+      [category, swap_date, location, remove_id, install_id,
+       removedDesc, installedDesc, performed_by || null, notes || null, req.user.username]
+    );
+
+    await client.query('COMMIT');
+    res.json({ ok: true, location });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
 // ── Dashboard stats ───────────────────────────────────────────────────────────
 app.get('/api/dashboard/stats', requireAuth, async (req, res) => {
   try {

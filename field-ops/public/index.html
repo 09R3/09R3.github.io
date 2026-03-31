@@ -500,19 +500,47 @@
       <div class="placeholder-msg">Well issue tracking coming in a future update.</div>
     </div>
 
-    <!-- Swaps Panel — placeholder (hidden stubs preserve module-level event listeners) -->
+    <!-- Swaps Panel — fully functional -->
     <div id="maint-panel-swaps" class="maint-panel hidden">
       <button class="maint-back-btn">&#8249; Maintenance</button>
-      <div class="placeholder-msg">Equipment swaps coming in a future update.</div>
-      <div class="hidden">
-        <input type="date" id="swap-date">
-        <select id="swap-remove-select"><option value="">Select…</option></select>
-        <select id="swap-install-select"><option value="">Select…</option></select>
-        <input type="text" id="swap-performed-by">
-        <textarea id="swap-notes"></textarea>
-        <div id="swap-error"></div>
-        <div id="swap-location-hint"></div>
-        <button id="swap-save-btn" type="button"></button>
+      <div class="form-card">
+        <div class="form-group">
+          <label>Category</label>
+          <div class="seg-group" id="swap-category-seg">
+            <button class="seg-btn active" data-val="siphon_breaker">SB</button>
+            <button class="seg-btn" data-val="motor">Motor</button>
+            <button class="seg-btn" data-val="pp_pump">PP Pump</button>
+            <button class="seg-btn" data-val="well_motor">Well Motor</button>
+            <button class="seg-btn" data-val="well_meter">Well Meter</button>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Active Unit Being Removed</label>
+          <select id="swap-remove-select" class="ctrl-select">
+            <option value="">Select active unit…</option>
+          </select>
+          <div id="swap-location-hint" class="form-hint hidden"></div>
+        </div>
+        <div class="form-group">
+          <label>Spare Being Installed</label>
+          <select id="swap-install-select" class="ctrl-select">
+            <option value="">Select spare…</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Swap Date</label>
+          <input type="date" id="swap-date" class="ctrl-input">
+        </div>
+        <div class="form-group">
+          <label>Performed By</label>
+          <input type="text" id="swap-performed-by" class="ctrl-input" placeholder="Name">
+        </div>
+        <div class="form-group">
+          <label>Notes</label>
+          <textarea id="swap-notes" class="ctrl-textarea" rows="2" placeholder="Optional notes…"></textarea>
+        </div>
+        <div id="swap-error" class="error-msg hidden"></div>
+        <button class="btn btn-save btn-full" id="swap-save-btn">Complete Swap</button>
       </div>
     </div>
 

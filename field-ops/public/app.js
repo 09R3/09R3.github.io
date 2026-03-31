@@ -1539,6 +1539,7 @@ function openMaintPanel(panelId) {
   document.querySelectorAll('.maint-panel').forEach(p => p.classList.add('hidden'));
   el('maint-panel-' + panelId).classList.remove('hidden');
   if (panelId === 'vehicles') initMaintVehiclesPanel();
+  if (panelId === 'swaps')    initMaintSwapsPanel();
 }
 
 function closeMaintPanel() {
@@ -1666,33 +1667,59 @@ el('maint-site-select').addEventListener('change', async () => {
   } catch { /* non-critical */ }
 });
 
-/* ── Siphon Breaker Swap ─────────────────────────────────────────────────── */
-let sbUnits = { active: [], spares: [] };
+/* ── Equipment Swaps ─────────────────────────────────────────────────────── */
+let swapCategory = 'siphon_breaker';
+let swapPanelLoaded = false;
 
-async function loadSBUnitsForSwap() {
+function initMaintSwapsPanel() {
+  if (swapPanelLoaded) return;
+  swapPanelLoaded = true;
+  el('swap-date').value = todayISO();
+  loadSwapUnits(swapCategory);
+}
+
+async function loadSwapUnits(category) {
+  const removeSel  = el('swap-remove-select');
+  const installSel = el('swap-install-select');
+  removeSel.innerHTML  = '<option value="">Loading…</option>';
+  installSel.innerHTML = '<option value="">Loading…</option>';
+  el('swap-location-hint').classList.add('hidden');
   try {
-    sbUnits = await api('GET', '/api/siphon-breakers/units');
-    const removeSel = el('swap-remove-select');
-    const installSel = el('swap-install-select');
-    removeSel.innerHTML = '<option value="">Select active unit…</option>';
-    installSel.innerHTML = '<option value="">Select spare…</option>';
-    sbUnits.active.forEach(u => {
+    const { active, spares } = await api('GET', `/api/equipment-swap-units/${category}`);
+    removeSel.innerHTML  = active.length  ? '<option value="">Select active unit…</option>'
+                                          : '<option value="">No active units found</option>';
+    installSel.innerHTML = spares.length  ? '<option value="">Select spare…</option>'
+                                          : '<option value="">No spares found</option>';
+    active.forEach(u => {
       const opt = document.createElement('option');
       opt.value = u.id;
       opt.textContent = u.name;
       opt.dataset.location = u.current_location || '';
       removeSel.appendChild(opt);
     });
-    sbUnits.spares.forEach(u => {
+    spares.forEach(u => {
       const opt = document.createElement('option');
       opt.value = u.id;
       opt.textContent = u.name;
       installSel.appendChild(opt);
     });
   } catch (err) {
-    showToast('Failed to load SB units: ' + err.message, 'error');
+    removeSel.innerHTML  = '<option value="">Failed to load</option>';
+    installSel.innerHTML = '<option value="">Failed to load</option>';
+    showToast('Failed to load swap units: ' + err.message, 'error');
   }
 }
+
+document.querySelectorAll('#swap-category-seg .seg-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#swap-category-seg .seg-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    swapCategory = btn.dataset.val;
+    el('swap-remove-select').value  = '';
+    el('swap-install-select').value = '';
+    loadSwapUnits(swapCategory);
+  });
+});
 
 el('swap-remove-select').addEventListener('change', () => {
   const sel = el('swap-remove-select');
@@ -1718,23 +1745,24 @@ el('swap-save-btn').addEventListener('click', async () => {
   const btn = el('swap-save-btn');
   btn.disabled = true; btn.textContent = 'Saving…';
   try {
-    const r = await api('POST', '/api/siphon-breakers/swap', {
+    const r = await api('POST', '/api/equipment-swaps', {
+      category: swapCategory,
       remove_id, install_id, swap_date,
       performed_by: el('swap-performed-by').value.trim() || null,
       notes: el('swap-notes').value.trim() || null,
-    }, 'SB Swap');
+    }, 'Equipment Swap');
     if (r.queued) {
       showToast('Swap queued offline — will sync when connected', 'warn');
     } else {
-      showToast(`Swap complete — SB now at location ${r.location}`, 'success');
+      showToast(`Swap complete — unit now at ${r.location}`, 'success');
     }
     // Reset form
-    el('swap-remove-select').value = '';
+    el('swap-remove-select').value  = '';
     el('swap-install-select').value = '';
     el('swap-notes').value = '';
     el('swap-location-hint').classList.add('hidden');
-    // Reload units so dropdowns reflect the change
-    if (!r.queued) loadSBUnitsForSwap();
+    // Reload units so dropdowns reflect the updated statuses
+    if (!r.queued) loadSwapUnits(swapCategory);
   } catch (err) {
     showError('swap-error', err.message);
   } finally {
