@@ -520,22 +520,60 @@
       </div>
     </div>
 
-    <!-- Buildings Panel — placeholder (hidden stubs preserve module-level event listeners) -->
+    <!-- Buildings Panel — fully functional -->
     <div id="maint-panel-buildings" class="maint-panel hidden">
       <button class="maint-back-btn">&#8249; Maintenance</button>
-      <div class="placeholder-msg">Building issue tracking coming in a future update.</div>
-      <div class="hidden">
-        <select id="maint-site-select" class="ctrl-select"><option value="">Select site…</option></select>
-        <select id="maint-building-select" class="ctrl-select" disabled><option value="">Select building…</option></select>
-        <button id="maint-building-hist-btn" type="button"></button>
-        <select id="maint-building-record-type" class="ctrl-select"></select>
-        <select id="maint-severity" class="ctrl-select"></select>
-        <select id="maint-status" class="ctrl-select">
-          <option value="open">Open</option><option value="resolved">Resolved</option>
-        </select>
+
+      <div class="issue-toolbar">
+        <button class="btn btn-secondary btn-sm" id="bldg-show-resolved-btn">Show Resolved</button>
+        <button class="btn btn-save btn-sm" id="bldg-new-issue-btn">+ New Issue</button>
       </div>
-      <div id="maint-resolution-group" class="hidden">
-        <textarea id="maint-resolution-notes" class="ctrl-textarea"></textarea>
+
+      <!-- New issue form -->
+      <div id="bldg-new-issue-form" class="form-card hidden">
+        <div class="form-group">
+          <label>Site</label>
+          <select id="bldg-issue-site" class="ctrl-select">
+            <option value="">Select site…</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Building</label>
+          <select id="bldg-issue-building" class="ctrl-select" disabled>
+            <option value="">Select building…</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Issue Description</label>
+          <textarea id="bldg-issue-desc" class="ctrl-textarea" rows="3" placeholder="Describe the problem…"></textarea>
+        </div>
+        <div class="form-group">
+          <label>Reported Date</label>
+          <input type="date" id="bldg-issue-date" class="ctrl-input">
+        </div>
+        <div class="form-group">
+          <label>Assigned To</label>
+          <input type="text" id="bldg-issue-assigned" class="ctrl-input" placeholder="Optional">
+        </div>
+        <div id="bldg-new-error" class="error-msg hidden"></div>
+        <div class="two-col">
+          <button class="btn btn-secondary" id="bldg-cancel-btn">Cancel</button>
+          <button class="btn btn-save" id="bldg-submit-btn">Submit Issue</button>
+        </div>
+      </div>
+
+      <!-- Issue list -->
+      <div id="bldg-issue-list"></div>
+
+      <!-- Hidden stubs — preserve existing module-level event listener IDs -->
+      <div class="hidden">
+        <select id="maint-site-select"><option value="">Select site…</option></select>
+        <select id="maint-building-select" disabled><option value="">Select building…</option></select>
+        <button id="maint-building-hist-btn" type="button"></button>
+        <select id="maint-building-record-type"></select>
+        <select id="maint-severity"></select>
+        <select id="maint-status"><option value="open">Open</option><option value="resolved">Resolved</option></select>
+        <div id="maint-resolution-group"><textarea id="maint-resolution-notes"></textarea></div>
       </div>
     </div>
 

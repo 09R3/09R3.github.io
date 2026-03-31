@@ -1528,6 +1528,213 @@ function createVehicleItem(v, dateInput, timeInput) {
   return div;
 }
 
+/* ── Building Issues ─────────────────────────────────────────────────────── */
+let bldgIssuesLoaded  = false;
+let bldgIssues        = [];
+let bldgShowResolved  = false;
+
+function initMaintBuildingsPanel() {
+  if (bldgIssuesLoaded) return;
+  bldgIssuesLoaded = true;
+  el('bldg-issue-date').value = todayISO();
+  loadBldgIssues();
+  // Load sites for new-issue form
+  api('GET', '/api/sites').then(sites => {
+    const sel = el('bldg-issue-site');
+    sel.innerHTML = '<option value="">Select site…</option>';
+    sites.forEach(s => {
+      const opt = document.createElement('option');
+      opt.value = s.site_id;
+      opt.textContent = s.site_name;
+      sel.appendChild(opt);
+    });
+  }).catch(() => {});
+}
+
+async function loadBldgIssues() {
+  try {
+    bldgIssues = await api('GET', `/api/building-issues?include_resolved=${bldgShowResolved}`);
+    renderBldgIssues();
+    updateBldgBadge();
+  } catch {
+    el('bldg-issue-list').innerHTML = `<div class="issue-empty">Failed to load issues</div>`;
+  }
+}
+
+function updateBldgBadge() {
+  const count = bldgIssues.filter(i => i.status === 'open' || i.status === 'in_progress').length;
+  const badge = el('maint-badge-buildings');
+  badge.textContent = count;
+  badge.classList.toggle('hidden', count === 0);
+}
+
+function renderBldgIssues() {
+  const list = el('bldg-issue-list');
+  if (!bldgIssues.length) {
+    list.innerHTML = `<div class="issue-empty">No ${bldgShowResolved ? '' : 'open '}issues</div>`;
+    return;
+  }
+  list.innerHTML = bldgIssues.map(issue => {
+    const statusClass = issue.status.replace('_', '-');
+    const title   = [issue.site_name, issue.building_name].filter(Boolean).join(' — ') || 'Unknown Building';
+    const snippet = (issue.description || '').slice(0, 80) + (issue.description?.length > 80 ? '…' : '');
+    const showResNotes = issue.status === 'resolved' || issue.status === 'in_progress';
+    return `
+      <div class="equip-issue-item" data-issue-id="${issue.issue_id}">
+        <div class="equip-issue-header">
+          <div class="equip-issue-meta">
+            <div class="equip-issue-name">${escHtml(title)}</div>
+            <div class="equip-issue-snippet">${escHtml(snippet)}</div>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+            <span class="status-pill ${statusClass}">${issue.status.replace('_',' ')}</span>
+            <span class="equip-issue-date">${issue.reported_date?.slice(0,10) || ''}</span>
+          </div>
+        </div>
+        <div class="equip-issue-body hidden">
+          <div class="form-group">
+            <label>Description</label>
+            <div style="font-size:0.9rem;padding:6px 0">${escHtml(issue.description)}</div>
+          </div>
+          <div class="form-group">
+            <label>Status</label>
+            <select class="ctrl-select issue-status-select">
+              <option value="open"        ${issue.status==='open'        ?'selected':''}>Open</option>
+              <option value="in_progress" ${issue.status==='in_progress' ?'selected':''}>In Progress</option>
+              <option value="resolved"    ${issue.status==='resolved'    ?'selected':''}>Resolved</option>
+            </select>
+          </div>
+          <div class="form-group issue-res-notes-group" style="${showResNotes ? '' : 'display:none'}">
+            <label>Resolution Notes</label>
+            <textarea class="ctrl-textarea issue-res-notes" rows="2" placeholder="Describe how it was resolved…">${escHtml(issue.resolution_notes || '')}</textarea>
+          </div>
+          <div class="form-group">
+            <label>Assigned To</label>
+            <input type="text" class="ctrl-input issue-assigned" value="${escHtml(issue.assigned_to || '')}" placeholder="Optional">
+          </div>
+          <div class="error-msg hidden issue-update-error"></div>
+          <button class="btn btn-save btn-full issue-save-btn">Save Changes</button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+// Site → Building cascade for new building issue
+el('bldg-issue-site').addEventListener('change', async () => {
+  const siteId  = el('bldg-issue-site').value;
+  const bldgSel = el('bldg-issue-building');
+  bldgSel.innerHTML = '<option value="">Select building…</option>';
+  bldgSel.disabled  = !siteId;
+  if (!siteId) return;
+  try {
+    const buildings = await api('GET', `/api/buildings?site_id=${siteId}`);
+    buildings.forEach(b => {
+      const opt = document.createElement('option');
+      opt.value = b.building_id;
+      opt.textContent = b.building_name || b.building_letter;
+      bldgSel.appendChild(opt);
+    });
+  } catch { /* non-critical */ }
+});
+
+// New issue form toggle
+el('bldg-new-issue-btn').addEventListener('click', () => {
+  el('bldg-new-issue-form').classList.remove('hidden');
+  el('bldg-new-issue-btn').classList.add('hidden');
+});
+el('bldg-cancel-btn').addEventListener('click', () => {
+  el('bldg-new-issue-form').classList.add('hidden');
+  el('bldg-new-issue-btn').classList.remove('hidden');
+  el('bldg-new-error').classList.add('hidden');
+});
+
+// Submit new building issue
+el('bldg-submit-btn').addEventListener('click', async () => {
+  clearError('bldg-new-error');
+  const desc = el('bldg-issue-desc').value.trim();
+  if (!desc) return showError('bldg-new-error', 'Issue description is required');
+
+  const siteSel  = el('bldg-issue-site');
+  const bldgSel  = el('bldg-issue-building');
+  const siteId   = siteSel.value   || null;
+  const bldgId   = bldgSel.value   || null;
+  const siteName = siteSel.options[siteSel.selectedIndex]?.textContent || null;
+  const bldgName = bldgSel.options[bldgSel.selectedIndex]?.textContent || null;
+
+  el('bldg-submit-btn').disabled = true;
+  try {
+    await api('POST', '/api/building-issues', {
+      building_id:   bldgId   ? parseInt(bldgId)   : null,
+      site_id:       siteId   ? parseInt(siteId)   : null,
+      building_name: bldgName,
+      site_name:     siteName,
+      description:   desc,
+      reported_date: el('bldg-issue-date').value || null,
+      assigned_to:   el('bldg-issue-assigned').value.trim() || null,
+    });
+    el('bldg-issue-desc').value     = '';
+    el('bldg-issue-assigned').value = '';
+    el('bldg-issue-date').value     = todayISO();
+    el('bldg-issue-building').innerHTML = '<option value="">Select building…</option>';
+    el('bldg-issue-building').disabled  = true;
+    el('bldg-issue-site').value = '';
+    el('bldg-new-issue-form').classList.add('hidden');
+    el('bldg-new-issue-btn').classList.remove('hidden');
+    bldgIssuesLoaded = false;
+    await loadBldgIssues();
+    showToast('Issue submitted', 'success');
+  } catch (err) {
+    showError('bldg-new-error', err.message);
+  } finally {
+    el('bldg-submit-btn').disabled = false;
+  }
+});
+
+// Show/hide resolved toggle
+el('bldg-show-resolved-btn').addEventListener('click', () => {
+  bldgShowResolved = !bldgShowResolved;
+  el('bldg-show-resolved-btn').textContent = bldgShowResolved ? 'Hide Resolved' : 'Show Resolved';
+  bldgIssuesLoaded = false;
+  loadBldgIssues();
+});
+
+// Issue list interactions (delegated)
+el('bldg-issue-list').addEventListener('click', async e => {
+  const item = e.target.closest('.equip-issue-item');
+  if (!item) return;
+
+  if (e.target.closest('.equip-issue-header')) {
+    item.querySelector('.equip-issue-body').classList.toggle('hidden');
+    return;
+  }
+
+  if (e.target.classList.contains('issue-status-select')) {
+    const resGroup = item.querySelector('.issue-res-notes-group');
+    resGroup.style.display = (e.target.value === 'resolved' || e.target.value === 'in_progress') ? '' : 'none';
+    return;
+  }
+
+  if (e.target.classList.contains('issue-save-btn')) {
+    const issueId  = item.dataset.issueId;
+    const status   = item.querySelector('.issue-status-select').value;
+    const resNotes = item.querySelector('.issue-res-notes').value.trim() || null;
+    const assigned = item.querySelector('.issue-assigned').value.trim() || null;
+    const errEl    = item.querySelector('.issue-update-error');
+    errEl.classList.add('hidden');
+    e.target.disabled = true;
+    try {
+      await api('PATCH', `/api/building-issues/${issueId}`, { status, resolution_notes: resNotes, assigned_to: assigned });
+      bldgIssuesLoaded = false;
+      await loadBldgIssues();
+      showToast('Issue updated', 'success');
+    } catch (err) {
+      errEl.textContent = err.message;
+      errEl.classList.remove('hidden');
+      e.target.disabled = false;
+    }
+  }
+});
+
 /* ── Equipment Issues ────────────────────────────────────────────────────── */
 let equipIssuesLoaded = false;
 let equipIssues       = [];
@@ -1762,8 +1969,9 @@ function openMaintPanel(panelId) {
   document.querySelectorAll('.maint-panel').forEach(p => p.classList.add('hidden'));
   el('maint-panel-' + panelId).classList.remove('hidden');
   if (panelId === 'equipment') initMaintEquipmentPanel();
-  if (panelId === 'vehicles') initMaintVehiclesPanel();
-  if (panelId === 'swaps')    initMaintSwapsPanel();
+  if (panelId === 'buildings') initMaintBuildingsPanel();
+  if (panelId === 'vehicles')  initMaintVehiclesPanel();
+  if (panelId === 'swaps')     initMaintSwapsPanel();
 }
 
 function closeMaintPanel() {
