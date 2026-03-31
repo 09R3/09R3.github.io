@@ -1,19 +1,22 @@
 #!/bin/bash
 # ─────────────────────────────────────────────────────────────────────────────
-#  Field Ops — Unraid Deploy Script
-#  Save this file to: /mnt/user/appdata/field-ops/deploy.sh
-#  Run with:  bash /mnt/user/appdata/field-ops/deploy.sh
+#  Field Ops Beta — Unraid Deploy Script
+#  Save this file to: /mnt/user/appdata/field-ops-beta/deploy-beta.sh
+#  Run with:  bash /mnt/user/appdata/field-ops-beta/deploy-beta.sh
+#
+#  Shares the same PostgreSQL database as the production instance (field-ops).
+#  Use a different SESSION_SECRET in .env if you want session isolation.
 # ─────────────────────────────────────────────────────────────────────────────
 
 set -e
 
 # ── Config (edit these if needed) ────────────────────────────────────────────
-APPDATA_DIR="/mnt/user/appdata/field-ops"
+APPDATA_DIR="/mnt/user/appdata/field-ops-beta"
 REPO_URL="https://github.com/09r3/09r3.github.io"
-BRANCH="main"
-CONTAINER_NAME="field-ops"
-IMAGE_NAME="field-ops"
-HOST_PORT=3067          # port exposed on Unraid
+BRANCH="claude/field-operator-form-app-dEwL1"   # beta / staging branch
+CONTAINER_NAME="field-ops-beta"
+IMAGE_NAME="field-ops-beta"
+HOST_PORT=3066          # port exposed on Unraid (production uses 3067)
 CONTAINER_PORT=4000     # port inside the container (matches PORT in .env)
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -22,7 +25,7 @@ SOURCE_DIR="$APPDATA_DIR/_source"
 
 echo ""
 echo "══════════════════════════════════════════"
-echo "  Field Ops Deploy"
+echo "  Field Ops Beta Deploy"
 echo "  Branch : $BRANCH"
 echo "  Port   : $HOST_PORT"
 echo "══════════════════════════════════════════"
@@ -43,7 +46,7 @@ if [ ! -f "$ENV_FILE" ]; then
     || {
         # Fallback: write a minimal template if curl fails
         cat > "$ENV_FILE" <<'EOF'
-# PostgreSQL connection
+# PostgreSQL connection — use the same credentials as your production instance.
 # IMPORTANT — if Postgres runs on the SAME Unraid machine, do NOT use "localhost".
 # Use your server's LAN IP (e.g. 192.168.1.100) or 172.17.0.1 (Docker bridge default).
 DB_HOST=192.168.1.100
@@ -52,6 +55,9 @@ DB_NAME=your_database
 DB_USER=your_username
 DB_PASSWORD=your_password
 PORT=4000
+
+# Optional: use a different secret here to keep beta sessions separate from prod.
+# SESSION_SECRET=change_me_beta
 EOF
     }
 
@@ -122,7 +128,7 @@ docker run \
 HOST_IP=$(ip route get 1 2>/dev/null | awk '{print $7; exit}' || hostname -I 2>/dev/null | awk '{print $1}')
 echo ""
 echo "  ┌──────────────────────────────────────────────────┐"
-echo "  │  ✓  Field Ops is running!                       │"
+echo "  │  ✓  Field Ops Beta is running!                  │"
 echo "  │                                                  │"
 echo "  │  http://${HOST_IP}:${HOST_PORT}"
 echo "  │                                                  │"
