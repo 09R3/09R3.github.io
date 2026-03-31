@@ -924,7 +924,7 @@ app.get('/api/equipment-swap-units/:category', requireAuth, async (req, res) => 
   const TABLE_MAP = {
     siphon_breaker: { table: 'siphon_breakers', id: 'pump_unit_id' },
     motor:          { table: 'motors',          id: 'motor_id' },
-    pp_pump:        { table: 'pp_pumps',        id: 'pump_id' },
+    pp_pump:        { table: 'pump_units',      id: 'pump_unit_id' },
     well_motor:     { table: 'well_motors',     id: 'well_motor_id' },
     well_meter:     { table: 'well_meters',     id: 'well_meter_id' },
   };
@@ -971,7 +971,7 @@ app.post('/api/equipment-swaps', requireAuth, async (req, res) => {
   const TABLE_MAP = {
     siphon_breaker: { table: 'siphon_breakers', id: 'pump_unit_id' },
     motor:          { table: 'motors',          id: 'motor_id' },
-    pp_pump:        { table: 'pp_pumps',        id: 'pump_id' },
+    pp_pump:        { table: 'pump_units',      id: 'pump_unit_id' },
     well_motor:     { table: 'well_motors',     id: 'well_motor_id' },
     well_meter:     { table: 'well_meters',     id: 'well_meter_id' },
   };

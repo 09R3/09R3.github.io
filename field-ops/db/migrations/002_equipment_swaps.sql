@@ -5,26 +5,13 @@
 --    psql -U <user> -d <dbname> -f 002_equipment_swaps.sql
 --
 --  Tables created:
---    pp_pumps         — PP physical pump inventory (active / spare)
 --    well_motors      — Well motor inventory (active / spare)
 --    well_meters      — Well meter inventory (active / spare)
 --    equipment_swaps  — Unified swap history for all categories
 --
---  NOTE: pump_unit is the canal pump table and is unrelated to pp_pumps.
+--  NOTE: pump_units already exists in the DB and is used directly for
+--        PP pump swaps. No new pump table is needed.
 -- ─────────────────────────────────────────────────────────────────────────────
-
--- ── PP pump inventory ─────────────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS pp_pumps (
-  pump_id          SERIAL       PRIMARY KEY,
-  manufacturer     TEXT,
-  model_number     TEXT,
-  serial_number    TEXT,
-  hp               NUMERIC,
-  status           TEXT         NOT NULL DEFAULT 'spare',  -- 'active', 'spare', 'inactive'
-  current_location TEXT,        -- e.g. "Plant A, Bldg B, Pump 1"
-  notes            TEXT,
-  created_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW()
-);
 
 -- ── Well motor inventory ──────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS well_motors (
