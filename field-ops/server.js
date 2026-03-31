@@ -787,7 +787,14 @@ app.get('/api/vehicles', requireAuth, async (req, res) => {
         LIMIT 1
       ) m ON true
       WHERE LOWER(v.status) != 'inactive' OR v.status IS NULL
-      ORDER BY v.vehicle_type, v.vehicle_number
+      ORDER BY
+        CASE LOWER(v.vehicle_type)
+          WHEN 'truck'           THEN 1
+          WHEN 'heavy_equipment' THEN 2
+          WHEN 'trailer'         THEN 99
+          ELSE 3
+        END,
+        v.vehicle_number
     `);
     res.json(rows);
   } catch (err) {
