@@ -922,33 +922,46 @@ app.get('/api/equipment-swap-units/:category', requireAuth, async (req, res) => 
   const { category } = req.params;
 
   const TABLE_MAP = {
-    siphon_breaker: { table: 'siphon_breakers', id: 'pump_unit_id' },
-    motor:          { table: 'motors',          id: 'motor_id' },
-    pp_pump:        { table: 'pump_units',      id: 'pump_unit_id' },
-    well_motor:     { table: 'well_motors',     id: 'well_motor_id' },
-    well_meter:     { table: 'well_meters',     id: 'well_meter_id' },
+    siphon_breaker: { table: 'siphon_breakers', id: 'pump_unit_id',  wellJoin: false },
+    motor:          { table: 'motors',          id: 'motor_id',       wellJoin: false },
+    pp_pump:        { table: 'pump_units',      id: 'pump_unit_id',   wellJoin: false },
+    well_motor:     { table: 'well_motors',     id: 'well_motor_id',  wellJoin: true  },
+    well_meter:     { table: 'well_meters',     id: 'well_meter_id',  wellJoin: true  },
   };
 
   const mapping = TABLE_MAP[category];
   if (!mapping) return res.status(400).json({ error: 'Unknown category' });
 
   try {
-    let nameExpr;
-    if (category === 'siphon_breaker') {
-      nameExpr = `'SB-' || COALESCE(current_location,'?') || ' (' || COALESCE(manufacturer,'') || ' ' || COALESCE(model_number,'') || ')'`;
+    let rows;
+    if (mapping.wellJoin) {
+      ({ rows } = await pool.query(`
+        SELECT t.${mapping.id} AS id, t.manufacturer, t.model_number, t.well_id, t.status,
+          COALESCE(t.manufacturer,'') || ' ' || COALESCE(t.model_number,'') ||
+          CASE WHEN w.common_name IS NOT NULL THEN ' (' || w.common_name || ')' ELSE ' (spare)' END AS name,
+          w.common_name AS current_location
+        FROM ${mapping.table} t
+        LEFT JOIN wells w ON t.well_id = w.well_id
+        WHERE LOWER(t.status) != 'inactive'
+        ORDER BY t.status, w.common_name, t.manufacturer, t.model_number
+      `));
     } else {
-      nameExpr = `COALESCE(manufacturer,'') || ' ' || COALESCE(model_number,'') ||
-        CASE WHEN current_location IS NOT NULL AND current_location != ''
-             THEN ' (' || current_location || ')' ELSE ' (spare)' END`;
+      let nameExpr;
+      if (category === 'siphon_breaker') {
+        nameExpr = `'SB-' || COALESCE(current_location,'?') || ' (' || COALESCE(manufacturer,'') || ' ' || COALESCE(model_number,'') || ')'`;
+      } else {
+        nameExpr = `COALESCE(manufacturer,'') || ' ' || COALESCE(model_number,'') ||
+          CASE WHEN current_location IS NOT NULL AND current_location != ''
+               THEN ' (' || current_location || ')' ELSE ' (spare)' END`;
+      }
+      ({ rows } = await pool.query(`
+        SELECT ${mapping.id} AS id, manufacturer, model_number, current_location, status,
+          ${nameExpr} AS name
+        FROM ${mapping.table}
+        WHERE LOWER(status) != 'inactive'
+        ORDER BY status, current_location, manufacturer, model_number
+      `));
     }
-
-    const { rows } = await pool.query(`
-      SELECT ${mapping.id} AS id, manufacturer, model_number, current_location, status,
-        ${nameExpr} AS name
-      FROM ${mapping.table}
-      WHERE LOWER(status) != 'inactive'
-      ORDER BY status, current_location, manufacturer, model_number
-    `);
 
     const active = rows.filter(r => r.status?.toLowerCase() === 'active');
     const spares = rows.filter(r => r.status?.toLowerCase() !== 'active');
@@ -969,11 +982,11 @@ app.post('/api/equipment-swaps', requireAuth, async (req, res) => {
   }
 
   const TABLE_MAP = {
-    siphon_breaker: { table: 'siphon_breakers', id: 'pump_unit_id' },
-    motor:          { table: 'motors',          id: 'motor_id' },
-    pp_pump:        { table: 'pump_units',      id: 'pump_unit_id' },
-    well_motor:     { table: 'well_motors',     id: 'well_motor_id' },
-    well_meter:     { table: 'well_meters',     id: 'well_meter_id' },
+    siphon_breaker: { table: 'siphon_breakers', id: 'pump_unit_id',  wellJoin: false },
+    motor:          { table: 'motors',          id: 'motor_id',       wellJoin: false },
+    pp_pump:        { table: 'pump_units',      id: 'pump_unit_id',   wellJoin: false },
+    well_motor:     { table: 'well_motors',     id: 'well_motor_id',  wellJoin: true  },
+    well_meter:     { table: 'well_meters',     id: 'well_meter_id',  wellJoin: true  },
   };
 
   const mapping = TABLE_MAP[category];
@@ -983,13 +996,45 @@ app.post('/api/equipment-swaps', requireAuth, async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    const { rows: [removed] } = await client.query(
-      `SELECT current_location, manufacturer, model_number FROM ${mapping.table} WHERE ${mapping.id} = $1`,
-      [remove_id]
-    );
-    if (!removed) throw new Error('Unit being removed not found');
-    const location = removed.current_location;
-    const removedDesc = `${removed.manufacturer || ''} ${removed.model_number || ''} from ${location}`.trim();
+    let location, removedDesc;
+    if (mapping.wellJoin) {
+      const { rows: [removed] } = await client.query(
+        `SELECT t.well_id, w.common_name, t.manufacturer, t.model_number
+         FROM ${mapping.table} t
+         LEFT JOIN wells w ON t.well_id = w.well_id
+         WHERE t.${mapping.id} = $1`,
+        [remove_id]
+      );
+      if (!removed) throw new Error('Unit being removed not found');
+      location    = removed.common_name || String(removed.well_id || '');
+      removedDesc = `${removed.manufacturer || ''} ${removed.model_number || ''} from ${location}`.trim();
+
+      await client.query(
+        `UPDATE ${mapping.table} SET status = 'spare', well_id = NULL WHERE ${mapping.id} = $1`,
+        [remove_id]
+      );
+      await client.query(
+        `UPDATE ${mapping.table} SET status = 'active', well_id = $1 WHERE ${mapping.id} = $2`,
+        [removed.well_id, install_id]
+      );
+    } else {
+      const { rows: [removed] } = await client.query(
+        `SELECT current_location, manufacturer, model_number FROM ${mapping.table} WHERE ${mapping.id} = $1`,
+        [remove_id]
+      );
+      if (!removed) throw new Error('Unit being removed not found');
+      location    = removed.current_location;
+      removedDesc = `${removed.manufacturer || ''} ${removed.model_number || ''} from ${location}`.trim();
+
+      await client.query(
+        `UPDATE ${mapping.table} SET status = 'spare', current_location = NULL WHERE ${mapping.id} = $1`,
+        [remove_id]
+      );
+      await client.query(
+        `UPDATE ${mapping.table} SET status = 'active', current_location = $1 WHERE ${mapping.id} = $2`,
+        [location, install_id]
+      );
+    }
 
     const { rows: [installed] } = await client.query(
       `SELECT manufacturer, model_number FROM ${mapping.table} WHERE ${mapping.id} = $1`,
@@ -997,15 +1042,6 @@ app.post('/api/equipment-swaps', requireAuth, async (req, res) => {
     );
     if (!installed) throw new Error('Unit being installed not found');
     const installedDesc = `${installed.manufacturer || ''} ${installed.model_number || ''}`.trim();
-
-    await client.query(
-      `UPDATE ${mapping.table} SET status = 'spare', current_location = NULL WHERE ${mapping.id} = $1`,
-      [remove_id]
-    );
-    await client.query(
-      `UPDATE ${mapping.table} SET status = 'active', current_location = $1 WHERE ${mapping.id} = $2`,
-      [location, install_id]
-    );
 
     await client.query(
       `INSERT INTO equipment_swaps
