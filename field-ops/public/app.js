@@ -2203,9 +2203,7 @@ async function refreshMaintenanceBadges() {
 
 document.querySelectorAll('[data-maint-panel]').forEach(btn => {
   btn.addEventListener('click', () => {
-    const panel = btn.dataset.maintPanel;
-    if (panel === 'pms') return; // disabled tile
-    openMaintPanel(panel);
+    openMaintPanel(btn.dataset.maintPanel);
   });
 });
 
