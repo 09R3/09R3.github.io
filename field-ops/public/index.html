@@ -77,7 +77,7 @@
         <div id="login-error" class="error-msg hidden"></div>
         <button type="submit" class="btn btn-primary btn-full">Sign In</button>
       </form>
-      <div class="login-version">v 0.89</div>
+      <div class="login-version">v 0.90</div>
     </div>
   </div>
 </div>
@@ -852,6 +852,12 @@
           <span>App Info</span><span class="settings-chevron">›</span>
         </button>
       </div>
+      <div class="settings-menu-card hidden" id="settings-widgets-section">
+        <div class="settings-menu-label">Widgets</div>
+        <button class="settings-menu-row" data-panel="kf-widget">
+          <span>KF Widget</span><span class="settings-chevron">›</span>
+        </button>
+      </div>
       <div class="settings-menu-card hidden" id="settings-admin-section">
         <button class="settings-menu-row" data-panel="bugreports">
           <span>Bug Reports</span><span class="settings-chevron">›</span>
@@ -929,12 +935,35 @@
       </div>
     </div>
 
+    <!-- KF Widget panel -->
+    <div id="settings-panel-kf-widget" class="settings-panel hidden">
+      <button class="settings-back-btn">‹ Settings</button>
+      <div class="settings-section">
+        <p style="font-size:0.85rem;color:var(--text-dim);margin:0 0 12px">
+          Set the date range the KF dashboard widgets use to calculate completed and remaining counts.
+        </p>
+        <div class="settings-card">
+          <div class="settings-pad">
+            <div class="form-group">
+              <label>Start Date</label>
+              <input type="date" id="kf-widget-start" class="ctrl-input">
+            </div>
+            <div class="form-group">
+              <label>End Date</label>
+              <input type="date" id="kf-widget-end" class="ctrl-input">
+            </div>
+            <button class="btn btn-primary" id="kf-widget-save-btn">Save</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- App Info panel -->
     <div id="settings-panel-appinfo" class="settings-panel hidden">
       <button class="settings-back-btn">‹ Settings</button>
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value">v 0.89</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value">v 0.90</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>

@@ -472,10 +472,12 @@ function onLogin(user) {
   el('nav-reports-item').classList.add('hidden');
   el('dash-reports-tile').classList.add('hidden');
   el('settings-admin-section').classList.add('hidden');
+  el('settings-widgets-section').classList.add('hidden');
   if (user.role === 'admin' || user.role === 'supervisor') {
     el('nav-reports-item').classList.remove('hidden');
     el('dash-reports-tile').classList.remove('hidden');
     el('settings-admin-section').classList.remove('hidden');
+    el('settings-widgets-section').classList.remove('hidden');
   }
   // Populate account info on settings screen
   el('settings-full-name').textContent = user.full_name || '—';
@@ -502,15 +504,25 @@ el('export-pending-btn').addEventListener('click', async () => {
 async function loadDashboardStats() {
   try {
     const s = await api('GET', '/api/dashboard/stats');
+    const fmtDate = str => {
+      if (!str) return '';
+      const [y, m, d] = str.split('-');
+      return new Date(+y, +m - 1, +d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    };
+    const rangeLabel = (s.kf_widget_start && s.kf_widget_end)
+      ? `${fmtDate(s.kf_widget_start)} – ${fmtDate(s.kf_widget_end)}`
+      : 'This Month';
     const grid = el('dashboard-stats');
     grid.innerHTML = `
       <div class="stat-card">
-        <div class="stat-value">${s.kf_total - s.kf_done}</div>
-        <div class="stat-label">KF Remaining</div>
+        <div class="stat-value">${s.kf_done} / ${s.kf_total}</div>
+        <div class="stat-label">KF Complete</div>
+        <div class="stat-sublabel">${rangeLabel}</div>
       </div>
       <div class="stat-card">
-        <div class="stat-value">${s.kf_done} / ${s.kf_total}</div>
-        <div class="stat-label">KF Done (month)</div>
+        <div class="stat-value">${s.kf_total - s.kf_done}</div>
+        <div class="stat-label">KF Remaining</div>
+        <div class="stat-sublabel">${rangeLabel}</div>
       </div>
       <div class="stat-card">
         <div class="stat-value">${s.wells_read_today} / ${s.wells_total}</div>
@@ -531,6 +543,7 @@ function onLogout() {
   el('nav-reports-item').classList.add('hidden');
   el('dash-reports-tile').classList.add('hidden');
   el('settings-admin-section').classList.add('hidden');
+  el('settings-widgets-section').classList.add('hidden');
   // Reset pumping plant
   pp.sites = []; pp.buildings = {}; pp.loadedSites = new Set(); pp.activeTab = null;
   ppLoaded = false;
@@ -2756,6 +2769,7 @@ function openSettingsPanel(panelId) {
   el('settings-panel-' + panelId).classList.remove('hidden');
   if (panelId === 'readings')   loadTodayReadings();
   if (panelId === 'bugreports') loadBugReports();
+  if (panelId === 'kf-widget')  initKFWidgetPanel();
   if (panelId === 'appinfo') {
     const ls = localStorage.getItem('field-ops-last-sync');
     el('settings-last-sync').textContent = ls ? new Date(ls).toLocaleString() : 'Never';
@@ -2802,6 +2816,34 @@ function initSettingsScreen() {
   closeSettingsPanel();
   updateTextSizeBtns();
 }
+
+// ── KF Widget Settings ────────────────────────────────────────────────────────
+let kfWidgetPanelLoaded = false;
+
+async function initKFWidgetPanel() {
+  if (kfWidgetPanelLoaded) return;
+  kfWidgetPanelLoaded = true;
+  try {
+    const { start_date, end_date } = await api('GET', '/api/settings/kf-widget');
+    if (start_date) el('kf-widget-start').value = start_date;
+    if (end_date)   el('kf-widget-end').value   = end_date;
+  } catch { /* leave inputs blank */ }
+}
+
+el('kf-widget-save-btn').addEventListener('click', async () => {
+  const start_date = el('kf-widget-start').value;
+  const end_date   = el('kf-widget-end').value;
+  if (!start_date || !end_date) return showToast('Both dates are required', 'error');
+  if (start_date > end_date)    return showToast('Start date must be before end date', 'error');
+  try {
+    await api('PUT', '/api/settings/kf-widget', { start_date, end_date });
+    showToast('KF widget updated');
+    // Reload dashboard stats on next visit
+    loadDashboardStats();
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+});
 
 async function loadTodayReadings() {
   const list = el('today-readings-list');

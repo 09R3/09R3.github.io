@@ -1277,6 +1277,19 @@ app.get('/api/maintenance/badge-counts', requireAuth, async (req, res) => {
 // ── Dashboard stats ───────────────────────────────────────────────────────────
 app.get('/api/dashboard/stats', requireAuth, async (req, res) => {
   try {
+    // Load KF widget date range from app_settings (fall back to current month)
+    const settingsRes = await pool.query(
+      `SELECT key, value FROM app_settings WHERE key IN ('kf_widget_start','kf_widget_end')`
+    ).catch(() => ({ rows: [] }));
+    const settingsMap = Object.fromEntries(settingsRes.rows.map(r => [r.key, r.value]));
+    const now = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    const defaultStart = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-01`;
+    const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    const defaultEnd = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(lastDay)}`;
+    const kfStart = settingsMap['kf_widget_start'] || defaultStart;
+    const kfEnd   = settingsMap['kf_widget_end']   || defaultEnd;
+
     const [kf, wells] = await Promise.all([
       pool.query(`
         SELECT
@@ -1287,18 +1300,14 @@ app.get('/api/dashboard/stats', requireAuth, async (req, res) => {
           SELECT w.well_id,
             EXISTS (
               SELECT 1 FROM readings_kf_monthly r
-              WHERE r.well_id = w.well_id AND (
-                date_trunc('month', r.reading_date) = date_trunc('month', CURRENT_DATE)
-                OR r.reading_date BETWEEN
-                  (date_trunc('month', CURRENT_DATE) - INTERVAL '1 day')::date - INTERVAL '7 days'
-                  AND (date_trunc('month', CURRENT_DATE) - INTERVAL '1 day')::date
-              )
+              WHERE r.well_id = w.well_id
+                AND r.reading_date BETWEEN $1 AND $2
             ) AS is_done
           FROM wells w
           WHERE w.kf_set_id IS NOT NULL
             AND (LOWER(w.status) != 'inactive' OR w.status IS NULL)
         ) s
-      `),
+      `, [kfStart, kfEnd]),
       pool.query(`
         SELECT
           COUNT(*)                                                 AS total,
@@ -1318,10 +1327,42 @@ app.get('/api/dashboard/stats', requireAuth, async (req, res) => {
       kf_total:         parseInt(kf.rows[0].total),
       kf_done:          parseInt(kf.rows[0].done),
       kf_due:           parseInt(kf.rows[0].due),
+      kf_widget_start:  kfStart,
+      kf_widget_end:    kfEnd,
       wells_total:      parseInt(wells.rows[0].total),
       wells_read_today: parseInt(wells.rows[0].read_today),
       wells_due_today:  parseInt(wells.rows[0].unread_today),
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── KF Widget Settings ────────────────────────────────────────────────────────
+app.get('/api/settings/kf-widget', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT key, value FROM app_settings WHERE key IN ('kf_widget_start','kf_widget_end')`
+    );
+    const m = Object.fromEntries(rows.map(r => [r.key, r.value]));
+    res.json({ start_date: m['kf_widget_start'] || null, end_date: m['kf_widget_end'] || null });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/settings/kf-widget', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+  const { start_date, end_date } = req.body;
+  if (!start_date || !end_date) return res.status(400).json({ error: 'start_date and end_date required' });
+  try {
+    await pool.query(
+      `INSERT INTO app_settings (key, value, updated_at) VALUES
+         ('kf_widget_start', $1, NOW()),
+         ('kf_widget_end',   $2, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+      [start_date, end_date]
+    );
+    res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
