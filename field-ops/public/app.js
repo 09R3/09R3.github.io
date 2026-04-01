@@ -2170,6 +2170,7 @@ function openMaintPanel(panelId) {
   if (panelId === 'wells')     initMaintWellsPanel();
   if (panelId === 'vehicles')  initMaintVehiclesPanel();
   if (panelId === 'swaps')     initMaintSwapsPanel();
+  if (panelId === 'pms')       initMaintPMsPanel();
 }
 
 function closeMaintPanel() {
@@ -3234,6 +3235,409 @@ el('maint-building-hist-btn').addEventListener('click', () => {
   if (!id) return showToast('Select a building first', 'error');
   openMaintHistoryModal('building', id, label);
 });
+
+/* ── PM (Preventive Maintenance) ─────────────────────────────────────────── */
+
+// ── Checklist Definitions ─────────────────────────────────────────────────────
+const PM_TYPES = {
+  a_electrical: {
+    title: 'A Plant Electrical PM',
+    subtitle: 'CVC Pumping Plant Monthly Electrical Controls Surveillance and Inspection',
+    formRef: 'M10-CVC',
+    buildings: ['Pumping Plant 1','Pumping Plant 2','Pumping Plant 3','Pumping Plant 4',
+                'Pumping Plant 5','Pumping Plant 6','Pumping Plant 7','O&M'],
+    items: [
+      { key: 'smells_noise',       label: 'Check for unusual smells or noise.' },
+      { key: 'visual_motor_ctrl',  label: 'Visual inspection of motor controls.' },
+      { key: 'dewebb_mcc_scada',   label: "De-webb / clean MCC's and SCADA panel." },
+      { key: 'indicator_lamps',    label: 'Check and replace burned out indicator lamps.' },
+      { key: 'panel_labels',       label: 'Replace missing panel labels.' },
+      { key: 'motor_current',      label: 'Check motor current on running motors. Look for imbalance or current running ~10 amps or more. This indicates a failed power factor correction capacitor.' },
+      { key: 'station_voltage',    label: 'Check station voltage at main breaker panel Cutler Hammer MP 4000. Should be ~2300 volts.' },
+      { key: 'relay_flags',        label: 'Check for flags on Overload, Reverse Power and Ground Fault relays.' },
+      { key: 'breaker_counter',    label: 'Log Main Breaker Operation Counter', type: 'twc', placeholder: 'Counter value' },
+      { key: 'scada_screen',       label: 'Clean SCADA touch screen.' },
+      { key: 'building_lighting',  label: 'Check building lighting.' },
+      { key: 'compressor_hoa',     label: "Check station compressor operation — place H.O.A. in manual then back to auto." },
+      { key: 'station_motors',     label: 'Check station motors — listen to running pumps and inspect all units.' },
+      { key: 'yard_lights',        label: 'Place yard lights in "ON" position and check lighting.' },
+      { key: 'summer_ac',          label: 'Summer — Check A.C. operation, building temp should be ~75°F. Check fan belts and filters.' },
+      { key: 'generator_test',     label: 'Generator test.', condBuilding: 'O&M' },
+    ],
+  },
+  b_electrical: {
+    title: 'B Plant Electrical PM',
+    subtitle: 'CVC Pumping Plant Monthly Electrical Controls Inspection',
+    formRef: 'M10-CVC-B',
+    buildings: ['Pumping Plant 1','Pumping Plant 2','Pumping Plant 3','Pumping Plant 4',
+                'Pumping Plant 5','Pumping Plant 6'],
+    items: [
+      { key: 'notify_super',        label: 'Contact and Notify the CVC O&M Superintendent of start of Preventive Maintenance Tasks.' },
+      { key: 'smells_noise',        label: 'Check for unusual smells or noise.' },
+      { key: 'visual_motor_ctrl',   label: 'Visual inspection of motor controls.' },
+      { key: 'mcc_scada_clean',     label: "Check MCC's and SCADA panels for cleanliness, dust and spider webs." },
+      { key: 'indicator_lamps',     label: 'Check and replace burned out indicator lamps.' },
+      { key: 'panel_labels',        label: 'Replace missing panel labels.' },
+      { key: 'station_voltage',     label: 'Check station voltage at main breaker panel (GE Multilin). Should be approx. 4160 volts.', type: 'twc', textLabel: 'Record Voltage', placeholder: 'Voltage reading' },
+      { key: 'relay_flags',         label: 'Check for flags on the main switchboard protective relay.' },
+      { key: 'breaker_counter',     label: 'Log Main Breaker Operation Counter', type: 'twc', placeholder: 'Counter value' },
+      { key: 'motor_current',       label: 'Check motor current on running motors. Look for imbalance or current running approx. 10 amps or more. This may indicate a failed power factor correction capacitor/s.' },
+      { key: 'scada_screen',        label: 'Clean SCADA touch screen.' },
+      { key: 'station_motors',      label: 'Check station motors — listen to running pumps and perform visual inspection on units not running.' },
+      { key: 'yard_lights',         label: 'Place yard lights in "ON" position and check lighting. Put back into "AUTO" when done.' },
+      { key: 'field_instrumentation', label: 'Check field instrumentation and attachment points — Level transducers/switches (Forebay and afterbay), conduits, junction boxes and underground pull boxes and "Condulet" Fittings and covers (LBs, LRs, TBs, Cs, etc...).' },
+      { key: 'utility_provider',    label: 'Check all utility provider (PG&E) equipment, transformer, etc. Report any issues to Utility Provider and CVC O&M Superintendent.' },
+      { key: 'smoke_fire',          label: 'Check status and operation of the Smoke / Fire detection systems.' },
+      { key: 'notify_complete',     label: 'Notify O&M Superintendent when PM work order is complete and report any follow-up items that need to be addressed.' },
+      { key: 'notify_ec_foreman',   label: 'Notify E&C foreman or Maintenance Supervisor of any follow-up items, repairs or additional work required and schedule accordingly.' },
+      { key: 'secure_lockup',       label: 'Secure and lock up all electrical enclosures, doors and facility gates.' },
+      { key: 'supervisor_initials', label: 'E&C Foreman / Maintenance Supervisor', type: 'text', placeholder: 'Supervisor initials' },
+    ],
+  },
+  siphon_breaker: { title: 'Siphon Breaker PM',      stub: true },
+  air_compressor: { title: 'Air Compressor PM',       stub: true },
+  wells:          { title: 'Wells PM',                stub: true },
+  annual_pp:      { title: 'Annual Pumping Plant PM', stub: true },
+};
+
+// ── PM Helpers ────────────────────────────────────────────────────────────────
+function pmPanelId(type) { return 'pm-panel-' + type.replace(/_/g, '-'); }
+function pmLastId(type)  { return 'pm-last-'  + type.replace(/_/g, '-'); }
+
+const pmHistoryCache = {}; // pm_id → record, for view/export without re-fetch
+
+// ── PM Navigation ─────────────────────────────────────────────────────────────
+function openPMType(pmType) {
+  el('pm-main').classList.add('hidden');
+  document.querySelectorAll('#maint-panel-pms .pm-panel').forEach(p => p.classList.add('hidden'));
+  el(pmPanelId(pmType)).classList.remove('hidden');
+  initPMTypePanel(pmType);
+}
+
+function closePMType() {
+  document.querySelectorAll('#maint-panel-pms .pm-panel').forEach(p => p.classList.add('hidden'));
+  el('pm-main').classList.remove('hidden');
+}
+
+el('maint-panel-pms').addEventListener('click', e => {
+  if (e.target.matches('.pm-back-btn') || e.target.closest('.pm-back-btn')) closePMType();
+});
+
+document.querySelectorAll('[data-pm-type]').forEach(btn => {
+  btn.addEventListener('click', () => openPMType(btn.dataset.pmType));
+});
+
+// ── PM Sub-dashboard ──────────────────────────────────────────────────────────
+async function initMaintPMsPanel() {
+  closePMType();
+  await loadPMLastCompleted();
+}
+
+async function loadPMLastCompleted() {
+  try {
+    const rows = await api('GET', '/api/pm-records/last-completed');
+    rows.forEach(r => {
+      const labelEl = el(pmLastId(r.pm_type));
+      if (!labelEl) return;
+      const d = new Date(r.completed_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      labelEl.textContent = d;
+    });
+  } catch { /* non-critical */ }
+}
+
+// ── PM Type Panel ─────────────────────────────────────────────────────────────
+async function initPMTypePanel(pmType) {
+  const def = PM_TYPES[pmType];
+  const contentEl = el(pmPanelId(pmType)).querySelector('.pm-type-content');
+
+  // Build structure on first open only
+  if (!contentEl.firstElementChild) {
+    if (def.stub) {
+      contentEl.innerHTML = `<h2 class="panel-heading">${escHtml(def.title)}</h2>
+        <div class="placeholder-msg">Checklist coming in a future update.</div>`;
+      return;
+    }
+    buildPMTypeStructure(pmType, def, contentEl);
+  }
+
+  if (!def.stub) await loadPMHistory(pmType, contentEl);
+}
+
+function buildPMTypeStructure(pmType, def, contentEl) {
+  contentEl.innerHTML = `
+    <h2 class="panel-heading">${escHtml(def.title)}</h2>
+    <div class="issue-toolbar">
+      <button class="btn btn-primary btn-sm pm-new-btn">+ New PM</button>
+    </div>
+    <div class="pm-form-wrap" style="display:none">
+      <div class="settings-card" style="margin-bottom:14px">
+        <div class="settings-pad">
+          <div class="form-group">
+            <label>Location</label>
+            <select class="ctrl-select pm-building-select">
+              <option value="">— select location —</option>
+              ${def.buildings.map(b => `<option value="${escHtml(b)}">${escHtml(b)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="pm-progress hidden"></div>
+          <div class="pm-checklist-area"><p class="placeholder-msg" style="font-style:normal">Select a location to load the checklist.</p></div>
+          <div class="form-group" style="margin-top:10px">
+            <label>Notes</label>
+            <textarea class="ctrl-input pm-notes-field" rows="3" placeholder="Any additional comments…"></textarea>
+          </div>
+          <div class="form-row">
+            <button class="btn btn-primary pm-submit-btn">Submit PM</button>
+            <button class="btn btn-secondary pm-cancel-btn">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="report-section-title" style="margin-top:4px">History</div>
+    <div class="pm-history-area"></div>`;
+
+  const newBtn      = contentEl.querySelector('.pm-new-btn');
+  const formWrap    = contentEl.querySelector('.pm-form-wrap');
+  const buildingSel = contentEl.querySelector('.pm-building-select');
+  const progressEl  = contentEl.querySelector('.pm-progress');
+  const checklistEl = contentEl.querySelector('.pm-checklist-area');
+  const notesEl     = contentEl.querySelector('.pm-notes-field');
+  const submitBtn   = contentEl.querySelector('.pm-submit-btn');
+  const cancelBtn   = contentEl.querySelector('.pm-cancel-btn');
+
+  newBtn.addEventListener('click', () => {
+    formWrap.style.display = '';
+    newBtn.style.display   = 'none';
+    buildingSel.value = '';
+    notesEl.value     = '';
+    checklistEl.innerHTML = '<p class="placeholder-msg" style="font-style:normal">Select a location to load the checklist.</p>';
+    progressEl.classList.add('hidden');
+  });
+
+  cancelBtn.addEventListener('click', () => {
+    formWrap.style.display = 'none';
+    newBtn.style.display   = '';
+  });
+
+  buildingSel.addEventListener('change', () => {
+    const building = buildingSel.value;
+    if (!building) {
+      checklistEl.innerHTML = '<p class="placeholder-msg" style="font-style:normal">Select a location to load the checklist.</p>';
+      progressEl.classList.add('hidden');
+      return;
+    }
+    checklistEl.innerHTML = renderChecklistItems(def, building);
+    progressEl.classList.remove('hidden');
+    updatePMProgress(checklistEl, progressEl, def, building);
+    checklistEl.addEventListener('change', () => updatePMProgress(checklistEl, progressEl, def, building));
+  });
+
+  submitBtn.addEventListener('click', async () => {
+    const building = buildingSel.value;
+    if (!building) return showToast('Select a location first', 'error');
+    const checklist = collectChecklist(checklistEl, def, building);
+    const notes = notesEl.value.trim();
+    submitBtn.disabled = true;
+    try {
+      await api('POST', '/api/pm-records', { pm_type: pmType, building, checklist, notes });
+      formWrap.style.display = 'none';
+      newBtn.style.display = '';
+      showToast('PM submitted');
+      loadPMLastCompleted();
+      await loadPMHistory(pmType, contentEl);
+    } catch (err) {
+      showToast(err.message, 'error');
+    } finally {
+      submitBtn.disabled = false;
+    }
+  });
+}
+
+// ── Checklist Rendering ───────────────────────────────────────────────────────
+function renderChecklistItems(def, building, existingData = {}) {
+  let n = 0;
+  return def.items.map(item => {
+    n++;
+    const hidden = item.condBuilding && item.condBuilding !== building;
+    const val = existingData[item.key];
+    let inner = '';
+
+    if (item.type === 'twc') {
+      const checked = val?.checked || false;
+      const tv = escHtml(val?.value || '');
+      const ph = escHtml(item.textLabel || item.placeholder || 'Value');
+      inner = `<label class="pm-check-row">
+        <input type="checkbox" data-key="${item.key}" data-type="twc" ${checked ? 'checked' : ''}>
+        <span>${n}. ${escHtml(item.label)}</span>
+      </label>
+      <input type="text" class="ctrl-input pm-text-input" data-key="${item.key}" data-type="twc-val"
+             placeholder="${ph}" value="${tv}">`;
+    } else if (item.type === 'text') {
+      const tv = escHtml(typeof val === 'string' ? val : '');
+      inner = `<div class="pm-text-only-row">
+        <span class="pm-text-only-label">${n}. ${escHtml(item.label)}</span>
+        <input type="text" class="ctrl-input pm-text-input" data-key="${item.key}" data-type="text-only"
+               placeholder="${escHtml(item.placeholder || '')}" value="${tv}">
+      </div>`;
+    } else {
+      const checked = val === true;
+      inner = `<label class="pm-check-row">
+        <input type="checkbox" data-key="${item.key}" ${checked ? 'checked' : ''}>
+        <span>${n}. ${escHtml(item.label)}</span>
+      </label>`;
+    }
+
+    return `<div class="pm-item${hidden ? ' hidden' : ''}"
+                 ${item.condBuilding ? `data-cond-building="${item.condBuilding}"` : ''}>
+      ${inner}
+    </div>`;
+  }).join('');
+}
+
+function updatePMProgress(checklistEl, progressEl, def, building) {
+  const visibleCBs = checklistEl.querySelectorAll('.pm-item:not(.hidden) input[type="checkbox"]');
+  const total   = visibleCBs.length;
+  const checked = Array.from(visibleCBs).filter(cb => cb.checked).length;
+  progressEl.textContent = `${checked} / ${total} items checked`;
+  progressEl.style.color = checked === total && total > 0 ? 'var(--green-light, #4caf50)' : 'var(--text-dim)';
+}
+
+function collectChecklist(checklistEl, def, building) {
+  const result = {};
+  def.items.forEach(item => {
+    if (item.condBuilding && item.condBuilding !== building) return;
+    if (item.type === 'twc') {
+      const cb  = checklistEl.querySelector(`input[data-key="${item.key}"][data-type="twc"]`);
+      const txt = checklistEl.querySelector(`input[data-key="${item.key}"][data-type="twc-val"]`);
+      result[item.key] = { checked: cb?.checked || false, value: txt?.value.trim() || '' };
+    } else if (item.type === 'text') {
+      const txt = checklistEl.querySelector(`input[data-key="${item.key}"][data-type="text-only"]`);
+      result[item.key] = txt?.value.trim() || '';
+    } else {
+      const cb = checklistEl.querySelector(`input[data-key="${item.key}"]`);
+      result[item.key] = cb?.checked || false;
+    }
+  });
+  return result;
+}
+
+// ── PM History ────────────────────────────────────────────────────────────────
+async function loadPMHistory(pmType, contentEl) {
+  const histEl = contentEl.querySelector('.pm-history-area');
+  if (!histEl) return;
+  histEl.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const rows = await api('GET', `/api/pm-records?type=${pmType}`);
+    rows.forEach(r => { pmHistoryCache[r.pm_id] = r; });
+    if (!rows.length) { histEl.innerHTML = '<div class="issue-empty">No PM records yet.</div>'; return; }
+    const def = PM_TYPES[pmType];
+    histEl.innerHTML = rows.map(r => {
+      const d  = new Date(r.completed_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      const t  = r.completed_time?.slice(0, 5) || '';
+      const totalItems   = def.items.filter(i => !i.type || i.type !== 'text').length;
+      const checkedCount = Object.values(r.checklist).filter(v => v === true || v?.checked === true).length;
+      return `<div class="pm-history-item">
+        <div class="pm-history-header">
+          <span class="pm-history-date">${d}${t ? ' · ' + t : ''}</span>
+          <span class="pm-history-loc">${escHtml(r.building || '—')}</span>
+        </div>
+        <div class="pm-history-meta">
+          ${escHtml(r.completed_by_name || 'Unknown')} · ${checkedCount}/${totalItems} items
+          ${r.notes ? ' · Notes included' : ''}
+        </div>
+        <div class="pm-history-actions">
+          <button class="btn btn-secondary btn-xs" data-pm-view="${r.pm_id}">View</button>
+          <button class="btn btn-secondary btn-xs" data-pm-pdf="${r.pm_id}">Export PDF</button>
+        </div>
+      </div>`;
+    }).join('');
+
+    histEl.querySelectorAll('[data-pm-view]').forEach(btn => {
+      btn.addEventListener('click', () => showPMRecord(pmHistoryCache[parseInt(btn.dataset.pmView)], PM_TYPES[pmType]));
+    });
+    histEl.querySelectorAll('[data-pm-pdf]').forEach(btn => {
+      btn.addEventListener('click', () => exportPMRecordAsPDF(pmHistoryCache[parseInt(btn.dataset.pmPdf)], PM_TYPES[pmType]));
+    });
+  } catch (err) {
+    histEl.innerHTML = `<div class="issue-empty" style="color:var(--red-light)">${err.message}</div>`;
+  }
+}
+
+// ── PM Record View Modal ──────────────────────────────────────────────────────
+el('pm-view-modal-close').addEventListener('click', () => el('pm-view-modal').classList.add('hidden'));
+el('pm-view-modal').addEventListener('click', e => {
+  if (e.target === el('pm-view-modal')) el('pm-view-modal').classList.add('hidden');
+});
+
+function showPMRecord(record, def) {
+  const d = new Date(record.completed_date).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  const t = record.completed_time?.slice(0, 5) || '';
+  el('pm-view-modal-title').textContent = def.title;
+  el('pm-view-modal-body').innerHTML = `
+    <div class="pm-view-meta">
+      <span>${escHtml(record.building || '—')}</span>
+      <span>${d}${t ? ' · ' + t : ''}</span>
+      <span>${escHtml(record.completed_by_name || 'Unknown')}</span>
+    </div>
+    <div class="pm-view-list">${renderChecklistItems(def, record.building, record.checklist)}</div>
+    ${record.notes ? `<div class="pm-view-notes"><strong>Notes:</strong> ${escHtml(record.notes)}</div>` : ''}`;
+  // Disable all inputs in view mode
+  el('pm-view-modal-body').querySelectorAll('input').forEach(i => i.disabled = true);
+  el('pm-view-modal').classList.remove('hidden');
+}
+
+// ── PM PDF Export ─────────────────────────────────────────────────────────────
+function exportPMRecordAsPDF(record, def) {
+  const w = window.open('', '_blank');
+  if (!w) { showToast('Allow pop-ups to export PDF', 'error'); return; }
+  const d = new Date(record.completed_date).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  const t = record.completed_time?.slice(0, 5) || '';
+  let itemNum = 0;
+  const itemsHTML = def.items.map(item => {
+    if (item.condBuilding && item.condBuilding !== record.building) return '';
+    itemNum++;
+    const val = record.checklist[item.key];
+    let checked = false, extra = '';
+    if (item.type === 'twc') {
+      checked = val?.checked || false;
+      if (val?.value) extra = ` — <strong>${escHtml(val.value)}</strong>`;
+    } else if (item.type === 'text') {
+      extra = val ? `: <strong>${escHtml(val)}</strong>` : '';
+      checked = !!val;
+    } else {
+      checked = val === true;
+    }
+    const sym = checked ? '&#9745;' : '&#9744;';
+    return `<div class="item">${sym} <strong>${itemNum}.</strong> ${escHtml(item.label)}${extra}</div>`;
+  }).filter(Boolean).join('');
+
+  w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>${escHtml(def.title)} — ${d}</title>
+<style>
+  body{font-family:Arial,sans-serif;font-size:12px;margin:20px 40px;color:#000}
+  h1{font-size:14px;margin:0 0 2px}
+  .sub{font-size:11px;color:#555;margin:0 0 12px}
+  table{border-collapse:collapse;margin-bottom:14px}
+  td{padding:2px 14px 2px 0;font-size:12px}
+  .item{margin:5px 0;line-height:1.5}
+  .notes{margin-top:14px;border-top:1px solid #ccc;padding-top:10px}
+  .footer{margin-top:20px;border-top:2px solid #000;padding-top:8px;font-weight:bold}
+  @media print{body{margin:10mm 15mm}}
+</style></head><body>
+<h1>${escHtml(def.subtitle || def.title)}</h1>
+<div class="sub">${escHtml(def.formRef || '')}</div>
+<table>
+  <tr><td><strong>Inspector:</strong></td><td>${escHtml(record.completed_by_name || '—')}</td>
+      <td><strong>Location:</strong></td><td>${escHtml(record.building || '—')}</td></tr>
+  <tr><td><strong>Date:</strong></td><td>${d}</td>
+      <td><strong>Time:</strong></td><td>${t}</td></tr>
+</table>
+${itemsHTML}
+${record.notes ? `<div class="notes"><strong>Notes:</strong><br>${escHtml(record.notes).replace(/\n/g,'<br>')}</div>` : ''}
+<div class="footer">INITIAL: Completed in accordance with ${escHtml(def.formRef || 'PM Checklist')} &nbsp;&nbsp; Date: ${d} &nbsp;&nbsp; Time: ${t}</div>
+</body></html>`);
+  w.document.close();
+  w.setTimeout(() => w.print(), 400);
+}
 
 /* ── Pesticides ──────────────────────────────────────────────────────────── */
 let pestUsageLoaded   = false;

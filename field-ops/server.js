@@ -1794,6 +1794,61 @@ app.get('/api/pesticide-usage/monthly', requireAuth, async (req, res) => {
   }
 });
 
+// ── PM Records ────────────────────────────────────────────────────────────────
+
+// Last completed date per PM type (for tile badges)
+app.get('/api/pm-records/last-completed', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT DISTINCT ON (pm_type)
+         pm_type, completed_date, completed_time, u.full_name AS completed_by_name
+       FROM pm_records p
+       LEFT JOIN users u ON u.user_id = p.completed_by
+       ORDER BY pm_type, completed_date DESC, completed_time DESC`
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// List records for a PM type
+app.get('/api/pm-records', requireAuth, async (req, res) => {
+  const { type } = req.query;
+  if (!type) return res.status(400).json({ error: 'type required' });
+  try {
+    const { rows } = await pool.query(
+      `SELECT p.pm_id, p.pm_type, p.building, p.completed_date, p.completed_time,
+              u.full_name AS completed_by_name, p.checklist, p.notes, p.created_at
+       FROM pm_records p
+       LEFT JOIN users u ON u.user_id = p.completed_by
+       WHERE p.pm_type = $1
+       ORDER BY p.completed_date DESC, p.completed_time DESC
+       LIMIT 100`,
+      [type]
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Submit a new PM record (date/time/user auto from server)
+app.post('/api/pm-records', requireAuth, async (req, res) => {
+  const { pm_type, building, checklist, notes } = req.body;
+  if (!pm_type || !checklist) return res.status(400).json({ error: 'pm_type and checklist required' });
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO pm_records (pm_type, building, completed_by, checklist, notes)
+       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [pm_type, building || null, req.user.user_id, JSON.stringify(checklist), notes || null]
+    );
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Change Password ────────────────────────────────────────────────────────────
 app.post('/api/auth/change-password', requireAuth, async (req, res) => {
   const { current_password, new_password } = req.body;

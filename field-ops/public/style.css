@@ -1289,6 +1289,94 @@ input[type="date"].ctrl-input { min-height: 44px; }
   color: var(--text);
 }
 
+/* ── PM (Preventive Maintenance) ────────────────────────────────────────── */
+.pm-panel { padding-top: 4px; }
+
+.pm-last-label {
+  display: block;
+  font-size: 0.68rem;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+
+.pm-progress {
+  font-size: 0.82rem;
+  font-weight: 600;
+  margin: 8px 0 10px;
+  transition: color 0.2s;
+}
+
+.pm-item {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+.pm-item:last-child { border-bottom: none; }
+
+.pm-check-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+  line-height: 1.45;
+}
+.pm-check-row input[type="checkbox"] {
+  margin-top: 3px;
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.pm-check-row input:checked + span { color: var(--text-dim); text-decoration: line-through; }
+
+.pm-text-input {
+  margin: 6px 0 2px 28px;
+  max-width: 220px;
+  font-size: 0.85rem;
+  padding: 5px 8px;
+}
+.pm-text-only-row { display: flex; flex-direction: column; gap: 4px; }
+.pm-text-only-label { font-size: 0.9rem; line-height: 1.45; }
+
+/* History */
+.pm-history-item {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+.pm-history-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: baseline;
+  margin-bottom: 2px;
+}
+.pm-history-date { font-weight: 600; }
+.pm-history-loc  { color: var(--accent); font-size: 0.88rem; }
+.pm-history-meta { font-size: 0.78rem; color: var(--text-dim); margin-bottom: 6px; }
+.pm-history-actions { display: flex; gap: 6px; }
+
+/* View modal */
+.pm-view-modal-card { max-width: 560px; width: 95vw; }
+.pm-view-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 0.82rem;
+  color: var(--text-dim);
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+.pm-view-notes {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  font-size: 0.88rem;
+}
+
 /* ── Pesticides ──────────────────────────────────────────────────────────── */
 .pest-usage-item,
 .pest-loc-item,
