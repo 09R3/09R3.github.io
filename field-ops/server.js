@@ -471,7 +471,7 @@ app.get('/api/wells/kf', requireAuth, async (req, res) => {
   try {
     const { rows } = await pool.query(`
       SELECT
-        w.well_id, w.common_name, w.area, w.kf_set_id, ws.set_name,
+        w.well_id, w.common_name, w.state_well_number, w.area, w.kf_set_id, ws.set_name,
         w.gps_latitude, w.gps_longitude, w.is_important,
         r.kf_reading_id    AS last_reading_id,
         r.reading_date     AS last_reading_date,
@@ -490,7 +490,7 @@ app.get('/api/wells/kf', requireAuth, async (req, res) => {
       ) r ON true
       WHERE w.kf_set_id IS NOT NULL
         AND (LOWER(w.status) != 'inactive' OR w.status IS NULL)
-      ORDER BY ws.set_name, w.common_name
+      ORDER BY ws.set_name, w.state_well_number, w.common_name
     `);
     res.json(rows);
   } catch (err) {
