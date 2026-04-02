@@ -1292,6 +1292,29 @@ input[type="date"].ctrl-input { min-height: 44px; }
 /* ── PM (Preventive Maintenance) ────────────────────────────────────────── */
 .pm-panel { padding-top: 4px; }
 
+.pm-back-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--accent);
+  font-size: 0.95rem;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 10px 16px;
+  margin-bottom: 16px;
+  width: 100%;
+}
+
+.pm-textarea {
+  margin: 6px 0 2px 28px;
+  max-width: calc(100% - 28px);
+  font-size: 0.85rem;
+  resize: vertical;
+}
+
 .pm-last-label {
   display: block;
   font-size: 0.68rem;

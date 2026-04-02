@@ -3250,8 +3250,8 @@ const PM_TYPES = {
       { key: 'dewebb_mcc_scada',   label: "De-webb / clean MCC's and SCADA panel." },
       { key: 'indicator_lamps',    label: 'Check and replace burned out indicator lamps.' },
       { key: 'panel_labels',       label: 'Replace missing panel labels.' },
-      { key: 'motor_current',      label: 'Check motor current on running motors. Look for imbalance or current running ~10 amps or more. This indicates a failed power factor correction capacitor.' },
-      { key: 'station_voltage',    label: 'Check station voltage at main breaker panel Cutler Hammer MP 4000. Should be ~2300 volts.' },
+      { key: 'motor_current',      label: 'Check motor current on running motors. Look for imbalance or current running ~10 amps or more. This indicates a failed power factor correction capacitor.', type: 'twc-area', placeholder: 'Amp readings (e.g. Pump 1: 45A, Pump 2: 48A…)' },
+      { key: 'station_voltage',    label: 'Check station voltage at main breaker panel PMX-1000. Should be ~2300 volts.', type: 'twc', placeholder: 'Voltage reading' },
       { key: 'relay_flags',        label: 'Check for flags on Overload, Reverse Power and Ground Fault relays.' },
       { key: 'breaker_counter',    label: 'Log Main Breaker Operation Counter', type: 'twc', placeholder: 'Counter value' },
       { key: 'scada_screen',       label: 'Clean SCADA touch screen.' },
@@ -3279,17 +3279,13 @@ const PM_TYPES = {
       { key: 'station_voltage',     label: 'Check station voltage at main breaker panel (GE Multilin). Should be approx. 4160 volts.', type: 'twc', textLabel: 'Record Voltage', placeholder: 'Voltage reading' },
       { key: 'relay_flags',         label: 'Check for flags on the main switchboard protective relay.' },
       { key: 'breaker_counter',     label: 'Log Main Breaker Operation Counter', type: 'twc', placeholder: 'Counter value' },
-      { key: 'motor_current',       label: 'Check motor current on running motors. Look for imbalance or current running approx. 10 amps or more. This may indicate a failed power factor correction capacitor/s.' },
+      { key: 'motor_current',       label: 'Check motor current on running motors. Look for imbalance or current running approx. 10 amps or more. This may indicate a failed power factor correction capacitor/s.', type: 'twc-area', placeholder: 'Amp readings (e.g. Pump 1: 45A, Pump 2: 48A…)' },
       { key: 'scada_screen',        label: 'Clean SCADA touch screen.' },
       { key: 'station_motors',      label: 'Check station motors — listen to running pumps and perform visual inspection on units not running.' },
       { key: 'yard_lights',         label: 'Place yard lights in "ON" position and check lighting. Put back into "AUTO" when done.' },
       { key: 'field_instrumentation', label: 'Check field instrumentation and attachment points — Level transducers/switches (Forebay and afterbay), conduits, junction boxes and underground pull boxes and "Condulet" Fittings and covers (LBs, LRs, TBs, Cs, etc...).' },
       { key: 'utility_provider',    label: 'Check all utility provider (PG&E) equipment, transformer, etc. Report any issues to Utility Provider and CVC O&M Superintendent.' },
       { key: 'smoke_fire',          label: 'Check status and operation of the Smoke / Fire detection systems.' },
-      { key: 'notify_complete',     label: 'Notify O&M Superintendent when PM work order is complete and report any follow-up items that need to be addressed.' },
-      { key: 'notify_ec_foreman',   label: 'Notify E&C foreman or Maintenance Supervisor of any follow-up items, repairs or additional work required and schedule accordingly.' },
-      { key: 'secure_lockup',       label: 'Secure and lock up all electrical enclosures, doors and facility gates.' },
-      { key: 'supervisor_initials', label: 'E&C Foreman / Maintenance Supervisor', type: 'text', placeholder: 'Supervisor initials' },
     ],
   },
   siphon_breaker: { title: 'Siphon Breaker PM',      stub: true },
@@ -3469,6 +3465,16 @@ function renderChecklistItems(def, building, existingData = {}) {
       </label>
       <input type="text" class="ctrl-input pm-text-input" data-key="${item.key}" data-type="twc-val"
              placeholder="${ph}" value="${tv}">`;
+    } else if (item.type === 'twc-area') {
+      const checked = val?.checked || false;
+      const tv = escHtml(val?.value || '');
+      const ph = escHtml(item.placeholder || 'Notes');
+      inner = `<label class="pm-check-row">
+        <input type="checkbox" data-key="${item.key}" data-type="twc" ${checked ? 'checked' : ''}>
+        <span>${n}. ${escHtml(item.label)}</span>
+      </label>
+      <textarea class="ctrl-input pm-text-input pm-textarea" data-key="${item.key}" data-type="twc-val"
+                rows="2" placeholder="${ph}">${tv}</textarea>`;
     } else if (item.type === 'text') {
       const tv = escHtml(typeof val === 'string' ? val : '');
       inner = `<div class="pm-text-only-row">
@@ -3595,7 +3601,7 @@ function exportPMRecordAsPDF(record, def) {
     itemNum++;
     const val = record.checklist[item.key];
     let checked = false, extra = '';
-    if (item.type === 'twc') {
+    if (item.type === 'twc' || item.type === 'twc-area') {
       checked = val?.checked || false;
       if (val?.value) extra = ` — <strong>${escHtml(val.value)}</strong>`;
     } else if (item.type === 'text') {
@@ -4190,6 +4196,52 @@ el('export-pdf-btn').addEventListener('click', () => {
   el('export-modal').classList.add('hidden');
   setTimeout(() => window.print(), 100);
 });
+
+/* ── Left-edge swipe to go back (system-wide) ────────────────────────────── */
+(function () {
+  let startX = 0, startY = 0, tracking = false;
+  const EDGE = 30, MIN_DIST = 60, MAX_VERT = 80;
+
+  document.addEventListener('touchstart', e => {
+    const t = e.touches[0];
+    tracking = t.clientX <= EDGE;
+    if (tracking) { startX = t.clientX; startY = t.clientY; }
+  }, { passive: true });
+
+  document.addEventListener('touchend', e => {
+    if (!tracking) return;
+    tracking = false;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - startX;
+    const dy = Math.abs(t.clientY - startY);
+    if (dx < MIN_DIST || dy > MAX_VERT) return;
+    triggerContextualBack();
+  }, { passive: true });
+
+  function triggerContextualBack() {
+    // PM type panel open?
+    if (document.querySelector('#maint-panel-pms .pm-panel:not(.hidden)')) {
+      return closePMType();
+    }
+    // Any maint panel open (including pms sub-dash)?
+    if (document.querySelector('.maint-panel:not(.hidden)')) {
+      return closeMaintPanel();
+    }
+    // Any pest panel open?
+    if (document.querySelector('.maint-panel[id^="pest-panel-"]:not(.hidden)')) {
+      return closePestPanel();
+    }
+    // Settings panel open?
+    if (document.querySelector('.settings-panel:not(.hidden)')) {
+      return closeSettingsPanel();
+    }
+    // On a non-dashboard screen?
+    const active = document.querySelector('.screen-content.active');
+    if (active && active.id !== 'screen-dashboard') {
+      showScreen('dashboard');
+    }
+  }
+})();
 
 /* ── Init ────────────────────────────────────────────────────────────────── */
 checkDBStatus();
