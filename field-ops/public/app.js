@@ -1553,7 +1553,7 @@ function initMaintWellsPanel() {
   el('well-issue-date').value = todayISO();
   loadWellIssues();
   // Populate well dropdown
-  api('GET', '/api/wells').then(wells => {
+  api('GET', '/api/wells/operational').then(wells => {
     const sel = el('well-issue-select');
     sel.innerHTML = '<option value="">Select well…</option>';
     wells.forEach(w => {
