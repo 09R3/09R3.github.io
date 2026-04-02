@@ -24,6 +24,13 @@ function todayISO() {
   return new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD in local time
 }
 
+// Parse a YYYY-MM-DD string as local midnight (avoids UTC-offset day-behind bug)
+function localDateStr(isoDate, opts = { month: 'short', day: 'numeric', year: 'numeric' }) {
+  if (!isoDate) return '—';
+  const [y, m, d] = isoDate.split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString('en-US', opts);
+}
+
 function nowHHMM() {
   const d = new Date();
   return d.toTimeString().slice(0, 5);
@@ -3742,7 +3749,7 @@ async function loadPestUsageList() {
     const rows = await api('GET', '/api/pesticide-usage');
     if (!rows.length) { list.innerHTML = '<div class="issue-empty">No usage entries yet.</div>'; return; }
     list.innerHTML = rows.map(r => {
-      const d = new Date(r.used_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      const d = localDateStr(r.used_date);
       const t = r.used_time ? r.used_time.slice(0, 5) : '';
       return `<div class="pest-usage-item">
         <div class="pest-usage-main">
@@ -3771,7 +3778,7 @@ async function loadPestLocationList() {
     const rows = await api('GET', '/api/pesticide-usage');
     if (!rows.length) { list.innerHTML = '<div class="issue-empty">No usage entries yet.</div>'; return; }
     list.innerHTML = rows.map(r => {
-      const d = new Date(r.used_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      const d = localDateStr(r.used_date);
       const hasLoc = !!r.location_description;
       return `<div class="pest-loc-item ${hasLoc ? 'has-location' : 'no-location'}" data-id="${r.usage_id}">
         <div class="pest-usage-main">
@@ -3794,7 +3801,7 @@ async function loadPestLocationList() {
 
 function openPestLocationModal(usageId, row) {
   pestLocationEditId = usageId;
-  const d = new Date(row.used_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  const d = localDateStr(row.used_date);
   el('pest-location-modal-meta').textContent =
     `${row.pesticide_name} · ${Number(row.quantity).toLocaleString()} ${row.unit_of_measure} · ${d}`;
   el('pest-location-desc').value  = row.location_description || '';
@@ -4219,25 +4226,23 @@ el('export-pdf-btn').addEventListener('click', () => {
   }, { passive: true });
 
   function triggerContextualBack() {
-    // PM type panel open?
-    if (document.querySelector('#maint-panel-pms .pm-panel:not(.hidden)')) {
-      return closePMType();
+    const activeScreen = document.querySelector('.screen-content.active');
+    const id = activeScreen?.id;
+
+    if (id === 'screen-maintenance') {
+      if (document.querySelector('#maint-panel-pms .pm-panel:not(.hidden)')) return closePMType();
+      if (document.querySelector('.maint-panel:not(.hidden)')) return closeMaintPanel();
+      return showScreen('dashboard');
     }
-    // Any maint panel open (including pms sub-dash)?
-    if (document.querySelector('.maint-panel:not(.hidden)')) {
-      return closeMaintPanel();
+    if (id === 'screen-pesticides') {
+      if (document.querySelector('#screen-pesticides .maint-panel:not(.hidden)')) return closePestPanel();
+      return showScreen('dashboard');
     }
-    // Any pest panel open?
-    if (document.querySelector('.maint-panel[id^="pest-panel-"]:not(.hidden)')) {
-      return closePestPanel();
+    if (id === 'screen-admin') {
+      if (document.querySelector('.settings-panel:not(.hidden)')) return closeSettingsPanel();
+      return showScreen('dashboard');
     }
-    // Settings panel open?
-    if (document.querySelector('.settings-panel:not(.hidden)')) {
-      return closeSettingsPanel();
-    }
-    // On a non-dashboard screen?
-    const active = document.querySelector('.screen-content.active');
-    if (active && active.id !== 'screen-dashboard') {
+    if (activeScreen && id !== 'screen-dashboard') {
       showScreen('dashboard');
     }
   }
