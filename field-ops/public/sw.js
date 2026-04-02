@@ -1,4 +1,4 @@
-const CACHE = 'field-ops-v0.92';
+const CACHE = 'field-ops-v0.92a';
 const SHELL = ['/', '/app.js', '/style.css', '/manifest.json'];
 
 self.addEventListener('install', e => {

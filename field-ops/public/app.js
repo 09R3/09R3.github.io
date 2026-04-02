@@ -3785,14 +3785,14 @@ async function loadPestLocationList() {
     }).join('');
     // Attach click handlers
     list.querySelectorAll('.pest-loc-item').forEach(item => {
-      item.addEventListener('click', () => openLocationModal(item.dataset.id, rows.find(r => r.usage_id == item.dataset.id)));
+      item.addEventListener('click', () => openPestLocationModal(item.dataset.id, rows.find(r => r.usage_id == item.dataset.id)));
     });
   } catch (err) {
     list.innerHTML = `<div class="issue-empty" style="color:var(--red-light)">${err.message}</div>`;
   }
 }
 
-function openLocationModal(usageId, row) {
+function openPestLocationModal(usageId, row) {
   pestLocationEditId = usageId;
   const d = new Date(row.used_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   el('pest-location-modal-meta').textContent =
