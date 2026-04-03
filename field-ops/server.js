@@ -474,22 +474,32 @@ app.get('/api/wells/kf', requireAuth, async (req, res) => {
       SELECT
         w.well_id, w.common_name, w.state_well_number, w.area, w.kf_set_id, ws.set_name,
         w.gps_latitude, w.gps_longitude, w.is_important,
-        r.kf_reading_id    AS last_reading_id,
-        r.reading_date     AS last_reading_date,
-        r.dtw_reading      AS last_dtw,
-        r.plopper_sounder  AS last_method,
-        r.notes            AS last_notes,
-        (CURRENT_DATE - r.reading_date)::int AS days_since_reading
+        -- Most recent reading ever (for pre-fill and hint display)
+        prev.kf_reading_id   AS last_reading_id,
+        prev.reading_date    AS last_reading_date,
+        prev.dtw_reading     AS last_dtw,
+        prev.plopper_sounder AS last_method,
+        prev.notes           AS last_notes,
+        (CURRENT_DATE - prev.reading_date)::int AS days_since_reading,
+        -- Reading within widget date range (for done/not-read status only)
+        rng.reading_date     AS range_reading_date
       FROM wells w
       LEFT JOIN well_sets ws ON w.kf_set_id = ws.set_id
       LEFT JOIN LATERAL (
         SELECT kf_reading_id, reading_date, dtw_reading, plopper_sounder, notes
         FROM readings_kf_monthly
         WHERE well_id = w.well_id
+        ORDER BY reading_date DESC, reading_time DESC
+        LIMIT 1
+      ) prev ON true
+      LEFT JOIN LATERAL (
+        SELECT reading_date
+        FROM readings_kf_monthly
+        WHERE well_id = w.well_id
           AND ($1::date IS NULL OR reading_date BETWEEN $1::date AND $2::date)
         ORDER BY reading_date DESC, reading_time DESC
         LIMIT 1
-      ) r ON true
+      ) rng ON true
       WHERE w.kf_set_id IS NOT NULL
         AND (LOWER(w.status) != 'inactive' OR w.status IS NULL)
       ORDER BY ws.set_name, w.state_well_number, w.common_name

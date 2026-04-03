@@ -2622,7 +2622,7 @@ function renderKFList() {
   if (currentSet) {
     const raw = currentSet.set_name || String(currentSet.set_id);
     const setLabel = /^set\s/i.test(raw) ? raw : `Set ${raw}`;
-    const doneCount = filtered.filter(w => w.last_reading_date != null).length;
+    const doneCount = filtered.filter(w => w.range_reading_date != null).length;
     const totalCount = filtered.length;
 
     const card = document.createElement('div');
@@ -2646,10 +2646,11 @@ function createKFItem(w, dateInput, timeInput) {
   const div = document.createElement('div');
   div.className = 'list-item';
 
-  const days  = w.days_since_reading;
-  const inRange = w.last_reading_date != null;
-  const sc    = inRange ? 'done' : 'due';
-  const badge = inRange ? (days === 0 ? 'Today' : localDateStr(w.last_reading_date, { month: 'short', day: 'numeric' })) : 'Not read';
+  const inRange = w.range_reading_date != null;
+  const sc      = inRange ? 'done' : 'due';
+  const badge   = inRange
+    ? localDateStr(w.range_reading_date, { month: 'short', day: 'numeric' })
+    : 'Not read';
   const prevDTW    = w.last_dtw    != null ? `${Number(w.last_dtw).toFixed(2)} ft` : null;
   const prevMethod = w.last_method != null ? w.last_method.charAt(0).toUpperCase() + w.last_method.slice(1) : null;
   const prevMeta   = [prevDTW, prevMethod].filter(Boolean).join(' · ');
