@@ -468,6 +468,7 @@ app.get('/api/well-sets', requireAuth, async (req, res) => {
 
 // KF wells — includes GPS, last reading, days since reading
 app.get('/api/wells/kf', requireAuth, async (req, res) => {
+  const { start_date, end_date } = req.query;
   try {
     const { rows } = await pool.query(`
       SELECT
@@ -485,13 +486,14 @@ app.get('/api/wells/kf', requireAuth, async (req, res) => {
         SELECT kf_reading_id, reading_date, dtw_reading, plopper_sounder, notes
         FROM readings_kf_monthly
         WHERE well_id = w.well_id
+          AND ($1::date IS NULL OR reading_date BETWEEN $1::date AND $2::date)
         ORDER BY reading_date DESC, reading_time DESC
         LIMIT 1
       ) r ON true
       WHERE w.kf_set_id IS NOT NULL
         AND (LOWER(w.status) != 'inactive' OR w.status IS NULL)
       ORDER BY ws.set_name, w.state_well_number, w.common_name
-    `);
+    `, [start_date || null, end_date || null]);
     res.json(rows);
   } catch (err) {
     res.status(500).json({ error: err.message });

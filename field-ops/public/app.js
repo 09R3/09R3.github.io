@@ -516,6 +516,8 @@ async function loadDashboardStats() {
       const [y, m, d] = str.split('-');
       return new Date(+y, +m - 1, +d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
     };
+    kfWidgetStart = s.kf_widget_start || null;
+    kfWidgetEnd   = s.kf_widget_end   || null;
     const rangeLabel = (s.kf_widget_start && s.kf_widget_end)
       ? `${fmtDate(s.kf_widget_start)} – ${fmtDate(s.kf_widget_end)}`
       : 'This Month';
@@ -2534,23 +2536,31 @@ el('maint-save-btn').addEventListener('click', async () => {
 });
 
 /* ── KF Monthly ─────────────────────────────────────────────────────────── */
-let kfLoaded   = false;
-let kfAllWells = [];
-let kfSets     = [];
-let kfActiveSet = null;
-
+let kfLoaded        = false;
+let kfAllWells      = [];
+let kfSets          = [];
+let kfActiveSet     = null;
+let kfWidgetStart   = null;
+let kfWidgetEnd     = null;
+let kfLoadedStart   = null;
+let kfLoadedEnd     = null;
 async function initKFScreen() {
-  if (kfLoaded) return;
+  // Reload if widget date range has changed since last load
+  if (kfLoaded && kfLoadedStart === kfWidgetStart && kfLoadedEnd === kfWidgetEnd) return;
   kfLoaded = true;
 
   el('kf-date').value = todayISO();
   el('kf-time').value = nowHHMM();
 
   try {
+    const kfParams = kfWidgetStart && kfWidgetEnd
+      ? `?start_date=${kfWidgetStart}&end_date=${kfWidgetEnd}` : '';
     [kfSets, kfAllWells] = await Promise.all([
       api('GET', '/api/well-sets'),
-      api('GET', '/api/wells/kf'),
+      api('GET', `/api/wells/kf${kfParams}`),
     ]);
+    kfLoadedStart = kfWidgetStart;
+    kfLoadedEnd   = kfWidgetEnd;
   } catch (err) {
     el('kf-list-body').innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
     showToast('Failed to load KF data: ' + err.message, 'error');
@@ -2612,7 +2622,7 @@ function renderKFList() {
   if (currentSet) {
     const raw = currentSet.set_name || String(currentSet.set_id);
     const setLabel = /^set\s/i.test(raw) ? raw : `Set ${raw}`;
-    const doneCount = filtered.filter(w => w.days_since_reading != null && w.days_since_reading <= 25).length;
+    const doneCount = filtered.filter(w => w.last_reading_date != null).length;
     const totalCount = filtered.length;
 
     const card = document.createElement('div');
@@ -2636,9 +2646,10 @@ function createKFItem(w, dateInput, timeInput) {
   const div = document.createElement('div');
   div.className = 'list-item';
 
-  const days = w.days_since_reading;
-  const sc   = days == null ? 'due' : days <= 25 ? 'done' : 'overdue';
-  const badge = days == null ? 'Never' : days === 0 ? 'Today' : `${days}d ago`;
+  const days  = w.days_since_reading;
+  const inRange = w.last_reading_date != null;
+  const sc    = inRange ? 'done' : 'due';
+  const badge = inRange ? (days === 0 ? 'Today' : localDateStr(w.last_reading_date, { month: 'short', day: 'numeric' })) : 'Not read';
   const prevDTW    = w.last_dtw    != null ? `${Number(w.last_dtw).toFixed(2)} ft` : null;
   const prevMethod = w.last_method != null ? w.last_method.charAt(0).toUpperCase() + w.last_method.slice(1) : null;
   const prevMeta   = [prevDTW, prevMethod].filter(Boolean).join(' · ');
