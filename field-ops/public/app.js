@@ -27,7 +27,7 @@ function todayISO() {
 // Parse a YYYY-MM-DD string as local midnight (avoids UTC-offset day-behind bug)
 function localDateStr(isoDate, opts = { month: 'short', day: 'numeric', year: 'numeric' }) {
   if (!isoDate) return '—';
-  const [y, m, d] = isoDate.split('-').map(Number);
+  const [y, m, d] = String(isoDate).slice(0, 10).split('-').map(Number);
   return new Date(y, m - 1, d).toLocaleDateString('en-US', opts);
 }
 
@@ -3340,7 +3340,7 @@ async function loadPMLastCompleted() {
     rows.forEach(r => {
       const labelEl = el(pmLastId(r.pm_type));
       if (!labelEl) return;
-      const d = localDateStr(r.completed_date, { month: 'short', day: 'numeric' });
+      const d = new Date(r.completed_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
       labelEl.textContent = d;
     });
   } catch { /* non-critical */ }
@@ -3542,7 +3542,7 @@ async function loadPMHistory(pmType, contentEl) {
     if (!rows.length) { histEl.innerHTML = '<div class="issue-empty">No PM records yet.</div>'; return; }
     const def = PM_TYPES[pmType];
     histEl.innerHTML = rows.map(r => {
-      const d  = localDateStr(r.completed_date, { month: 'short', day: 'numeric', year: 'numeric' });
+      const d  = new Date(r.completed_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
       const t  = r.completed_time?.slice(0, 5) || '';
       const totalItems   = def.items.filter(i => !i.type || i.type !== 'text').length;
       const checkedCount = Object.values(r.checklist).filter(v => v === true || v?.checked === true).length;
@@ -3580,7 +3580,7 @@ el('pm-view-modal').addEventListener('click', e => {
 });
 
 function showPMRecord(record, def) {
-  const d = localDateStr(record.completed_date, { month: 'long', day: 'numeric', year: 'numeric' });
+  const d = new Date(record.completed_date).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
   const t = record.completed_time?.slice(0, 5) || '';
   el('pm-view-modal-title').textContent = def.title;
   el('pm-view-modal-body').innerHTML = `
@@ -3600,7 +3600,7 @@ function showPMRecord(record, def) {
 function exportPMRecordAsPDF(record, def) {
   const w = window.open('', '_blank');
   if (!w) { showToast('Allow pop-ups to export PDF', 'error'); return; }
-  const d = localDateStr(record.completed_date, { month: 'long', day: 'numeric', year: 'numeric' });
+  const d = new Date(record.completed_date).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
   const t = record.completed_time?.slice(0, 5) || '';
   let itemNum = 0;
   const itemsHTML = def.items.map(item => {
