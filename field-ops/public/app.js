@@ -336,8 +336,19 @@ function openSetMapModal(setName, wells) {
     if (_setLocationMarker) { _setLocationMarker.remove(); _setLocationMarker = null; }
 
     _setLeafletMarkers = validWells.map(w => {
-      const m = L.marker([w.gps_latitude, w.gps_longitude]).addTo(_setLeafletMap);
-      m.bindPopup(`<strong>${w.common_name || 'Well'}</strong>`);
+      const done = w.range_reading_date != null;
+      const color = done ? '#22c55e' : '#ef4444';
+      const icon = L.divIcon({
+        className: '',
+        html: `<div style="width:14px;height:14px;border-radius:50%;background:${color};border:2px solid rgba(0,0,0,0.4);box-shadow:0 1px 3px rgba(0,0,0,0.5)"></div>`,
+        iconSize: [14, 14],
+        iconAnchor: [7, 7],
+        popupAnchor: [0, -8],
+      });
+      const label = w.state_well_number ? `${w.state_well_number} | ${w.common_name}` : (w.common_name || 'Well');
+      const status = done ? `<span style="color:#16a34a">✓ Read ${localDateStr(w.range_reading_date, {month:'short',day:'numeric'})}</span>` : `<span style="color:#dc2626">Not read</span>`;
+      const m = L.marker([w.gps_latitude, w.gps_longitude], { icon }).addTo(_setLeafletMap);
+      m.bindPopup(`<strong>${label}</strong><br>${status}`);
       return m;
     });
 
