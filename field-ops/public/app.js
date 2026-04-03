@@ -1710,6 +1710,17 @@ el('well-show-resolved-btn').addEventListener('click', () => {
   loadWellIssues();
 });
 
+// Shared: instantly show/hide action-taken or resolution fields when status dropdown changes
+function onIssueStatusChange(e) {
+  const item = e.target.closest('.equip-issue-item');
+  if (!item || !e.target.classList.contains('issue-status-select')) return;
+  item.querySelector('.issue-action-group').style.display = e.target.value === 'in_progress' ? '' : 'none';
+  item.querySelector('.issue-res-group').style.display    = e.target.value === 'resolved'    ? '' : 'none';
+}
+['well-issue-list','bldg-issue-list','equip-issue-list'].forEach(id =>
+  el(id).addEventListener('change', onIssueStatusChange)
+);
+
 // Issue list interactions (delegated)
 el('well-issue-list').addEventListener('click', async e => {
   const item = e.target.closest('.equip-issue-item');
@@ -1717,12 +1728,6 @@ el('well-issue-list').addEventListener('click', async e => {
 
   if (e.target.closest('.equip-issue-header')) {
     item.querySelector('.equip-issue-body').classList.toggle('hidden');
-    return;
-  }
-
-  if (e.target.classList.contains('issue-status-select')) {
-    item.querySelector('.issue-action-group').style.display = e.target.value === 'in_progress' ? '' : 'none';
-    item.querySelector('.issue-res-group').style.display    = e.target.value === 'resolved'    ? '' : 'none';
     return;
   }
 
@@ -1941,12 +1946,6 @@ el('bldg-issue-list').addEventListener('click', async e => {
 
   if (e.target.closest('.equip-issue-header')) {
     item.querySelector('.equip-issue-body').classList.toggle('hidden');
-    return;
-  }
-
-  if (e.target.classList.contains('issue-status-select')) {
-    item.querySelector('.issue-action-group').style.display = e.target.value === 'in_progress' ? '' : 'none';
-    item.querySelector('.issue-res-group').style.display    = e.target.value === 'resolved'    ? '' : 'none';
     return;
   }
 
@@ -2175,13 +2174,6 @@ el('equip-issue-list').addEventListener('click', async e => {
   if (e.target.closest('.equip-issue-header')) {
     const body = item.querySelector('.equip-issue-body');
     body.classList.toggle('hidden');
-    return;
-  }
-
-  // Show/hide action taken / resolution fields when status changes
-  if (e.target.classList.contains('issue-status-select')) {
-    item.querySelector('.issue-action-group').style.display = e.target.value === 'in_progress' ? '' : 'none';
-    item.querySelector('.issue-res-group').style.display    = e.target.value === 'resolved'    ? '' : 'none';
     return;
   }
 
