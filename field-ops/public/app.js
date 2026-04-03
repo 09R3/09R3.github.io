@@ -1598,7 +1598,6 @@ function renderWellIssues() {
     const statusClass = issue.status.replace('_', '-');
     const title   = issue.well_area ? `${issue.well_name} (${issue.well_area})` : (issue.well_name || 'Unknown Well');
     const snippet = (issue.description || '').slice(0, 80) + (issue.description?.length > 80 ? '…' : '');
-    const showResNotes = issue.status === 'resolved' || issue.status === 'in_progress';
     return `
       <div class="equip-issue-item" data-issue-id="${issue.issue_id}">
         <div class="equip-issue-header">
@@ -1624,9 +1623,23 @@ function renderWellIssues() {
               <option value="resolved"    ${issue.status==='resolved'    ?'selected':''}>Resolved</option>
             </select>
           </div>
-          <div class="form-group issue-res-notes-group" style="${showResNotes ? '' : 'display:none'}">
-            <label>Resolution Notes</label>
-            <textarea class="ctrl-textarea issue-res-notes" rows="2" placeholder="Describe how it was resolved…">${escHtml(issue.resolution_notes || '')}</textarea>
+          <div class="form-group issue-action-group" style="${issue.status==='in_progress' ? '' : 'display:none'}">
+            <label>Action Taken</label>
+            <textarea class="ctrl-textarea issue-action-taken" rows="2" placeholder="Describe the action being taken…">${escHtml(issue.action_taken || '')}</textarea>
+          </div>
+          <div class="issue-res-group" style="${issue.status==='resolved' ? '' : 'display:none'}">
+            <div class="form-group">
+              <label>Resolution Notes</label>
+              <textarea class="ctrl-textarea issue-res-notes" rows="2" placeholder="Describe how it was resolved…">${escHtml(issue.resolution_notes || '')}</textarea>
+            </div>
+            <div class="form-group">
+              <label>PO Number</label>
+              <input type="text" class="ctrl-input issue-po-number" value="${escHtml(issue.po_number || '')}" placeholder="Optional">
+            </div>
+            <div class="form-group">
+              <label>Cost ($)</label>
+              <input type="number" class="ctrl-input issue-cost" value="${issue.cost != null ? issue.cost : ''}" placeholder="0.00" min="0" step="0.01">
+            </div>
           </div>
           <div class="form-group">
             <label>Assigned To</label>
@@ -1708,21 +1721,25 @@ el('well-issue-list').addEventListener('click', async e => {
   }
 
   if (e.target.classList.contains('issue-status-select')) {
-    const resGroup = item.querySelector('.issue-res-notes-group');
-    resGroup.style.display = (e.target.value === 'resolved' || e.target.value === 'in_progress') ? '' : 'none';
+    item.querySelector('.issue-action-group').style.display = e.target.value === 'in_progress' ? '' : 'none';
+    item.querySelector('.issue-res-group').style.display    = e.target.value === 'resolved'    ? '' : 'none';
     return;
   }
 
   if (e.target.classList.contains('issue-save-btn')) {
-    const issueId  = item.dataset.issueId;
-    const status   = item.querySelector('.issue-status-select').value;
-    const resNotes = item.querySelector('.issue-res-notes').value.trim() || null;
-    const assigned = item.querySelector('.issue-assigned').value.trim() || null;
-    const errEl    = item.querySelector('.issue-update-error');
+    const issueId     = item.dataset.issueId;
+    const status      = item.querySelector('.issue-status-select').value;
+    const actionTaken = item.querySelector('.issue-action-taken').value.trim() || null;
+    const resNotes    = item.querySelector('.issue-res-notes').value.trim()    || null;
+    const poNumber    = item.querySelector('.issue-po-number').value.trim()    || null;
+    const costVal     = item.querySelector('.issue-cost').value;
+    const cost        = costVal !== '' ? parseFloat(costVal) : null;
+    const assigned    = item.querySelector('.issue-assigned').value.trim()     || null;
+    const errEl       = item.querySelector('.issue-update-error');
     errEl.classList.add('hidden');
     e.target.disabled = true;
     try {
-      await api('PATCH', `/api/well-issues/${issueId}`, { status, resolution_notes: resNotes, assigned_to: assigned });
+      await api('PATCH', `/api/well-issues/${issueId}`, { status, action_taken: actionTaken, resolution_notes: resNotes, po_number: poNumber, cost, assigned_to: assigned });
       wellIssuesLoaded = false;
       await loadWellIssues();
       showToast('Issue updated', 'success');
@@ -1783,7 +1800,6 @@ function renderBldgIssues() {
     const statusClass = issue.status.replace('_', '-');
     const title   = [issue.site_name, issue.building_name].filter(Boolean).join(' — ') || 'Unknown Building';
     const snippet = (issue.description || '').slice(0, 80) + (issue.description?.length > 80 ? '…' : '');
-    const showResNotes = issue.status === 'resolved' || issue.status === 'in_progress';
     return `
       <div class="equip-issue-item" data-issue-id="${issue.issue_id}">
         <div class="equip-issue-header">
@@ -1809,9 +1825,23 @@ function renderBldgIssues() {
               <option value="resolved"    ${issue.status==='resolved'    ?'selected':''}>Resolved</option>
             </select>
           </div>
-          <div class="form-group issue-res-notes-group" style="${showResNotes ? '' : 'display:none'}">
-            <label>Resolution Notes</label>
-            <textarea class="ctrl-textarea issue-res-notes" rows="2" placeholder="Describe how it was resolved…">${escHtml(issue.resolution_notes || '')}</textarea>
+          <div class="form-group issue-action-group" style="${issue.status==='in_progress' ? '' : 'display:none'}">
+            <label>Action Taken</label>
+            <textarea class="ctrl-textarea issue-action-taken" rows="2" placeholder="Describe the action being taken…">${escHtml(issue.action_taken || '')}</textarea>
+          </div>
+          <div class="issue-res-group" style="${issue.status==='resolved' ? '' : 'display:none'}">
+            <div class="form-group">
+              <label>Resolution Notes</label>
+              <textarea class="ctrl-textarea issue-res-notes" rows="2" placeholder="Describe how it was resolved…">${escHtml(issue.resolution_notes || '')}</textarea>
+            </div>
+            <div class="form-group">
+              <label>PO Number</label>
+              <input type="text" class="ctrl-input issue-po-number" value="${escHtml(issue.po_number || '')}" placeholder="Optional">
+            </div>
+            <div class="form-group">
+              <label>Cost ($)</label>
+              <input type="number" class="ctrl-input issue-cost" value="${issue.cost != null ? issue.cost : ''}" placeholder="0.00" min="0" step="0.01">
+            </div>
           </div>
           <div class="form-group">
             <label>Assigned To</label>
@@ -1915,21 +1945,25 @@ el('bldg-issue-list').addEventListener('click', async e => {
   }
 
   if (e.target.classList.contains('issue-status-select')) {
-    const resGroup = item.querySelector('.issue-res-notes-group');
-    resGroup.style.display = (e.target.value === 'resolved' || e.target.value === 'in_progress') ? '' : 'none';
+    item.querySelector('.issue-action-group').style.display = e.target.value === 'in_progress' ? '' : 'none';
+    item.querySelector('.issue-res-group').style.display    = e.target.value === 'resolved'    ? '' : 'none';
     return;
   }
 
   if (e.target.classList.contains('issue-save-btn')) {
-    const issueId  = item.dataset.issueId;
-    const status   = item.querySelector('.issue-status-select').value;
-    const resNotes = item.querySelector('.issue-res-notes').value.trim() || null;
-    const assigned = item.querySelector('.issue-assigned').value.trim() || null;
-    const errEl    = item.querySelector('.issue-update-error');
+    const issueId     = item.dataset.issueId;
+    const status      = item.querySelector('.issue-status-select').value;
+    const actionTaken = item.querySelector('.issue-action-taken').value.trim() || null;
+    const resNotes    = item.querySelector('.issue-res-notes').value.trim()    || null;
+    const poNumber    = item.querySelector('.issue-po-number').value.trim()    || null;
+    const costVal     = item.querySelector('.issue-cost').value;
+    const cost        = costVal !== '' ? parseFloat(costVal) : null;
+    const assigned    = item.querySelector('.issue-assigned').value.trim()     || null;
+    const errEl       = item.querySelector('.issue-update-error');
     errEl.classList.add('hidden');
     e.target.disabled = true;
     try {
-      await api('PATCH', `/api/building-issues/${issueId}`, { status, resolution_notes: resNotes, assigned_to: assigned });
+      await api('PATCH', `/api/building-issues/${issueId}`, { status, action_taken: actionTaken, resolution_notes: resNotes, po_number: poNumber, cost, assigned_to: assigned });
       bldgIssuesLoaded = false;
       await loadBldgIssues();
       showToast('Issue updated', 'success');
@@ -1980,7 +2014,6 @@ function renderEquipIssues() {
   list.innerHTML = equipIssues.map(issue => {
     const statusClass = issue.status.replace('_', '-');
     const snippet = (issue.description || '').slice(0, 80) + (issue.description?.length > 80 ? '…' : '');
-    const showResNotes = issue.status === 'resolved' || issue.status === 'in_progress';
     return `
       <div class="equip-issue-item" data-issue-id="${issue.issue_id}">
         <div class="equip-issue-header">
@@ -2006,9 +2039,23 @@ function renderEquipIssues() {
               <option value="resolved"    ${issue.status==='resolved'    ?'selected':''}>Resolved</option>
             </select>
           </div>
-          <div class="form-group issue-res-notes-group" style="${showResNotes ? '' : 'display:none'}">
-            <label>Resolution Notes</label>
-            <textarea class="ctrl-textarea issue-res-notes" rows="2" placeholder="Describe how it was resolved…">${escHtml(issue.resolution_notes || '')}</textarea>
+          <div class="form-group issue-action-group" style="${issue.status==='in_progress' ? '' : 'display:none'}">
+            <label>Action Taken</label>
+            <textarea class="ctrl-textarea issue-action-taken" rows="2" placeholder="Describe the action being taken…">${escHtml(issue.action_taken || '')}</textarea>
+          </div>
+          <div class="issue-res-group" style="${issue.status==='resolved' ? '' : 'display:none'}">
+            <div class="form-group">
+              <label>Resolution Notes</label>
+              <textarea class="ctrl-textarea issue-res-notes" rows="2" placeholder="Describe how it was resolved…">${escHtml(issue.resolution_notes || '')}</textarea>
+            </div>
+            <div class="form-group">
+              <label>PO Number</label>
+              <input type="text" class="ctrl-input issue-po-number" value="${escHtml(issue.po_number || '')}" placeholder="Optional">
+            </div>
+            <div class="form-group">
+              <label>Cost ($)</label>
+              <input type="number" class="ctrl-input issue-cost" value="${issue.cost != null ? issue.cost : ''}" placeholder="0.00" min="0" step="0.01">
+            </div>
           </div>
           <div class="form-group">
             <label>Assigned To</label>
@@ -2131,25 +2178,28 @@ el('equip-issue-list').addEventListener('click', async e => {
     return;
   }
 
-  // Show/hide resolution notes when status changes
+  // Show/hide action taken / resolution fields when status changes
   if (e.target.classList.contains('issue-status-select')) {
-    const resGroup = item.querySelector('.issue-res-notes-group');
-    const show = e.target.value === 'resolved' || e.target.value === 'in_progress';
-    resGroup.style.display = show ? '' : 'none';
+    item.querySelector('.issue-action-group').style.display = e.target.value === 'in_progress' ? '' : 'none';
+    item.querySelector('.issue-res-group').style.display    = e.target.value === 'resolved'    ? '' : 'none';
     return;
   }
 
   // Save changes
   if (e.target.classList.contains('issue-save-btn')) {
-    const issueId  = item.dataset.issueId;
-    const status   = item.querySelector('.issue-status-select').value;
-    const resNotes = item.querySelector('.issue-res-notes').value.trim() || null;
-    const assigned = item.querySelector('.issue-assigned').value.trim() || null;
-    const errEl    = item.querySelector('.issue-update-error');
+    const issueId     = item.dataset.issueId;
+    const status      = item.querySelector('.issue-status-select').value;
+    const actionTaken = item.querySelector('.issue-action-taken').value.trim() || null;
+    const resNotes    = item.querySelector('.issue-res-notes').value.trim()    || null;
+    const poNumber    = item.querySelector('.issue-po-number').value.trim()    || null;
+    const costVal     = item.querySelector('.issue-cost').value;
+    const cost        = costVal !== '' ? parseFloat(costVal) : null;
+    const assigned    = item.querySelector('.issue-assigned').value.trim()     || null;
+    const errEl       = item.querySelector('.issue-update-error');
     errEl.classList.add('hidden');
     e.target.disabled = true;
     try {
-      await api('PATCH', `/api/equipment-issues/${issueId}`, { status, resolution_notes: resNotes, assigned_to: assigned });
+      await api('PATCH', `/api/equipment-issues/${issueId}`, { status, action_taken: actionTaken, resolution_notes: resNotes, po_number: poNumber, cost, assigned_to: assigned });
       equipIssuesLoaded = false;
       await loadEquipIssues();
       showToast('Issue updated', 'success');

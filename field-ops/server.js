@@ -924,7 +924,8 @@ app.get('/api/well-issues', requireAuth, async (req, res) => {
     const { rows } = await pool.query(`
       SELECT issue_id, well_id, well_name, well_area,
              status, description, reported_date, resolved_date,
-             resolution_notes, entered_by, assigned_to, notes, created_at
+             action_taken, resolution_notes, po_number, cost,
+             entered_by, assigned_to, notes, created_at
       FROM well_issues
       WHERE $1 OR status != 'resolved'
       ORDER BY
@@ -960,20 +961,24 @@ app.post('/api/well-issues', requireAuth, async (req, res) => {
 
 app.patch('/api/well-issues/:id', requireAuth, async (req, res) => {
   const { id } = req.params;
-  const { status, resolution_notes, assigned_to, notes } = req.body;
+  const { status, action_taken, resolution_notes, po_number, cost, assigned_to, notes } = req.body;
   try {
     await pool.query(`
       UPDATE well_issues SET
         status           = COALESCE($1, status),
-        resolution_notes = COALESCE($2, resolution_notes),
-        assigned_to      = COALESCE($3, assigned_to),
-        notes            = COALESCE($4, notes),
+        action_taken     = COALESCE($2, action_taken),
+        resolution_notes = COALESCE($3, resolution_notes),
+        po_number        = COALESCE($4, po_number),
+        cost             = COALESCE($5, cost),
+        assigned_to      = COALESCE($6, assigned_to),
+        notes            = COALESCE($7, notes),
         resolved_date    = CASE WHEN $1 = 'resolved' THEN CURRENT_DATE
                                 WHEN $1 IN ('open','in_progress') THEN NULL
                                 ELSE resolved_date END,
         updated_at       = NOW()
-      WHERE issue_id = $5
-    `, [status || null, resolution_notes ?? null, assigned_to ?? null, notes ?? null, id]);
+      WHERE issue_id = $8
+    `, [status || null, action_taken ?? null, resolution_notes ?? null,
+        po_number ?? null, cost ?? null, assigned_to ?? null, notes ?? null, id]);
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -987,7 +992,8 @@ app.get('/api/building-issues', requireAuth, async (req, res) => {
     const { rows } = await pool.query(`
       SELECT issue_id, building_id, site_id, building_name, site_name,
              status, description, reported_date, resolved_date,
-             resolution_notes, entered_by, assigned_to, notes, created_at
+             action_taken, resolution_notes, po_number, cost,
+             entered_by, assigned_to, notes, created_at
       FROM building_issues
       WHERE $1 OR status != 'resolved'
       ORDER BY
@@ -1023,20 +1029,24 @@ app.post('/api/building-issues', requireAuth, async (req, res) => {
 
 app.patch('/api/building-issues/:id', requireAuth, async (req, res) => {
   const { id } = req.params;
-  const { status, resolution_notes, assigned_to, notes } = req.body;
+  const { status, action_taken, resolution_notes, po_number, cost, assigned_to, notes } = req.body;
   try {
     await pool.query(`
       UPDATE building_issues SET
         status           = COALESCE($1, status),
-        resolution_notes = COALESCE($2, resolution_notes),
-        assigned_to      = COALESCE($3, assigned_to),
-        notes            = COALESCE($4, notes),
+        action_taken     = COALESCE($2, action_taken),
+        resolution_notes = COALESCE($3, resolution_notes),
+        po_number        = COALESCE($4, po_number),
+        cost             = COALESCE($5, cost),
+        assigned_to      = COALESCE($6, assigned_to),
+        notes            = COALESCE($7, notes),
         resolved_date    = CASE WHEN $1 = 'resolved' THEN CURRENT_DATE
                                 WHEN $1 IN ('open','in_progress') THEN NULL
                                 ELSE resolved_date END,
         updated_at       = NOW()
-      WHERE issue_id = $5
-    `, [status || null, resolution_notes ?? null, assigned_to ?? null, notes ?? null, id]);
+      WHERE issue_id = $8
+    `, [status || null, action_taken ?? null, resolution_notes ?? null,
+        po_number ?? null, cost ?? null, assigned_to ?? null, notes ?? null, id]);
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1050,7 +1060,8 @@ app.get('/api/equipment-issues', requireAuth, async (req, res) => {
     const { rows } = await pool.query(`
       SELECT issue_id, equipment_type, equipment_id, equipment_name,
              status, description, reported_date, resolved_date,
-             resolution_notes, entered_by, assigned_to, notes, created_at
+             action_taken, resolution_notes, po_number, cost,
+             entered_by, assigned_to, notes, created_at
       FROM equipment_issues
       WHERE $1 OR status != 'resolved'
       ORDER BY
@@ -1086,20 +1097,24 @@ app.post('/api/equipment-issues', requireAuth, async (req, res) => {
 
 app.patch('/api/equipment-issues/:id', requireAuth, async (req, res) => {
   const { id } = req.params;
-  const { status, resolution_notes, assigned_to, notes } = req.body;
+  const { status, action_taken, resolution_notes, po_number, cost, assigned_to, notes } = req.body;
   try {
     await pool.query(`
       UPDATE equipment_issues SET
         status           = COALESCE($1, status),
-        resolution_notes = COALESCE($2, resolution_notes),
-        assigned_to      = COALESCE($3, assigned_to),
-        notes            = COALESCE($4, notes),
+        action_taken     = COALESCE($2, action_taken),
+        resolution_notes = COALESCE($3, resolution_notes),
+        po_number        = COALESCE($4, po_number),
+        cost             = COALESCE($5, cost),
+        assigned_to      = COALESCE($6, assigned_to),
+        notes            = COALESCE($7, notes),
         resolved_date    = CASE WHEN $1 = 'resolved' THEN CURRENT_DATE
                                 WHEN $1 IN ('open','in_progress') THEN NULL
                                 ELSE resolved_date END,
         updated_at       = NOW()
-      WHERE issue_id = $5
-    `, [status || null, resolution_notes ?? null, assigned_to ?? null, notes ?? null, id]);
+      WHERE issue_id = $8
+    `, [status || null, action_taken ?? null, resolution_notes ?? null,
+        po_number ?? null, cost ?? null, assigned_to ?? null, notes ?? null, id]);
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
