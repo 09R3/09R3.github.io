@@ -77,7 +77,7 @@
         <div id="login-error" class="error-msg hidden"></div>
         <button type="submit" class="btn btn-primary btn-full">Sign In</button>
       </form>
-      <div class="login-version">v 0.98</div>
+      <div class="login-version">v 0.99</div>
     </div>
   </div>
 </div>
@@ -865,25 +865,64 @@
 
   <!-- ── Reports ───────────────────────────────────────────────────────────── -->
   <div id="screen-reports" class="screen-content">
-    <div class="report-toolbar">
-      <select id="report-select" class="ctrl-select" style="max-width:220px">
-        <option value="mileage">CVC Mileage</option>
-        <option value="kf-operators">KF Breakdown</option>
-      </select>
-      <div class="report-month-nav">
-        <button class="btn btn-secondary btn-sm" id="report-prev-month">&#8592;</button>
-        <span id="report-month-label" class="report-month-label"></span>
-        <button class="btn btn-secondary btn-sm" id="report-next-month">&#8594;</button>
+
+    <!-- Category tiles -->
+    <div id="report-main" class="maint-grid">
+      <div class="maint-tile" data-report-cat="vehicles">
+        <div class="maint-tile-icon">&#128665;</div>
+        <div class="maint-tile-label">Vehicles</div>
       </div>
-      <div class="report-date-range hidden" id="report-date-range">
+      <div class="maint-tile" data-report-cat="kf">
+        <div class="maint-tile-icon">&#128200;</div>
+        <div class="maint-tile-label">KF</div>
+      </div>
+      <div class="maint-tile" data-report-cat="maintenance">
+        <div class="maint-tile-icon">&#128295;</div>
+        <div class="maint-tile-label">Maintenance Issues</div>
+      </div>
+    </div>
+
+    <!-- Vehicles panel -->
+    <div id="report-panel-vehicles" class="maint-panel hidden">
+      <button class="maint-back-btn" id="report-vehicles-back">&#8249; Reports</button>
+      <div class="report-toolbar">
+        <div class="seg-group" id="vehicle-report-seg">
+          <button class="seg-btn active" data-val="mileage">CVC Mileage</button>
+          <button class="seg-btn" data-val="service">Last Service</button>
+        </div>
+        <div class="report-month-nav">
+          <button class="btn btn-secondary btn-sm" id="report-prev-month">&#8592;</button>
+          <span id="report-month-label" class="report-month-label"></span>
+          <button class="btn btn-secondary btn-sm" id="report-next-month">&#8594;</button>
+        </div>
+        <button class="btn btn-secondary btn-sm" id="report-export-btn" style="margin-left:auto">&#8615; Export</button>
+      </div>
+      <div id="report-output"></div>
+    </div>
+
+    <!-- KF panel -->
+    <div id="report-panel-kf" class="maint-panel hidden">
+      <button class="maint-back-btn" id="report-kf-back">&#8249; Reports</button>
+      <div class="report-toolbar">
+        <div class="report-month-nav">
+          <button class="btn btn-secondary btn-sm" id="kf-report-prev-month">&#8592;</button>
+          <span id="kf-report-month-label" class="report-month-label"></span>
+          <button class="btn btn-secondary btn-sm" id="kf-report-next-month">&#8594;</button>
+        </div>
         <input type="date" id="report-start-date" class="ctrl-input ctrl-input-sm">
-        <span class="report-date-sep">–</span>
+        <span class="report-date-sep">&#8211;</span>
         <input type="date" id="report-end-date" class="ctrl-input ctrl-input-sm">
       </div>
-      <button class="btn btn-secondary btn-sm" id="report-export-btn" style="margin-left:auto">&#8615; Export</button>
+      <div id="report-kf-output"></div>
     </div>
-    <div id="report-output"></div>
-  </div>
+
+    <!-- Maintenance Issues panel -->
+    <div id="report-panel-maintenance" class="maint-panel hidden">
+      <button class="maint-back-btn" id="report-maint-back">&#8249; Reports</button>
+      <div id="report-maint-output"></div>
+    </div>
+
+  </div><!-- /screen-reports -->
 
   <!-- ── Settings ─────────────────────────────────────────────────────────── -->
   <div id="screen-admin" class="screen-content">
@@ -1018,7 +1057,7 @@
       <button class="settings-back-btn">‹ Settings</button>
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value">v 0.98</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value">v 0.99</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>

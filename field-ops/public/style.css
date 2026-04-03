@@ -1250,6 +1250,16 @@ input[type="date"].ctrl-input { min-height: 44px; }
 .kf-op-bar-wrap { background: var(--surface2); border-radius: 4px; height: 8px; min-width: 80px; overflow: hidden; }
 .kf-op-bar { background: var(--accent); height: 100%; border-radius: 4px; transition: width 0.4s ease; }
 
+/* Maintenance issues report */
+.maint-issue-report-row { padding: 10px 0; border-bottom: 1px solid var(--border); }
+.maint-issue-report-row:last-child { border-bottom: none; }
+.maint-issue-report-header { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+.maint-issue-report-name { font-weight: 600; font-size: 0.9rem; flex: 1; }
+.maint-issue-report-date { font-size: 0.78rem; color: var(--text-dim); }
+.maint-issue-report-desc { font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 2px; }
+.maint-issue-report-action { font-size: 0.82rem; color: var(--text-dim); font-style: italic; }
+.maint-issue-report-meta  { font-size: 0.78rem; color: var(--text-dim); }
+
 .report-date-range {
   display: flex;
   align-items: center;

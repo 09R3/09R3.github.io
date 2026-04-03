@@ -1691,6 +1691,110 @@ app.get('/api/reports/kf-operators', requireAuth, requireRole('supervisor', 'adm
   }
 });
 
+// Vehicle last-service report
+app.get('/api/reports/vehicle-service', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        v.vehicle_id, v.vehicle_number, v.vehicle_type, v.make, v.model,
+        v.assigned_user, v.reading_type,
+        r.odometer_miles        AS current_odometer,
+        r.engine_hours          AS current_engine_hours,
+        r.reading_date          AS current_reading_date,
+        m.work_date             AS last_service_date,
+        m.work_type             AS last_service_type,
+        m.odometer_at_service,
+        m.engine_hours_at_service,
+        m.next_service_miles,
+        m.next_service_hours
+      FROM vehicles v
+      LEFT JOIN LATERAL (
+        SELECT odometer_miles, engine_hours, reading_date
+        FROM readings_vehicle_monthly
+        WHERE vehicle_id = v.vehicle_id
+        ORDER BY reading_date DESC, reading_time DESC
+        LIMIT 1
+      ) r ON true
+      LEFT JOIN LATERAL (
+        SELECT work_date, work_type, odometer_at_service,
+               engine_hours_at_service, next_service_miles, next_service_hours
+        FROM maintenance_vehicles
+        WHERE vehicle_id = v.vehicle_id
+        ORDER BY work_date DESC
+        LIMIT 1
+      ) m ON true
+      WHERE LOWER(v.status) != 'inactive' OR v.status IS NULL
+      ORDER BY
+        CASE LOWER(v.vehicle_type)
+          WHEN 'truck'           THEN 1
+          WHEN 'heavy_equipment' THEN 2
+          WHEN 'trailer'         THEN 99
+          ELSE 3
+        END,
+        v.vehicle_number
+    `);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// KF set-by-set breakdown
+app.get('/api/reports/kf-sets', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+  const { start_date, end_date } = req.query;
+  if (!start_date || !end_date) return res.status(400).json({ error: 'start_date and end_date required' });
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        ws.set_name,
+        COUNT(DISTINCT w.well_id)                                              AS total_wells,
+        COUNT(DISTINCT CASE WHEN r.well_id IS NOT NULL THEN r.well_id END)     AS wells_read
+      FROM well_sets ws
+      JOIN wells w ON w.kf_set_id = ws.set_id
+        AND (LOWER(w.status) != 'inactive' OR w.status IS NULL)
+      LEFT JOIN readings_kf_monthly r
+        ON r.well_id = w.well_id
+        AND r.reading_date BETWEEN $1 AND $2
+      GROUP BY ws.set_id, ws.set_name
+      ORDER BY ws.set_name
+    `, [start_date, end_date]);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Open maintenance issues across all three categories
+app.get('/api/reports/maintenance-issues', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT 'Wells' AS category, issue_id,
+        COALESCE(well_name, 'Unknown') AS location_name,
+        description, status, reported_date, assigned_to, action_taken
+      FROM well_issues
+      WHERE status IN ('open','in_progress')
+      UNION ALL
+      SELECT 'Buildings', issue_id,
+        TRIM(COALESCE(site_name,'') ||
+          CASE WHEN building_name IS NOT NULL THEN ' — ' || building_name ELSE '' END
+        ) AS location_name,
+        description, status, reported_date, assigned_to, action_taken
+      FROM building_issues
+      WHERE status IN ('open','in_progress')
+      UNION ALL
+      SELECT 'Equipment', issue_id,
+        COALESCE(equipment_name, equipment_type, 'Unknown') AS location_name,
+        description, status, reported_date, assigned_to, action_taken
+      FROM equipment_issues
+      WHERE status IN ('open','in_progress')
+      ORDER BY category, reported_date ASC
+    `);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Pesticides ────────────────────────────────────────────────────────────────
 
 // List pesticides (active only for operators; all for supervisor/admin)

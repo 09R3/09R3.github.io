@@ -4039,72 +4039,81 @@ async function loadPestProductList() {
 }
 
 /* ── Reports ─────────────────────────────────────────────────────────────── */
-let reportsMonth = new Date().getMonth() + 1;
-let reportsYear  = new Date().getFullYear();
-let kfStartDate  = '';
-let kfEndDate    = '';
+let reportsMonth    = new Date().getMonth() + 1;
+let reportsYear     = new Date().getFullYear();
+let kfReportMonth   = new Date().getMonth() + 1;
+let kfReportYear    = new Date().getFullYear();
+let kfStartDate     = '';
+let kfEndDate       = '';
+let vehicleReportType = 'mileage';
+let lastReportRows  = [];
 
-function kfMonthBounds() {
-  const y = reportsYear, m = reportsMonth;
-  const pad = n => String(n).padStart(2, '0');
-  const lastDay = new Date(y, m, 0).getDate();
-  kfStartDate = `${y}-${pad(m)}-01`;
-  kfEndDate   = `${y}-${pad(m)}-${pad(lastDay)}`;
-  el('report-start-date').value = kfStartDate;
-  el('report-end-date').value   = kfEndDate;
-}
-
-function syncKfDatesFromInputs() {
-  kfStartDate = el('report-start-date').value;
-  kfEndDate   = el('report-end-date').value;
-}
-
-function updateReportControls() {
-  const isKF = el('report-select').value === 'kf-operators';
-  el('report-date-range').classList.toggle('hidden', !isKF);
-}
-
+// ── Navigation ────────────────────────────────────────────────────────────────
 function initReportsScreen() {
-  updateReportsMonthLabel();
-  kfMonthBounds();
-  updateReportControls();
-  runReport();
+  // Just ensure main tile grid is visible and panels are closed
+  el('report-main').classList.remove('hidden');
+  ['vehicles','kf','maintenance'].forEach(c => el(`report-panel-${c}`).classList.add('hidden'));
 }
 
+function openReportPanel(cat) {
+  el('report-main').classList.add('hidden');
+  el(`report-panel-${cat}`).classList.remove('hidden');
+  if (cat === 'vehicles')    initVehicleReportPanel();
+  if (cat === 'kf')          initKFReportPanel();
+  if (cat === 'maintenance') initMaintenanceReportPanel();
+}
+
+function closeReportPanel() {
+  ['vehicles','kf','maintenance'].forEach(c => el(`report-panel-${c}`).classList.add('hidden'));
+  el('report-main').classList.remove('hidden');
+}
+
+el('screen-reports').addEventListener('click', e => {
+  const tile = e.target.closest('[data-report-cat]');
+  if (tile) openReportPanel(tile.dataset.reportCat);
+});
+el('report-vehicles-back').addEventListener('click', closeReportPanel);
+el('report-kf-back').addEventListener('click', closeReportPanel);
+el('report-maint-back').addEventListener('click', closeReportPanel);
+
+// ── Vehicles Panel ────────────────────────────────────────────────────────────
 function updateReportsMonthLabel() {
   const d = new Date(reportsYear, reportsMonth - 1, 1);
   el('report-month-label').textContent = d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 }
 
+function initVehicleReportPanel() {
+  updateReportsMonthLabel();
+  runVehicleReport();
+}
+
+async function runVehicleReport() {
+  el('report-export-btn').style.display = vehicleReportType === 'mileage' ? '' : 'none';
+  if (vehicleReportType === 'mileage') await renderMileageReport();
+  else                                  await renderVehicleServiceReport();
+}
+
+document.querySelectorAll('#vehicle-report-seg .seg-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#vehicle-report-seg .seg-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    vehicleReportType = btn.dataset.val;
+    runVehicleReport();
+  });
+});
+
 el('report-prev-month').addEventListener('click', () => {
   reportsMonth--;
   if (reportsMonth < 1) { reportsMonth = 12; reportsYear--; }
   updateReportsMonthLabel();
-  kfMonthBounds();
-  runReport();
+  runVehicleReport();
 });
-
 el('report-next-month').addEventListener('click', () => {
   reportsMonth++;
   if (reportsMonth > 12) { reportsMonth = 1; reportsYear++; }
   updateReportsMonthLabel();
-  kfMonthBounds();
-  runReport();
+  runVehicleReport();
 });
-
-el('report-start-date').addEventListener('change', () => { syncKfDatesFromInputs(); runReport(); });
-el('report-end-date').addEventListener('change',   () => { syncKfDatesFromInputs(); runReport(); });
-
-el('report-select').addEventListener('change', () => { updateReportControls(); runReport(); });
-
-async function runReport() {
-  const report = el('report-select').value;
-  el('report-export-btn').style.display = report === 'mileage' ? '' : 'none';
-  if (report === 'mileage')      await renderMileageReport();
-  if (report === 'kf-operators') await renderKFOperatorsReport();
-}
-
-let lastReportRows = [];
 
 function buildMileageHTML(rows, year, month) {
   const d = new Date(year, month - 1, 1);
@@ -4149,38 +4158,165 @@ async function renderMileageReport() {
   }
 }
 
-async function renderKFOperatorsReport() {
-  if (!kfStartDate || !kfEndDate) kfMonthBounds();
+async function renderVehicleServiceReport() {
   const out = el('report-output');
   out.innerHTML = '<div class="placeholder-msg">Loading…</div>';
   try {
-    const fmtDate = s => {
-      const [y, m, d] = s.split('-');
-      return new Date(+y, +m - 1, +d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    const rows = await api('GET', '/api/reports/vehicle-service');
+    const trucks = rows.filter(r => !r.reading_type || r.reading_type === 'odometer' || r.reading_type === 'both');
+    const heavy  = rows.filter(r => r.reading_type === 'hours');
+
+    const fmtOdo  = v => v != null ? Number(v).toLocaleString() + ' mi' : '—';
+    const fmtHrs  = v => v != null ? Number(v).toFixed(1) + ' hrs' : '—';
+    const fmtDate = s => s ? localDateStr(s, { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
+    const diffCell = (cur, svc) => {
+      if (cur == null || svc == null) return '<td class="report-num">—</td>';
+      const diff = Number(cur) - Number(svc);
+      const cls  = diff > 0 ? '' : '';
+      return `<td class="report-num">${Number(diff).toLocaleString()}</td>`;
     };
+    const nextCell = (cur, next) => {
+      if (next == null) return '<td class="report-num">—</td>';
+      const remaining = cur != null ? Number(next) - Number(cur) : null;
+      const remColor = remaining < 0 ? 'var(--red-light)' : 'var(--text-dim)';
+      const remText  = remaining >= 0 ? `${remaining.toLocaleString()} to go` : 'OVERDUE';
+      const rem = remaining != null ? ` <span style="color:${remColor};font-size:0.8em">(${remText})</span>` : '';
+      return `<td class="report-num">${Number(next).toLocaleString()}${rem}</td>`;
+    };
+
+    const truckRows = trucks.map(v => `<tr>
+      <td>${v.vehicle_number||''}</td>
+      <td>${fmtOdo(v.current_odometer)}<br><small style="color:var(--text-dim)">${fmtDate(v.current_reading_date)}</small></td>
+      <td>${fmtOdo(v.odometer_at_service)}<br><small style="color:var(--text-dim)">${fmtDate(v.last_service_date)}</small></td>
+      ${diffCell(v.current_odometer, v.odometer_at_service)}
+      ${nextCell(v.current_odometer, v.next_service_miles)}
+    </tr>`).join('');
+
+    const heavyRows = heavy.map(v => `<tr>
+      <td>${v.vehicle_number||''}</td>
+      <td>${fmtHrs(v.current_engine_hours)}<br><small style="color:var(--text-dim)">${fmtDate(v.current_reading_date)}</small></td>
+      <td>${fmtHrs(v.engine_hours_at_service)}<br><small style="color:var(--text-dim)">${fmtDate(v.last_service_date)}</small></td>
+      ${diffCell(v.current_engine_hours, v.engine_hours_at_service)}
+      ${nextCell(v.current_engine_hours, v.next_service_hours)}
+    </tr>`).join('');
+
+    out.innerHTML = `<div class="report-card">
+      <div class="report-title">Last Service</div>
+      <div class="report-section-title">Trucks</div>
+      ${trucks.length ? `<table class="report-table">
+        <thead><tr><th>Unit #</th><th class="report-num">Current Odo</th><th class="report-num">Service Odo</th><th class="report-num">Difference</th><th class="report-num">Next Service</th></tr></thead>
+        <tbody>${truckRows}</tbody></table>`
+      : '<div class="report-empty">No trucks.</div>'}
+      <div class="report-section-title">Heavy Equipment</div>
+      ${heavy.length ? `<table class="report-table">
+        <thead><tr><th>Unit #</th><th class="report-num">Current Hrs</th><th class="report-num">Service Hrs</th><th class="report-num">Difference</th><th class="report-num">Next Service</th></tr></thead>
+        <tbody>${heavyRows}</tbody></table>`
+      : '<div class="report-empty">No heavy equipment.</div>'}
+    </div>`;
+  } catch (err) {
+    out.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
+  }
+}
+
+// ── KF Panel ──────────────────────────────────────────────────────────────────
+function kfMonthBounds() {
+  const y = kfReportYear, m = kfReportMonth;
+  const pad = n => String(n).padStart(2, '0');
+  const lastDay = new Date(y, m, 0).getDate();
+  kfStartDate = `${y}-${pad(m)}-01`;
+  kfEndDate   = `${y}-${pad(m)}-${pad(lastDay)}`;
+  el('report-start-date').value = kfStartDate;
+  el('report-end-date').value   = kfEndDate;
+}
+
+function syncKfDatesFromInputs() {
+  kfStartDate = el('report-start-date').value;
+  kfEndDate   = el('report-end-date').value;
+}
+
+function updateKFReportMonthLabel() {
+  const d = new Date(kfReportYear, kfReportMonth - 1, 1);
+  el('kf-report-month-label').textContent = d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+}
+
+function initKFReportPanel() {
+  if (!kfStartDate) {
+    // Default to widget dates if available, else current month
+    if (kfWidgetStart && kfWidgetEnd) {
+      kfStartDate = kfWidgetStart;
+      kfEndDate   = kfWidgetEnd;
+      const [y, m] = kfWidgetStart.split('-').map(Number);
+      kfReportYear = y; kfReportMonth = m;
+      el('report-start-date').value = kfStartDate;
+      el('report-end-date').value   = kfEndDate;
+    } else {
+      kfMonthBounds();
+    }
+  }
+  updateKFReportMonthLabel();
+  renderKFReport();
+}
+
+el('kf-report-prev-month').addEventListener('click', () => {
+  kfReportMonth--;
+  if (kfReportMonth < 1) { kfReportMonth = 12; kfReportYear--; }
+  kfMonthBounds();
+  updateKFReportMonthLabel();
+  renderKFReport();
+});
+el('kf-report-next-month').addEventListener('click', () => {
+  kfReportMonth++;
+  if (kfReportMonth > 12) { kfReportMonth = 1; kfReportYear++; }
+  kfMonthBounds();
+  updateKFReportMonthLabel();
+  renderKFReport();
+});
+el('report-start-date').addEventListener('change', () => { syncKfDatesFromInputs(); renderKFReport(); });
+el('report-end-date').addEventListener('change',   () => { syncKfDatesFromInputs(); renderKFReport(); });
+
+async function renderKFReport() {
+  if (!kfStartDate || !kfEndDate) kfMonthBounds();
+  const out = el('report-kf-output');
+  out.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const fmtDate = s => localDateStr(s, { month: 'short', day: 'numeric', year: 'numeric' });
     const subtitle = kfStartDate === kfEndDate
       ? fmtDate(kfStartDate)
       : `${fmtDate(kfStartDate)} – ${fmtDate(kfEndDate)}`;
-    const { rows, distinctRead, totalWells } = await api('GET',
-      `/api/reports/kf-operators?start_date=${kfStartDate}&end_date=${kfEndDate}`);
-    if (!rows.length) {
-      out.innerHTML = `<div class="report-card">
-        <div class="report-title">KF Breakdown</div>
-        <div class="report-subtitle">${subtitle}</div>
-        <div class="report-empty">No KF readings for this period.</div>
-      </div>`;
-      return;
-    }
-    const rowsHTML = rows.map(r => {
-      const pct = totalWells > 0 ? (parseInt(r.wells_read) / totalWells * 100).toFixed(1) : '0.0';
+
+    const [{ rows, distinctRead, totalWells }, sets] = await Promise.all([
+      api('GET', `/api/reports/kf-operators?start_date=${kfStartDate}&end_date=${kfEndDate}`),
+      api('GET', `/api/reports/kf-sets?start_date=${kfStartDate}&end_date=${kfEndDate}`),
+    ]);
+
+    const completePct = totalWells > 0 ? (distinctRead / totalWells * 100).toFixed(0) : 0;
+
+    const opRowsHTML = rows.length
+      ? rows.map(r => {
+          const pct = totalWells > 0 ? (parseInt(r.wells_read) / totalWells * 100).toFixed(1) : '0.0';
+          return `<tr>
+            <td>${r.operator}</td>
+            <td class="report-num">${r.wells_read}</td>
+            <td class="report-num">${pct}%</td>
+            <td><div class="kf-op-bar-wrap"><div class="kf-op-bar" style="width:${pct}%"></div></div></td>
+          </tr>`;
+        }).join('')
+      : `<tr><td colspan="4" style="text-align:center;color:var(--text-dim)">No readings for this period</td></tr>`;
+
+    const setRowsHTML = sets.map(s => {
+      const read  = parseInt(s.wells_read);
+      const total = parseInt(s.total_wells);
+      const pct   = total > 0 ? (read / total * 100).toFixed(0) : 0;
+      const raw   = s.set_name || '';
+      const label = /^set\s/i.test(raw) ? raw : `Set ${raw}`;
       return `<tr>
-        <td>${r.operator}</td>
-        <td class="report-num">${r.wells_read}</td>
+        <td>${label}</td>
+        <td class="report-num">${read} / ${total}</td>
         <td class="report-num">${pct}%</td>
         <td><div class="kf-op-bar-wrap"><div class="kf-op-bar" style="width:${pct}%"></div></div></td>
       </tr>`;
     }).join('');
-    const completePct = totalWells > 0 ? (distinctRead / totalWells * 100).toFixed(0) : 0;
+
     out.innerHTML = `<div class="report-card">
       <div class="report-title">KF Breakdown</div>
       <div class="report-subtitle">${subtitle}</div>
@@ -4189,12 +4325,57 @@ async function renderKFOperatorsReport() {
         <span class="kf-complete-label">wells complete</span>
         <span class="kf-complete-pct">${completePct}%</span>
       </div>
-      <div class="report-section-title">Wells Read by Operator</div>
+      <div class="report-section-title">By Operator</div>
       <table class="report-table">
         <thead><tr><th>Operator</th><th class="report-num">Wells</th><th class="report-num">% of Total</th><th></th></tr></thead>
-        <tbody>${rowsHTML}</tbody>
+        <tbody>${opRowsHTML}</tbody>
+      </table>
+      <div class="report-section-title">By Set</div>
+      <table class="report-table">
+        <thead><tr><th>Set</th><th class="report-num">Complete</th><th class="report-num">%</th><th></th></tr></thead>
+        <tbody>${setRowsHTML}</tbody>
       </table>
     </div>`;
+  } catch (err) {
+    out.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
+  }
+}
+
+// ── Maintenance Issues Panel ───────────────────────────────────────────────────
+function initMaintenanceReportPanel() {
+  renderMaintenanceIssuesReport();
+}
+
+async function renderMaintenanceIssuesReport() {
+  const out = el('report-maint-output');
+  out.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const rows = await api('GET', '/api/reports/maintenance-issues');
+    const categories = ['Wells', 'Buildings', 'Equipment'];
+    let html = '<div class="report-card"><div class="report-title">Open Maintenance Issues</div>';
+    categories.forEach(cat => {
+      const issues = rows.filter(r => r.category === cat);
+      html += `<div class="report-section-title">${cat}</div>`;
+      if (!issues.length) {
+        html += '<div class="report-empty">No open issues.</div>';
+      } else {
+        issues.forEach(r => {
+          const statusCls = r.status === 'in_progress' ? 'in-progress' : 'open';
+          html += `<div class="maint-issue-report-row">
+            <div class="maint-issue-report-header">
+              <span class="status-pill ${statusCls}">${r.status.replace('_',' ')}</span>
+              <span class="maint-issue-report-name">${escHtml(r.location_name)}</span>
+              <span class="maint-issue-report-date">${localDateStr(r.reported_date, {month:'short',day:'numeric',year:'numeric'})}</span>
+            </div>
+            <div class="maint-issue-report-desc">${escHtml(r.description)}</div>
+            ${r.action_taken ? `<div class="maint-issue-report-action">Action: ${escHtml(r.action_taken)}</div>` : ''}
+            ${r.assigned_to  ? `<div class="maint-issue-report-meta">Assigned: ${escHtml(r.assigned_to)}</div>` : ''}
+          </div>`;
+        });
+      }
+    });
+    html += '</div>';
+    out.innerHTML = html;
   } catch (err) {
     out.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
   }
@@ -4301,6 +4482,10 @@ el('export-pdf-btn').addEventListener('click', () => {
     }
     if (id === 'screen-pesticides') {
       if (document.querySelector('#screen-pesticides .maint-panel:not(.hidden)')) return closePestPanel();
+      return showScreen('dashboard');
+    }
+    if (id === 'screen-reports') {
+      if (document.querySelector('#screen-reports .maint-panel:not(.hidden)')) return closeReportPanel();
       return showScreen('dashboard');
     }
     if (id === 'screen-admin') {
