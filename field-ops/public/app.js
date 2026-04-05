@@ -3591,10 +3591,13 @@ async function buildSiphonBreakerPM(pmType, def, contentEl) {
         ]);
         allPositions = posData;
         const plants = sites
-          .filter(s => /pumping plant/i.test(s.site_name))
+          .filter(s => !/o\s*&\s*m/i.test(s.site_name))
           .sort((a, b) => a.site_name.localeCompare(b.site_name));
         plantSel.innerHTML = '<option value="">— Select Pumping Plant —</option>' +
-          plants.map(s => `<option value="${s.site_id}" data-name="${s.site_name}">${escHtml(s.site_name)}</option>`).join('');
+          plants.map(s => {
+            const label = s.site_name.replace(/\bSite\b/g, 'Pumping Plant');
+            return `<option value="${s.site_id}" data-name="${label}">${escHtml(label)}</option>`;
+          }).join('');
       } catch (err) {
         plantSel.innerHTML = '<option value="">— Error loading plants —</option>';
         showToast('Could not load plants: ' + err.message, 'error');
@@ -3731,10 +3734,13 @@ async function buildAirCompressorPM(pmType, def, contentEl) {
       try {
         const sites = await api('GET', '/api/sites');
         const plants = sites
-          .filter(s => /pumping plant/i.test(s.site_name))
+          .filter(s => !/o\s*&\s*m/i.test(s.site_name))
           .sort((a, b) => a.site_name.localeCompare(b.site_name));
         plantSel.innerHTML = '<option value="">— Select Pumping Plant —</option>' +
-          plants.map(s => `<option value="${s.site_id}" data-name="${s.site_name}">${escHtml(s.site_name)}</option>`).join('');
+          plants.map(s => {
+            const label = s.site_name.replace(/\bSite\b/g, 'Pumping Plant');
+            return `<option value="${s.site_id}" data-name="${label}">${escHtml(label)}</option>`;
+          }).join('');
       } catch (err) {
         plantSel.innerHTML = '<option value="">— Error loading plants —</option>';
         showToast('Could not load plants: ' + err.message, 'error');
@@ -4729,10 +4735,12 @@ async function renderPMGridReport() {
   try {
     const { sbRecords, acRecords, positions } = await api('GET', '/api/reports/pm-grid');
 
-    // Build ordered plant list from positions (site_number for sort, site_name for key)
+    // Build ordered plant list from positions; normalize "Site N" → "Pumping Plant N"
+    const toPlantName = n => n.replace(/\bSite\b/g, 'Pumping Plant');
     const plantMap = {};
     positions.forEach(p => {
-      if (!plantMap[p.site_name]) plantMap[p.site_name] = { name: p.site_name, num: p.site_number || '' };
+      const key = toPlantName(p.site_name);
+      if (!plantMap[key]) plantMap[key] = { name: key, rawName: p.site_name, num: p.site_number || '' };
     });
     const plants = Object.values(plantMap).sort((a, b) => Number(a.num) - Number(b.num));
 
@@ -4746,7 +4754,7 @@ async function renderPMGridReport() {
       const checklist = sbRecords[plant.name]?.checklist || null;
       sbRows += `<tr><td class="pmgrid-plant-label">PP ${plant.num}</td>`;
       pumpLetters.forEach(letter => {
-        const pos = positions.find(p => p.site_name === plant.name && p.pump_letter === letter);
+        const pos = positions.find(p => p.site_name === plant.rawName && p.pump_letter === letter);
         if (!pos) { sbRows += '<td></td>'; return; }
         const val = checklist?.[`pos_${pos.position_id}`];
         let cls, text;
@@ -4756,8 +4764,8 @@ async function renderPMGridReport() {
         else                { cls = 'fail';  text = '✗'; }
         sbRows += `<td><span class="pmgrid-badge ${cls}" title="${escHtml(val?.notes||'')}">${text}</span></td>`;
       });
-      const rec = sbRecords[plant.name];
-      const recDate = rec ? localDateStr(rec.completed_date, {month:'short',day:'numeric'}) : '—';
+      const sbRec = sbRecords[plant.name];
+      const recDate = sbRec ? localDateStr(sbRec.completed_date, {month:'short',day:'numeric'}) : '—';
       sbRows += `<td class="pmgrid-date-col">${recDate}</td></tr>`;
     });
 
