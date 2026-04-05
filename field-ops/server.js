@@ -268,7 +268,8 @@ app.get('/api/pump-positions/all', requireAuth, async (req, res) => {
   }
 });
 
-
+app.get('/api/air-compressors', requireAuth, async (req, res) => {
+  const { building_id } = req.query;
   if (!building_id) return res.status(400).json({ error: 'building_id required' });
   try {
     const { rows } = await pool.query(`
