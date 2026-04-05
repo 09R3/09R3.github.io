@@ -1823,11 +1823,13 @@ app.get('/api/reports/pm-grid', requireAuth, requireRole('supervisor', 'admin'),
   try {
     const [pmRes, posRes] = await Promise.all([
       pool.query(`
-        SELECT DISTINCT ON (pm_type)
-          pm_type, completed_date, completed_time, applied_by, checklist, notes
-        FROM pm_records
-        WHERE pm_type IN ('siphon_breaker','air_compressor')
-        ORDER BY pm_type, completed_date DESC, completed_time DESC
+        SELECT DISTINCT ON (p.pm_type)
+          p.pm_type, p.completed_date, p.completed_time,
+          u.full_name AS applied_by, p.checklist, p.notes
+        FROM pm_records p
+        LEFT JOIN users u ON u.user_id = p.completed_by
+        WHERE p.pm_type IN ('siphon_breaker','air_compressor')
+        ORDER BY p.pm_type, p.completed_date DESC, p.completed_time DESC
       `),
       pool.query(`
         SELECT pp.position_id, pp.pump_letter, b.building_letter,
