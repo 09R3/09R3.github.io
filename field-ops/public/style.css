@@ -1260,6 +1260,147 @@ input[type="date"].ctrl-input { min-height: 44px; }
 .maint-issue-report-action { font-size: 0.82rem; color: var(--text-dim); font-style: italic; }
 .maint-issue-report-meta  { font-size: 0.78rem; color: var(--text-dim); }
 
+/* ── Siphon Breaker PM ───────────────────────────────────────────────────── */
+.sb-site-group { margin-bottom: 14px; }
+.sb-site-header {
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-dim);
+  padding: 8px 0 6px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 6px;
+}
+.sb-pm-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 10px;
+  align-items: start;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border-subtle, rgba(255,255,255,0.06));
+}
+.sb-pm-row:last-child { border-bottom: none; }
+.sb-check-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  min-width: 0;
+}
+.sb-loc-label {
+  font-size: 0.88rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.sb-pm-row .ctrl-input {
+  font-size: 0.82rem;
+  padding: 4px 8px;
+}
+
+/* ── Air Compressor PM ───────────────────────────────────────────────────── */
+.ac-compressor-group {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+.ac-compressor-group .sb-site-header {
+  border-bottom: none;
+  margin-bottom: 4px;
+  padding-bottom: 2px;
+}
+.ac-compressor-group .pm-check-row {
+  padding: 3px 0;
+}
+
+/* ── PM Grid Report ──────────────────────────────────────────────────────── */
+.pmgrid-section-title {
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  padding: 12px 0 6px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 10px;
+}
+.pmgrid-meta {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  margin-bottom: 12px;
+}
+.pmgrid-site-group { margin-bottom: 16px; }
+.pmgrid-site-header {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+  padding: 4px 0 6px;
+}
+.pmgrid-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border-subtle, rgba(255,255,255,0.06));
+  font-size: 0.85rem;
+}
+.pmgrid-row:last-child { border-bottom: none; }
+.pmgrid-loc { font-weight: 500; min-width: 40px; }
+.pmgrid-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.pmgrid-badge.pass  { background: rgba(76,175,80,0.2);  color: #4caf50; }
+.pmgrid-badge.fail  { background: rgba(244,67,54,0.18); color: #f44336; }
+.pmgrid-badge.note  { background: rgba(255,193,7,0.2);  color: #ffc107; }
+.pmgrid-badge.empty { background: var(--surface2); color: var(--text-muted); }
+.pmgrid-note-text   { font-size: 0.78rem; color: var(--text-dim); font-style: italic; flex: 1; }
+.pmgrid-ac-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.pmgrid-ac-card {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+}
+.pmgrid-ac-title {
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+.pmgrid-ac-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.82rem;
+  padding: 2px 0;
+}
+.pmgrid-ac-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.pmgrid-ac-dot.pass { background: #4caf50; }
+.pmgrid-ac-dot.fail { background: #f44336; }
+.pmgrid-ac-dot.empty { background: var(--border); }
+
 .report-date-range {
   display: flex;
   align-items: center;

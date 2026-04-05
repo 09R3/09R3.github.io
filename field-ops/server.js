@@ -244,8 +244,31 @@ app.get('/api/pump-positions', requireAuth, async (req, res) => {
   }
 });
 
-app.get('/api/air-compressors', requireAuth, async (req, res) => {
-  const { building_id } = req.query;
+// All pump positions grouped for siphon breaker PM
+app.get('/api/pump-positions/all', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        pp.position_id,
+        pp.pump_letter,
+        b.building_id,
+        b.building_letter,
+        s.site_id,
+        s.site_name,
+        REGEXP_REPLACE(s.site_name, '[^0-9]', '', 'g') AS site_number
+      FROM pump_positions pp
+      JOIN buildings b ON pp.building_id = b.building_id
+      JOIN sites     s ON b.site_id      = s.site_id
+      WHERE LOWER(pp.status) != 'inactive' OR pp.status IS NULL
+      ORDER BY s.site_name, b.building_letter, pp.pump_letter
+    `);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
   if (!building_id) return res.status(400).json({ error: 'building_id required' });
   try {
     const { rows } = await pool.query(`
@@ -1790,6 +1813,36 @@ app.get('/api/reports/maintenance-issues', requireAuth, requireRole('supervisor'
       ORDER BY category, reported_date ASC
     `);
     res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PM Grid report — latest siphon breaker + air compressor records + pump positions
+app.get('/api/reports/pm-grid', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+  try {
+    const [pmRes, posRes] = await Promise.all([
+      pool.query(`
+        SELECT DISTINCT ON (pm_type)
+          pm_type, completed_date, completed_time, applied_by, checklist, notes
+        FROM pm_records
+        WHERE pm_type IN ('siphon_breaker','air_compressor')
+        ORDER BY pm_type, completed_date DESC, completed_time DESC
+      `),
+      pool.query(`
+        SELECT pp.position_id, pp.pump_letter, b.building_letter,
+               s.site_name,
+               REGEXP_REPLACE(s.site_name, '[^0-9]', '', 'g') AS site_number
+        FROM pump_positions pp
+        JOIN buildings b ON pp.building_id = b.building_id
+        JOIN sites     s ON b.site_id = s.site_id
+        WHERE LOWER(pp.status) != 'inactive' OR pp.status IS NULL
+        ORDER BY s.site_name, b.building_letter, pp.pump_letter
+      `),
+    ]);
+    const records = {};
+    pmRes.rows.forEach(r => { records[r.pm_type] = r; });
+    res.json({ records, positions: posRes.rows });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

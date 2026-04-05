@@ -3360,8 +3360,21 @@ const PM_TYPES = {
       { key: 'smoke_fire',          label: 'Check status and operation of the Smoke / Fire detection systems.' },
     ],
   },
-  siphon_breaker: { title: 'Siphon Breaker PM',      stub: true },
-  air_compressor: { title: 'Air Compressor PM',       stub: true },
+  siphon_breaker: {
+    title: 'Siphon Breaker PM',
+    customType: 'siphon',
+  },
+  air_compressor: {
+    title: 'Air Compressor PM',
+    customType: 'air_compressor',
+    checks: [
+      { key: 'leak_test',     label: '5 min Leak Test' },
+      { key: 'a_building',    label: 'A Building' },
+      { key: 'b_building',    label: 'B Building' },
+      { key: 'service_truck', label: 'Service Truck' },
+      { key: 'shop',          label: 'Shop' },
+    ],
+  },
   wells:          { title: 'Wells PM',                stub: true },
   annual_pp:      { title: 'Annual Pumping Plant PM', stub: true },
 };
@@ -3423,10 +3436,13 @@ async function initPMTypePanel(pmType) {
         <div class="placeholder-msg">Checklist coming in a future update.</div>`;
       return;
     }
+    if (def.customType === 'siphon')       { buildSiphonBreakerPM(pmType, def, contentEl); return; }
+    if (def.customType === 'air_compressor') { buildAirCompressorPM(pmType, def, contentEl); return; }
     buildPMTypeStructure(pmType, def, contentEl);
   }
 
-  if (!def.stub) await loadPMHistory(pmType, contentEl);
+  if (!def.stub && !def.customType) await loadPMHistory(pmType, contentEl);
+  if (def.customType) await loadPMHistory(pmType, contentEl);
 }
 
 function buildPMTypeStructure(pmType, def, contentEl) {
@@ -3516,6 +3532,200 @@ function buildPMTypeStructure(pmType, def, contentEl) {
       submitBtn.disabled = false;
     }
   });
+}
+
+// ── Siphon Breaker PM ─────────────────────────────────────────────────────────
+async function buildSiphonBreakerPM(pmType, def, contentEl) {
+  contentEl.innerHTML = `<h2 class="panel-heading">${escHtml(def.title)}</h2>
+    <div class="issue-toolbar">
+      <button class="btn btn-primary btn-sm pm-new-btn">+ New PM</button>
+    </div>
+    <div class="pm-form-wrap" style="display:none">
+      <div class="settings-card" style="margin-bottom:14px">
+        <div class="settings-pad">
+          <div class="pm-sb-checklist"><div class="placeholder-msg">Loading pump positions…</div></div>
+          <div class="form-group" style="margin-top:10px">
+            <label>Notes</label>
+            <textarea class="ctrl-input pm-notes-field" rows="2" placeholder="Any additional comments…"></textarea>
+          </div>
+          <div class="form-row">
+            <button class="btn btn-primary pm-submit-btn">Submit PM</button>
+            <button class="btn btn-secondary pm-cancel-btn">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="report-section-title" style="margin-top:4px">History</div>
+    <div class="pm-history-area"></div>`;
+
+  const newBtn     = contentEl.querySelector('.pm-new-btn');
+  const formWrap   = contentEl.querySelector('.pm-form-wrap');
+  const listEl     = contentEl.querySelector('.pm-sb-checklist');
+  const notesEl    = contentEl.querySelector('.pm-notes-field');
+  const submitBtn  = contentEl.querySelector('.pm-submit-btn');
+  const cancelBtn  = contentEl.querySelector('.pm-cancel-btn');
+
+  let positions = [];
+
+  newBtn.addEventListener('click', async () => {
+    formWrap.style.display = '';
+    newBtn.style.display   = 'none';
+    notesEl.value          = '';
+    listEl.innerHTML       = '<div class="placeholder-msg">Loading…</div>';
+    try {
+      positions = await api('GET', '/api/pump-positions/all');
+      listEl.innerHTML = renderSiphonBreakerChecklist(positions, {});
+    } catch (err) {
+      listEl.innerHTML = `<div class="issue-empty" style="color:var(--red-light)">${err.message}</div>`;
+    }
+  });
+
+  cancelBtn.addEventListener('click', () => {
+    formWrap.style.display = 'none';
+    newBtn.style.display   = '';
+  });
+
+  submitBtn.addEventListener('click', async () => {
+    const checklist = collectSiphonChecklist(listEl, positions);
+    const notes = notesEl.value.trim();
+    submitBtn.disabled = true;
+    try {
+      await api('POST', '/api/pm-records', { pm_type: pmType, building: 'All Plants', checklist, notes });
+      formWrap.style.display = 'none';
+      newBtn.style.display   = '';
+      showToast('PM submitted');
+      loadPMLastCompleted();
+      await loadPMHistory(pmType, contentEl);
+    } catch (err) {
+      showToast(err.message, 'error');
+    } finally {
+      submitBtn.disabled = false;
+    }
+  });
+
+  await loadPMHistory(pmType, contentEl);
+}
+
+function renderSiphonBreakerChecklist(positions, existingData) {
+  // Group by site
+  const sites = {};
+  positions.forEach(p => {
+    const key = p.site_name;
+    if (!sites[key]) sites[key] = { name: p.site_name, pumps: [] };
+    sites[key].pumps.push(p);
+  });
+
+  return Object.values(sites).map(site => {
+    const rows = site.pumps.map(p => {
+      const locKey = `pos_${p.position_id}`;
+      const val    = existingData[locKey] || {};
+      const label  = `${p.building_letter}-${p.pump_letter}`;
+      return `<div class="sb-pm-row">
+        <label class="pm-check-row sb-check-label">
+          <input type="checkbox" class="sb-cb" data-pos="${p.position_id}" ${val.checked ? 'checked' : ''}>
+          <span class="sb-loc-label">${escHtml(label)}</span>
+        </label>
+        <textarea class="ctrl-input pm-textarea sb-notes" data-pos="${p.position_id}"
+                  rows="1" placeholder="Notes…">${escHtml(val.notes || '')}</textarea>
+      </div>`;
+    }).join('');
+    return `<div class="sb-site-group">
+      <div class="sb-site-header">${escHtml(site.name)}</div>
+      ${rows}
+    </div>`;
+  }).join('');
+}
+
+function collectSiphonChecklist(listEl, positions) {
+  const result = {};
+  positions.forEach(p => {
+    const cb    = listEl.querySelector(`input.sb-cb[data-pos="${p.position_id}"]`);
+    const notes = listEl.querySelector(`textarea.sb-notes[data-pos="${p.position_id}"]`);
+    result[`pos_${p.position_id}`] = {
+      checked: cb?.checked || false,
+      notes:   notes?.value.trim() || '',
+    };
+  });
+  return result;
+}
+
+// ── Air Compressor PM ─────────────────────────────────────────────────────────
+async function buildAirCompressorPM(pmType, def, contentEl) {
+  const compressors = [1, 2, 3, 4, 5, 6, 7];
+  contentEl.innerHTML = `<h2 class="panel-heading">${escHtml(def.title)}</h2>
+    <div class="issue-toolbar">
+      <button class="btn btn-primary btn-sm pm-new-btn">+ New PM</button>
+    </div>
+    <div class="pm-form-wrap" style="display:none">
+      <div class="settings-card" style="margin-bottom:14px">
+        <div class="settings-pad">
+          <div class="pm-ac-checklist">
+            ${compressors.map(n => `
+              <div class="ac-compressor-group">
+                <div class="sb-site-header">Compressor ${n}</div>
+                ${def.checks.map(c => `
+                  <label class="pm-check-row">
+                    <input type="checkbox" data-comp="${n}" data-check="${c.key}">
+                    <span>${escHtml(c.label)}</span>
+                  </label>`).join('')}
+              </div>`).join('')}
+          </div>
+          <div class="form-group" style="margin-top:10px">
+            <label>Notes</label>
+            <textarea class="ctrl-input pm-notes-field" rows="2" placeholder="Any additional comments…"></textarea>
+          </div>
+          <div class="form-row">
+            <button class="btn btn-primary pm-submit-btn">Submit PM</button>
+            <button class="btn btn-secondary pm-cancel-btn">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="report-section-title" style="margin-top:4px">History</div>
+    <div class="pm-history-area"></div>`;
+
+  const newBtn    = contentEl.querySelector('.pm-new-btn');
+  const formWrap  = contentEl.querySelector('.pm-form-wrap');
+  const notesEl   = contentEl.querySelector('.pm-notes-field');
+  const submitBtn = contentEl.querySelector('.pm-submit-btn');
+  const cancelBtn = contentEl.querySelector('.pm-cancel-btn');
+
+  newBtn.addEventListener('click', () => {
+    formWrap.style.display = '';
+    newBtn.style.display   = 'none';
+    notesEl.value = '';
+    contentEl.querySelectorAll('.pm-ac-checklist input[type="checkbox"]').forEach(cb => cb.checked = false);
+  });
+  cancelBtn.addEventListener('click', () => {
+    formWrap.style.display = 'none';
+    newBtn.style.display   = '';
+  });
+  submitBtn.addEventListener('click', async () => {
+    const checklist = {};
+    compressors.forEach(n => {
+      checklist[String(n)] = {};
+      def.checks.forEach(c => {
+        const cb = contentEl.querySelector(`input[data-comp="${n}"][data-check="${c.key}"]`);
+        checklist[String(n)][c.key] = cb?.checked || false;
+      });
+    });
+    const notes = notesEl.value.trim();
+    submitBtn.disabled = true;
+    try {
+      await api('POST', '/api/pm-records', { pm_type: pmType, building: 'All Plants', checklist, notes });
+      formWrap.style.display = 'none';
+      newBtn.style.display   = '';
+      showToast('PM submitted');
+      loadPMLastCompleted();
+      await loadPMHistory(pmType, contentEl);
+    } catch (err) {
+      showToast(err.message, 'error');
+    } finally {
+      submitBtn.disabled = false;
+    }
+  });
+
+  await loadPMHistory(pmType, contentEl);
 }
 
 // ── Checklist Rendering ───────────────────────────────────────────────────────
@@ -4052,7 +4262,7 @@ let lastReportRows  = [];
 function initReportsScreen() {
   // Just ensure main tile grid is visible and panels are closed
   el('report-main').classList.remove('hidden');
-  ['vehicles','kf','maintenance'].forEach(c => el(`report-panel-${c}`).classList.add('hidden'));
+  ['vehicles','kf','maintenance','pms'].forEach(c => el(`report-panel-${c}`).classList.add('hidden'));
 }
 
 function openReportPanel(cat) {
@@ -4061,10 +4271,11 @@ function openReportPanel(cat) {
   if (cat === 'vehicles')    initVehicleReportPanel();
   if (cat === 'kf')          initKFReportPanel();
   if (cat === 'maintenance') initMaintenanceReportPanel();
+  if (cat === 'pms')         initPMReportPanel();
 }
 
 function closeReportPanel() {
-  ['vehicles','kf','maintenance'].forEach(c => el(`report-panel-${c}`).classList.add('hidden'));
+  ['vehicles','kf','maintenance','pms'].forEach(c => el(`report-panel-${c}`).classList.add('hidden'));
   el('report-main').classList.remove('hidden');
 }
 
@@ -4075,6 +4286,7 @@ el('screen-reports').addEventListener('click', e => {
 el('report-vehicles-back').addEventListener('click', closeReportPanel);
 el('report-kf-back').addEventListener('click', closeReportPanel);
 el('report-maint-back').addEventListener('click', closeReportPanel);
+el('report-pms-back').addEventListener('click', closeReportPanel);
 
 // ── Vehicles Panel ────────────────────────────────────────────────────────────
 function updateReportsMonthLabel() {
@@ -4376,6 +4588,108 @@ async function renderMaintenanceIssuesReport() {
     });
     html += '</div>';
     out.innerHTML = html;
+  } catch (err) {
+    out.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
+  }
+}
+
+// ── PM Grid Panel ─────────────────────────────────────────────────────────────
+function initPMReportPanel() {
+  renderPMGridReport();
+}
+
+async function renderPMGridReport() {
+  const out = el('report-pms-output');
+  out.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const { records, positions } = await api('GET', '/api/reports/pm-grid');
+
+    const sbRecord = records['siphon_breaker'];
+    const acRecord = records['air_compressor'];
+    const sbData   = sbRecord?.checklist || {};
+    const acData   = acRecord?.checklist || {};
+
+    // ── Siphon Breakers ──────────────────────────────────────────────────────
+    // Group positions by site
+    const sites = {};
+    positions.forEach(p => {
+      if (!sites[p.site_name]) sites[p.site_name] = [];
+      sites[p.site_name].push(p);
+    });
+
+    const sbMeta = sbRecord
+      ? `Last PM: ${localDateStr(sbRecord.completed_date)} by ${escHtml(sbRecord.applied_by || '—')}`
+      : 'No PM on record';
+
+    let sbHtml = `<div class="pmgrid-section-title">Siphon Breakers</div>
+      <div class="pmgrid-meta">${sbMeta}</div>`;
+
+    Object.entries(sites).forEach(([siteName, pumps]) => {
+      sbHtml += `<div class="pmgrid-site-group">
+        <div class="pmgrid-site-header">${escHtml(siteName)}</div>`;
+      pumps.forEach(p => {
+        const locKey = `pos_${p.position_id}`;
+        const val    = sbData[locKey];
+        const label  = `${p.building_letter}-${p.pump_letter}`;
+        let badgeCls, badgeText, noteText = '';
+        if (!val) {
+          badgeCls  = 'empty';
+          badgeText = '—';
+        } else if (val.checked) {
+          badgeCls  = val.notes ? 'note' : 'pass';
+          badgeText = val.notes ? '!' : '✓';
+          noteText  = val.notes || '';
+        } else {
+          badgeCls  = 'fail';
+          badgeText = '✗';
+          noteText  = val.notes || '';
+        }
+        sbHtml += `<div class="pmgrid-row">
+          <span class="pmgrid-loc">${escHtml(label)}</span>
+          <span class="pmgrid-badge ${badgeCls}">${badgeText}</span>
+          ${noteText ? `<span class="pmgrid-note-text">${escHtml(noteText)}</span>` : ''}
+        </div>`;
+      });
+      sbHtml += '</div>';
+    });
+
+    if (!positions.length) {
+      sbHtml += '<div class="report-empty">No pump positions on record.</div>';
+    }
+
+    // ── Air Compressors ───────────────────────────────────────────────────────
+    const acChecks = [
+      { key: 'leak_test',     label: '5 min Leak Test' },
+      { key: 'a_building',    label: 'A Building' },
+      { key: 'b_building',    label: 'B Building' },
+      { key: 'service_truck', label: 'Service Truck' },
+      { key: 'shop',          label: 'Shop' },
+    ];
+    const acMeta = acRecord
+      ? `Last PM: ${localDateStr(acRecord.completed_date)} by ${escHtml(acRecord.applied_by || '—')}`
+      : 'No PM on record';
+
+    let acHtml = `<div class="pmgrid-section-title" style="margin-top:20px">Air Compressors</div>
+      <div class="pmgrid-meta">${acMeta}</div>
+      <div class="pmgrid-ac-grid">`;
+
+    for (let n = 1; n <= 7; n++) {
+      const compData = acData[String(n)] || {};
+      acHtml += `<div class="pmgrid-ac-card">
+        <div class="pmgrid-ac-title">Compressor ${n}</div>`;
+      acChecks.forEach(c => {
+        const checked = compData[c.key];
+        const dotCls  = checked === undefined ? 'empty' : (checked ? 'pass' : 'fail');
+        acHtml += `<div class="pmgrid-ac-check">
+          <span class="pmgrid-ac-dot ${dotCls}"></span>
+          <span>${escHtml(c.label)}</span>
+        </div>`;
+      });
+      acHtml += '</div>';
+    }
+    acHtml += '</div>';
+
+    out.innerHTML = `<div class="report-card">${sbHtml}${acHtml}</div>`;
   } catch (err) {
     out.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
   }
