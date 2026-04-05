@@ -3536,22 +3536,6 @@ function buildPMTypeStructure(pmType, def, contentEl) {
 
 // ── Siphon Breaker PM ─────────────────────────────────────────────────────────
 async function buildSiphonBreakerPM(pmType, def, contentEl) {
-  // Preload all positions and sites in parallel
-  let allPositions = [], plantOpts = '';
-  try {
-    const [posData, sites] = await Promise.all([
-      api('GET', '/api/pump-positions/all'),
-      api('GET', '/api/sites'),
-    ]);
-    allPositions = posData;
-    const plants = sites
-      .filter(s => /pumping plant/i.test(s.site_name))
-      .sort((a, b) => a.site_name.localeCompare(b.site_name));
-    plantOpts = plants.map(s =>
-      `<option value="${s.site_id}" data-name="${escHtml(s.site_name)}">${escHtml(s.site_name)}</option>`
-    ).join('');
-  } catch { /* handled below */ }
-
   contentEl.innerHTML = `<h2 class="panel-heading">${escHtml(def.title)}</h2>
     <div class="issue-toolbar">
       <button class="btn btn-primary btn-sm pm-new-btn">+ New PM</button>
@@ -3563,7 +3547,6 @@ async function buildSiphonBreakerPM(pmType, def, contentEl) {
             <label>Pumping Plant</label>
             <select class="ctrl-input pm-plant-sel">
               <option value="">— Select Pumping Plant —</option>
-              ${plantOpts}
             </select>
           </div>
           <div class="pm-sb-checklist"></div>
@@ -3589,15 +3572,36 @@ async function buildSiphonBreakerPM(pmType, def, contentEl) {
   const submitBtn = contentEl.querySelector('.pm-submit-btn');
   const cancelBtn = contentEl.querySelector('.pm-cancel-btn');
 
-  let positions = [];
+  let positions = [], allPositions = [];
 
-  newBtn.addEventListener('click', () => {
+  newBtn.addEventListener('click', async () => {
     formWrap.style.display = '';
     newBtn.style.display   = 'none';
     notesEl.value = '';
-    plantSel.value = '';
     listEl.innerHTML = '';
     positions = [];
+
+    // Populate plant dropdown on first open
+    if (plantSel.options.length <= 1) {
+      plantSel.innerHTML = '<option value="">Loading…</option>';
+      try {
+        const [posData, sites] = await Promise.all([
+          api('GET', '/api/pump-positions/all'),
+          api('GET', '/api/sites'),
+        ]);
+        allPositions = posData;
+        const plants = sites
+          .filter(s => /pumping plant/i.test(s.site_name))
+          .sort((a, b) => a.site_name.localeCompare(b.site_name));
+        plantSel.innerHTML = '<option value="">— Select Pumping Plant —</option>' +
+          plants.map(s => `<option value="${s.site_id}" data-name="${s.site_name}">${escHtml(s.site_name)}</option>`).join('');
+      } catch (err) {
+        plantSel.innerHTML = '<option value="">— Error loading plants —</option>';
+        showToast('Could not load plants: ' + err.message, 'error');
+      }
+    } else {
+      plantSel.value = '';
+    }
   });
 
   plantSel.addEventListener('change', () => {
@@ -3670,17 +3674,6 @@ function collectSiphonChecklist(listEl, positions) {
 
 // ── Air Compressor PM ─────────────────────────────────────────────────────────
 async function buildAirCompressorPM(pmType, def, contentEl) {
-  let plantOpts = '';
-  try {
-    const sites = await api('GET', '/api/sites');
-    const plants = sites
-      .filter(s => /pumping plant/i.test(s.site_name))
-      .sort((a, b) => a.site_name.localeCompare(b.site_name));
-    plantOpts = plants.map(s =>
-      `<option value="${s.site_id}" data-name="${escHtml(s.site_name)}">${escHtml(s.site_name)}</option>`
-    ).join('');
-  } catch { /* handled below */ }
-
   const bldChecks = ['a', 'b'].map(bld => `
     <div class="ac-compressor-group">
       <div class="sb-site-header">Building ${bld.toUpperCase()} Compressor</div>
@@ -3702,7 +3695,6 @@ async function buildAirCompressorPM(pmType, def, contentEl) {
             <label>Pumping Plant</label>
             <select class="ctrl-input pm-plant-sel">
               <option value="">— Select Pumping Plant —</option>
-              ${plantOpts}
             </select>
           </div>
           <div class="pm-ac-checklist">${bldChecks}</div>
@@ -3722,24 +3714,41 @@ async function buildAirCompressorPM(pmType, def, contentEl) {
 
   const newBtn    = contentEl.querySelector('.pm-new-btn');
   const formWrap  = contentEl.querySelector('.pm-form-wrap');
+  const plantSel  = contentEl.querySelector('.pm-plant-sel');
   const notesEl   = contentEl.querySelector('.pm-notes-field');
   const submitBtn = contentEl.querySelector('.pm-submit-btn');
   const cancelBtn = contentEl.querySelector('.pm-cancel-btn');
 
-  newBtn.addEventListener('click', () => {
+  newBtn.addEventListener('click', async () => {
     formWrap.style.display = '';
     newBtn.style.display   = 'none';
     notesEl.value = '';
-    contentEl.querySelector('.pm-plant-sel').value = '';
     contentEl.querySelectorAll('.pm-ac-checklist input[type="checkbox"]').forEach(cb => cb.checked = false);
+
+    // Populate plant dropdown on first open
+    if (plantSel.options.length <= 1) {
+      plantSel.innerHTML = '<option value="">Loading…</option>';
+      try {
+        const sites = await api('GET', '/api/sites');
+        const plants = sites
+          .filter(s => /pumping plant/i.test(s.site_name))
+          .sort((a, b) => a.site_name.localeCompare(b.site_name));
+        plantSel.innerHTML = '<option value="">— Select Pumping Plant —</option>' +
+          plants.map(s => `<option value="${s.site_id}" data-name="${s.site_name}">${escHtml(s.site_name)}</option>`).join('');
+      } catch (err) {
+        plantSel.innerHTML = '<option value="">— Error loading plants —</option>';
+        showToast('Could not load plants: ' + err.message, 'error');
+      }
+    } else {
+      plantSel.value = '';
+    }
   });
   cancelBtn.addEventListener('click', () => {
     formWrap.style.display = 'none';
     newBtn.style.display   = '';
   });
   submitBtn.addEventListener('click', async () => {
-    const plantSel  = contentEl.querySelector('.pm-plant-sel');
-    const opt       = plantSel.options[plantSel.selectedIndex];
+    const opt = plantSel.options[plantSel.selectedIndex];
     const plantName = opt?.dataset.name;
     if (!plantName) { showToast('Please select a pumping plant', 'error'); return; }
     const checklist = {};
