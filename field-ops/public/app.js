@@ -3369,10 +3369,10 @@ const PM_TYPES = {
     customType: 'air_compressor',
     checks: [
       { key: 'leak_test',     label: '5 min Leak Test' },
-      { key: 'a_building',    label: 'A Building' },
-      { key: 'b_building',    label: 'B Building' },
-      { key: 'service_truck', label: 'Service Truck' },
-      { key: 'shop',          label: 'Shop' },
+      { key: 'bleed_sep',     label: 'Bleed Water Separator' },
+      { key: 'auto_drain',    label: 'Test Tank Auto Drain' },
+      { key: 'high_cutoff',   label: 'Confirm High Cutoff and Low Cut On Are Correct' },
+      { key: 'inspect_leaks', label: 'Inspect for Leaks' },
     ],
   },
   wells:          { title: 'Wells PM',                stub: true },
@@ -3675,17 +3675,18 @@ function collectSiphonChecklist(listEl, positions) {
   return result;
 }
 
+// Sites without a Building B compressor
+function acHasBBuilding(label) {
+  return !/pumping plant 7|o\s*[&]\s*m|service truck/i.test(label);
+}
+
 // ── Air Compressor PM ─────────────────────────────────────────────────────────
 async function buildAirCompressorPM(pmType, def, contentEl) {
-  const bldChecks = ['a', 'b'].map(bld => `
-    <div class="ac-compressor-group">
-      <div class="sb-site-header">Building ${bld.toUpperCase()} Compressor</div>
-      ${def.checks.map(c => `
-        <label class="pm-check-row">
-          <input type="checkbox" data-bld="${bld}" data-check="${c.key}">
-          <span>${escHtml(c.label)}</span>
-        </label>`).join('')}
-    </div>`).join('');
+  const makeChecks = bld => def.checks.map(c => `
+    <label class="pm-check-row">
+      <input type="checkbox" data-bld="${bld}" data-check="${c.key}">
+      <span>${escHtml(c.label)}</span>
+    </label>`).join('');
 
   contentEl.innerHTML = `<h2 class="panel-heading">${escHtml(def.title)}</h2>
     <div class="issue-toolbar">
@@ -3695,12 +3696,21 @@ async function buildAirCompressorPM(pmType, def, contentEl) {
       <div class="settings-card" style="margin-bottom:14px">
         <div class="settings-pad">
           <div class="form-group">
-            <label>Pumping Plant</label>
+            <label>Location</label>
             <select class="ctrl-input pm-plant-sel">
-              <option value="">— Select Pumping Plant —</option>
+              <option value="">— Select Location —</option>
             </select>
           </div>
-          <div class="pm-ac-checklist">${bldChecks}</div>
+          <div class="pm-ac-checklist">
+            <div class="ac-compressor-group" data-bld-group="a">
+              <div class="sb-site-header">Building A Compressor</div>
+              ${makeChecks('a')}
+            </div>
+            <div class="ac-compressor-group" data-bld-group="b">
+              <div class="sb-site-header">Building B Compressor</div>
+              ${makeChecks('b')}
+            </div>
+          </div>
           <div class="form-group" style="margin-top:10px">
             <label>Notes</label>
             <textarea class="ctrl-input pm-notes-field" rows="2" placeholder="Any additional comments…"></textarea>
@@ -3715,40 +3725,55 @@ async function buildAirCompressorPM(pmType, def, contentEl) {
     <div class="report-section-title" style="margin-top:4px">History</div>
     <div class="pm-history-area"></div>`;
 
-  const newBtn    = contentEl.querySelector('.pm-new-btn');
-  const formWrap  = contentEl.querySelector('.pm-form-wrap');
-  const plantSel  = contentEl.querySelector('.pm-plant-sel');
-  const notesEl   = contentEl.querySelector('.pm-notes-field');
-  const submitBtn = contentEl.querySelector('.pm-submit-btn');
-  const cancelBtn = contentEl.querySelector('.pm-cancel-btn');
+  const newBtn      = contentEl.querySelector('.pm-new-btn');
+  const formWrap    = contentEl.querySelector('.pm-form-wrap');
+  const plantSel    = contentEl.querySelector('.pm-plant-sel');
+  const bGroupB     = contentEl.querySelector('[data-bld-group="b"]');
+  const notesEl     = contentEl.querySelector('.pm-notes-field');
+  const submitBtn   = contentEl.querySelector('.pm-submit-btn');
+  const cancelBtn   = contentEl.querySelector('.pm-cancel-btn');
+
+  function updateBuildingB() {
+    const label = plantSel.options[plantSel.selectedIndex]?.dataset.name || '';
+    const show  = acHasBBuilding(label);
+    bGroupB.style.display = show ? '' : 'none';
+    if (!show) bGroupB.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
+  }
 
   newBtn.addEventListener('click', async () => {
     formWrap.style.display = '';
     newBtn.style.display   = 'none';
     notesEl.value = '';
     contentEl.querySelectorAll('.pm-ac-checklist input[type="checkbox"]').forEach(cb => cb.checked = false);
+    bGroupB.style.display = 'none';
 
-    // Populate plant dropdown on first open
     if (plantSel.options.length <= 1) {
       plantSel.innerHTML = '<option value="">Loading…</option>';
       try {
         const sites = await api('GET', '/api/sites');
-        const plants = sites
-          .filter(s => !/o\s*&\s*m/i.test(s.site_name))
-          .sort((a, b) => a.site_name.localeCompare(b.site_name));
-        plantSel.innerHTML = '<option value="">— Select Pumping Plant —</option>' +
-          plants.map(s => {
+        // Sort: pumping plants first (by number), then others alphabetically
+        const sorted = sites.slice().sort((a, b) => {
+          const aNum = parseInt(a.site_name.replace(/\D/g, '')) || 999;
+          const bNum = parseInt(b.site_name.replace(/\D/g, '')) || 999;
+          return aNum - bNum || a.site_name.localeCompare(b.site_name);
+        });
+        plantSel.innerHTML = '<option value="">— Select Location —</option>' +
+          sorted.map(s => {
             const label = s.site_name.replace(/\bSite\b/g, 'Pumping Plant');
             return `<option value="${s.site_id}" data-name="${label}">${escHtml(label)}</option>`;
           }).join('');
       } catch (err) {
-        plantSel.innerHTML = '<option value="">— Error loading plants —</option>';
-        showToast('Could not load plants: ' + err.message, 'error');
+        plantSel.innerHTML = '<option value="">— Error loading locations —</option>';
+        showToast('Could not load locations: ' + err.message, 'error');
       }
     } else {
       plantSel.value = '';
+      bGroupB.style.display = 'none';
     }
   });
+
+  plantSel.addEventListener('change', updateBuildingB);
+
   cancelBtn.addEventListener('click', () => {
     formWrap.style.display = 'none';
     newBtn.style.display   = '';
@@ -3756,9 +3781,10 @@ async function buildAirCompressorPM(pmType, def, contentEl) {
   submitBtn.addEventListener('click', async () => {
     const opt = plantSel.options[plantSel.selectedIndex];
     const plantName = opt?.dataset.name;
-    if (!plantName) { showToast('Please select a pumping plant', 'error'); return; }
+    if (!plantName) { showToast('Please select a location', 'error'); return; }
+    const hasBBld = acHasBBuilding(plantName);
     const checklist = {};
-    ['a', 'b'].forEach(bld => {
+    ['a', ...(hasBBld ? ['b'] : [])].forEach(bld => {
       checklist[bld] = {};
       def.checks.forEach(c => {
         const cb = contentEl.querySelector(`input[data-bld="${bld}"][data-check="${c.key}"]`);
