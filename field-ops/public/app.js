@@ -2878,16 +2878,191 @@ document.querySelectorAll('.settings-back-btn').forEach(btn => {
 
 el('settings-panel-tools').addEventListener('click', e => {
   const btn = e.target.closest('[data-tool]');
-  if (btn) {
-    document.querySelectorAll('.settings-panel').forEach(p => p.classList.add('hidden'));
-    el('settings-panel-tools-' + btn.dataset.tool).classList.remove('hidden');
-  }
+  if (btn && btn.dataset.tool === 'exif') openExifTool();
 });
 
 el('exif-back-btn').addEventListener('click', () => {
-  document.querySelectorAll('.settings-panel').forEach(p => p.classList.add('hidden'));
-  el('settings-panel-tools').classList.remove('hidden');
+  el('exif-tool-overlay').classList.add('hidden');
 });
+
+// ── EXIF Tool ─────────────────────────────────────────────────────────────────
+(function () {
+  let exifRows = [], exifFields = [], exifActive = new Set();
+  let exifLibLoaded = false;
+
+  function loadExifLib() {
+    if (exifLibLoaded || window.EXIF) { exifLibLoaded = true; return Promise.resolve(); }
+    return new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/exif-js/2.3.0/exif.min.js';
+      s.onload = () => { exifLibLoaded = true; resolve(); };
+      s.onerror = reject;
+      document.head.appendChild(s);
+    });
+  }
+
+  window.openExifTool = async function () {
+    el('exif-tool-overlay').classList.remove('hidden');
+    try { await loadExifLib(); } catch { showToast('Could not load EXIF library', 'error'); }
+  };
+
+  function gpsDD(coords, ref) {
+    if (!Array.isArray(coords) || coords.length < 3) return '';
+    const dd = coords[0] + coords[1] / 60 + coords[2] / 3600;
+    return ((ref === 'S' || ref === 'W') ? -dd : dd).toFixed(6);
+  }
+
+  const FIELDS = {
+    Make:'Make', Model:'Model', Software:'Software',
+    DateTimeOriginal:'Date Taken', DateTime:'Date/Time',
+    ExposureTime:'Exposure', FNumber:'F-Number', ISOSpeedRatings:'ISO',
+    FocalLength:'Focal Length', FocalLengthIn35mmFilm:'Focal (35mm)',
+    Flash:'Flash', WhiteBalance:'White Balance', ExposureMode:'Exp Mode',
+    PixelXDimension:'Width', PixelYDimension:'Height',
+    Orientation:'Orientation', GPSLatitude:'Latitude', GPSLongitude:'Longitude',
+    GPSAltitude:'Altitude (m)', GPSSpeed:'GPS Speed', GPSDateStamp:'GPS Date',
+    LensModel:'Lens', MeteringMode:'Metering', SceneCaptureType:'Scene',
+    ColorSpace:'Color Space', UserComment:'Comment', ImageDescription:'Description',
+  };
+  const SKIP = new Set(['GPSLatitudeRef','GPSLongitudeRef','GPSAltitudeRef','GPSSpeedRef',
+                        'GPSImgDirectionRef','GPSMapDatum','GPSVersionID']);
+
+  function fmtVal(key, val, allData) {
+    if (val === undefined || val === null || val === '') return '';
+    if (key === 'ExposureTime') return val < 1 ? `1/${Math.round(1/val)}s` : `${val}s`;
+    if (key === 'FNumber') return `f/${val}`;
+    if (key === 'FocalLength' || key === 'FocalLengthIn35mmFilm') return `${val}mm`;
+    if (key === 'GPSLatitude')  return gpsDD(val, allData.GPSLatitudeRef  || 'N');
+    if (key === 'GPSLongitude') return gpsDD(val, allData.GPSLongitudeRef || 'E');
+    if (Array.isArray(val)) return val.join(', ');
+    return String(val);
+  }
+
+  function readExif(file) {
+    return new Promise(resolve => {
+      EXIF.getData(file, function () {
+        const data = EXIF.getAllTags(this);
+        const row = {
+          'Filename':  file.name,
+          'File Size': (file.size / 1024).toFixed(1) + ' KB',
+          'File Type': file.type,
+        };
+        for (const key of Object.keys(FIELDS)) {
+          if (data[key] !== undefined) row[FIELDS[key]] = fmtVal(key, data[key], data);
+        }
+        resolve(row);
+      });
+    });
+  }
+
+  function mergeFields(rows) {
+    const seen = new Set(), out = [];
+    for (const r of rows) for (const k of Object.keys(r)) if (!seen.has(k)) { seen.add(k); out.push(k); }
+    return out;
+  }
+
+  function renderTable() {
+    const wrap = el('exif-table-wrap');
+    const tbl  = el('exif-table');
+    if (!exifRows.length) { wrap.classList.add('hidden'); return; }
+    const cols = exifFields.filter(f => exifActive.has(f));
+    let head = '<thead><tr>' + cols.map(f => `<th>${escHtml(f)}</th>`).join('') + '</tr></thead>';
+    let body = '<tbody>' + exifRows.map(row =>
+      '<tr>' + cols.map(f => {
+        const v = row[f] || '';
+        return v ? `<td title="${escHtml(v)}">${escHtml(v)}</td>` : '<td class="na">—</td>';
+      }).join('') + '</tr>'
+    ).join('') + '</tbody>';
+    tbl.innerHTML = head + body;
+    wrap.classList.remove('hidden');
+  }
+
+  function renderChips() {
+    const box = el('exif-chips');
+    box.innerHTML = '';
+    const all = document.createElement('span');
+    all.className = 'exif-chip chip-all';
+    all.textContent = 'All / None';
+    all.addEventListener('click', () => {
+      if (exifFields.some(f => exifActive.has(f))) exifActive.clear();
+      else exifFields.forEach(f => exifActive.add(f));
+      renderChips(); renderTable(); updateStats();
+    });
+    box.appendChild(all);
+    exifFields.forEach(f => {
+      const c = document.createElement('span');
+      c.className = 'exif-chip' + (exifActive.has(f) ? ' active' : '');
+      c.textContent = f;
+      c.addEventListener('click', () => {
+        exifActive[exifActive.has(f) ? 'delete' : 'add'](f);
+        c.classList.toggle('active');
+        renderTable(); updateStats();
+      });
+      box.appendChild(c);
+    });
+    box.classList.remove('hidden');
+  }
+
+  function updateStats() {
+    el('exif-stat-count').textContent = exifRows.length;
+    const gpsCount = exifRows.filter(r => r['Latitude']).length;
+    el('exif-stat-gps').textContent = gpsCount;
+    el('exif-export-btn').style.display = exifRows.length ? '' : 'none';
+  }
+
+  async function processFiles(files) {
+    if (!files.length) return;
+    const progWrap = el('exif-progress-wrap');
+    const progBar  = el('exif-progress-bar');
+    progWrap.classList.remove('hidden');
+    progBar.style.width = '0%';
+    const newRows = [];
+    for (let i = 0; i < files.length; i++) {
+      newRows.push(await readExif(files[i]));
+      progBar.style.width = ((i + 1) / files.length * 100) + '%';
+    }
+    exifRows   = [...exifRows, ...newRows];
+    exifFields = mergeFields(exifRows);
+    exifActive = new Set(exifFields);
+    setTimeout(() => progWrap.classList.add('hidden'), 500);
+    el('exif-stats').classList.remove('hidden');
+    renderChips(); renderTable(); updateStats();
+  }
+
+  function exportCSV() {
+    if (!exifRows.length) return;
+    const cols = exifFields.filter(f => exifActive.has(f));
+    const esc  = v => `"${String(v).replace(/"/g, '""')}"`;
+    let csv = cols.map(esc).join(',') + '\n';
+    for (const row of exifRows) csv += cols.map(f => esc(row[f] || '')).join(',') + '\n';
+    const a = Object.assign(document.createElement('a'), {
+      href: URL.createObjectURL(new Blob([csv], { type: 'text/csv' })),
+      download: `exif_${new Date().toISOString().slice(0,10)}.csv`,
+    });
+    a.click(); URL.revokeObjectURL(a.href);
+  }
+
+  const dropzone = el('exif-dropzone');
+  const fileInput = el('exif-file-input');
+
+  fileInput.addEventListener('change', e => processFiles([...e.target.files]));
+  dropzone.addEventListener('dragover',  e => { e.preventDefault(); dropzone.classList.add('drag-over'); });
+  dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag-over'));
+  dropzone.addEventListener('drop', e => {
+    e.preventDefault(); dropzone.classList.remove('drag-over');
+    processFiles([...e.dataTransfer.files].filter(f => f.type.startsWith('image/')));
+  });
+  el('exif-export-btn').addEventListener('click', exportCSV);
+  el('exif-filter-btn').addEventListener('click', () => el('exif-chips').classList.toggle('hidden'));
+  el('exif-clear-btn').addEventListener('click', () => {
+    exifRows = []; exifFields = []; exifActive.clear();
+    el('exif-stats').classList.add('hidden');
+    el('exif-chips').classList.add('hidden');
+    el('exif-table-wrap').classList.add('hidden');
+    el('exif-export-btn').style.display = 'none';
+    fileInput.value = '';
+  });
+})();
 
 // Change password
 el('pw-save-btn').addEventListener('click', async () => {
