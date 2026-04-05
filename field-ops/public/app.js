@@ -3536,6 +3536,22 @@ function buildPMTypeStructure(pmType, def, contentEl) {
 
 // ── Siphon Breaker PM ─────────────────────────────────────────────────────────
 async function buildSiphonBreakerPM(pmType, def, contentEl) {
+  // Preload all positions and sites in parallel
+  let allPositions = [], plantOpts = '';
+  try {
+    const [posData, sites] = await Promise.all([
+      api('GET', '/api/pump-positions/all'),
+      api('GET', '/api/sites'),
+    ]);
+    allPositions = posData;
+    const plants = sites
+      .filter(s => /pumping plant/i.test(s.site_name))
+      .sort((a, b) => a.site_name.localeCompare(b.site_name));
+    plantOpts = plants.map(s =>
+      `<option value="${s.site_id}" data-name="${escHtml(s.site_name)}">${escHtml(s.site_name)}</option>`
+    ).join('');
+  } catch { /* handled below */ }
+
   contentEl.innerHTML = `<h2 class="panel-heading">${escHtml(def.title)}</h2>
     <div class="issue-toolbar">
       <button class="btn btn-primary btn-sm pm-new-btn">+ New PM</button>
@@ -3543,7 +3559,14 @@ async function buildSiphonBreakerPM(pmType, def, contentEl) {
     <div class="pm-form-wrap" style="display:none">
       <div class="settings-card" style="margin-bottom:14px">
         <div class="settings-pad">
-          <div class="pm-sb-checklist"><div class="placeholder-msg">Loading pump positions…</div></div>
+          <div class="form-group">
+            <label>Pumping Plant</label>
+            <select class="ctrl-input pm-plant-sel">
+              <option value="">— Select Pumping Plant —</option>
+              ${plantOpts}
+            </select>
+          </div>
+          <div class="pm-sb-checklist"></div>
           <div class="form-group" style="margin-top:10px">
             <label>Notes</label>
             <textarea class="ctrl-input pm-notes-field" rows="2" placeholder="Any additional comments…"></textarea>
@@ -3558,26 +3581,32 @@ async function buildSiphonBreakerPM(pmType, def, contentEl) {
     <div class="report-section-title" style="margin-top:4px">History</div>
     <div class="pm-history-area"></div>`;
 
-  const newBtn     = contentEl.querySelector('.pm-new-btn');
-  const formWrap   = contentEl.querySelector('.pm-form-wrap');
-  const listEl     = contentEl.querySelector('.pm-sb-checklist');
-  const notesEl    = contentEl.querySelector('.pm-notes-field');
-  const submitBtn  = contentEl.querySelector('.pm-submit-btn');
-  const cancelBtn  = contentEl.querySelector('.pm-cancel-btn');
+  const newBtn    = contentEl.querySelector('.pm-new-btn');
+  const formWrap  = contentEl.querySelector('.pm-form-wrap');
+  const plantSel  = contentEl.querySelector('.pm-plant-sel');
+  const listEl    = contentEl.querySelector('.pm-sb-checklist');
+  const notesEl   = contentEl.querySelector('.pm-notes-field');
+  const submitBtn = contentEl.querySelector('.pm-submit-btn');
+  const cancelBtn = contentEl.querySelector('.pm-cancel-btn');
 
   let positions = [];
 
-  newBtn.addEventListener('click', async () => {
+  newBtn.addEventListener('click', () => {
     formWrap.style.display = '';
     newBtn.style.display   = 'none';
-    notesEl.value          = '';
-    listEl.innerHTML       = '<div class="placeholder-msg">Loading…</div>';
-    try {
-      positions = await api('GET', '/api/pump-positions/all');
-      listEl.innerHTML = renderSiphonBreakerChecklist(positions, {});
-    } catch (err) {
-      listEl.innerHTML = `<div class="issue-empty" style="color:var(--red-light)">${err.message}</div>`;
-    }
+    notesEl.value = '';
+    plantSel.value = '';
+    listEl.innerHTML = '';
+    positions = [];
+  });
+
+  plantSel.addEventListener('change', () => {
+    const siteId = plantSel.value;
+    if (!siteId) { listEl.innerHTML = ''; positions = []; return; }
+    positions = allPositions.filter(p => String(p.site_id) === String(siteId));
+    listEl.innerHTML = positions.length
+      ? renderSiphonBreakerChecklist(positions)
+      : '<div class="issue-empty">No pump positions at this plant.</div>';
   });
 
   cancelBtn.addEventListener('click', () => {
@@ -3586,11 +3615,15 @@ async function buildSiphonBreakerPM(pmType, def, contentEl) {
   });
 
   submitBtn.addEventListener('click', async () => {
+    const opt = plantSel.options[plantSel.selectedIndex];
+    const plantName = opt?.dataset.name;
+    if (!plantName) { showToast('Please select a pumping plant', 'error'); return; }
+    if (!positions.length) { showToast('No pump positions loaded', 'error'); return; }
     const checklist = collectSiphonChecklist(listEl, positions);
     const notes = notesEl.value.trim();
     submitBtn.disabled = true;
     try {
-      await api('POST', '/api/pm-records', { pm_type: pmType, building: 'All Plants', checklist, notes });
+      await api('POST', '/api/pm-records', { pm_type: pmType, building: plantName, checklist, notes });
       formWrap.style.display = 'none';
       newBtn.style.display   = '';
       showToast('PM submitted');
@@ -3606,32 +3639,18 @@ async function buildSiphonBreakerPM(pmType, def, contentEl) {
   await loadPMHistory(pmType, contentEl);
 }
 
-function renderSiphonBreakerChecklist(positions, existingData) {
-  // Group by site
-  const sites = {};
-  positions.forEach(p => {
-    const key = p.site_name;
-    if (!sites[key]) sites[key] = { name: p.site_name, pumps: [] };
-    sites[key].pumps.push(p);
-  });
-
-  return Object.values(sites).map(site => {
-    const rows = site.pumps.map(p => {
-      const locKey = `pos_${p.position_id}`;
-      const val    = existingData[locKey] || {};
-      const label  = `${p.building_letter}-${p.pump_letter}`;
-      return `<div class="sb-pm-row">
-        <label class="pm-check-row sb-check-label">
-          <input type="checkbox" class="sb-cb" data-pos="${p.position_id}" ${val.checked ? 'checked' : ''}>
-          <span class="sb-loc-label">${escHtml(label)}</span>
-        </label>
-        <textarea class="ctrl-input pm-textarea sb-notes" data-pos="${p.position_id}"
-                  rows="1" placeholder="Notes…">${escHtml(val.notes || '')}</textarea>
-      </div>`;
-    }).join('');
-    return `<div class="sb-site-group">
-      <div class="sb-site-header">${escHtml(site.name)}</div>
-      ${rows}
+function renderSiphonBreakerChecklist(positions, existingData = {}) {
+  return positions.map(p => {
+    const locKey = `pos_${p.position_id}`;
+    const val    = existingData[locKey] || {};
+    const label  = `${p.site_number}${p.pump_letter}`;
+    return `<div class="sb-pm-row">
+      <label class="pm-check-row sb-check-label">
+        <input type="checkbox" class="sb-cb" data-pos="${p.position_id}" ${val.checked ? 'checked' : ''}>
+        <span class="sb-loc-label">${escHtml(label)}</span>
+      </label>
+      <textarea class="ctrl-input pm-textarea sb-notes" data-pos="${p.position_id}"
+                rows="1" placeholder="Notes…">${escHtml(val.notes || '')}</textarea>
     </div>`;
   }).join('');
 }
@@ -3651,7 +3670,27 @@ function collectSiphonChecklist(listEl, positions) {
 
 // ── Air Compressor PM ─────────────────────────────────────────────────────────
 async function buildAirCompressorPM(pmType, def, contentEl) {
-  const compressors = [1, 2, 3, 4, 5, 6, 7];
+  let plantOpts = '';
+  try {
+    const sites = await api('GET', '/api/sites');
+    const plants = sites
+      .filter(s => /pumping plant/i.test(s.site_name))
+      .sort((a, b) => a.site_name.localeCompare(b.site_name));
+    plantOpts = plants.map(s =>
+      `<option value="${s.site_id}" data-name="${escHtml(s.site_name)}">${escHtml(s.site_name)}</option>`
+    ).join('');
+  } catch { /* handled below */ }
+
+  const bldChecks = ['a', 'b'].map(bld => `
+    <div class="ac-compressor-group">
+      <div class="sb-site-header">Building ${bld.toUpperCase()} Compressor</div>
+      ${def.checks.map(c => `
+        <label class="pm-check-row">
+          <input type="checkbox" data-bld="${bld}" data-check="${c.key}">
+          <span>${escHtml(c.label)}</span>
+        </label>`).join('')}
+    </div>`).join('');
+
   contentEl.innerHTML = `<h2 class="panel-heading">${escHtml(def.title)}</h2>
     <div class="issue-toolbar">
       <button class="btn btn-primary btn-sm pm-new-btn">+ New PM</button>
@@ -3659,17 +3698,14 @@ async function buildAirCompressorPM(pmType, def, contentEl) {
     <div class="pm-form-wrap" style="display:none">
       <div class="settings-card" style="margin-bottom:14px">
         <div class="settings-pad">
-          <div class="pm-ac-checklist">
-            ${compressors.map(n => `
-              <div class="ac-compressor-group">
-                <div class="sb-site-header">Compressor ${n}</div>
-                ${def.checks.map(c => `
-                  <label class="pm-check-row">
-                    <input type="checkbox" data-comp="${n}" data-check="${c.key}">
-                    <span>${escHtml(c.label)}</span>
-                  </label>`).join('')}
-              </div>`).join('')}
+          <div class="form-group">
+            <label>Pumping Plant</label>
+            <select class="ctrl-input pm-plant-sel">
+              <option value="">— Select Pumping Plant —</option>
+              ${plantOpts}
+            </select>
           </div>
+          <div class="pm-ac-checklist">${bldChecks}</div>
           <div class="form-group" style="margin-top:10px">
             <label>Notes</label>
             <textarea class="ctrl-input pm-notes-field" rows="2" placeholder="Any additional comments…"></textarea>
@@ -3694,6 +3730,7 @@ async function buildAirCompressorPM(pmType, def, contentEl) {
     formWrap.style.display = '';
     newBtn.style.display   = 'none';
     notesEl.value = '';
+    contentEl.querySelector('.pm-plant-sel').value = '';
     contentEl.querySelectorAll('.pm-ac-checklist input[type="checkbox"]').forEach(cb => cb.checked = false);
   });
   cancelBtn.addEventListener('click', () => {
@@ -3701,18 +3738,22 @@ async function buildAirCompressorPM(pmType, def, contentEl) {
     newBtn.style.display   = '';
   });
   submitBtn.addEventListener('click', async () => {
+    const plantSel  = contentEl.querySelector('.pm-plant-sel');
+    const opt       = plantSel.options[plantSel.selectedIndex];
+    const plantName = opt?.dataset.name;
+    if (!plantName) { showToast('Please select a pumping plant', 'error'); return; }
     const checklist = {};
-    compressors.forEach(n => {
-      checklist[String(n)] = {};
+    ['a', 'b'].forEach(bld => {
+      checklist[bld] = {};
       def.checks.forEach(c => {
-        const cb = contentEl.querySelector(`input[data-comp="${n}"][data-check="${c.key}"]`);
-        checklist[String(n)][c.key] = cb?.checked || false;
+        const cb = contentEl.querySelector(`input[data-bld="${bld}"][data-check="${c.key}"]`);
+        checklist[bld][c.key] = cb?.checked || false;
       });
     });
     const notes = notesEl.value.trim();
     submitBtn.disabled = true;
     try {
-      await api('POST', '/api/pm-records', { pm_type: pmType, building: 'All Plants', checklist, notes });
+      await api('POST', '/api/pm-records', { pm_type: pmType, building: plantName, checklist, notes });
       formWrap.style.display = 'none';
       newBtn.style.display   = '';
       showToast('PM submitted');
@@ -3819,8 +3860,21 @@ async function loadPMHistory(pmType, contentEl) {
     histEl.innerHTML = rows.map(r => {
       const d  = localDateStr(r.completed_date, { month: 'short', day: 'numeric', year: 'numeric' });
       const t  = r.completed_time?.slice(0, 5) || '';
-      const totalItems   = def.items.filter(i => !i.type || i.type !== 'text').length;
-      const checkedCount = Object.values(r.checklist).filter(v => v === true || v?.checked === true).length;
+      let totalItems, checkedCount;
+      if (def.customType === 'siphon') {
+        const vals = Object.values(r.checklist);
+        totalItems   = vals.length;
+        checkedCount = vals.filter(v => v?.checked === true).length;
+      } else if (def.customType === 'air_compressor') {
+        let tot = 0, done = 0;
+        Object.values(r.checklist).forEach(comp => {
+          if (comp && typeof comp === 'object') Object.values(comp).forEach(v => { tot++; if (v === true) done++; });
+        });
+        totalItems = tot; checkedCount = done;
+      } else {
+        totalItems   = def.items.filter(i => !i.type || i.type !== 'text').length;
+        checkedCount = Object.values(r.checklist).filter(v => v === true || v?.checked === true).length;
+      }
       return `<div class="pm-history-item">
         <div class="pm-history-header">
           <span class="pm-history-date">${d}${t ? ' · ' + t : ''}</span>
@@ -3854,6 +3908,40 @@ el('pm-view-modal').addEventListener('click', e => {
   if (e.target === el('pm-view-modal')) el('pm-view-modal').classList.add('hidden');
 });
 
+function renderSBRecordView(record) {
+  const entries = Object.entries(record.checklist);
+  if (!entries.length) return '<div class="issue-empty">No checklist data.</div>';
+  return entries.map(([, val]) => {
+    const sym = val.checked ? '✓' : '✗';
+    const cls = val.checked ? 'pass' : 'fail';
+    return `<div class="pm-view-row">
+      <span class="pv-loc ${cls}">${sym}</span>
+      ${val.notes ? `<span class="pv-note">${escHtml(val.notes)}</span>` : ''}
+    </div>`;
+  }).join('');
+}
+
+function renderACRecordView(record, def) {
+  const cl = record.checklist || {};
+  const checks = def.checks || [];
+  return ['a', 'b'].map(bld => {
+    const data = cl[bld] || {};
+    const rows = checks.map(c => {
+      const v = data[c.key];
+      const dotCls = v === true ? 'pass' : (v === false ? 'fail' : 'empty');
+      const sym    = v === true ? '✓'    : (v === false ? '✗'    : '—');
+      return `<div class="pm-view-row">
+        <span class="pv-loc ${dotCls}">${sym}</span>
+        <span>${escHtml(c.label)}</span>
+      </div>`;
+    }).join('');
+    return `<div style="margin-bottom:10px">
+      <div style="font-weight:700;font-size:0.82rem;margin-bottom:4px">Building ${bld.toUpperCase()} Compressor</div>
+      ${rows}
+    </div>`;
+  }).join('');
+}
+
 function showPMRecord(record, def) {
   const d = localDateStr(record.completed_date, { month: 'long', day: 'numeric', year: 'numeric' });
   const t = record.completed_time?.slice(0, 5) || '';
@@ -3864,9 +3952,12 @@ function showPMRecord(record, def) {
       <span>${d}${t ? ' · ' + t : ''}</span>
       <span>${escHtml(record.completed_by_name || 'Unknown')}</span>
     </div>
-    <div class="pm-view-list">${renderChecklistItems(def, record.building, record.checklist)}</div>
+    <div class="pm-view-list">${
+      def.customType === 'siphon'        ? renderSBRecordView(record) :
+      def.customType === 'air_compressor'? renderACRecordView(record, def) :
+      renderChecklistItems(def, record.building, record.checklist)
+    }</div>
     ${record.notes ? `<div class="pm-view-notes"><strong>Notes:</strong> ${escHtml(record.notes)}</div>` : ''}`;
-  // Disable all inputs in view mode
   el('pm-view-modal-body').querySelectorAll('input').forEach(i => i.disabled = true);
   el('pm-view-modal').classList.remove('hidden');
 }
@@ -3877,6 +3968,31 @@ function exportPMRecordAsPDF(record, def) {
   if (!w) { showToast('Allow pop-ups to export PDF', 'error'); return; }
   const d = localDateStr(record.completed_date, { month: 'long', day: 'numeric', year: 'numeric' });
   const t = record.completed_time?.slice(0, 5) || '';
+  if (def.customType) {
+    const body = def.customType === 'siphon' ? renderSBRecordView(record) : renderACRecordView(record, def);
+    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>${escHtml(def.title)} — ${d}</title>
+<style>body{font-family:Arial,sans-serif;font-size:12px;margin:20px 40px;color:#000}
+h1{font-size:14px;margin:0 0 2px}.sub{font-size:11px;color:#555;margin:0 0 12px}
+table{border-collapse:collapse;margin-bottom:14px}td{padding:2px 14px 2px 0}
+.pm-view-row{display:flex;gap:8px;padding:4px 0;border-bottom:1px solid #eee}
+.pv-loc{font-weight:600;min-width:40px}.pv-note{color:#555;font-style:italic}
+.pass{color:#388e3c}.fail{color:#d32f2f}.ac-group{margin-bottom:12px}
+.ac-title{font-weight:700;font-size:11px;text-transform:uppercase;margin-bottom:4px}
+.ac-row{display:flex;gap:6px;padding:2px 0}.ac-dot{width:10px;height:10px;border-radius:50%;margin-top:2px}
+.ac-dot.pass{background:#388e3c}.ac-dot.fail{background:#d32f2f}.ac-dot.empty{background:#ccc}
+@media print{body{margin:10mm 15mm}}</style></head><body>
+<h1>${escHtml(def.title)}</h1>
+<table><tr><td><strong>Location:</strong></td><td>${escHtml(record.building||'—')}</td>
+<td><strong>Date:</strong></td><td>${d}${t?' · '+t:''}</td>
+<td><strong>By:</strong></td><td>${escHtml(record.completed_by_name||'—')}</td></tr></table>
+${body}
+${record.notes?`<div style="margin-top:14px;border-top:1px solid #ccc;padding-top:10px"><strong>Notes:</strong><br>${escHtml(record.notes).replace(/\n/g,'<br>')}</div>`:''}
+</body></html>`);
+    w.document.close();
+    setTimeout(() => w.print(), 400);
+    return;
+  }
   let itemNum = 0;
   const itemsHTML = def.items.map(item => {
     if (item.condBuilding && item.condBuilding !== record.building) return '';
@@ -4602,62 +4718,47 @@ async function renderPMGridReport() {
   const out = el('report-pms-output');
   out.innerHTML = '<div class="placeholder-msg">Loading…</div>';
   try {
-    const { records, positions } = await api('GET', '/api/reports/pm-grid');
+    const { sbRecords, acRecords, positions } = await api('GET', '/api/reports/pm-grid');
 
-    const sbRecord = records['siphon_breaker'];
-    const acRecord = records['air_compressor'];
-    const sbData   = sbRecord?.checklist || {};
-    const acData   = acRecord?.checklist || {};
-
-    // ── Siphon Breakers ──────────────────────────────────────────────────────
-    // Group positions by site
-    const sites = {};
+    // Build ordered plant list from positions (site_number for sort, site_name for key)
+    const plantMap = {};
     positions.forEach(p => {
-      if (!sites[p.site_name]) sites[p.site_name] = [];
-      sites[p.site_name].push(p);
+      if (!plantMap[p.site_name]) plantMap[p.site_name] = { name: p.site_name, num: p.site_number || '' };
     });
+    const plants = Object.values(plantMap).sort((a, b) => Number(a.num) - Number(b.num));
 
-    const sbMeta = sbRecord
-      ? `Last PM: ${localDateStr(sbRecord.completed_date)} by ${escHtml(sbRecord.applied_by || '—')}`
-      : 'No PM on record';
+    // All unique pump letters sorted
+    const pumpLetters = [...new Set(positions.map(p => p.pump_letter))].sort();
 
-    let sbHtml = `<div class="pmgrid-section-title">Siphon Breakers</div>
-      <div class="pmgrid-meta">${sbMeta}</div>`;
-
-    Object.entries(sites).forEach(([siteName, pumps]) => {
-      sbHtml += `<div class="pmgrid-site-group">
-        <div class="pmgrid-site-header">${escHtml(siteName)}</div>`;
-      pumps.forEach(p => {
-        const locKey = `pos_${p.position_id}`;
-        const val    = sbData[locKey];
-        const label  = `${p.building_letter}-${p.pump_letter}`;
-        let badgeCls, badgeText, noteText = '';
-        if (!val) {
-          badgeCls  = 'empty';
-          badgeText = '—';
-        } else if (val.checked) {
-          badgeCls  = val.notes ? 'note' : 'pass';
-          badgeText = val.notes ? '!' : '✓';
-          noteText  = val.notes || '';
-        } else {
-          badgeCls  = 'fail';
-          badgeText = '✗';
-          noteText  = val.notes || '';
-        }
-        sbHtml += `<div class="pmgrid-row">
-          <span class="pmgrid-loc">${escHtml(label)}</span>
-          <span class="pmgrid-badge ${badgeCls}">${badgeText}</span>
-          ${noteText ? `<span class="pmgrid-note-text">${escHtml(noteText)}</span>` : ''}
-        </div>`;
+    // ── Siphon Breakers: rows = plants, columns = pump letters ───────────────
+    const sbCols = pumpLetters.map(l => `<th class="pmgrid-th">${l}</th>`).join('');
+    let sbRows = '';
+    plants.forEach(plant => {
+      const checklist = sbRecords[plant.name]?.checklist || null;
+      sbRows += `<tr><td class="pmgrid-plant-label">PP ${plant.num}</td>`;
+      pumpLetters.forEach(letter => {
+        const pos = positions.find(p => p.site_name === plant.name && p.pump_letter === letter);
+        if (!pos) { sbRows += '<td></td>'; return; }
+        const val = checklist?.[`pos_${pos.position_id}`];
+        let cls, text;
+        if (!checklist)     { cls = 'empty'; text = '—'; }
+        else if (!val)      { cls = 'empty'; text = '—'; }
+        else if (val.checked) { cls = val.notes ? 'note' : 'pass'; text = val.notes ? '!' : '✓'; }
+        else                { cls = 'fail';  text = '✗'; }
+        sbRows += `<td><span class="pmgrid-badge ${cls}" title="${escHtml(val?.notes||'')}">${text}</span></td>`;
       });
-      sbHtml += '</div>';
+      const rec = sbRecords[plant.name];
+      const recDate = rec ? localDateStr(rec.completed_date, {month:'short',day:'numeric'}) : '—';
+      sbRows += `<td class="pmgrid-date-col">${recDate}</td></tr>`;
     });
 
-    if (!positions.length) {
-      sbHtml += '<div class="report-empty">No pump positions on record.</div>';
-    }
+    const sbHtml = `<div class="pmgrid-section-title">Siphon Breakers</div>
+      <div class="pmgrid-scroll"><table class="pmgrid-table">
+        <thead><tr><th class="pmgrid-th pmgrid-th-left">Plant</th>${sbCols}<th class="pmgrid-th">Last PM</th></tr></thead>
+        <tbody>${sbRows || '<tr><td colspan="99" class="report-empty">No positions found.</td></tr>'}</tbody>
+      </table></div>`;
 
-    // ── Air Compressors ───────────────────────────────────────────────────────
+    // ── Air Compressors: rows = checks, columns = plants ─────────────────────
     const acChecks = [
       { key: 'leak_test',     label: '5 min Leak Test' },
       { key: 'a_building',    label: 'A Building' },
@@ -4665,29 +4766,37 @@ async function renderPMGridReport() {
       { key: 'service_truck', label: 'Service Truck' },
       { key: 'shop',          label: 'Shop' },
     ];
-    const acMeta = acRecord
-      ? `Last PM: ${localDateStr(acRecord.completed_date)} by ${escHtml(acRecord.applied_by || '—')}`
-      : 'No PM on record';
-
-    let acHtml = `<div class="pmgrid-section-title" style="margin-top:20px">Air Compressors</div>
-      <div class="pmgrid-meta">${acMeta}</div>
-      <div class="pmgrid-ac-grid">`;
-
-    for (let n = 1; n <= 7; n++) {
-      const compData = acData[String(n)] || {};
-      acHtml += `<div class="pmgrid-ac-card">
-        <div class="pmgrid-ac-title">Compressor ${n}</div>`;
-      acChecks.forEach(c => {
-        const checked = compData[c.key];
-        const dotCls  = checked === undefined ? 'empty' : (checked ? 'pass' : 'fail');
-        acHtml += `<div class="pmgrid-ac-check">
-          <span class="pmgrid-ac-dot ${dotCls}"></span>
-          <span>${escHtml(c.label)}</span>
-        </div>`;
+    const acCols = plants.map(p => `<th class="pmgrid-th">PP ${p.num}</th>`).join('');
+    let acRows = '';
+    acChecks.forEach(check => {
+      acRows += `<tr><td class="pmgrid-check-label">${escHtml(check.label)}</td>`;
+      plants.forEach(plant => {
+        const cl   = acRecords[plant.name]?.checklist || null;
+        const aVal = cl?.['a']?.[check.key];
+        const bVal = cl?.['b']?.[check.key];
+        const aCls = aVal === true ? 'pass' : (aVal === false ? 'fail' : 'empty');
+        const bCls = bVal === true ? 'pass' : (bVal === false ? 'fail' : 'empty');
+        acRows += `<td><div class="pmgrid-ac-cell">
+          <span class="pmgrid-ac-dot ${aCls}" title="Bldg A"></span>
+          <span class="pmgrid-ac-dot ${bCls}" title="Bldg B"></span>
+        </div></td>`;
       });
-      acHtml += '</div>';
-    }
-    acHtml += '</div>';
+      acRows += '</tr>';
+    });
+    // Last PM date row
+    acRows += `<tr><td class="pmgrid-check-label" style="font-style:italic;color:var(--text-dim)">Last PM</td>`;
+    plants.forEach(plant => {
+      const rec = acRecords[plant.name];
+      acRows += `<td class="pmgrid-date-col">${rec ? localDateStr(rec.completed_date, {month:'short',day:'numeric'}) : '—'}</td>`;
+    });
+    acRows += '</tr>';
+
+    const acHtml = `<div class="pmgrid-section-title" style="margin-top:20px">Air Compressors
+      <span class="pmgrid-legend"> &nbsp;●A &nbsp;●B per plant</span></div>
+      <div class="pmgrid-scroll"><table class="pmgrid-table">
+        <thead><tr><th class="pmgrid-th pmgrid-th-left">Check</th>${acCols}</tr></thead>
+        <tbody>${acRows}</tbody>
+      </table></div>`;
 
     out.innerHTML = `<div class="report-card">${sbHtml}${acHtml}</div>`;
   } catch (err) {

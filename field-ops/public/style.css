@@ -1316,6 +1316,32 @@ input[type="date"].ctrl-input { min-height: 44px; }
 }
 
 /* ── PM Grid Report ──────────────────────────────────────────────────────── */
+/* ── PM Grid tables ──────────────────────────────────────────────────────── */
+.pmgrid-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; margin-bottom: 6px; }
+.pmgrid-table { border-collapse: collapse; min-width: 100%; }
+.pmgrid-th {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+  padding: 5px 6px;
+  text-align: center;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.pmgrid-th-left { text-align: left; }
+.pmgrid-table td {
+  padding: 4px 6px;
+  text-align: center;
+  border-bottom: 1px solid var(--border-subtle, rgba(255,255,255,0.06));
+  font-size: 0.82rem;
+}
+.pmgrid-plant-label { text-align: left; font-weight: 600; white-space: nowrap; font-size: 0.82rem; }
+.pmgrid-check-label { text-align: left; white-space: nowrap; font-size: 0.82rem; }
+.pmgrid-date-col    { font-size: 0.75rem; color: var(--text-dim); white-space: nowrap; }
+.pmgrid-legend { font-size: 0.72rem; font-weight: 400; color: var(--text-dim); text-transform: none; letter-spacing: 0; }
+
 .pmgrid-section-title {
   font-size: 0.82rem;
   font-weight: 700;
@@ -1390,6 +1416,12 @@ input[type="date"].ctrl-input { min-height: 44px; }
   gap: 6px;
   font-size: 0.82rem;
   padding: 2px 0;
+}
+.pmgrid-ac-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
 }
 .pmgrid-ac-dot {
   width: 10px;

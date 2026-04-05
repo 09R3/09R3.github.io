@@ -1819,22 +1819,31 @@ app.get('/api/reports/maintenance-issues', requireAuth, requireRole('supervisor'
   }
 });
 
-// PM Grid report — latest siphon breaker + air compressor records + pump positions
+// PM Grid report — latest per-plant siphon breaker + air compressor records + positions
 app.get('/api/reports/pm-grid', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
   try {
-    const [pmRes, posRes] = await Promise.all([
+    const [sbRes, acRes, posRes] = await Promise.all([
       pool.query(`
-        SELECT DISTINCT ON (p.pm_type)
-          p.pm_type, p.completed_date, p.completed_time,
-          u.full_name AS applied_by, p.checklist, p.notes
+        SELECT DISTINCT ON (p.building)
+          p.building, p.completed_date, p.completed_time,
+          u.full_name AS applied_by, p.checklist
         FROM pm_records p
         LEFT JOIN users u ON u.user_id = p.completed_by
-        WHERE p.pm_type IN ('siphon_breaker','air_compressor')
-        ORDER BY p.pm_type, p.completed_date DESC, p.completed_time DESC
+        WHERE p.pm_type = 'siphon_breaker' AND p.building IS NOT NULL
+        ORDER BY p.building, p.completed_date DESC, p.completed_time DESC
+      `),
+      pool.query(`
+        SELECT DISTINCT ON (p.building)
+          p.building, p.completed_date, p.completed_time,
+          u.full_name AS applied_by, p.checklist
+        FROM pm_records p
+        LEFT JOIN users u ON u.user_id = p.completed_by
+        WHERE p.pm_type = 'air_compressor' AND p.building IS NOT NULL
+        ORDER BY p.building, p.completed_date DESC, p.completed_time DESC
       `),
       pool.query(`
         SELECT pp.position_id, pp.pump_letter, b.building_letter,
-               s.site_name,
+               s.site_id, s.site_name,
                REGEXP_REPLACE(s.site_name, '[^0-9]', '', 'g') AS site_number
         FROM pump_positions pp
         JOIN buildings b ON pp.building_id = b.building_id
@@ -1843,9 +1852,10 @@ app.get('/api/reports/pm-grid', requireAuth, requireRole('supervisor', 'admin'),
         ORDER BY s.site_name, b.building_letter, pp.pump_letter
       `),
     ]);
-    const records = {};
-    pmRes.rows.forEach(r => { records[r.pm_type] = r; });
-    res.json({ records, positions: posRes.rows });
+    const sbRecords = {}, acRecords = {};
+    sbRes.rows.forEach(r => { sbRecords[r.building] = r; });
+    acRes.rows.forEach(r => { acRecords[r.building] = r; });
+    res.json({ sbRecords, acRecords, positions: posRes.rows });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
