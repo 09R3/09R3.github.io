@@ -3927,16 +3927,12 @@ async function loadPMHistory(pmType, contentEl) {
         </div>
         <div class="pm-history-actions">
           <button class="btn btn-secondary btn-xs" data-pm-view="${r.pm_id}">View</button>
-          <button class="btn btn-secondary btn-xs" data-pm-pdf="${r.pm_id}">Export PDF</button>
         </div>
       </div>`;
     }).join('');
 
     histEl.querySelectorAll('[data-pm-view]').forEach(btn => {
       btn.addEventListener('click', () => showPMRecord(pmHistoryCache[parseInt(btn.dataset.pmView)], PM_TYPES[pmType]));
-    });
-    histEl.querySelectorAll('[data-pm-pdf]').forEach(btn => {
-      btn.addEventListener('click', () => exportPMRecordAsPDF(pmHistoryCache[parseInt(btn.dataset.pmPdf)], PM_TYPES[pmType]));
     });
   } catch (err) {
     histEl.innerHTML = `<div class="issue-empty" style="color:var(--red-light)">${err.message}</div>`;
@@ -4802,13 +4798,7 @@ async function renderPMGridReport() {
       </table></div>`;
 
     // ── Air Compressors: rows = checks, columns = plants ─────────────────────
-    const acChecks = [
-      { key: 'leak_test',     label: '5 min Leak Test' },
-      { key: 'a_building',    label: 'A Building' },
-      { key: 'b_building',    label: 'B Building' },
-      { key: 'service_truck', label: 'Service Truck' },
-      { key: 'shop',          label: 'Shop' },
-    ];
+    const acChecks = PM_TYPES.air_compressor.checks;
     const acCols = plants.map(p => `<th class="pmgrid-th">PP ${p.num}</th>`).join('');
     let acRows = '';
     acChecks.forEach(check => {
