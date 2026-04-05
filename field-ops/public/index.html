@@ -77,7 +77,7 @@
         <div id="login-error" class="error-msg hidden"></div>
         <button type="submit" class="btn btn-primary btn-full">Sign In</button>
       </form>
-      <div class="login-version">v 1.06</div>
+      <div class="login-version">v 1.07</div>
     </div>
   </div>
 </div>
@@ -1067,9 +1067,31 @@
       <button class="settings-back-btn">‹ Settings</button>
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value">v 1.06</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 1.07</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tools panel (secret) -->
+    <div id="settings-panel-tools" class="settings-panel hidden">
+      <button class="settings-back-btn">‹ Settings</button>
+      <div class="settings-section">
+        <div class="settings-card">
+          <button class="settings-menu-row" data-tool="exif">
+            <span>EXIF Extractor</span><span class="settings-chevron">›</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- EXIF Extractor tool panel -->
+    <div id="settings-panel-tools-exif" class="settings-panel hidden">
+      <button class="settings-back-btn" id="exif-back-btn">‹ Tools</button>
+      <div class="settings-section">
+        <div id="exif-tool-content">
+          <div class="placeholder-msg">Paste the EXIF tool HTML below or ask to build one.</div>
         </div>
       </div>
     </div>

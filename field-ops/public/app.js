@@ -2861,6 +2861,34 @@ document.querySelectorAll('.settings-back-btn').forEach(btn => {
   btn.addEventListener('click', closeSettingsPanel);
 });
 
+// ── Secret tools menu (tap version number 5 times) ────────────────────────
+(function () {
+  let tapCount = 0, tapTimer = null;
+  el('appinfo-version-tap').addEventListener('click', () => {
+    tapCount++;
+    clearTimeout(tapTimer);
+    if (tapCount >= 5) {
+      tapCount = 0;
+      openSettingsPanel('tools');
+    } else {
+      tapTimer = setTimeout(() => { tapCount = 0; }, 1500);
+    }
+  });
+})();
+
+el('settings-panel-tools').addEventListener('click', e => {
+  const btn = e.target.closest('[data-tool]');
+  if (btn) {
+    document.querySelectorAll('.settings-panel').forEach(p => p.classList.add('hidden'));
+    el('settings-panel-tools-' + btn.dataset.tool).classList.remove('hidden');
+  }
+});
+
+el('exif-back-btn').addEventListener('click', () => {
+  document.querySelectorAll('.settings-panel').forEach(p => p.classList.add('hidden'));
+  el('settings-panel-tools').classList.remove('hidden');
+});
+
 // Change password
 el('pw-save-btn').addEventListener('click', async () => {
   const cur = el('pw-current').value;
@@ -3591,7 +3619,7 @@ async function buildSiphonBreakerPM(pmType, def, contentEl) {
         ]);
         allPositions = posData;
         const plants = sites
-          .filter(s => !/o\s*&\s*m/i.test(s.site_name))
+          .filter(s => !/o\s*&\s*m|service.truck/i.test(s.site_name))
           .sort((a, b) => a.site_name.localeCompare(b.site_name));
         plantSel.innerHTML = '<option value="">— Select Pumping Plant —</option>' +
           plants.map(s => {
