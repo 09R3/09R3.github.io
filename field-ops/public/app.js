@@ -24,6 +24,13 @@ function todayISO() {
   return new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD in local time
 }
 
+// Parse a YYYY-MM-DD string as local midnight (avoids UTC-offset day-behind bug)
+function localDateStr(isoDate, opts = { month: 'short', day: 'numeric', year: 'numeric' }) {
+  if (!isoDate) return '—';
+  const [y, m, d] = String(isoDate).slice(0, 10).split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString('en-US', opts);
+}
+
 function nowHHMM() {
   const d = new Date();
   return d.toTimeString().slice(0, 5);
@@ -329,8 +336,19 @@ function openSetMapModal(setName, wells) {
     if (_setLocationMarker) { _setLocationMarker.remove(); _setLocationMarker = null; }
 
     _setLeafletMarkers = validWells.map(w => {
-      const m = L.marker([w.gps_latitude, w.gps_longitude]).addTo(_setLeafletMap);
-      m.bindPopup(`<strong>${w.common_name || 'Well'}</strong>`);
+      const done = w.range_reading_date != null;
+      const color = done ? '#22c55e' : '#ef4444';
+      const icon = L.divIcon({
+        className: '',
+        html: `<div style="width:14px;height:14px;border-radius:50%;background:${color};border:2px solid rgba(0,0,0,0.4);box-shadow:0 1px 3px rgba(0,0,0,0.5)"></div>`,
+        iconSize: [14, 14],
+        iconAnchor: [7, 7],
+        popupAnchor: [0, -8],
+      });
+      const label = w.state_well_number ? `${w.state_well_number} | ${w.common_name}` : (w.common_name || 'Well');
+      const status = done ? `<span style="color:#16a34a">✓ Read ${localDateStr(w.range_reading_date, {month:'short',day:'numeric'})}</span>` : `<span style="color:#dc2626">Not read</span>`;
+      const m = L.marker([w.gps_latitude, w.gps_longitude], { icon }).addTo(_setLeafletMap);
+      m.bindPopup(`<strong>${label}</strong><br>${status}`);
       return m;
     });
 
@@ -392,13 +410,14 @@ function showScreen(name) {
   }
 
   // Lazy-load data on first visit
-  if (name === 'dashboard')     { loadDashboardStats(); refreshPendingSync(); }
+  if (name === 'dashboard')     { loadDashboardStats(); refreshPendingSync(); refreshMaintenanceBadges(); }
   if (name === 'pumping-plant') initPPScreen();
   if (name === 'wells')         initWellsScreen();
   if (name === 'canal')         initCanalScreen();
   if (name === 'vehicles')      initVehiclesScreen();
   if (name === 'kf-monthly')    initKFScreen();
   if (name === 'maintenance')   initMaintenanceScreen();
+  if (name === 'pesticides')    initPesticideScreen();
   if (name === 'reports')       initReportsScreen();
   if (name === 'admin')         { initAdminScreen(); initSettingsScreen(); }
 
@@ -471,10 +490,12 @@ function onLogin(user) {
   el('nav-reports-item').classList.add('hidden');
   el('dash-reports-tile').classList.add('hidden');
   el('settings-admin-section').classList.add('hidden');
+  el('settings-widgets-section').classList.add('hidden');
   if (user.role === 'admin' || user.role === 'supervisor') {
     el('nav-reports-item').classList.remove('hidden');
     el('dash-reports-tile').classList.remove('hidden');
     el('settings-admin-section').classList.remove('hidden');
+    el('settings-widgets-section').classList.remove('hidden');
   }
   // Populate account info on settings screen
   el('settings-full-name').textContent = user.full_name || '—';
@@ -501,15 +522,27 @@ el('export-pending-btn').addEventListener('click', async () => {
 async function loadDashboardStats() {
   try {
     const s = await api('GET', '/api/dashboard/stats');
+    const fmtDate = str => {
+      if (!str) return '';
+      const [y, m, d] = str.split('-');
+      return new Date(+y, +m - 1, +d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    };
+    kfWidgetStart = s.kf_widget_start || null;
+    kfWidgetEnd   = s.kf_widget_end   || null;
+    const rangeLabel = (s.kf_widget_start && s.kf_widget_end)
+      ? `${fmtDate(s.kf_widget_start)} – ${fmtDate(s.kf_widget_end)}`
+      : 'This Month';
     const grid = el('dashboard-stats');
     grid.innerHTML = `
       <div class="stat-card">
-        <div class="stat-value">${s.kf_total - s.kf_done}</div>
-        <div class="stat-label">KF Remaining</div>
+        <div class="stat-value">${s.kf_done} / ${s.kf_total}</div>
+        <div class="stat-label">KF Complete</div>
+        <div class="stat-sublabel">${rangeLabel}</div>
       </div>
       <div class="stat-card">
-        <div class="stat-value">${s.kf_done} / ${s.kf_total}</div>
-        <div class="stat-label">KF Done (month)</div>
+        <div class="stat-value">${s.kf_total - s.kf_done}</div>
+        <div class="stat-label">KF Remaining</div>
+        <div class="stat-sublabel">${rangeLabel}</div>
       </div>
       <div class="stat-card">
         <div class="stat-value">${s.wells_read_today} / ${s.wells_total}</div>
@@ -530,6 +563,7 @@ function onLogout() {
   el('nav-reports-item').classList.add('hidden');
   el('dash-reports-tile').classList.add('hidden');
   el('settings-admin-section').classList.add('hidden');
+  el('settings-widgets-section').classList.add('hidden');
   // Reset pumping plant
   pp.sites = []; pp.buildings = {}; pp.loadedSites = new Set(); pp.activeTab = null;
   ppLoaded = false;
@@ -1528,19 +1562,724 @@ function createVehicleItem(v, dateInput, timeInput) {
   return div;
 }
 
+/* ── Well Issues ─────────────────────────────────────────────────────────── */
+let wellIssuesLoaded  = false;
+let wellIssues        = [];
+let wellShowResolved  = false;
+
+function initMaintWellsPanel() {
+  if (wellIssuesLoaded) return;
+  wellIssuesLoaded = true;
+  el('well-issue-date').value = todayISO();
+  loadWellIssues();
+  // Populate well dropdown
+  api('GET', '/api/wells/operational').then(wells => {
+    const sel = el('well-issue-select');
+    sel.innerHTML = '<option value="">Select well…</option>';
+    wells.forEach(w => {
+      const opt = document.createElement('option');
+      opt.value = w.well_id;
+      opt.dataset.area = w.area || '';
+      opt.textContent  = w.area ? `${w.common_name} (${w.area})` : w.common_name;
+      sel.appendChild(opt);
+    });
+  }).catch(() => {});
+}
+
+async function loadWellIssues() {
+  try {
+    wellIssues = await api('GET', `/api/well-issues?include_resolved=${wellShowResolved}`);
+    renderWellIssues();
+    updateWellBadge();
+  } catch {
+    el('well-issue-list').innerHTML = `<div class="issue-empty">Failed to load issues</div>`;
+  }
+}
+
+function updateWellBadge() {
+  const count = wellIssues.filter(i => i.status === 'open' || i.status === 'in_progress').length;
+  setBadge('maint-badge-wells', count);
+}
+
+function renderWellIssues() {
+  const list = el('well-issue-list');
+  if (!wellIssues.length) {
+    list.innerHTML = `<div class="issue-empty">No ${wellShowResolved ? '' : 'open '}issues</div>`;
+    return;
+  }
+  list.innerHTML = wellIssues.map(issue => {
+    const statusClass = issue.status.replace('_', '-');
+    const title   = issue.well_area ? `${issue.well_name} (${issue.well_area})` : (issue.well_name || 'Unknown Well');
+    const snippet = (issue.description || '').slice(0, 80) + (issue.description?.length > 80 ? '…' : '');
+    return `
+      <div class="equip-issue-item" data-issue-id="${issue.issue_id}">
+        <div class="equip-issue-header">
+          <div class="equip-issue-meta">
+            <div class="equip-issue-name">${escHtml(title)}</div>
+            <div class="equip-issue-snippet">${escHtml(snippet)}</div>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+            <span class="status-pill ${statusClass}">${issue.status.replace('_',' ')}</span>
+            <span class="equip-issue-date">${issue.reported_date?.slice(0,10) || ''}</span>
+          </div>
+        </div>
+        <div class="equip-issue-body hidden">
+          <div class="form-group">
+            <label>Description</label>
+            <div style="font-size:0.9rem;padding:6px 0">${escHtml(issue.description)}</div>
+          </div>
+          <div class="form-group">
+            <label>Status</label>
+            <select class="ctrl-select issue-status-select">
+              <option value="open"        ${issue.status==='open'        ?'selected':''}>Open</option>
+              <option value="in_progress" ${issue.status==='in_progress' ?'selected':''}>In Progress</option>
+              <option value="resolved"    ${issue.status==='resolved'    ?'selected':''}>Resolved</option>
+            </select>
+          </div>
+          <div class="form-group issue-action-group" style="${issue.status==='in_progress' ? '' : 'display:none'}">
+            <label>Action Taken</label>
+            <textarea class="ctrl-textarea issue-action-taken" rows="2" placeholder="Describe the action being taken…">${escHtml(issue.action_taken || '')}</textarea>
+          </div>
+          <div class="issue-res-group" style="${issue.status==='resolved' ? '' : 'display:none'}">
+            <div class="form-group">
+              <label>Resolution Notes</label>
+              <textarea class="ctrl-textarea issue-res-notes" rows="2" placeholder="Describe how it was resolved…">${escHtml(issue.resolution_notes || '')}</textarea>
+            </div>
+            <div class="form-group">
+              <label>PO Number</label>
+              <input type="text" class="ctrl-input issue-po-number" value="${escHtml(issue.po_number || '')}" placeholder="Optional">
+            </div>
+            <div class="form-group">
+              <label>Cost ($)</label>
+              <input type="number" class="ctrl-input issue-cost" value="${issue.cost != null ? issue.cost : ''}" placeholder="0.00" min="0" step="0.01">
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Assigned To</label>
+            <input type="text" class="ctrl-input issue-assigned" value="${escHtml(issue.assigned_to || '')}" placeholder="Optional">
+          </div>
+          <div class="error-msg hidden issue-update-error"></div>
+          <button class="btn btn-save btn-full issue-save-btn">Save Changes</button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+// New issue form toggle
+el('well-new-issue-btn').addEventListener('click', () => {
+  el('well-new-issue-form').classList.remove('hidden');
+  el('well-new-issue-btn').classList.add('hidden');
+});
+el('well-cancel-btn').addEventListener('click', () => {
+  el('well-new-issue-form').classList.add('hidden');
+  el('well-new-issue-btn').classList.remove('hidden');
+  el('well-new-error').classList.add('hidden');
+});
+
+// Submit new well issue
+el('well-submit-btn').addEventListener('click', async () => {
+  clearError('well-new-error');
+  const desc = el('well-issue-desc').value.trim();
+  if (!desc) return showError('well-new-error', 'Issue description is required');
+
+  const sel      = el('well-issue-select');
+  const wellId   = sel.value || null;
+  const wellName = sel.options[sel.selectedIndex]?.textContent?.replace(/\s*\(.*\)$/, '').trim() || null;
+  const wellArea = sel.options[sel.selectedIndex]?.dataset.area || null;
+  if (!wellId) return showError('well-new-error', 'Please select a well');
+
+  el('well-submit-btn').disabled = true;
+  try {
+    await api('POST', '/api/well-issues', {
+      well_id:       parseInt(wellId),
+      well_name:     wellName,
+      well_area:     wellArea || null,
+      description:   desc,
+      reported_date: el('well-issue-date').value || null,
+      assigned_to:   el('well-issue-assigned').value.trim() || null,
+    });
+    el('well-issue-desc').value     = '';
+    el('well-issue-assigned').value = '';
+    el('well-issue-date').value     = todayISO();
+    el('well-issue-select').value   = '';
+    el('well-new-issue-form').classList.add('hidden');
+    el('well-new-issue-btn').classList.remove('hidden');
+    wellIssuesLoaded = false;
+    await loadWellIssues();
+    showToast('Issue submitted', 'success');
+    refreshMaintenanceBadges();
+  } catch (err) {
+    showError('well-new-error', err.message);
+  } finally {
+    el('well-submit-btn').disabled = false;
+  }
+});
+
+// Show/hide resolved toggle
+el('well-show-resolved-btn').addEventListener('click', () => {
+  wellShowResolved = !wellShowResolved;
+  el('well-show-resolved-btn').textContent = wellShowResolved ? 'Hide Resolved' : 'Show Resolved';
+  wellIssuesLoaded = false;
+  loadWellIssues();
+});
+
+// Shared: instantly show/hide action-taken or resolution fields when status dropdown changes
+function onIssueStatusChange(e) {
+  const item = e.target.closest('.equip-issue-item');
+  if (!item || !e.target.classList.contains('issue-status-select')) return;
+  item.querySelector('.issue-action-group').style.display = e.target.value === 'in_progress' ? '' : 'none';
+  item.querySelector('.issue-res-group').style.display    = e.target.value === 'resolved'    ? '' : 'none';
+}
+['well-issue-list','bldg-issue-list','equip-issue-list'].forEach(id =>
+  el(id).addEventListener('change', onIssueStatusChange)
+);
+
+// Issue list interactions (delegated)
+el('well-issue-list').addEventListener('click', async e => {
+  const item = e.target.closest('.equip-issue-item');
+  if (!item) return;
+
+  if (e.target.closest('.equip-issue-header')) {
+    item.querySelector('.equip-issue-body').classList.toggle('hidden');
+    return;
+  }
+
+  if (e.target.classList.contains('issue-save-btn')) {
+    const issueId     = item.dataset.issueId;
+    const status      = item.querySelector('.issue-status-select').value;
+    const actionTaken = item.querySelector('.issue-action-taken').value.trim() || null;
+    const resNotes    = item.querySelector('.issue-res-notes').value.trim()    || null;
+    const poNumber    = item.querySelector('.issue-po-number').value.trim()    || null;
+    const costVal     = item.querySelector('.issue-cost').value;
+    const cost        = costVal !== '' ? parseFloat(costVal) : null;
+    const assigned    = item.querySelector('.issue-assigned').value.trim()     || null;
+    const errEl       = item.querySelector('.issue-update-error');
+    errEl.classList.add('hidden');
+    e.target.disabled = true;
+    try {
+      await api('PATCH', `/api/well-issues/${issueId}`, { status, action_taken: actionTaken, resolution_notes: resNotes, po_number: poNumber, cost, assigned_to: assigned });
+      wellIssuesLoaded = false;
+      await loadWellIssues();
+      showToast('Issue updated', 'success');
+      refreshMaintenanceBadges();
+    } catch (err) {
+      errEl.textContent = err.message;
+      errEl.classList.remove('hidden');
+      e.target.disabled = false;
+    }
+  }
+});
+
+/* ── Building Issues ─────────────────────────────────────────────────────── */
+let bldgIssuesLoaded  = false;
+let bldgIssues        = [];
+let bldgShowResolved  = false;
+
+function initMaintBuildingsPanel() {
+  if (bldgIssuesLoaded) return;
+  bldgIssuesLoaded = true;
+  el('bldg-issue-date').value = todayISO();
+  loadBldgIssues();
+  // Load sites for new-issue form
+  api('GET', '/api/sites').then(sites => {
+    const sel = el('bldg-issue-site');
+    sel.innerHTML = '<option value="">Select site…</option>';
+    sites.forEach(s => {
+      const opt = document.createElement('option');
+      opt.value = s.site_id;
+      opt.textContent = s.site_name;
+      sel.appendChild(opt);
+    });
+  }).catch(() => {});
+}
+
+async function loadBldgIssues() {
+  try {
+    bldgIssues = await api('GET', `/api/building-issues?include_resolved=${bldgShowResolved}`);
+    renderBldgIssues();
+    updateBldgBadge();
+  } catch {
+    el('bldg-issue-list').innerHTML = `<div class="issue-empty">Failed to load issues</div>`;
+  }
+}
+
+function updateBldgBadge() {
+  const count = bldgIssues.filter(i => i.status === 'open' || i.status === 'in_progress').length;
+  setBadge('maint-badge-buildings', count);
+}
+
+function renderBldgIssues() {
+  const list = el('bldg-issue-list');
+  if (!bldgIssues.length) {
+    list.innerHTML = `<div class="issue-empty">No ${bldgShowResolved ? '' : 'open '}issues</div>`;
+    return;
+  }
+  list.innerHTML = bldgIssues.map(issue => {
+    const statusClass = issue.status.replace('_', '-');
+    const title   = [issue.site_name, issue.building_name].filter(Boolean).join(' — ') || 'Unknown Building';
+    const snippet = (issue.description || '').slice(0, 80) + (issue.description?.length > 80 ? '…' : '');
+    return `
+      <div class="equip-issue-item" data-issue-id="${issue.issue_id}">
+        <div class="equip-issue-header">
+          <div class="equip-issue-meta">
+            <div class="equip-issue-name">${escHtml(title)}</div>
+            <div class="equip-issue-snippet">${escHtml(snippet)}</div>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+            <span class="status-pill ${statusClass}">${issue.status.replace('_',' ')}</span>
+            <span class="equip-issue-date">${issue.reported_date?.slice(0,10) || ''}</span>
+          </div>
+        </div>
+        <div class="equip-issue-body hidden">
+          <div class="form-group">
+            <label>Description</label>
+            <div style="font-size:0.9rem;padding:6px 0">${escHtml(issue.description)}</div>
+          </div>
+          <div class="form-group">
+            <label>Status</label>
+            <select class="ctrl-select issue-status-select">
+              <option value="open"        ${issue.status==='open'        ?'selected':''}>Open</option>
+              <option value="in_progress" ${issue.status==='in_progress' ?'selected':''}>In Progress</option>
+              <option value="resolved"    ${issue.status==='resolved'    ?'selected':''}>Resolved</option>
+            </select>
+          </div>
+          <div class="form-group issue-action-group" style="${issue.status==='in_progress' ? '' : 'display:none'}">
+            <label>Action Taken</label>
+            <textarea class="ctrl-textarea issue-action-taken" rows="2" placeholder="Describe the action being taken…">${escHtml(issue.action_taken || '')}</textarea>
+          </div>
+          <div class="issue-res-group" style="${issue.status==='resolved' ? '' : 'display:none'}">
+            <div class="form-group">
+              <label>Resolution Notes</label>
+              <textarea class="ctrl-textarea issue-res-notes" rows="2" placeholder="Describe how it was resolved…">${escHtml(issue.resolution_notes || '')}</textarea>
+            </div>
+            <div class="form-group">
+              <label>PO Number</label>
+              <input type="text" class="ctrl-input issue-po-number" value="${escHtml(issue.po_number || '')}" placeholder="Optional">
+            </div>
+            <div class="form-group">
+              <label>Cost ($)</label>
+              <input type="number" class="ctrl-input issue-cost" value="${issue.cost != null ? issue.cost : ''}" placeholder="0.00" min="0" step="0.01">
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Assigned To</label>
+            <input type="text" class="ctrl-input issue-assigned" value="${escHtml(issue.assigned_to || '')}" placeholder="Optional">
+          </div>
+          <div class="error-msg hidden issue-update-error"></div>
+          <button class="btn btn-save btn-full issue-save-btn">Save Changes</button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+// Site → Building cascade for new building issue
+el('bldg-issue-site').addEventListener('change', async () => {
+  const siteId  = el('bldg-issue-site').value;
+  const bldgSel = el('bldg-issue-building');
+  bldgSel.innerHTML = '<option value="">Select building…</option>';
+  bldgSel.disabled  = !siteId;
+  if (!siteId) return;
+  try {
+    const buildings = await api('GET', `/api/buildings?site_id=${siteId}`);
+    buildings.forEach(b => {
+      const opt = document.createElement('option');
+      opt.value = b.building_id;
+      opt.textContent = b.building_name || b.building_letter;
+      bldgSel.appendChild(opt);
+    });
+  } catch { /* non-critical */ }
+});
+
+// New issue form toggle
+el('bldg-new-issue-btn').addEventListener('click', () => {
+  el('bldg-new-issue-form').classList.remove('hidden');
+  el('bldg-new-issue-btn').classList.add('hidden');
+});
+el('bldg-cancel-btn').addEventListener('click', () => {
+  el('bldg-new-issue-form').classList.add('hidden');
+  el('bldg-new-issue-btn').classList.remove('hidden');
+  el('bldg-new-error').classList.add('hidden');
+});
+
+// Submit new building issue
+el('bldg-submit-btn').addEventListener('click', async () => {
+  clearError('bldg-new-error');
+  const desc = el('bldg-issue-desc').value.trim();
+  if (!desc) return showError('bldg-new-error', 'Issue description is required');
+
+  const siteSel  = el('bldg-issue-site');
+  const bldgSel  = el('bldg-issue-building');
+  const siteId   = siteSel.value   || null;
+  const bldgId   = bldgSel.value   || null;
+  const siteName = siteSel.options[siteSel.selectedIndex]?.textContent || null;
+  const bldgName = bldgSel.options[bldgSel.selectedIndex]?.textContent || null;
+
+  el('bldg-submit-btn').disabled = true;
+  try {
+    await api('POST', '/api/building-issues', {
+      building_id:   bldgId   ? parseInt(bldgId)   : null,
+      site_id:       siteId   ? parseInt(siteId)   : null,
+      building_name: bldgName,
+      site_name:     siteName,
+      description:   desc,
+      reported_date: el('bldg-issue-date').value || null,
+      assigned_to:   el('bldg-issue-assigned').value.trim() || null,
+    });
+    el('bldg-issue-desc').value     = '';
+    el('bldg-issue-assigned').value = '';
+    el('bldg-issue-date').value     = todayISO();
+    el('bldg-issue-building').innerHTML = '<option value="">Select building…</option>';
+    el('bldg-issue-building').disabled  = true;
+    el('bldg-issue-site').value = '';
+    el('bldg-new-issue-form').classList.add('hidden');
+    el('bldg-new-issue-btn').classList.remove('hidden');
+    bldgIssuesLoaded = false;
+    await loadBldgIssues();
+    showToast('Issue submitted', 'success');
+    refreshMaintenanceBadges();
+  } catch (err) {
+    showError('bldg-new-error', err.message);
+  } finally {
+    el('bldg-submit-btn').disabled = false;
+  }
+});
+
+// Show/hide resolved toggle
+el('bldg-show-resolved-btn').addEventListener('click', () => {
+  bldgShowResolved = !bldgShowResolved;
+  el('bldg-show-resolved-btn').textContent = bldgShowResolved ? 'Hide Resolved' : 'Show Resolved';
+  bldgIssuesLoaded = false;
+  loadBldgIssues();
+});
+
+// Issue list interactions (delegated)
+el('bldg-issue-list').addEventListener('click', async e => {
+  const item = e.target.closest('.equip-issue-item');
+  if (!item) return;
+
+  if (e.target.closest('.equip-issue-header')) {
+    item.querySelector('.equip-issue-body').classList.toggle('hidden');
+    return;
+  }
+
+  if (e.target.classList.contains('issue-save-btn')) {
+    const issueId     = item.dataset.issueId;
+    const status      = item.querySelector('.issue-status-select').value;
+    const actionTaken = item.querySelector('.issue-action-taken').value.trim() || null;
+    const resNotes    = item.querySelector('.issue-res-notes').value.trim()    || null;
+    const poNumber    = item.querySelector('.issue-po-number').value.trim()    || null;
+    const costVal     = item.querySelector('.issue-cost').value;
+    const cost        = costVal !== '' ? parseFloat(costVal) : null;
+    const assigned    = item.querySelector('.issue-assigned').value.trim()     || null;
+    const errEl       = item.querySelector('.issue-update-error');
+    errEl.classList.add('hidden');
+    e.target.disabled = true;
+    try {
+      await api('PATCH', `/api/building-issues/${issueId}`, { status, action_taken: actionTaken, resolution_notes: resNotes, po_number: poNumber, cost, assigned_to: assigned });
+      bldgIssuesLoaded = false;
+      await loadBldgIssues();
+      showToast('Issue updated', 'success');
+      refreshMaintenanceBadges();
+    } catch (err) {
+      errEl.textContent = err.message;
+      errEl.classList.remove('hidden');
+      e.target.disabled = false;
+    }
+  }
+});
+
+/* ── Equipment Issues ────────────────────────────────────────────────────── */
+let equipIssuesLoaded = false;
+let equipIssues       = [];
+let equipShowResolved = false;
+let equipNewType      = 'pump';
+
+function initMaintEquipmentPanel() {
+  if (equipIssuesLoaded) return;
+  equipIssuesLoaded = true;
+  el('equip-issue-date').value = todayISO();
+  loadEquipIssues();
+  loadEquipForNewIssue(equipNewType);
+}
+
+async function loadEquipIssues() {
+  try {
+    equipIssues = await api('GET', `/api/equipment-issues?include_resolved=${equipShowResolved}`);
+    renderEquipIssues();
+    updateEquipBadge();
+  } catch (err) {
+    el('equip-issue-list').innerHTML = `<div class="issue-empty">Failed to load issues</div>`;
+  }
+}
+
+function updateEquipBadge() {
+  const count = equipIssues.filter(i => i.status === 'open' || i.status === 'in_progress').length;
+  setBadge('maint-badge-equipment', count);
+}
+
+function renderEquipIssues() {
+  const list = el('equip-issue-list');
+  if (!equipIssues.length) {
+    list.innerHTML = `<div class="issue-empty">No ${equipShowResolved ? '' : 'open '}issues</div>`;
+    return;
+  }
+  list.innerHTML = equipIssues.map(issue => {
+    const statusClass = issue.status.replace('_', '-');
+    const snippet = (issue.description || '').slice(0, 80) + (issue.description?.length > 80 ? '…' : '');
+    return `
+      <div class="equip-issue-item" data-issue-id="${issue.issue_id}">
+        <div class="equip-issue-header">
+          <div class="equip-issue-meta">
+            <div class="equip-issue-name">${escHtml(issue.equipment_name || issue.equipment_type)}</div>
+            <div class="equip-issue-snippet">${escHtml(snippet)}</div>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+            <span class="status-pill ${statusClass}">${issue.status.replace('_',' ')}</span>
+            <span class="equip-issue-date">${issue.reported_date?.slice(0,10) || ''}</span>
+          </div>
+        </div>
+        <div class="equip-issue-body hidden">
+          <div class="form-group">
+            <label>Description</label>
+            <div style="font-size:0.9rem;padding:6px 0">${escHtml(issue.description)}</div>
+          </div>
+          <div class="form-group">
+            <label>Status</label>
+            <select class="ctrl-select issue-status-select">
+              <option value="open"        ${issue.status==='open'        ?'selected':''}>Open</option>
+              <option value="in_progress" ${issue.status==='in_progress' ?'selected':''}>In Progress</option>
+              <option value="resolved"    ${issue.status==='resolved'    ?'selected':''}>Resolved</option>
+            </select>
+          </div>
+          <div class="form-group issue-action-group" style="${issue.status==='in_progress' ? '' : 'display:none'}">
+            <label>Action Taken</label>
+            <textarea class="ctrl-textarea issue-action-taken" rows="2" placeholder="Describe the action being taken…">${escHtml(issue.action_taken || '')}</textarea>
+          </div>
+          <div class="issue-res-group" style="${issue.status==='resolved' ? '' : 'display:none'}">
+            <div class="form-group">
+              <label>Resolution Notes</label>
+              <textarea class="ctrl-textarea issue-res-notes" rows="2" placeholder="Describe how it was resolved…">${escHtml(issue.resolution_notes || '')}</textarea>
+            </div>
+            <div class="form-group">
+              <label>PO Number</label>
+              <input type="text" class="ctrl-input issue-po-number" value="${escHtml(issue.po_number || '')}" placeholder="Optional">
+            </div>
+            <div class="form-group">
+              <label>Cost ($)</label>
+              <input type="number" class="ctrl-input issue-cost" value="${issue.cost != null ? issue.cost : ''}" placeholder="0.00" min="0" step="0.01">
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Assigned To</label>
+            <input type="text" class="ctrl-input issue-assigned" value="${escHtml(issue.assigned_to || '')}" placeholder="Optional">
+          </div>
+          <div class="error-msg hidden issue-update-error"></div>
+          <button class="btn btn-save btn-full issue-save-btn">Save Changes</button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function escHtml(str) {
+  return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+async function loadEquipForNewIssue(type) {
+  const isOther = type === 'other';
+  el('equip-select-group').classList.toggle('hidden', isOther);
+  el('equip-other-group').classList.toggle('hidden', !isOther);
+  if (isOther) return;
+  const sel = el('equip-issue-select');
+  sel.innerHTML = '<option value="">Loading…</option>';
+  try {
+    const list = await api('GET', `/api/equipment/${type}`);
+    sel.innerHTML = '<option value="">Select equipment…</option>';
+    list.forEach(e => {
+      const opt = document.createElement('option');
+      opt.value = e.id;
+      opt.textContent = e.name;
+      sel.appendChild(opt);
+    });
+  } catch {
+    sel.innerHTML = '<option value="">Failed to load</option>';
+  }
+}
+
+// New issue form toggle
+el('equip-new-issue-btn').addEventListener('click', () => {
+  el('equip-new-issue-form').classList.remove('hidden');
+  el('equip-new-issue-btn').classList.add('hidden');
+});
+el('equip-cancel-btn').addEventListener('click', () => {
+  el('equip-new-issue-form').classList.add('hidden');
+  el('equip-new-issue-btn').classList.remove('hidden');
+  el('equip-new-error').classList.add('hidden');
+});
+
+// Equipment type seg for new issue form
+document.querySelectorAll('#equip-type-seg .seg-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#equip-type-seg .seg-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    equipNewType = btn.dataset.val;
+    loadEquipForNewIssue(equipNewType);
+  });
+});
+
+// Submit new issue
+el('equip-submit-btn').addEventListener('click', async () => {
+  clearError('equip-new-error');
+  const desc = el('equip-issue-desc').value.trim();
+  if (!desc) return showError('equip-new-error', 'Issue description is required');
+
+  let equipId = null, equipName = null;
+  if (equipNewType === 'other') {
+    equipName = el('equip-issue-other').value.trim() || 'Other';
+  } else {
+    const sel = el('equip-issue-select');
+    equipId   = sel.value || null;
+    equipName = sel.options[sel.selectedIndex]?.textContent || null;
+    if (!equipId) return showError('equip-new-error', 'Please select equipment');
+  }
+
+  el('equip-submit-btn').disabled = true;
+  try {
+    await api('POST', '/api/equipment-issues', {
+      equipment_type: equipNewType,
+      equipment_id:   equipId,
+      equipment_name: equipName,
+      description:    desc,
+      reported_date:  el('equip-issue-date').value || null,
+      assigned_to:    el('equip-issue-assigned').value.trim() || null,
+    });
+    // Reset form
+    el('equip-issue-desc').value     = '';
+    el('equip-issue-other').value    = '';
+    el('equip-issue-assigned').value = '';
+    el('equip-issue-date').value     = todayISO();
+    el('equip-new-issue-form').classList.add('hidden');
+    el('equip-new-issue-btn').classList.remove('hidden');
+    equipIssuesLoaded = false; // force reload
+    await loadEquipIssues();
+    showToast('Issue submitted', 'success');
+    refreshMaintenanceBadges();
+  } catch (err) {
+    showError('equip-new-error', err.message);
+  } finally {
+    el('equip-submit-btn').disabled = false;
+  }
+});
+
+// Show/hide resolved toggle
+el('equip-show-resolved-btn').addEventListener('click', () => {
+  equipShowResolved = !equipShowResolved;
+  el('equip-show-resolved-btn').textContent = equipShowResolved ? 'Hide Resolved' : 'Show Resolved';
+  equipIssuesLoaded = false;
+  loadEquipIssues();
+});
+
+// Issue list interactions (delegated)
+el('equip-issue-list').addEventListener('click', async e => {
+  const item = e.target.closest('.equip-issue-item');
+  if (!item) return;
+
+  // Toggle expand on header click
+  if (e.target.closest('.equip-issue-header')) {
+    const body = item.querySelector('.equip-issue-body');
+    body.classList.toggle('hidden');
+    return;
+  }
+
+  // Save changes
+  if (e.target.classList.contains('issue-save-btn')) {
+    const issueId     = item.dataset.issueId;
+    const status      = item.querySelector('.issue-status-select').value;
+    const actionTaken = item.querySelector('.issue-action-taken').value.trim() || null;
+    const resNotes    = item.querySelector('.issue-res-notes').value.trim()    || null;
+    const poNumber    = item.querySelector('.issue-po-number').value.trim()    || null;
+    const costVal     = item.querySelector('.issue-cost').value;
+    const cost        = costVal !== '' ? parseFloat(costVal) : null;
+    const assigned    = item.querySelector('.issue-assigned').value.trim()     || null;
+    const errEl       = item.querySelector('.issue-update-error');
+    errEl.classList.add('hidden');
+    e.target.disabled = true;
+    try {
+      await api('PATCH', `/api/equipment-issues/${issueId}`, { status, action_taken: actionTaken, resolution_notes: resNotes, po_number: poNumber, cost, assigned_to: assigned });
+      equipIssuesLoaded = false;
+      await loadEquipIssues();
+      showToast('Issue updated', 'success');
+      refreshMaintenanceBadges();
+    } catch (err) {
+      errEl.textContent = err.message;
+      errEl.classList.remove('hidden');
+      e.target.disabled = false;
+    }
+  }
+});
+
 /* ── Maintenance ─────────────────────────────────────────────────────────── */
-let maintLoaded   = false;
-let maintType     = 'equipment';
+let maintType       = 'vehicle';
 let maintContractor = false;
-let maintVehicles = [];
+let maintVehicles   = [];
+let maintVehiclesLoaded = false;
 
-async function initMaintenanceScreen() {
-  if (maintLoaded) return;
-  maintLoaded = true;
+function openMaintPanel(panelId) {
+  el('maint-main').classList.add('hidden');
+  document.querySelectorAll('.maint-panel').forEach(p => p.classList.add('hidden'));
+  el('maint-panel-' + panelId).classList.remove('hidden');
+  if (panelId === 'equipment') initMaintEquipmentPanel();
+  if (panelId === 'buildings') initMaintBuildingsPanel();
+  if (panelId === 'wells')     initMaintWellsPanel();
+  if (panelId === 'vehicles')  initMaintVehiclesPanel();
+  if (panelId === 'swaps')     initMaintSwapsPanel();
+  if (panelId === 'pms')       initMaintPMsPanel();
+}
+
+function closeMaintPanel() {
+  document.querySelectorAll('.maint-panel').forEach(p => p.classList.add('hidden'));
+  el('maint-main').classList.remove('hidden');
+}
+
+function initMaintenanceScreen() {
+  // Always reset to the sub-dashboard view on each visit
+  closeMaintPanel();
+  refreshMaintenanceBadges();
+}
+
+function setBadge(id, count) {
+  const b = el(id);
+  if (!b) return;
+  b.textContent = count;
+  b.classList.toggle('hidden', count === 0);
+}
+
+async function refreshMaintenanceBadges() {
+  try {
+    const counts = await api('GET', '/api/maintenance/badge-counts');
+    setBadge('maint-badge-equipment', counts.equipment);
+    setBadge('maint-badge-buildings', counts.buildings);
+    setBadge('maint-badge-wells',     counts.wells);
+    setBadge('maint-main-badge', counts.equipment + counts.buildings + counts.wells);
+  } catch { /* non-critical — badges stay at last known value */ }
+}
+
+document.querySelectorAll('[data-maint-panel]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    openMaintPanel(btn.dataset.maintPanel);
+  });
+});
+
+document.querySelectorAll('.maint-back-btn').forEach(btn => {
+  btn.addEventListener('click', closeMaintPanel);
+});
+
+async function initMaintVehiclesPanel() {
+  if (maintVehiclesLoaded) return;
+  maintVehiclesLoaded = true;
+  maintType = 'vehicle';
+
   el('maint-date').value = todayISO();
-  el('swap-date').value  = todayISO();
 
-  // Load vehicles for maintenance dropdown
   try {
     const vehicles = await api('GET', '/api/vehicles');
     maintVehicles = vehicles;
@@ -1557,60 +2296,7 @@ async function initMaintenanceScreen() {
       sel.appendChild(opt);
     });
   } catch { /* non-critical */ }
-
-  // Load sites for building maintenance
-  try {
-    const sites = await api('GET', '/api/sites');
-    const sel = el('maint-site-select');
-    sel.innerHTML = '<option value="">Select site…</option>';
-    sites.forEach(s => {
-      const opt = document.createElement('option');
-      opt.value = s.site_id;
-      opt.textContent = s.site_name;
-      sel.appendChild(opt);
-    });
-  } catch { /* non-critical */ }
-
-  // Load equipment for the equipment dropdown (default: pump)
-  await loadMaintEquipment(el('maint-equip-type').value);
 }
-
-async function loadMaintEquipment(type) {
-  const sel = el('maint-equip-select');
-  sel.innerHTML = '<option value="">Loading…</option>';
-  try {
-    const list = await api('GET', `/api/equipment/${type}`);
-    sel.innerHTML = '<option value="">Select equipment…</option>';
-    list.forEach(e => {
-      const opt = document.createElement('option');
-      opt.value = e.id;
-      opt.textContent = e.name;
-      sel.appendChild(opt);
-    });
-  } catch {
-    sel.innerHTML = '<option value="">Select equipment…</option>';
-  }
-}
-
-el('maint-equip-type').addEventListener('change', () => {
-  loadMaintEquipment(el('maint-equip-type').value);
-});
-
-// Maintenance type segmented control
-document.querySelectorAll('#maint-type-seg .seg-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('#maint-type-seg .seg-btn').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    maintType = btn.dataset.val;
-    const isSwap = maintType === 'swap';
-    el('maint-equipment-fields').classList.toggle('hidden', maintType !== 'equipment');
-    el('maint-vehicle-fields').classList.toggle('hidden', maintType !== 'vehicle');
-    el('maint-building-fields').classList.toggle('hidden', maintType !== 'building');
-    el('maint-swap-fields').classList.toggle('hidden', !isSwap);
-    el('maint-common-fields').classList.toggle('hidden', isSwap);
-    if (isSwap) loadSBUnitsForSwap();
-  });
-});
 
 // Show/hide next service fields and hints based on selected vehicle
 el('maint-vehicle-select').addEventListener('change', () => {
@@ -1690,33 +2376,59 @@ el('maint-site-select').addEventListener('change', async () => {
   } catch { /* non-critical */ }
 });
 
-/* ── Siphon Breaker Swap ─────────────────────────────────────────────────── */
-let sbUnits = { active: [], spares: [] };
+/* ── Equipment Swaps ─────────────────────────────────────────────────────── */
+let swapCategory = 'siphon_breaker';
+let swapPanelLoaded = false;
 
-async function loadSBUnitsForSwap() {
+function initMaintSwapsPanel() {
+  if (swapPanelLoaded) return;
+  swapPanelLoaded = true;
+  el('swap-date').value = todayISO();
+  loadSwapUnits(swapCategory);
+}
+
+async function loadSwapUnits(category) {
+  const removeSel  = el('swap-remove-select');
+  const installSel = el('swap-install-select');
+  removeSel.innerHTML  = '<option value="">Loading…</option>';
+  installSel.innerHTML = '<option value="">Loading…</option>';
+  el('swap-location-hint').classList.add('hidden');
   try {
-    sbUnits = await api('GET', '/api/siphon-breakers/units');
-    const removeSel = el('swap-remove-select');
-    const installSel = el('swap-install-select');
-    removeSel.innerHTML = '<option value="">Select active unit…</option>';
-    installSel.innerHTML = '<option value="">Select spare…</option>';
-    sbUnits.active.forEach(u => {
+    const { active, spares } = await api('GET', `/api/equipment-swap-units/${category}`);
+    removeSel.innerHTML  = active.length  ? '<option value="">Select active unit…</option>'
+                                          : '<option value="">No active units found</option>';
+    installSel.innerHTML = spares.length  ? '<option value="">Select spare…</option>'
+                                          : '<option value="">No spares found</option>';
+    active.forEach(u => {
       const opt = document.createElement('option');
       opt.value = u.id;
       opt.textContent = u.name;
       opt.dataset.location = u.current_location || '';
       removeSel.appendChild(opt);
     });
-    sbUnits.spares.forEach(u => {
+    spares.forEach(u => {
       const opt = document.createElement('option');
       opt.value = u.id;
       opt.textContent = u.name;
       installSel.appendChild(opt);
     });
   } catch (err) {
-    showToast('Failed to load SB units: ' + err.message, 'error');
+    removeSel.innerHTML  = '<option value="">Failed to load</option>';
+    installSel.innerHTML = '<option value="">Failed to load</option>';
+    showToast('Failed to load swap units: ' + err.message, 'error');
   }
 }
+
+document.querySelectorAll('#swap-category-seg .seg-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#swap-category-seg .seg-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    swapCategory = btn.dataset.val;
+    el('swap-remove-select').value  = '';
+    el('swap-install-select').value = '';
+    loadSwapUnits(swapCategory);
+  });
+});
 
 el('swap-remove-select').addEventListener('change', () => {
   const sel = el('swap-remove-select');
@@ -1742,23 +2454,24 @@ el('swap-save-btn').addEventListener('click', async () => {
   const btn = el('swap-save-btn');
   btn.disabled = true; btn.textContent = 'Saving…';
   try {
-    const r = await api('POST', '/api/siphon-breakers/swap', {
+    const r = await api('POST', '/api/equipment-swaps', {
+      category: swapCategory,
       remove_id, install_id, swap_date,
       performed_by: el('swap-performed-by').value.trim() || null,
       notes: el('swap-notes').value.trim() || null,
-    }, 'SB Swap');
+    }, 'Equipment Swap');
     if (r.queued) {
       showToast('Swap queued offline — will sync when connected', 'warn');
     } else {
-      showToast(`Swap complete — SB now at location ${r.location}`, 'success');
+      showToast(`Swap complete — unit now at ${r.location}`, 'success');
     }
     // Reset form
-    el('swap-remove-select').value = '';
+    el('swap-remove-select').value  = '';
     el('swap-install-select').value = '';
     el('swap-notes').value = '';
     el('swap-location-hint').classList.add('hidden');
-    // Reload units so dropdowns reflect the change
-    if (!r.queued) loadSBUnitsForSwap();
+    // Reload units so dropdowns reflect the updated statuses
+    if (!r.queued) loadSwapUnits(swapCategory);
   } catch (err) {
     showError('swap-error', err.message);
   } finally {
@@ -1834,23 +2547,31 @@ el('maint-save-btn').addEventListener('click', async () => {
 });
 
 /* ── KF Monthly ─────────────────────────────────────────────────────────── */
-let kfLoaded   = false;
-let kfAllWells = [];
-let kfSets     = [];
-let kfActiveSet = null;
-
+let kfLoaded        = false;
+let kfAllWells      = [];
+let kfSets          = [];
+let kfActiveSet     = null;
+let kfWidgetStart   = null;
+let kfWidgetEnd     = null;
+let kfLoadedStart   = null;
+let kfLoadedEnd     = null;
 async function initKFScreen() {
-  if (kfLoaded) return;
+  // Reload if widget date range has changed since last load
+  if (kfLoaded && kfLoadedStart === kfWidgetStart && kfLoadedEnd === kfWidgetEnd) return;
   kfLoaded = true;
 
   el('kf-date').value = todayISO();
   el('kf-time').value = nowHHMM();
 
   try {
+    const kfParams = kfWidgetStart && kfWidgetEnd
+      ? `?start_date=${kfWidgetStart}&end_date=${kfWidgetEnd}` : '';
     [kfSets, kfAllWells] = await Promise.all([
       api('GET', '/api/well-sets'),
-      api('GET', '/api/wells/kf'),
+      api('GET', `/api/wells/kf${kfParams}`),
     ]);
+    kfLoadedStart = kfWidgetStart;
+    kfLoadedEnd   = kfWidgetEnd;
   } catch (err) {
     el('kf-list-body').innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
     showToast('Failed to load KF data: ' + err.message, 'error');
@@ -1912,7 +2633,7 @@ function renderKFList() {
   if (currentSet) {
     const raw = currentSet.set_name || String(currentSet.set_id);
     const setLabel = /^set\s/i.test(raw) ? raw : `Set ${raw}`;
-    const doneCount = filtered.filter(w => w.days_since_reading != null && w.days_since_reading <= 25).length;
+    const doneCount = filtered.filter(w => w.range_reading_date != null).length;
     const totalCount = filtered.length;
 
     const card = document.createElement('div');
@@ -1936,9 +2657,11 @@ function createKFItem(w, dateInput, timeInput) {
   const div = document.createElement('div');
   div.className = 'list-item';
 
-  const days = w.days_since_reading;
-  const sc   = days == null ? 'due' : days <= 25 ? 'done' : 'overdue';
-  const badge = days == null ? 'Never' : days === 0 ? 'Today' : `${days}d ago`;
+  const inRange = w.range_reading_date != null;
+  const sc      = inRange ? 'done' : 'due';
+  const badge   = inRange
+    ? localDateStr(w.range_reading_date, { month: 'short', day: 'numeric' })
+    : 'Not read';
   const prevDTW    = w.last_dtw    != null ? `${Number(w.last_dtw).toFixed(2)} ft` : null;
   const prevMethod = w.last_method != null ? w.last_method.charAt(0).toUpperCase() + w.last_method.slice(1) : null;
   const prevMeta   = [prevDTW, prevMethod].filter(Boolean).join(' · ');
@@ -1947,7 +2670,7 @@ function createKFItem(w, dateInput, timeInput) {
   div.innerHTML = `
     <div class="list-item-header">
       <span class="status-dot ${sc}"></span>
-      <span class="list-item-name${w.is_important ? ' well-important' : ''}">${w.common_name}</span>
+      <span class="list-item-name${w.is_important ? ' well-important' : ''}">${w.state_well_number ? `${w.state_well_number} | ${w.common_name}` : w.common_name}</span>
       <span class="status-badge ${sc}">${badge}</span>
       <span class="expand-chevron">&#9660;</span>
     </div>
@@ -2117,6 +2840,7 @@ function openSettingsPanel(panelId) {
   el('settings-panel-' + panelId).classList.remove('hidden');
   if (panelId === 'readings')   loadTodayReadings();
   if (panelId === 'bugreports') loadBugReports();
+  if (panelId === 'kf-widget')  initKFWidgetPanel();
   if (panelId === 'appinfo') {
     const ls = localStorage.getItem('field-ops-last-sync');
     el('settings-last-sync').textContent = ls ? new Date(ls).toLocaleString() : 'Never';
@@ -2136,6 +2860,209 @@ document.querySelectorAll('.settings-menu-row').forEach(btn => {
 document.querySelectorAll('.settings-back-btn').forEach(btn => {
   btn.addEventListener('click', closeSettingsPanel);
 });
+
+// ── Secret tools menu (tap version number 5 times) ────────────────────────
+(function () {
+  let tapCount = 0, tapTimer = null;
+  el('appinfo-version-tap').addEventListener('click', () => {
+    tapCount++;
+    clearTimeout(tapTimer);
+    if (tapCount >= 5) {
+      tapCount = 0;
+      openSettingsPanel('tools');
+    } else {
+      tapTimer = setTimeout(() => { tapCount = 0; }, 1500);
+    }
+  });
+})();
+
+el('settings-panel-tools').addEventListener('click', e => {
+  const btn = e.target.closest('[data-tool]');
+  if (btn && btn.dataset.tool === 'exif') openExifTool();
+});
+
+el('exif-back-btn').addEventListener('click', () => {
+  el('exif-tool-overlay').classList.add('hidden');
+});
+
+// ── EXIF Tool ─────────────────────────────────────────────────────────────────
+(function () {
+  let exifRows = [], exifFields = [], exifActive = new Set();
+  let exifLibLoaded = false;
+
+  function loadExifLib() {
+    if (exifLibLoaded || window.EXIF) { exifLibLoaded = true; return Promise.resolve(); }
+    return new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/exif-js/2.3.0/exif.min.js';
+      s.onload = () => { exifLibLoaded = true; resolve(); };
+      s.onerror = reject;
+      document.head.appendChild(s);
+    });
+  }
+
+  window.openExifTool = async function () {
+    el('exif-tool-overlay').classList.remove('hidden');
+    try { await loadExifLib(); } catch { showToast('Could not load EXIF library', 'error'); }
+  };
+
+  function gpsDD(coords, ref) {
+    if (!Array.isArray(coords) || coords.length < 3) return '';
+    const dd = coords[0] + coords[1] / 60 + coords[2] / 3600;
+    return ((ref === 'S' || ref === 'W') ? -dd : dd).toFixed(6);
+  }
+
+  const FIELDS = {
+    Make:'Make', Model:'Model', Software:'Software',
+    DateTimeOriginal:'Date Taken', DateTime:'Date/Time',
+    ExposureTime:'Exposure', FNumber:'F-Number', ISOSpeedRatings:'ISO',
+    FocalLength:'Focal Length', FocalLengthIn35mmFilm:'Focal (35mm)',
+    Flash:'Flash', WhiteBalance:'White Balance', ExposureMode:'Exp Mode',
+    PixelXDimension:'Width', PixelYDimension:'Height',
+    Orientation:'Orientation', GPSLatitude:'Latitude', GPSLongitude:'Longitude',
+    GPSAltitude:'Altitude (m)', GPSSpeed:'GPS Speed', GPSDateStamp:'GPS Date',
+    LensModel:'Lens', MeteringMode:'Metering', SceneCaptureType:'Scene',
+    ColorSpace:'Color Space', UserComment:'Comment', ImageDescription:'Description',
+  };
+  const SKIP = new Set(['GPSLatitudeRef','GPSLongitudeRef','GPSAltitudeRef','GPSSpeedRef',
+                        'GPSImgDirectionRef','GPSMapDatum','GPSVersionID']);
+
+  function fmtVal(key, val, allData) {
+    if (val === undefined || val === null || val === '') return '';
+    if (key === 'ExposureTime') return val < 1 ? `1/${Math.round(1/val)}s` : `${val}s`;
+    if (key === 'FNumber') return `f/${val}`;
+    if (key === 'FocalLength' || key === 'FocalLengthIn35mmFilm') return `${val}mm`;
+    if (key === 'GPSLatitude')  return gpsDD(val, allData.GPSLatitudeRef  || 'N');
+    if (key === 'GPSLongitude') return gpsDD(val, allData.GPSLongitudeRef || 'E');
+    if (Array.isArray(val)) return val.join(', ');
+    return String(val);
+  }
+
+  function readExif(file) {
+    return new Promise(resolve => {
+      EXIF.getData(file, function () {
+        const data = EXIF.getAllTags(this);
+        const row = {
+          'Filename':  file.name,
+          'File Size': (file.size / 1024).toFixed(1) + ' KB',
+          'File Type': file.type,
+        };
+        for (const key of Object.keys(FIELDS)) {
+          if (data[key] !== undefined) row[FIELDS[key]] = fmtVal(key, data[key], data);
+        }
+        resolve(row);
+      });
+    });
+  }
+
+  function mergeFields(rows) {
+    const seen = new Set(), out = [];
+    for (const r of rows) for (const k of Object.keys(r)) if (!seen.has(k)) { seen.add(k); out.push(k); }
+    return out;
+  }
+
+  function renderTable() {
+    const wrap = el('exif-table-wrap');
+    const tbl  = el('exif-table');
+    if (!exifRows.length) { wrap.classList.add('hidden'); return; }
+    const cols = exifFields.filter(f => exifActive.has(f));
+    let head = '<thead><tr>' + cols.map(f => `<th>${escHtml(f)}</th>`).join('') + '</tr></thead>';
+    let body = '<tbody>' + exifRows.map(row =>
+      '<tr>' + cols.map(f => {
+        const v = row[f] || '';
+        return v ? `<td title="${escHtml(v)}">${escHtml(v)}</td>` : '<td class="na">—</td>';
+      }).join('') + '</tr>'
+    ).join('') + '</tbody>';
+    tbl.innerHTML = head + body;
+    wrap.classList.remove('hidden');
+  }
+
+  function renderChips() {
+    const box = el('exif-chips');
+    box.innerHTML = '';
+    const all = document.createElement('span');
+    all.className = 'exif-chip chip-all';
+    all.textContent = 'All / None';
+    all.addEventListener('click', () => {
+      if (exifFields.some(f => exifActive.has(f))) exifActive.clear();
+      else exifFields.forEach(f => exifActive.add(f));
+      renderChips(); renderTable(); updateStats();
+    });
+    box.appendChild(all);
+    exifFields.forEach(f => {
+      const c = document.createElement('span');
+      c.className = 'exif-chip' + (exifActive.has(f) ? ' active' : '');
+      c.textContent = f;
+      c.addEventListener('click', () => {
+        exifActive[exifActive.has(f) ? 'delete' : 'add'](f);
+        c.classList.toggle('active');
+        renderTable(); updateStats();
+      });
+      box.appendChild(c);
+    });
+    box.classList.remove('hidden');
+  }
+
+  function updateStats() {
+    el('exif-stat-count').textContent = exifRows.length;
+    const gpsCount = exifRows.filter(r => r['Latitude']).length;
+    el('exif-stat-gps').textContent = gpsCount;
+    el('exif-export-btn').style.display = exifRows.length ? '' : 'none';
+  }
+
+  async function processFiles(files) {
+    if (!files.length) return;
+    const progWrap = el('exif-progress-wrap');
+    const progBar  = el('exif-progress-bar');
+    progWrap.classList.remove('hidden');
+    progBar.style.width = '0%';
+    const newRows = [];
+    for (let i = 0; i < files.length; i++) {
+      newRows.push(await readExif(files[i]));
+      progBar.style.width = ((i + 1) / files.length * 100) + '%';
+    }
+    exifRows   = [...exifRows, ...newRows];
+    exifFields = mergeFields(exifRows);
+    exifActive = new Set(exifFields);
+    setTimeout(() => progWrap.classList.add('hidden'), 500);
+    el('exif-stats').classList.remove('hidden');
+    renderChips(); renderTable(); updateStats();
+  }
+
+  function exportCSV() {
+    if (!exifRows.length) return;
+    const cols = exifFields.filter(f => exifActive.has(f));
+    const esc  = v => `"${String(v).replace(/"/g, '""')}"`;
+    let csv = cols.map(esc).join(',') + '\n';
+    for (const row of exifRows) csv += cols.map(f => esc(row[f] || '')).join(',') + '\n';
+    const a = Object.assign(document.createElement('a'), {
+      href: URL.createObjectURL(new Blob([csv], { type: 'text/csv' })),
+      download: `exif_${new Date().toISOString().slice(0,10)}.csv`,
+    });
+    a.click(); URL.revokeObjectURL(a.href);
+  }
+
+  const dropzone = el('exif-dropzone');
+  const fileInput = el('exif-file-input');
+
+  fileInput.addEventListener('change', e => processFiles([...e.target.files]));
+  dropzone.addEventListener('dragover',  e => { e.preventDefault(); dropzone.classList.add('drag-over'); });
+  dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag-over'));
+  dropzone.addEventListener('drop', e => {
+    e.preventDefault(); dropzone.classList.remove('drag-over');
+    processFiles([...e.dataTransfer.files].filter(f => f.type.startsWith('image/')));
+  });
+  el('exif-export-btn').addEventListener('click', exportCSV);
+  el('exif-filter-btn').addEventListener('click', () => el('exif-chips').classList.toggle('hidden'));
+  el('exif-clear-btn').addEventListener('click', () => {
+    exifRows = []; exifFields = []; exifActive.clear();
+    el('exif-stats').classList.add('hidden');
+    el('exif-chips').classList.add('hidden');
+    el('exif-table-wrap').classList.add('hidden');
+    el('exif-export-btn').style.display = 'none';
+    fileInput.value = '';
+  });
+})();
 
 // Change password
 el('pw-save-btn').addEventListener('click', async () => {
@@ -2163,6 +3090,34 @@ function initSettingsScreen() {
   closeSettingsPanel();
   updateTextSizeBtns();
 }
+
+// ── KF Widget Settings ────────────────────────────────────────────────────────
+let kfWidgetPanelLoaded = false;
+
+async function initKFWidgetPanel() {
+  if (kfWidgetPanelLoaded) return;
+  kfWidgetPanelLoaded = true;
+  try {
+    const { start_date, end_date } = await api('GET', '/api/settings/kf-widget');
+    if (start_date) el('kf-widget-start').value = start_date;
+    if (end_date)   el('kf-widget-end').value   = end_date;
+  } catch { /* leave inputs blank */ }
+}
+
+el('kf-widget-save-btn').addEventListener('click', async () => {
+  const start_date = el('kf-widget-start').value;
+  const end_date   = el('kf-widget-end').value;
+  if (!start_date || !end_date) return showToast('Both dates are required', 'error');
+  if (start_date > end_date)    return showToast('Start date must be before end date', 'error');
+  try {
+    await api('PUT', '/api/settings/kf-widget', { start_date, end_date });
+    showToast('KF widget updated');
+    // Reload dashboard stats on next visit
+    loadDashboardStats();
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+});
 
 async function loadTodayReadings() {
   const list = el('today-readings-list');
@@ -2554,44 +3509,1179 @@ el('maint-building-hist-btn').addEventListener('click', () => {
   openMaintHistoryModal('building', id, label);
 });
 
-/* ── Reports ─────────────────────────────────────────────────────────────── */
-let reportsMonth = new Date().getMonth() + 1;
-let reportsYear  = new Date().getFullYear();
+/* ── PM (Preventive Maintenance) ─────────────────────────────────────────── */
 
-function initReportsScreen() {
-  updateReportsMonthLabel();
-  runReport();
+// ── Checklist Definitions ─────────────────────────────────────────────────────
+const PM_TYPES = {
+  a_electrical: {
+    title: 'A Plant Electrical PM',
+    subtitle: 'CVC Pumping Plant Monthly Electrical Controls Surveillance and Inspection',
+    formRef: 'M10-CVC',
+    buildings: ['Pumping Plant 1','Pumping Plant 2','Pumping Plant 3','Pumping Plant 4',
+                'Pumping Plant 5','Pumping Plant 6','Pumping Plant 7','O&M'],
+    items: [
+      { key: 'smells_noise',       label: 'Check for unusual smells or noise.' },
+      { key: 'visual_motor_ctrl',  label: 'Visual inspection of motor controls.' },
+      { key: 'dewebb_mcc_scada',   label: "De-webb / clean MCC's and SCADA panel." },
+      { key: 'indicator_lamps',    label: 'Check and replace burned out indicator lamps.' },
+      { key: 'panel_labels',       label: 'Replace missing panel labels.' },
+      { key: 'motor_current',      label: 'Check motor current on running motors. Look for imbalance or current running ~10 amps or more. This indicates a failed power factor correction capacitor.', type: 'twc-area', placeholder: 'Amp readings (e.g. Pump 1: 45A, Pump 2: 48A…)' },
+      { key: 'station_voltage',    label: 'Check station voltage at main breaker panel PMX-1000. Should be ~2300 volts.', type: 'twc', placeholder: 'Voltage reading' },
+      { key: 'relay_flags',        label: 'Check for flags on Overload, Reverse Power and Ground Fault relays.' },
+      { key: 'breaker_counter',    label: 'Log Main Breaker Operation Counter', type: 'twc', placeholder: 'Counter value' },
+      { key: 'scada_screen',       label: 'Clean SCADA touch screen.' },
+      { key: 'building_lighting',  label: 'Check building lighting.' },
+      { key: 'compressor_hoa',     label: "Check station compressor operation — place H.O.A. in manual then back to auto." },
+      { key: 'station_motors',     label: 'Check station motors — listen to running pumps and inspect all units.' },
+      { key: 'yard_lights',        label: 'Place yard lights in "ON" position and check lighting.' },
+      { key: 'summer_ac',          label: 'Summer — Check A.C. operation, building temp should be ~75°F. Check fan belts and filters.' },
+      { key: 'generator_test',     label: 'Generator test.', condBuilding: 'O&M' },
+    ],
+  },
+  b_electrical: {
+    title: 'B Plant Electrical PM',
+    subtitle: 'CVC Pumping Plant Monthly Electrical Controls Inspection',
+    formRef: 'M10-CVC-B',
+    buildings: ['Pumping Plant 1','Pumping Plant 2','Pumping Plant 3','Pumping Plant 4',
+                'Pumping Plant 5','Pumping Plant 6'],
+    items: [
+      { key: 'notify_super',        label: 'Contact and Notify the CVC O&M Superintendent of start of Preventive Maintenance Tasks.' },
+      { key: 'smells_noise',        label: 'Check for unusual smells or noise.' },
+      { key: 'visual_motor_ctrl',   label: 'Visual inspection of motor controls.' },
+      { key: 'mcc_scada_clean',     label: "Check MCC's and SCADA panels for cleanliness, dust and spider webs." },
+      { key: 'indicator_lamps',     label: 'Check and replace burned out indicator lamps.' },
+      { key: 'panel_labels',        label: 'Replace missing panel labels.' },
+      { key: 'station_voltage',     label: 'Check station voltage at main breaker panel (GE Multilin). Should be approx. 4160 volts.', type: 'twc', textLabel: 'Record Voltage', placeholder: 'Voltage reading' },
+      { key: 'relay_flags',         label: 'Check for flags on the main switchboard protective relay.' },
+      { key: 'breaker_counter',     label: 'Log Main Breaker Operation Counter', type: 'twc', placeholder: 'Counter value' },
+      { key: 'motor_current',       label: 'Check motor current on running motors. Look for imbalance or current running approx. 10 amps or more. This may indicate a failed power factor correction capacitor/s.', type: 'twc-area', placeholder: 'Amp readings (e.g. Pump 1: 45A, Pump 2: 48A…)' },
+      { key: 'scada_screen',        label: 'Clean SCADA touch screen.' },
+      { key: 'station_motors',      label: 'Check station motors — listen to running pumps and perform visual inspection on units not running.' },
+      { key: 'yard_lights',         label: 'Place yard lights in "ON" position and check lighting. Put back into "AUTO" when done.' },
+      { key: 'field_instrumentation', label: 'Check field instrumentation and attachment points — Level transducers/switches (Forebay and afterbay), conduits, junction boxes and underground pull boxes and "Condulet" Fittings and covers (LBs, LRs, TBs, Cs, etc...).' },
+      { key: 'utility_provider',    label: 'Check all utility provider (PG&E) equipment, transformer, etc. Report any issues to Utility Provider and CVC O&M Superintendent.' },
+      { key: 'smoke_fire',          label: 'Check status and operation of the Smoke / Fire detection systems.' },
+    ],
+  },
+  siphon_breaker: {
+    title: 'Siphon Breaker PM',
+    customType: 'siphon',
+  },
+  air_compressor: {
+    title: 'Air Compressor PM',
+    customType: 'air_compressor',
+    checks: [
+      { key: 'leak_test',     label: '5 min Leak Test' },
+      { key: 'bleed_sep',     label: 'Bleed Water Separator' },
+      { key: 'auto_drain',    label: 'Test Tank Auto Drain' },
+      { key: 'high_cutoff',   label: 'Confirm High Cutoff and Low Cut On Are Correct' },
+      { key: 'inspect_leaks', label: 'Inspect for Leaks' },
+    ],
+  },
+  wells:          { title: 'Wells PM',                stub: true },
+  annual_pp:      { title: 'Annual Pumping Plant PM', stub: true },
+};
+
+// ── PM Helpers ────────────────────────────────────────────────────────────────
+function pmPanelId(type) { return 'pm-panel-' + type.replace(/_/g, '-'); }
+function pmLastId(type)  { return 'pm-last-'  + type.replace(/_/g, '-'); }
+
+const pmHistoryCache = {}; // pm_id → record, for view/export without re-fetch
+
+// ── PM Navigation ─────────────────────────────────────────────────────────────
+function openPMType(pmType) {
+  el('pm-main').classList.add('hidden');
+  document.querySelectorAll('#maint-panel-pms .pm-panel').forEach(p => p.classList.add('hidden'));
+  el(pmPanelId(pmType)).classList.remove('hidden');
+  initPMTypePanel(pmType);
 }
 
+function closePMType() {
+  document.querySelectorAll('#maint-panel-pms .pm-panel').forEach(p => p.classList.add('hidden'));
+  el('pm-main').classList.remove('hidden');
+}
+
+el('maint-panel-pms').addEventListener('click', e => {
+  if (e.target.matches('.pm-back-btn') || e.target.closest('.pm-back-btn')) closePMType();
+});
+
+document.querySelectorAll('[data-pm-type]').forEach(btn => {
+  btn.addEventListener('click', () => openPMType(btn.dataset.pmType));
+});
+
+// ── PM Sub-dashboard ──────────────────────────────────────────────────────────
+async function initMaintPMsPanel() {
+  closePMType();
+  await loadPMLastCompleted();
+}
+
+async function loadPMLastCompleted() {
+  try {
+    const rows = await api('GET', '/api/pm-records/last-completed');
+    rows.forEach(r => {
+      const labelEl = el(pmLastId(r.pm_type));
+      if (!labelEl) return;
+      const d = localDateStr(r.completed_date, { month: 'short', day: 'numeric' });
+      labelEl.textContent = d;
+    });
+  } catch { /* non-critical */ }
+}
+
+// ── PM Type Panel ─────────────────────────────────────────────────────────────
+async function initPMTypePanel(pmType) {
+  const def = PM_TYPES[pmType];
+  const contentEl = el(pmPanelId(pmType)).querySelector('.pm-type-content');
+
+  // Build structure on first open only
+  if (!contentEl.firstElementChild) {
+    if (def.stub) {
+      contentEl.innerHTML = `<h2 class="panel-heading">${escHtml(def.title)}</h2>
+        <div class="placeholder-msg">Checklist coming in a future update.</div>`;
+      return;
+    }
+    if (def.customType === 'siphon')       { buildSiphonBreakerPM(pmType, def, contentEl); return; }
+    if (def.customType === 'air_compressor') { buildAirCompressorPM(pmType, def, contentEl); return; }
+    buildPMTypeStructure(pmType, def, contentEl);
+  }
+
+  if (!def.stub && !def.customType) await loadPMHistory(pmType, contentEl);
+  if (def.customType) await loadPMHistory(pmType, contentEl);
+}
+
+function buildPMTypeStructure(pmType, def, contentEl) {
+  contentEl.innerHTML = `
+    <h2 class="panel-heading">${escHtml(def.title)}</h2>
+    <div class="issue-toolbar">
+      <button class="btn btn-primary btn-sm pm-new-btn">+ New PM</button>
+    </div>
+    <div class="pm-form-wrap" style="display:none">
+      <div class="settings-card" style="margin-bottom:14px">
+        <div class="settings-pad">
+          <div class="form-group">
+            <label>Location</label>
+            <select class="ctrl-select pm-building-select">
+              <option value="">— select location —</option>
+              ${def.buildings.map(b => `<option value="${escHtml(b)}">${escHtml(b)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="pm-progress hidden"></div>
+          <div class="pm-checklist-area"><p class="placeholder-msg" style="font-style:normal">Select a location to load the checklist.</p></div>
+          <div class="form-group" style="margin-top:10px">
+            <label>Notes</label>
+            <textarea class="ctrl-input pm-notes-field" rows="3" placeholder="Any additional comments…"></textarea>
+          </div>
+          <div class="form-row">
+            <button class="btn btn-primary pm-submit-btn">Submit PM</button>
+            <button class="btn btn-secondary pm-cancel-btn">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="report-section-title" style="margin-top:4px">History</div>
+    <div class="pm-history-area"></div>`;
+
+  const newBtn      = contentEl.querySelector('.pm-new-btn');
+  const formWrap    = contentEl.querySelector('.pm-form-wrap');
+  const buildingSel = contentEl.querySelector('.pm-building-select');
+  const progressEl  = contentEl.querySelector('.pm-progress');
+  const checklistEl = contentEl.querySelector('.pm-checklist-area');
+  const notesEl     = contentEl.querySelector('.pm-notes-field');
+  const submitBtn   = contentEl.querySelector('.pm-submit-btn');
+  const cancelBtn   = contentEl.querySelector('.pm-cancel-btn');
+
+  newBtn.addEventListener('click', () => {
+    formWrap.style.display = '';
+    newBtn.style.display   = 'none';
+    buildingSel.value = '';
+    notesEl.value     = '';
+    checklistEl.innerHTML = '<p class="placeholder-msg" style="font-style:normal">Select a location to load the checklist.</p>';
+    progressEl.classList.add('hidden');
+  });
+
+  cancelBtn.addEventListener('click', () => {
+    formWrap.style.display = 'none';
+    newBtn.style.display   = '';
+  });
+
+  buildingSel.addEventListener('change', () => {
+    const building = buildingSel.value;
+    if (!building) {
+      checklistEl.innerHTML = '<p class="placeholder-msg" style="font-style:normal">Select a location to load the checklist.</p>';
+      progressEl.classList.add('hidden');
+      return;
+    }
+    checklistEl.innerHTML = renderChecklistItems(def, building);
+    progressEl.classList.remove('hidden');
+    updatePMProgress(checklistEl, progressEl, def, building);
+    checklistEl.addEventListener('change', () => updatePMProgress(checklistEl, progressEl, def, building));
+  });
+
+  submitBtn.addEventListener('click', async () => {
+    const building = buildingSel.value;
+    if (!building) return showToast('Select a location first', 'error');
+    const checklist = collectChecklist(checklistEl, def, building);
+    const notes = notesEl.value.trim();
+    submitBtn.disabled = true;
+    try {
+      await api('POST', '/api/pm-records', { pm_type: pmType, building, checklist, notes });
+      formWrap.style.display = 'none';
+      newBtn.style.display = '';
+      showToast('PM submitted');
+      loadPMLastCompleted();
+      await loadPMHistory(pmType, contentEl);
+    } catch (err) {
+      showToast(err.message, 'error');
+    } finally {
+      submitBtn.disabled = false;
+    }
+  });
+}
+
+// ── Siphon Breaker PM ─────────────────────────────────────────────────────────
+async function buildSiphonBreakerPM(pmType, def, contentEl) {
+  contentEl.innerHTML = `<h2 class="panel-heading">${escHtml(def.title)}</h2>
+    <div class="issue-toolbar">
+      <button class="btn btn-primary btn-sm pm-new-btn">+ New PM</button>
+    </div>
+    <div class="pm-form-wrap" style="display:none">
+      <div class="settings-card" style="margin-bottom:14px">
+        <div class="settings-pad">
+          <div class="form-group">
+            <label>Pumping Plant</label>
+            <select class="ctrl-input pm-plant-sel">
+              <option value="">— Select Pumping Plant —</option>
+            </select>
+          </div>
+          <div class="pm-sb-checklist"></div>
+          <div class="form-group" style="margin-top:10px">
+            <label>Notes</label>
+            <textarea class="ctrl-input pm-notes-field" rows="2" placeholder="Any additional comments…"></textarea>
+          </div>
+          <div class="form-row">
+            <button class="btn btn-primary pm-submit-btn">Submit PM</button>
+            <button class="btn btn-secondary pm-cancel-btn">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="report-section-title" style="margin-top:4px">History</div>
+    <div class="pm-history-area"></div>`;
+
+  const newBtn    = contentEl.querySelector('.pm-new-btn');
+  const formWrap  = contentEl.querySelector('.pm-form-wrap');
+  const plantSel  = contentEl.querySelector('.pm-plant-sel');
+  const listEl    = contentEl.querySelector('.pm-sb-checklist');
+  const notesEl   = contentEl.querySelector('.pm-notes-field');
+  const submitBtn = contentEl.querySelector('.pm-submit-btn');
+  const cancelBtn = contentEl.querySelector('.pm-cancel-btn');
+
+  let positions = [], allPositions = [];
+
+  newBtn.addEventListener('click', async () => {
+    formWrap.style.display = '';
+    newBtn.style.display   = 'none';
+    notesEl.value = '';
+    listEl.innerHTML = '';
+    positions = [];
+
+    // Populate plant dropdown on first open
+    if (plantSel.options.length <= 1) {
+      plantSel.innerHTML = '<option value="">Loading…</option>';
+      try {
+        const [posData, sites] = await Promise.all([
+          api('GET', '/api/pump-positions/all'),
+          api('GET', '/api/sites'),
+        ]);
+        allPositions = posData;
+        const plants = sites
+          .filter(s => !/o\s*&\s*m|service.truck/i.test(s.site_name))
+          .sort((a, b) => a.site_name.localeCompare(b.site_name));
+        plantSel.innerHTML = '<option value="">— Select Pumping Plant —</option>' +
+          plants.map(s => {
+            const label = s.site_name.replace(/\bSite\b/g, 'Pumping Plant');
+            return `<option value="${s.site_id}" data-name="${label}">${escHtml(label)}</option>`;
+          }).join('');
+      } catch (err) {
+        plantSel.innerHTML = '<option value="">— Error loading plants —</option>';
+        showToast('Could not load plants: ' + err.message, 'error');
+      }
+    } else {
+      plantSel.value = '';
+    }
+  });
+
+  plantSel.addEventListener('change', () => {
+    const siteId = plantSel.value;
+    if (!siteId) { listEl.innerHTML = ''; positions = []; return; }
+    positions = allPositions.filter(p => String(p.site_id) === String(siteId));
+    listEl.innerHTML = positions.length
+      ? renderSiphonBreakerChecklist(positions)
+      : '<div class="issue-empty">No pump positions at this plant.</div>';
+  });
+
+  cancelBtn.addEventListener('click', () => {
+    formWrap.style.display = 'none';
+    newBtn.style.display   = '';
+  });
+
+  submitBtn.addEventListener('click', async () => {
+    const opt = plantSel.options[plantSel.selectedIndex];
+    const plantName = opt?.dataset.name;
+    if (!plantName) { showToast('Please select a pumping plant', 'error'); return; }
+    if (!positions.length) { showToast('No pump positions loaded', 'error'); return; }
+    const checklist = collectSiphonChecklist(listEl, positions);
+    const notes = notesEl.value.trim();
+    submitBtn.disabled = true;
+    try {
+      await api('POST', '/api/pm-records', { pm_type: pmType, building: plantName, checklist, notes });
+      formWrap.style.display = 'none';
+      newBtn.style.display   = '';
+      showToast('PM submitted');
+      loadPMLastCompleted();
+      await loadPMHistory(pmType, contentEl);
+    } catch (err) {
+      showToast(err.message, 'error');
+    } finally {
+      submitBtn.disabled = false;
+    }
+  });
+
+  await loadPMHistory(pmType, contentEl);
+}
+
+function renderSiphonBreakerChecklist(positions, existingData = {}) {
+  return positions.map(p => {
+    const locKey = `pos_${p.position_id}`;
+    const val    = existingData[locKey] || {};
+    const label  = `${p.site_number}${p.pump_letter}`;
+    return `<div class="sb-pm-row">
+      <label class="pm-check-row sb-check-label">
+        <input type="checkbox" class="sb-cb" data-pos="${p.position_id}" ${val.checked ? 'checked' : ''}>
+        <span class="sb-loc-label">${escHtml(label)}</span>
+      </label>
+      <textarea class="ctrl-input pm-textarea sb-notes" data-pos="${p.position_id}"
+                rows="1" placeholder="Notes…">${escHtml(val.notes || '')}</textarea>
+    </div>`;
+  }).join('');
+}
+
+function collectSiphonChecklist(listEl, positions) {
+  const result = {};
+  positions.forEach(p => {
+    const cb    = listEl.querySelector(`input.sb-cb[data-pos="${p.position_id}"]`);
+    const notes = listEl.querySelector(`textarea.sb-notes[data-pos="${p.position_id}"]`);
+    result[`pos_${p.position_id}`] = {
+      checked: cb?.checked || false,
+      notes:   notes?.value.trim() || '',
+    };
+  });
+  return result;
+}
+
+// Sites without a Building B compressor
+function acHasBBuilding(label) {
+  return !/pumping plant 7|o\s*[&]\s*m|service truck/i.test(label);
+}
+
+// ── Air Compressor PM ─────────────────────────────────────────────────────────
+async function buildAirCompressorPM(pmType, def, contentEl) {
+  const makeChecks = bld => def.checks.map(c => `
+    <label class="pm-check-row">
+      <input type="checkbox" data-bld="${bld}" data-check="${c.key}">
+      <span>${escHtml(c.label)}</span>
+    </label>`).join('');
+
+  contentEl.innerHTML = `<h2 class="panel-heading">${escHtml(def.title)}</h2>
+    <div class="issue-toolbar">
+      <button class="btn btn-primary btn-sm pm-new-btn">+ New PM</button>
+    </div>
+    <div class="pm-form-wrap" style="display:none">
+      <div class="settings-card" style="margin-bottom:14px">
+        <div class="settings-pad">
+          <div class="form-group">
+            <label>Location</label>
+            <select class="ctrl-input pm-plant-sel">
+              <option value="">— Select Location —</option>
+            </select>
+          </div>
+          <div class="pm-ac-checklist">
+            <div class="ac-compressor-group" data-bld-group="a">
+              <div class="sb-site-header">Building A Compressor</div>
+              ${makeChecks('a')}
+            </div>
+            <div class="ac-compressor-group" data-bld-group="b">
+              <div class="sb-site-header">Building B Compressor</div>
+              ${makeChecks('b')}
+            </div>
+          </div>
+          <div class="form-group" style="margin-top:10px">
+            <label>Notes</label>
+            <textarea class="ctrl-input pm-notes-field" rows="2" placeholder="Any additional comments…"></textarea>
+          </div>
+          <div class="form-row">
+            <button class="btn btn-primary pm-submit-btn">Submit PM</button>
+            <button class="btn btn-secondary pm-cancel-btn">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="report-section-title" style="margin-top:4px">History</div>
+    <div class="pm-history-area"></div>`;
+
+  const newBtn      = contentEl.querySelector('.pm-new-btn');
+  const formWrap    = contentEl.querySelector('.pm-form-wrap');
+  const plantSel    = contentEl.querySelector('.pm-plant-sel');
+  const bGroupB     = contentEl.querySelector('[data-bld-group="b"]');
+  const notesEl     = contentEl.querySelector('.pm-notes-field');
+  const submitBtn   = contentEl.querySelector('.pm-submit-btn');
+  const cancelBtn   = contentEl.querySelector('.pm-cancel-btn');
+
+  function updateBuildingB() {
+    const label = plantSel.options[plantSel.selectedIndex]?.dataset.name || '';
+    const show  = acHasBBuilding(label);
+    bGroupB.style.display = show ? '' : 'none';
+    if (!show) bGroupB.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
+  }
+
+  newBtn.addEventListener('click', async () => {
+    formWrap.style.display = '';
+    newBtn.style.display   = 'none';
+    notesEl.value = '';
+    contentEl.querySelectorAll('.pm-ac-checklist input[type="checkbox"]').forEach(cb => cb.checked = false);
+    bGroupB.style.display = 'none';
+
+    if (plantSel.options.length <= 1) {
+      plantSel.innerHTML = '<option value="">Loading…</option>';
+      try {
+        const sites = await api('GET', '/api/sites');
+        // Sort: pumping plants first (by number), then others alphabetically
+        const sorted = sites.slice().sort((a, b) => {
+          const aNum = parseInt(a.site_name.replace(/\D/g, '')) || 999;
+          const bNum = parseInt(b.site_name.replace(/\D/g, '')) || 999;
+          return aNum - bNum || a.site_name.localeCompare(b.site_name);
+        });
+        plantSel.innerHTML = '<option value="">— Select Location —</option>' +
+          sorted.map(s => {
+            const label = s.site_name.replace(/\bSite\b/g, 'Pumping Plant');
+            return `<option value="${s.site_id}" data-name="${label}">${escHtml(label)}</option>`;
+          }).join('');
+      } catch (err) {
+        plantSel.innerHTML = '<option value="">— Error loading locations —</option>';
+        showToast('Could not load locations: ' + err.message, 'error');
+      }
+    } else {
+      plantSel.value = '';
+      bGroupB.style.display = 'none';
+    }
+  });
+
+  plantSel.addEventListener('change', updateBuildingB);
+
+  cancelBtn.addEventListener('click', () => {
+    formWrap.style.display = 'none';
+    newBtn.style.display   = '';
+  });
+  submitBtn.addEventListener('click', async () => {
+    const opt = plantSel.options[plantSel.selectedIndex];
+    const plantName = opt?.dataset.name;
+    if (!plantName) { showToast('Please select a location', 'error'); return; }
+    const hasBBld = acHasBBuilding(plantName);
+    const checklist = {};
+    ['a', ...(hasBBld ? ['b'] : [])].forEach(bld => {
+      checklist[bld] = {};
+      def.checks.forEach(c => {
+        const cb = contentEl.querySelector(`input[data-bld="${bld}"][data-check="${c.key}"]`);
+        checklist[bld][c.key] = cb?.checked || false;
+      });
+    });
+    const notes = notesEl.value.trim();
+    submitBtn.disabled = true;
+    try {
+      await api('POST', '/api/pm-records', { pm_type: pmType, building: plantName, checklist, notes });
+      formWrap.style.display = 'none';
+      newBtn.style.display   = '';
+      showToast('PM submitted');
+      loadPMLastCompleted();
+      await loadPMHistory(pmType, contentEl);
+    } catch (err) {
+      showToast(err.message, 'error');
+    } finally {
+      submitBtn.disabled = false;
+    }
+  });
+
+  await loadPMHistory(pmType, contentEl);
+}
+
+// ── Checklist Rendering ───────────────────────────────────────────────────────
+function renderChecklistItems(def, building, existingData = {}) {
+  let n = 0;
+  return def.items.map(item => {
+    n++;
+    const hidden = item.condBuilding && item.condBuilding !== building;
+    const val = existingData[item.key];
+    let inner = '';
+
+    if (item.type === 'twc') {
+      const checked = val?.checked || false;
+      const tv = escHtml(val?.value || '');
+      const ph = escHtml(item.textLabel || item.placeholder || 'Value');
+      inner = `<label class="pm-check-row">
+        <input type="checkbox" data-key="${item.key}" data-type="twc" ${checked ? 'checked' : ''}>
+        <span>${n}. ${escHtml(item.label)}</span>
+      </label>
+      <input type="text" class="ctrl-input pm-text-input" data-key="${item.key}" data-type="twc-val"
+             placeholder="${ph}" value="${tv}">`;
+    } else if (item.type === 'twc-area') {
+      const checked = val?.checked || false;
+      const tv = escHtml(val?.value || '');
+      const ph = escHtml(item.placeholder || 'Notes');
+      inner = `<label class="pm-check-row">
+        <input type="checkbox" data-key="${item.key}" data-type="twc" ${checked ? 'checked' : ''}>
+        <span>${n}. ${escHtml(item.label)}</span>
+      </label>
+      <textarea class="ctrl-input pm-text-input pm-textarea" data-key="${item.key}" data-type="twc-val"
+                rows="2" placeholder="${ph}">${tv}</textarea>`;
+    } else if (item.type === 'text') {
+      const tv = escHtml(typeof val === 'string' ? val : '');
+      inner = `<div class="pm-text-only-row">
+        <span class="pm-text-only-label">${n}. ${escHtml(item.label)}</span>
+        <input type="text" class="ctrl-input pm-text-input" data-key="${item.key}" data-type="text-only"
+               placeholder="${escHtml(item.placeholder || '')}" value="${tv}">
+      </div>`;
+    } else {
+      const checked = val === true;
+      inner = `<label class="pm-check-row">
+        <input type="checkbox" data-key="${item.key}" ${checked ? 'checked' : ''}>
+        <span>${n}. ${escHtml(item.label)}</span>
+      </label>`;
+    }
+
+    return `<div class="pm-item${hidden ? ' hidden' : ''}"
+                 ${item.condBuilding ? `data-cond-building="${item.condBuilding}"` : ''}>
+      ${inner}
+    </div>`;
+  }).join('');
+}
+
+function updatePMProgress(checklistEl, progressEl, def, building) {
+  const visibleCBs = checklistEl.querySelectorAll('.pm-item:not(.hidden) input[type="checkbox"]');
+  const total   = visibleCBs.length;
+  const checked = Array.from(visibleCBs).filter(cb => cb.checked).length;
+  progressEl.textContent = `${checked} / ${total} items checked`;
+  progressEl.style.color = checked === total && total > 0 ? 'var(--green-light, #4caf50)' : 'var(--text-dim)';
+}
+
+function collectChecklist(checklistEl, def, building) {
+  const result = {};
+  def.items.forEach(item => {
+    if (item.condBuilding && item.condBuilding !== building) return;
+    if (item.type === 'twc') {
+      const cb  = checklistEl.querySelector(`input[data-key="${item.key}"][data-type="twc"]`);
+      const txt = checklistEl.querySelector(`input[data-key="${item.key}"][data-type="twc-val"]`);
+      result[item.key] = { checked: cb?.checked || false, value: txt?.value.trim() || '' };
+    } else if (item.type === 'text') {
+      const txt = checklistEl.querySelector(`input[data-key="${item.key}"][data-type="text-only"]`);
+      result[item.key] = txt?.value.trim() || '';
+    } else {
+      const cb = checklistEl.querySelector(`input[data-key="${item.key}"]`);
+      result[item.key] = cb?.checked || false;
+    }
+  });
+  return result;
+}
+
+// ── PM History ────────────────────────────────────────────────────────────────
+async function loadPMHistory(pmType, contentEl) {
+  const histEl = contentEl.querySelector('.pm-history-area');
+  if (!histEl) return;
+  histEl.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const rows = await api('GET', `/api/pm-records?type=${pmType}`);
+    rows.forEach(r => { pmHistoryCache[r.pm_id] = r; });
+    if (!rows.length) { histEl.innerHTML = '<div class="issue-empty">No PM records yet.</div>'; return; }
+    const def = PM_TYPES[pmType];
+    histEl.innerHTML = rows.map(r => {
+      const d  = localDateStr(r.completed_date, { month: 'short', day: 'numeric', year: 'numeric' });
+      const t  = r.completed_time?.slice(0, 5) || '';
+      let totalItems, checkedCount;
+      if (def.customType === 'siphon') {
+        const vals = Object.values(r.checklist);
+        totalItems   = vals.length;
+        checkedCount = vals.filter(v => v?.checked === true).length;
+      } else if (def.customType === 'air_compressor') {
+        let tot = 0, done = 0;
+        Object.values(r.checklist).forEach(comp => {
+          if (comp && typeof comp === 'object') Object.values(comp).forEach(v => { tot++; if (v === true) done++; });
+        });
+        totalItems = tot; checkedCount = done;
+      } else {
+        totalItems   = def.items.filter(i => !i.type || i.type !== 'text').length;
+        checkedCount = Object.values(r.checklist).filter(v => v === true || v?.checked === true).length;
+      }
+      return `<div class="pm-history-item">
+        <div class="pm-history-header">
+          <span class="pm-history-date">${d}${t ? ' · ' + t : ''}</span>
+          <span class="pm-history-loc">${escHtml(r.building || '—')}</span>
+        </div>
+        <div class="pm-history-meta">
+          ${escHtml(r.completed_by_name || 'Unknown')} · ${checkedCount}/${totalItems} items
+          ${r.notes ? ' · Notes included' : ''}
+        </div>
+        <div class="pm-history-actions">
+          <button class="btn btn-secondary btn-xs" data-pm-view="${r.pm_id}">View</button>
+        </div>
+      </div>`;
+    }).join('');
+
+    histEl.querySelectorAll('[data-pm-view]').forEach(btn => {
+      btn.addEventListener('click', () => showPMRecord(pmHistoryCache[parseInt(btn.dataset.pmView)], PM_TYPES[pmType]));
+    });
+  } catch (err) {
+    histEl.innerHTML = `<div class="issue-empty" style="color:var(--red-light)">${err.message}</div>`;
+  }
+}
+
+// ── PM Record View Modal ──────────────────────────────────────────────────────
+el('pm-view-modal-close').addEventListener('click', () => el('pm-view-modal').classList.add('hidden'));
+el('pm-view-modal').addEventListener('click', e => {
+  if (e.target === el('pm-view-modal')) el('pm-view-modal').classList.add('hidden');
+});
+
+function renderSBRecordView(record) {
+  const entries = Object.entries(record.checklist);
+  if (!entries.length) return '<div class="issue-empty">No checklist data.</div>';
+  return entries.map(([, val]) => {
+    const sym = val.checked ? '✓' : '✗';
+    const cls = val.checked ? 'pass' : 'fail';
+    return `<div class="pm-view-row">
+      <span class="pv-loc ${cls}">${sym}</span>
+      ${val.notes ? `<span class="pv-note">${escHtml(val.notes)}</span>` : ''}
+    </div>`;
+  }).join('');
+}
+
+function renderACRecordView(record, def) {
+  const cl = record.checklist || {};
+  const checks = def.checks || [];
+  return ['a', 'b'].map(bld => {
+    const data = cl[bld] || {};
+    const rows = checks.map(c => {
+      const v = data[c.key];
+      const dotCls = v === true ? 'pass' : (v === false ? 'fail' : 'empty');
+      const sym    = v === true ? '✓'    : (v === false ? '✗'    : '—');
+      return `<div class="pm-view-row">
+        <span class="pv-loc ${dotCls}">${sym}</span>
+        <span>${escHtml(c.label)}</span>
+      </div>`;
+    }).join('');
+    return `<div style="margin-bottom:10px">
+      <div style="font-weight:700;font-size:0.82rem;margin-bottom:4px">Building ${bld.toUpperCase()} Compressor</div>
+      ${rows}
+    </div>`;
+  }).join('');
+}
+
+function showPMRecord(record, def) {
+  const d = localDateStr(record.completed_date, { month: 'long', day: 'numeric', year: 'numeric' });
+  const t = record.completed_time?.slice(0, 5) || '';
+  el('pm-view-modal-title').textContent = def.title;
+  el('pm-view-modal-body').innerHTML = `
+    <div class="pm-view-meta">
+      <span>${escHtml(record.building || '—')}</span>
+      <span>${d}${t ? ' · ' + t : ''}</span>
+      <span>${escHtml(record.completed_by_name || 'Unknown')}</span>
+    </div>
+    <div class="pm-view-list">${
+      def.customType === 'siphon'        ? renderSBRecordView(record) :
+      def.customType === 'air_compressor'? renderACRecordView(record, def) :
+      renderChecklistItems(def, record.building, record.checklist)
+    }</div>
+    ${record.notes ? `<div class="pm-view-notes"><strong>Notes:</strong> ${escHtml(record.notes)}</div>` : ''}`;
+  el('pm-view-modal-body').querySelectorAll('input').forEach(i => i.disabled = true);
+  el('pm-view-modal').classList.remove('hidden');
+}
+
+// ── PM PDF Export ─────────────────────────────────────────────────────────────
+function exportPMRecordAsPDF(record, def) {
+  const w = window.open('', '_blank');
+  if (!w) { showToast('Allow pop-ups to export PDF', 'error'); return; }
+  const d = localDateStr(record.completed_date, { month: 'long', day: 'numeric', year: 'numeric' });
+  const t = record.completed_time?.slice(0, 5) || '';
+  if (def.customType) {
+    const body = def.customType === 'siphon' ? renderSBRecordView(record) : renderACRecordView(record, def);
+    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>${escHtml(def.title)} — ${d}</title>
+<style>body{font-family:Arial,sans-serif;font-size:12px;margin:20px 40px;color:#000}
+h1{font-size:14px;margin:0 0 2px}.sub{font-size:11px;color:#555;margin:0 0 12px}
+table{border-collapse:collapse;margin-bottom:14px}td{padding:2px 14px 2px 0}
+.pm-view-row{display:flex;gap:8px;padding:4px 0;border-bottom:1px solid #eee}
+.pv-loc{font-weight:600;min-width:40px}.pv-note{color:#555;font-style:italic}
+.pass{color:#388e3c}.fail{color:#d32f2f}.ac-group{margin-bottom:12px}
+.ac-title{font-weight:700;font-size:11px;text-transform:uppercase;margin-bottom:4px}
+.ac-row{display:flex;gap:6px;padding:2px 0}.ac-dot{width:10px;height:10px;border-radius:50%;margin-top:2px}
+.ac-dot.pass{background:#388e3c}.ac-dot.fail{background:#d32f2f}.ac-dot.empty{background:#ccc}
+@media print{body{margin:10mm 15mm}}</style></head><body>
+<h1>${escHtml(def.title)}</h1>
+<table><tr><td><strong>Location:</strong></td><td>${escHtml(record.building||'—')}</td>
+<td><strong>Date:</strong></td><td>${d}${t?' · '+t:''}</td>
+<td><strong>By:</strong></td><td>${escHtml(record.completed_by_name||'—')}</td></tr></table>
+${body}
+${record.notes?`<div style="margin-top:14px;border-top:1px solid #ccc;padding-top:10px"><strong>Notes:</strong><br>${escHtml(record.notes).replace(/\n/g,'<br>')}</div>`:''}
+</body></html>`);
+    w.document.close();
+    setTimeout(() => w.print(), 400);
+    return;
+  }
+  let itemNum = 0;
+  const itemsHTML = def.items.map(item => {
+    if (item.condBuilding && item.condBuilding !== record.building) return '';
+    itemNum++;
+    const val = record.checklist[item.key];
+    let checked = false, extra = '';
+    if (item.type === 'twc' || item.type === 'twc-area') {
+      checked = val?.checked || false;
+      if (val?.value) extra = ` — <strong>${escHtml(val.value)}</strong>`;
+    } else if (item.type === 'text') {
+      extra = val ? `: <strong>${escHtml(val)}</strong>` : '';
+      checked = !!val;
+    } else {
+      checked = val === true;
+    }
+    const sym = checked ? '&#9745;' : '&#9744;';
+    return `<div class="item">${sym} <strong>${itemNum}.</strong> ${escHtml(item.label)}${extra}</div>`;
+  }).filter(Boolean).join('');
+
+  w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>${escHtml(def.title)} — ${d}</title>
+<style>
+  body{font-family:Arial,sans-serif;font-size:12px;margin:20px 40px;color:#000}
+  h1{font-size:14px;margin:0 0 2px}
+  .sub{font-size:11px;color:#555;margin:0 0 12px}
+  table{border-collapse:collapse;margin-bottom:14px}
+  td{padding:2px 14px 2px 0;font-size:12px}
+  .item{margin:5px 0;line-height:1.5}
+  .notes{margin-top:14px;border-top:1px solid #ccc;padding-top:10px}
+  .footer{margin-top:20px;border-top:2px solid #000;padding-top:8px;font-weight:bold}
+  @media print{body{margin:10mm 15mm}}
+</style></head><body>
+<h1>${escHtml(def.subtitle || def.title)}</h1>
+<div class="sub">${escHtml(def.formRef || '')}</div>
+<table>
+  <tr><td><strong>Inspector:</strong></td><td>${escHtml(record.completed_by_name || '—')}</td>
+      <td><strong>Location:</strong></td><td>${escHtml(record.building || '—')}</td></tr>
+  <tr><td><strong>Date:</strong></td><td>${d}</td>
+      <td><strong>Time:</strong></td><td>${t}</td></tr>
+</table>
+${itemsHTML}
+${record.notes ? `<div class="notes"><strong>Notes:</strong><br>${escHtml(record.notes).replace(/\n/g,'<br>')}</div>` : ''}
+<div class="footer">INITIAL: Completed in accordance with ${escHtml(def.formRef || 'PM Checklist')} &nbsp;&nbsp; Date: ${d} &nbsp;&nbsp; Time: ${t}</div>
+</body></html>`);
+  w.document.close();
+  w.setTimeout(() => w.print(), 400);
+}
+
+/* ── Pesticides ──────────────────────────────────────────────────────────── */
+let pestUsageLoaded   = false;
+let pestLocationLoaded = false;
+let pestReportLoaded  = false;
+let pestProductsLoaded = false;
+let pestReportMonth   = new Date().getMonth() + 1;
+let pestReportYear    = new Date().getFullYear();
+let pestLocationEditId = null;
+
+function openPestPanel(panelId) {
+  el('pest-main').classList.add('hidden');
+  document.querySelectorAll('.maint-panel[id^="pest-panel-"]').forEach(p => p.classList.add('hidden'));
+  el(`pest-panel-${panelId}`).classList.remove('hidden');
+  if (panelId === 'usage')    initPestUsagePanel();
+  if (panelId === 'location') initPestLocationPanel();
+  if (panelId === 'reports')  initPestReportsPanel();
+  if (panelId === 'products') initPestProductsPanel();
+}
+
+function closePestPanel() {
+  document.querySelectorAll('.maint-panel[id^="pest-panel-"]').forEach(p => p.classList.add('hidden'));
+  el('pest-main').classList.remove('hidden');
+}
+
+function initPesticideScreen() {
+  closePestPanel();
+}
+
+// Sub-tile click
+document.querySelectorAll('[data-pest-panel]').forEach(btn => {
+  btn.addEventListener('click', () => openPestPanel(btn.dataset.pestPanel));
+});
+
+// Back buttons inside pest panels
+document.querySelectorAll('#screen-pesticides .maint-back-btn').forEach(btn => {
+  btn.addEventListener('click', closePestPanel);
+});
+
+// ── Usage Panel ───────────────────────────────────────────────────────────────
+async function initPestUsagePanel() {
+  if (pestUsageLoaded) return;
+  pestUsageLoaded = true;
+  await loadPestUsageList();
+  await populatePestUsageSelect();
+}
+
+async function populatePestUsageSelect() {
+  const products = await api('GET', '/api/pesticides');
+  const sel = el('pest-usage-select');
+  sel.innerHTML = '<option value="">— select pesticide —</option>' +
+    products.filter(p => p.active).map(p =>
+      `<option value="${p.pesticide_id}" data-uom="${escHtml(p.unit_of_measure)}">${escHtml(p.name)}</option>`
+    ).join('');
+}
+
+el('pest-usage-select').addEventListener('change', () => {
+  const opt = el('pest-usage-select').selectedOptions[0];
+  el('pest-usage-uom-label').textContent = opt?.dataset.uom ? `(${opt.dataset.uom})` : '';
+});
+
+el('pest-usage-new-btn').addEventListener('click', () => {
+  el('pest-usage-form').classList.remove('hidden');
+  el('pest-usage-select').value = '';
+  el('pest-usage-qty').value = '';
+  el('pest-usage-uom-label').textContent = '';
+  el('pest-usage-new-btn').style.display = 'none';
+});
+
+el('pest-usage-cancel-btn').addEventListener('click', () => {
+  el('pest-usage-form').classList.add('hidden');
+  el('pest-usage-new-btn').style.display = '';
+});
+
+el('pest-usage-save-btn').addEventListener('click', async () => {
+  const pesticide_id = el('pest-usage-select').value;
+  const quantity = parseFloat(el('pest-usage-qty').value);
+  if (!pesticide_id) return showToast('Select a pesticide', 'error');
+  if (!quantity || quantity <= 0) return showToast('Enter a valid quantity', 'error');
+  try {
+    await api('POST', '/api/pesticide-usage', { pesticide_id: parseInt(pesticide_id), quantity });
+    el('pest-usage-form').classList.add('hidden');
+    el('pest-usage-new-btn').style.display = '';
+    pestUsageLoaded = false;
+    pestLocationLoaded = false;
+    await loadPestUsageList();
+    pestUsageLoaded = true;
+    showToast('Usage logged');
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+});
+
+async function loadPestUsageList() {
+  const list = el('pest-usage-list');
+  list.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const rows = await api('GET', '/api/pesticide-usage');
+    if (!rows.length) { list.innerHTML = '<div class="issue-empty">No usage entries yet.</div>'; return; }
+    list.innerHTML = rows.map(r => {
+      const d = localDateStr(r.used_date);
+      const t = r.used_time ? r.used_time.slice(0, 5) : '';
+      return `<div class="pest-usage-item">
+        <div class="pest-usage-main">
+          <span class="pest-usage-name">${escHtml(r.pesticide_name)}</span>
+          <span class="pest-usage-qty">${Number(r.quantity).toLocaleString()} ${escHtml(r.unit_of_measure)}</span>
+        </div>
+        <div class="pest-usage-meta">${d}${t ? ' · ' + t : ''} · ${escHtml(r.applicator_name || 'Unknown')}</div>
+      </div>`;
+    }).join('');
+  } catch (err) {
+    list.innerHTML = `<div class="issue-empty" style="color:var(--red-light)">${err.message}</div>`;
+  }
+}
+
+// ── Location Panel ────────────────────────────────────────────────────────────
+async function initPestLocationPanel() {
+  if (pestLocationLoaded) return;
+  pestLocationLoaded = true;
+  await loadPestLocationList();
+}
+
+async function loadPestLocationList() {
+  const list = el('pest-location-list');
+  list.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const rows = await api('GET', '/api/pesticide-usage');
+    if (!rows.length) { list.innerHTML = '<div class="issue-empty">No usage entries yet.</div>'; return; }
+    list.innerHTML = rows.map(r => {
+      const d = localDateStr(r.used_date);
+      const hasLoc = !!r.location_description;
+      return `<div class="pest-loc-item ${hasLoc ? 'has-location' : 'no-location'}" data-id="${r.usage_id}">
+        <div class="pest-usage-main">
+          <span class="pest-usage-name">${escHtml(r.pesticide_name)}</span>
+          <span class="pest-usage-qty">${Number(r.quantity).toLocaleString()} ${escHtml(r.unit_of_measure)}</span>
+        </div>
+        <div class="pest-usage-meta">${d} · ${escHtml(r.applicator_name || 'Unknown')}</div>
+        <div class="pest-loc-desc">${hasLoc ? escHtml(r.location_description) : '<em style="color:var(--text-dim)">No location added — tap to add</em>'}</div>
+        ${r.notes ? `<div class="pest-loc-notes">${escHtml(r.notes)}</div>` : ''}
+      </div>`;
+    }).join('');
+    // Attach click handlers
+    list.querySelectorAll('.pest-loc-item').forEach(item => {
+      item.addEventListener('click', () => openPestLocationModal(item.dataset.id, rows.find(r => r.usage_id == item.dataset.id)));
+    });
+  } catch (err) {
+    list.innerHTML = `<div class="issue-empty" style="color:var(--red-light)">${err.message}</div>`;
+  }
+}
+
+function openPestLocationModal(usageId, row) {
+  pestLocationEditId = usageId;
+  const d = localDateStr(row.used_date);
+  el('pest-location-modal-meta').textContent =
+    `${row.pesticide_name} · ${Number(row.quantity).toLocaleString()} ${row.unit_of_measure} · ${d}`;
+  el('pest-location-desc').value  = row.location_description || '';
+  el('pest-location-notes').value = row.notes || '';
+  el('pest-location-modal').classList.remove('hidden');
+}
+
+el('pest-location-modal-close').addEventListener('click', () => el('pest-location-modal').classList.add('hidden'));
+el('pest-location-cancel-btn').addEventListener('click', () => el('pest-location-modal').classList.add('hidden'));
+el('pest-location-modal').addEventListener('click', e => {
+  if (e.target === el('pest-location-modal')) el('pest-location-modal').classList.add('hidden');
+});
+
+el('pest-location-save-btn').addEventListener('click', async () => {
+  const location_description = el('pest-location-desc').value.trim();
+  const notes = el('pest-location-notes').value.trim();
+  try {
+    await api('PATCH', `/api/pesticide-usage/${pestLocationEditId}`, { location_description, notes });
+    el('pest-location-modal').classList.add('hidden');
+    pestLocationLoaded = false;
+    await loadPestLocationList();
+    pestLocationLoaded = true;
+    showToast('Location saved');
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+});
+
+// ── Reports Panel ─────────────────────────────────────────────────────────────
+function updatePestReportLabel() {
+  const d = new Date(pestReportYear, pestReportMonth - 1, 1);
+  el('pest-report-label').textContent = d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+}
+
+el('pest-report-prev').addEventListener('click', () => {
+  pestReportMonth--;
+  if (pestReportMonth < 1) { pestReportMonth = 12; pestReportYear--; }
+  updatePestReportLabel();
+  pestReportLoaded = false;
+  loadPestReport();
+});
+
+el('pest-report-next').addEventListener('click', () => {
+  pestReportMonth++;
+  if (pestReportMonth > 12) { pestReportMonth = 1; pestReportYear++; }
+  updatePestReportLabel();
+  pestReportLoaded = false;
+  loadPestReport();
+});
+
+async function initPestReportsPanel() {
+  updatePestReportLabel();
+  if (pestReportLoaded) return;
+  pestReportLoaded = true;
+  await loadPestReport();
+}
+
+async function loadPestReport() {
+  const out = el('pest-report-output');
+  out.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const rows = await api('GET', `/api/pesticide-usage/monthly?year=${pestReportYear}&month=${pestReportMonth}`);
+    if (!rows.length) {
+      out.innerHTML = '<div class="issue-empty">No usage recorded for this month.</div>';
+      return;
+    }
+    const tbody = rows.map(r =>
+      `<tr>
+        <td>${escHtml(r.pesticide_name)}</td>
+        <td class="report-num">${Number(r.total_quantity).toLocaleString()}</td>
+        <td>${escHtml(r.unit_of_measure)}</td>
+        <td class="report-num">${r.entry_count}</td>
+      </tr>`
+    ).join('');
+    out.innerHTML = `<table class="report-table">
+      <thead><tr>
+        <th>Pesticide</th>
+        <th class="report-num">Total Used</th>
+        <th>Unit</th>
+        <th class="report-num">Entries</th>
+      </tr></thead>
+      <tbody>${tbody}</tbody>
+    </table>`;
+  } catch (err) {
+    out.innerHTML = `<div class="issue-empty" style="color:var(--red-light)">${err.message}</div>`;
+  }
+}
+
+// ── Products Panel ────────────────────────────────────────────────────────────
+async function initPestProductsPanel() {
+  if (pestProductsLoaded) return;
+  pestProductsLoaded = true;
+  await loadPestProductList();
+}
+
+el('pest-product-new-btn').addEventListener('click', () => {
+  el('pest-product-form').classList.remove('hidden');
+  el('pest-product-name').value = '';
+  el('pest-product-epa').value  = '';
+  el('pest-product-uom').value  = '';
+  el('pest-product-new-btn').style.display = 'none';
+});
+
+el('pest-product-cancel-btn').addEventListener('click', () => {
+  el('pest-product-form').classList.add('hidden');
+  el('pest-product-new-btn').style.display = '';
+});
+
+el('pest-product-save-btn').addEventListener('click', async () => {
+  const name = el('pest-product-name').value.trim();
+  const epa_reg_number = el('pest-product-epa').value.trim();
+  const unit_of_measure = el('pest-product-uom').value.trim();
+  if (!name) return showToast('Product name is required', 'error');
+  if (!unit_of_measure) return showToast('Unit of measure is required', 'error');
+  try {
+    await api('POST', '/api/pesticides', { name, epa_reg_number, unit_of_measure });
+    el('pest-product-form').classList.add('hidden');
+    el('pest-product-new-btn').style.display = '';
+    pestProductsLoaded = false;
+    await loadPestProductList();
+    pestProductsLoaded = true;
+    showToast('Product added');
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+});
+
+async function loadPestProductList() {
+  const list = el('pest-product-list');
+  list.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const products = await api('GET', '/api/pesticides');
+    if (!products.length) { list.innerHTML = '<div class="issue-empty">No products added yet.</div>'; return; }
+    const isSupervisor = currentUser && (currentUser.role === 'supervisor' || currentUser.role === 'admin');
+    list.innerHTML = products.map(p => `
+      <div class="pest-product-item ${p.active ? '' : 'pest-product-inactive'}">
+        <div class="pest-product-main">
+          <span class="pest-product-name">${escHtml(p.name)}</span>
+          ${!p.active ? '<span class="pest-inactive-badge">Inactive</span>' : ''}
+        </div>
+        <div class="pest-product-meta">
+          ${p.epa_reg_number ? `EPA: ${escHtml(p.epa_reg_number)} · ` : ''}${escHtml(p.unit_of_measure)}
+        </div>
+        ${isSupervisor ? `<div class="pest-product-actions">
+          <button class="btn btn-secondary btn-xs pest-toggle-btn" data-id="${p.pesticide_id}" data-active="${p.active}">
+            ${p.active ? 'Deactivate' : 'Reactivate'}
+          </button>
+        </div>` : ''}
+      </div>`
+    ).join('');
+    if (isSupervisor) {
+      list.querySelectorAll('.pest-toggle-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const newActive = btn.dataset.active === 'true' ? false : true;
+          try {
+            await api('PATCH', `/api/pesticides/${btn.dataset.id}`, { active: newActive });
+            pestProductsLoaded = false;
+            pestUsageLoaded = false; // refresh select on next open
+            await loadPestProductList();
+            pestProductsLoaded = true;
+          } catch (err) {
+            showToast(err.message, 'error');
+          }
+        });
+      });
+    }
+  } catch (err) {
+    list.innerHTML = `<div class="issue-empty" style="color:var(--red-light)">${err.message}</div>`;
+  }
+}
+
+/* ── Reports ─────────────────────────────────────────────────────────────── */
+let reportsMonth    = new Date().getMonth() + 1;
+let reportsYear     = new Date().getFullYear();
+let kfReportMonth   = new Date().getMonth() + 1;
+let kfReportYear    = new Date().getFullYear();
+let kfStartDate     = '';
+let kfEndDate       = '';
+let vehicleReportType = 'mileage';
+let lastReportRows  = [];
+
+// ── Navigation ────────────────────────────────────────────────────────────────
+function initReportsScreen() {
+  // Just ensure main tile grid is visible and panels are closed
+  el('report-main').classList.remove('hidden');
+  ['vehicles','kf','maintenance','pms'].forEach(c => el(`report-panel-${c}`).classList.add('hidden'));
+}
+
+function openReportPanel(cat) {
+  el('report-main').classList.add('hidden');
+  el(`report-panel-${cat}`).classList.remove('hidden');
+  if (cat === 'vehicles')    initVehicleReportPanel();
+  if (cat === 'kf')          initKFReportPanel();
+  if (cat === 'maintenance') initMaintenanceReportPanel();
+  if (cat === 'pms')         initPMReportPanel();
+}
+
+function closeReportPanel() {
+  ['vehicles','kf','maintenance','pms'].forEach(c => el(`report-panel-${c}`).classList.add('hidden'));
+  el('report-main').classList.remove('hidden');
+}
+
+el('screen-reports').addEventListener('click', e => {
+  const tile = e.target.closest('[data-report-cat]');
+  if (tile) openReportPanel(tile.dataset.reportCat);
+});
+el('report-vehicles-back').addEventListener('click', closeReportPanel);
+el('report-kf-back').addEventListener('click', closeReportPanel);
+el('report-maint-back').addEventListener('click', closeReportPanel);
+el('report-pms-back').addEventListener('click', closeReportPanel);
+
+// ── Vehicles Panel ────────────────────────────────────────────────────────────
 function updateReportsMonthLabel() {
   const d = new Date(reportsYear, reportsMonth - 1, 1);
   el('report-month-label').textContent = d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 }
 
+function initVehicleReportPanel() {
+  updateReportsMonthLabel();
+  runVehicleReport();
+}
+
+async function runVehicleReport() {
+  el('report-export-btn').style.display = vehicleReportType === 'mileage' ? '' : 'none';
+  if (vehicleReportType === 'mileage') await renderMileageReport();
+  else                                  await renderVehicleServiceReport();
+}
+
+document.querySelectorAll('#vehicle-report-seg .seg-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#vehicle-report-seg .seg-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    vehicleReportType = btn.dataset.val;
+    runVehicleReport();
+  });
+});
+
 el('report-prev-month').addEventListener('click', () => {
   reportsMonth--;
   if (reportsMonth < 1) { reportsMonth = 12; reportsYear--; }
   updateReportsMonthLabel();
-  runReport();
+  runVehicleReport();
 });
-
 el('report-next-month').addEventListener('click', () => {
   reportsMonth++;
   if (reportsMonth > 12) { reportsMonth = 1; reportsYear++; }
   updateReportsMonthLabel();
-  runReport();
+  runVehicleReport();
 });
-
-el('report-select').addEventListener('change', runReport);
-
-async function runReport() {
-  const report = el('report-select').value;
-  el('report-export-btn').style.display = report === 'mileage' ? '' : 'none';
-  if (report === 'mileage')      await renderMileageReport();
-  if (report === 'kf-operators') await renderKFOperatorsReport();
-}
-
-let lastReportRows = [];
 
 function buildMileageHTML(rows, year, month) {
   const d = new Date(year, month - 1, 1);
@@ -2636,41 +4726,315 @@ async function renderMileageReport() {
   }
 }
 
-async function renderKFOperatorsReport() {
+async function renderVehicleServiceReport() {
   const out = el('report-output');
   out.innerHTML = '<div class="placeholder-msg">Loading…</div>';
   try {
-    const d = new Date(reportsYear, reportsMonth - 1, 1);
-    const monthName = d.toLocaleDateString('en-US', { month: 'long' });
-    const { rows, totalRead, totalWells } = await api('GET',
-      `/api/reports/kf-operators?year=${reportsYear}&month=${reportsMonth}`);
-    if (!rows.length) {
-      out.innerHTML = `<div class="report-card">
-        <div class="report-title">KF Operator Breakdown</div>
-        <div class="report-subtitle">${monthName} ${reportsYear}</div>
-        <div class="report-empty">No KF readings for this month.</div>
-      </div>`;
-      return;
+    const rows = await api('GET', '/api/reports/vehicle-service');
+    const trucks = rows.filter(r => !r.reading_type || r.reading_type === 'odometer' || r.reading_type === 'both');
+    const heavy  = rows.filter(r => r.reading_type === 'hours');
+
+    const fmtOdo  = v => v != null ? Number(v).toLocaleString() + ' mi' : '—';
+    const fmtHrs  = v => v != null ? Number(v).toFixed(1) + ' hrs' : '—';
+    const fmtDate = s => s ? localDateStr(s, { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
+    const diffCell = (cur, svc) => {
+      if (cur == null || svc == null) return '<td class="report-num">—</td>';
+      const diff = Number(cur) - Number(svc);
+      const cls  = diff > 0 ? '' : '';
+      return `<td class="report-num">${Number(diff).toLocaleString()}</td>`;
+    };
+    const nextCell = (cur, next) => {
+      if (next == null) return '<td class="report-num">—</td>';
+      const remaining = cur != null ? Number(next) - Number(cur) : null;
+      const remColor = remaining < 0 ? 'var(--red-light)' : 'var(--text-dim)';
+      const remText  = remaining >= 0 ? `${remaining.toLocaleString()} to go` : 'OVERDUE';
+      const rem = remaining != null ? ` <span style="color:${remColor};font-size:0.8em">(${remText})</span>` : '';
+      return `<td class="report-num">${Number(next).toLocaleString()}${rem}</td>`;
+    };
+
+    const truckRows = trucks.map(v => `<tr>
+      <td>${v.vehicle_number||''}</td>
+      <td>${fmtOdo(v.current_odometer)}<br><small style="color:var(--text-dim)">${fmtDate(v.current_reading_date)}</small></td>
+      <td>${fmtOdo(v.odometer_at_service)}<br><small style="color:var(--text-dim)">${fmtDate(v.last_service_date)}</small></td>
+      ${diffCell(v.current_odometer, v.odometer_at_service)}
+      ${nextCell(v.current_odometer, v.next_service_miles)}
+    </tr>`).join('');
+
+    const heavyRows = heavy.map(v => `<tr>
+      <td>${v.vehicle_number||''}</td>
+      <td>${fmtHrs(v.current_engine_hours)}<br><small style="color:var(--text-dim)">${fmtDate(v.current_reading_date)}</small></td>
+      <td>${fmtHrs(v.engine_hours_at_service)}<br><small style="color:var(--text-dim)">${fmtDate(v.last_service_date)}</small></td>
+      ${diffCell(v.current_engine_hours, v.engine_hours_at_service)}
+      ${nextCell(v.current_engine_hours, v.next_service_hours)}
+    </tr>`).join('');
+
+    out.innerHTML = `<div class="report-card">
+      <div class="report-title">Last Service</div>
+      <div class="report-section-title">Trucks</div>
+      ${trucks.length ? `<table class="report-table">
+        <thead><tr><th>Unit #</th><th class="report-num">Current Odo</th><th class="report-num">Service Odo</th><th class="report-num">Difference</th><th class="report-num">Next Service</th></tr></thead>
+        <tbody>${truckRows}</tbody></table>`
+      : '<div class="report-empty">No trucks.</div>'}
+      <div class="report-section-title">Heavy Equipment</div>
+      ${heavy.length ? `<table class="report-table">
+        <thead><tr><th>Unit #</th><th class="report-num">Current Hrs</th><th class="report-num">Service Hrs</th><th class="report-num">Difference</th><th class="report-num">Next Service</th></tr></thead>
+        <tbody>${heavyRows}</tbody></table>`
+      : '<div class="report-empty">No heavy equipment.</div>'}
+    </div>`;
+  } catch (err) {
+    out.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
+  }
+}
+
+// ── KF Panel ──────────────────────────────────────────────────────────────────
+function kfMonthBounds() {
+  const y = kfReportYear, m = kfReportMonth;
+  const pad = n => String(n).padStart(2, '0');
+  const lastDay = new Date(y, m, 0).getDate();
+  kfStartDate = `${y}-${pad(m)}-01`;
+  kfEndDate   = `${y}-${pad(m)}-${pad(lastDay)}`;
+  el('report-start-date').value = kfStartDate;
+  el('report-end-date').value   = kfEndDate;
+}
+
+function syncKfDatesFromInputs() {
+  kfStartDate = el('report-start-date').value;
+  kfEndDate   = el('report-end-date').value;
+}
+
+function updateKFReportMonthLabel() {
+  const d = new Date(kfReportYear, kfReportMonth - 1, 1);
+  el('kf-report-month-label').textContent = d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+}
+
+function initKFReportPanel() {
+  if (!kfStartDate) {
+    // Default to widget dates if available, else current month
+    if (kfWidgetStart && kfWidgetEnd) {
+      kfStartDate = kfWidgetStart;
+      kfEndDate   = kfWidgetEnd;
+      const [y, m] = kfWidgetStart.split('-').map(Number);
+      kfReportYear = y; kfReportMonth = m;
+      el('report-start-date').value = kfStartDate;
+      el('report-end-date').value   = kfEndDate;
+    } else {
+      kfMonthBounds();
     }
-    const rowsHTML = rows.map(r => {
-      const pct = totalWells > 0 ? (parseInt(r.wells_read) / totalWells * 100).toFixed(1) : '0.0';
+  }
+  updateKFReportMonthLabel();
+  renderKFReport();
+}
+
+el('kf-report-prev-month').addEventListener('click', () => {
+  kfReportMonth--;
+  if (kfReportMonth < 1) { kfReportMonth = 12; kfReportYear--; }
+  kfMonthBounds();
+  updateKFReportMonthLabel();
+  renderKFReport();
+});
+el('kf-report-next-month').addEventListener('click', () => {
+  kfReportMonth++;
+  if (kfReportMonth > 12) { kfReportMonth = 1; kfReportYear++; }
+  kfMonthBounds();
+  updateKFReportMonthLabel();
+  renderKFReport();
+});
+el('report-start-date').addEventListener('change', () => { syncKfDatesFromInputs(); renderKFReport(); });
+el('report-end-date').addEventListener('change',   () => { syncKfDatesFromInputs(); renderKFReport(); });
+
+async function renderKFReport() {
+  if (!kfStartDate || !kfEndDate) kfMonthBounds();
+  const out = el('report-kf-output');
+  out.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const fmtDate = s => localDateStr(s, { month: 'short', day: 'numeric', year: 'numeric' });
+    const subtitle = kfStartDate === kfEndDate
+      ? fmtDate(kfStartDate)
+      : `${fmtDate(kfStartDate)} – ${fmtDate(kfEndDate)}`;
+
+    const [{ rows, distinctRead, totalWells }, sets] = await Promise.all([
+      api('GET', `/api/reports/kf-operators?start_date=${kfStartDate}&end_date=${kfEndDate}`),
+      api('GET', `/api/reports/kf-sets?start_date=${kfStartDate}&end_date=${kfEndDate}`),
+    ]);
+
+    const completePct = totalWells > 0 ? (distinctRead / totalWells * 100).toFixed(0) : 0;
+
+    const opRowsHTML = rows.length
+      ? rows.map(r => {
+          const pct = totalWells > 0 ? (parseInt(r.wells_read) / totalWells * 100).toFixed(1) : '0.0';
+          return `<tr>
+            <td>${r.operator}</td>
+            <td class="report-num">${r.wells_read}</td>
+            <td class="report-num">${pct}%</td>
+            <td><div class="kf-op-bar-wrap"><div class="kf-op-bar" style="width:${pct}%"></div></div></td>
+          </tr>`;
+        }).join('')
+      : `<tr><td colspan="4" style="text-align:center;color:var(--text-dim)">No readings for this period</td></tr>`;
+
+    const setRowsHTML = sets.map(s => {
+      const read  = parseInt(s.wells_read);
+      const total = parseInt(s.total_wells);
+      const pct   = total > 0 ? (read / total * 100).toFixed(0) : 0;
+      const raw   = s.set_name || '';
+      const label = /^set\s/i.test(raw) ? raw : `Set ${raw}`;
       return `<tr>
-        <td>${r.operator}</td>
-        <td class="report-num">${r.wells_read}</td>
+        <td>${label}</td>
+        <td class="report-num">${read} / ${total}</td>
         <td class="report-num">${pct}%</td>
         <td><div class="kf-op-bar-wrap"><div class="kf-op-bar" style="width:${pct}%"></div></div></td>
       </tr>`;
     }).join('');
+
     out.innerHTML = `<div class="report-card">
-      <div class="report-title">KF Operator Breakdown</div>
-      <div class="report-subtitle">${monthName} ${reportsYear}</div>
-      <div class="report-section-title">Wells Read by Operator</div>
-      <div class="report-meta">${totalRead} readings across ${totalWells} active KF wells</div>
+      <div class="report-title">KF Breakdown</div>
+      <div class="report-subtitle">${subtitle}</div>
+      <div class="kf-complete-banner">
+        <span class="kf-complete-fraction">${distinctRead} / ${totalWells}</span>
+        <span class="kf-complete-label">wells complete</span>
+        <span class="kf-complete-pct">${completePct}%</span>
+      </div>
+      <div class="report-section-title">By Operator</div>
       <table class="report-table">
-        <thead><tr><th>Operator</th><th class="report-num">Wells Read</th><th class="report-num">% of Total</th><th></th></tr></thead>
-        <tbody>${rowsHTML}</tbody>
+        <thead><tr><th>Operator</th><th class="report-num">Wells</th><th class="report-num">% of Total</th><th></th></tr></thead>
+        <tbody>${opRowsHTML}</tbody>
+      </table>
+      <div class="report-section-title">By Set</div>
+      <table class="report-table">
+        <thead><tr><th>Set</th><th class="report-num">Complete</th><th class="report-num">%</th><th></th></tr></thead>
+        <tbody>${setRowsHTML}</tbody>
       </table>
     </div>`;
+  } catch (err) {
+    out.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
+  }
+}
+
+// ── Maintenance Issues Panel ───────────────────────────────────────────────────
+function initMaintenanceReportPanel() {
+  renderMaintenanceIssuesReport();
+}
+
+async function renderMaintenanceIssuesReport() {
+  const out = el('report-maint-output');
+  out.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const rows = await api('GET', '/api/reports/maintenance-issues');
+    const categories = ['Wells', 'Buildings', 'Equipment'];
+    let html = '<div class="report-card"><div class="report-title">Open Maintenance Issues</div>';
+    categories.forEach(cat => {
+      const issues = rows.filter(r => r.category === cat);
+      html += `<div class="report-section-title">${cat}</div>`;
+      if (!issues.length) {
+        html += '<div class="report-empty">No open issues.</div>';
+      } else {
+        issues.forEach(r => {
+          const statusCls = r.status === 'in_progress' ? 'in-progress' : 'open';
+          html += `<div class="maint-issue-report-row">
+            <div class="maint-issue-report-header">
+              <span class="status-pill ${statusCls}">${r.status.replace('_',' ')}</span>
+              <span class="maint-issue-report-name">${escHtml(r.location_name)}</span>
+              <span class="maint-issue-report-date">${localDateStr(r.reported_date, {month:'short',day:'numeric',year:'numeric'})}</span>
+            </div>
+            <div class="maint-issue-report-desc">${escHtml(r.description)}</div>
+            ${r.action_taken ? `<div class="maint-issue-report-action">Action: ${escHtml(r.action_taken)}</div>` : ''}
+            ${r.assigned_to  ? `<div class="maint-issue-report-meta">Assigned: ${escHtml(r.assigned_to)}</div>` : ''}
+          </div>`;
+        });
+      }
+    });
+    html += '</div>';
+    out.innerHTML = html;
+  } catch (err) {
+    out.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
+  }
+}
+
+// ── PM Grid Panel ─────────────────────────────────────────────────────────────
+function initPMReportPanel() {
+  renderPMGridReport();
+}
+
+async function renderPMGridReport() {
+  const out = el('report-pms-output');
+  out.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const { sbRecords, acRecords, positions } = await api('GET', '/api/reports/pm-grid');
+
+    // Build ordered plant list from positions; normalize "Site N" → "Pumping Plant N"
+    const toPlantName = n => n.replace(/\bSite\b/g, 'Pumping Plant');
+    const plantMap = {};
+    positions.forEach(p => {
+      const key = toPlantName(p.site_name);
+      if (!plantMap[key]) plantMap[key] = { name: key, rawName: p.site_name, num: p.site_number || '' };
+    });
+    const plants = Object.values(plantMap).sort((a, b) => Number(a.num) - Number(b.num));
+
+    // All unique pump letters sorted
+    const pumpLetters = [...new Set(positions.map(p => p.pump_letter))].sort();
+
+    // ── Siphon Breakers: rows = plants, columns = pump letters ───────────────
+    const sbCols = pumpLetters.map(l => `<th class="pmgrid-th">${l}</th>`).join('');
+    let sbRows = '';
+    plants.forEach(plant => {
+      const checklist = sbRecords[plant.name]?.checklist || null;
+      sbRows += `<tr><td class="pmgrid-plant-label">PP ${plant.num}</td>`;
+      pumpLetters.forEach(letter => {
+        const pos = positions.find(p => p.site_name === plant.rawName && p.pump_letter === letter);
+        if (!pos) { sbRows += '<td></td>'; return; }
+        const val = checklist?.[`pos_${pos.position_id}`];
+        let cls, text;
+        if (!checklist)     { cls = 'empty'; text = '—'; }
+        else if (!val)      { cls = 'empty'; text = '—'; }
+        else if (val.checked) { cls = val.notes ? 'note' : 'pass'; text = val.notes ? '!' : '✓'; }
+        else                { cls = 'fail';  text = '✗'; }
+        sbRows += `<td><span class="pmgrid-badge ${cls}" title="${escHtml(val?.notes||'')}">${text}</span></td>`;
+      });
+      const sbRec = sbRecords[plant.name];
+      const recDate = sbRec ? localDateStr(sbRec.completed_date, {month:'short',day:'numeric'}) : '—';
+      sbRows += `<td class="pmgrid-date-col">${recDate}</td></tr>`;
+    });
+
+    const sbHtml = `<div class="pmgrid-section-title">Siphon Breakers</div>
+      <div class="pmgrid-scroll"><table class="pmgrid-table">
+        <thead><tr><th class="pmgrid-th pmgrid-th-left">Plant</th>${sbCols}<th class="pmgrid-th">Last PM</th></tr></thead>
+        <tbody>${sbRows || '<tr><td colspan="99" class="report-empty">No positions found.</td></tr>'}</tbody>
+      </table></div>`;
+
+    // ── Air Compressors: rows = checks, columns = plants ─────────────────────
+    const acChecks = PM_TYPES.air_compressor.checks;
+    const acCols = plants.map(p => `<th class="pmgrid-th">PP ${p.num}</th>`).join('');
+    let acRows = '';
+    acChecks.forEach(check => {
+      acRows += `<tr><td class="pmgrid-check-label">${escHtml(check.label)}</td>`;
+      plants.forEach(plant => {
+        const cl   = acRecords[plant.name]?.checklist || null;
+        const aVal = cl?.['a']?.[check.key];
+        const bVal = cl?.['b']?.[check.key];
+        const aCls = aVal === true ? 'pass' : (aVal === false ? 'fail' : 'empty');
+        const bCls = bVal === true ? 'pass' : (bVal === false ? 'fail' : 'empty');
+        acRows += `<td><div class="pmgrid-ac-cell">
+          <span class="pmgrid-ac-dot ${aCls}" title="Bldg A"></span>
+          <span class="pmgrid-ac-dot ${bCls}" title="Bldg B"></span>
+        </div></td>`;
+      });
+      acRows += '</tr>';
+    });
+    // Last PM date row
+    acRows += `<tr><td class="pmgrid-check-label" style="font-style:italic;color:var(--text-dim)">Last PM</td>`;
+    plants.forEach(plant => {
+      const rec = acRecords[plant.name];
+      acRows += `<td class="pmgrid-date-col">${rec ? localDateStr(rec.completed_date, {month:'short',day:'numeric'}) : '—'}</td>`;
+    });
+    acRows += '</tr>';
+
+    const acHtml = `<div class="pmgrid-section-title" style="margin-top:20px">Air Compressors
+      <span class="pmgrid-legend"> &nbsp;●A &nbsp;●B per plant</span></div>
+      <div class="pmgrid-scroll"><table class="pmgrid-table">
+        <thead><tr><th class="pmgrid-th pmgrid-th-left">Check</th>${acCols}</tr></thead>
+        <tbody>${acRows}</tbody>
+      </table></div>`;
+
+    out.innerHTML = `<div class="report-card">${sbHtml}${acHtml}</div>`;
   } catch (err) {
     out.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
   }
@@ -2744,6 +5108,54 @@ el('export-pdf-btn').addEventListener('click', () => {
   el('export-modal').classList.add('hidden');
   setTimeout(() => window.print(), 100);
 });
+
+/* ── Left-edge swipe to go back (system-wide) ────────────────────────────── */
+(function () {
+  let startX = 0, startY = 0, tracking = false;
+  const EDGE = 30, MIN_DIST = 60, MAX_VERT = 80;
+
+  document.addEventListener('touchstart', e => {
+    const t = e.touches[0];
+    tracking = t.clientX <= EDGE;
+    if (tracking) { startX = t.clientX; startY = t.clientY; }
+  }, { passive: true });
+
+  document.addEventListener('touchend', e => {
+    if (!tracking) return;
+    tracking = false;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - startX;
+    const dy = Math.abs(t.clientY - startY);
+    if (dx < MIN_DIST || dy > MAX_VERT) return;
+    triggerContextualBack();
+  }, { passive: true });
+
+  function triggerContextualBack() {
+    const activeScreen = document.querySelector('.screen-content.active');
+    const id = activeScreen?.id;
+
+    if (id === 'screen-maintenance') {
+      if (document.querySelector('#maint-panel-pms .pm-panel:not(.hidden)')) return closePMType();
+      if (document.querySelector('.maint-panel:not(.hidden)')) return closeMaintPanel();
+      return showScreen('dashboard');
+    }
+    if (id === 'screen-pesticides') {
+      if (document.querySelector('#screen-pesticides .maint-panel:not(.hidden)')) return closePestPanel();
+      return showScreen('dashboard');
+    }
+    if (id === 'screen-reports') {
+      if (document.querySelector('#screen-reports .maint-panel:not(.hidden)')) return closeReportPanel();
+      return showScreen('dashboard');
+    }
+    if (id === 'screen-admin') {
+      if (document.querySelector('.settings-panel:not(.hidden)')) return closeSettingsPanel();
+      return showScreen('dashboard');
+    }
+    if (activeScreen && id !== 'screen-dashboard') {
+      showScreen('dashboard');
+    }
+  }
+})();
 
 /* ── Init ────────────────────────────────────────────────────────────────── */
 checkDBStatus();

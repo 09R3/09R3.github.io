@@ -244,6 +244,30 @@ app.get('/api/pump-positions', requireAuth, async (req, res) => {
   }
 });
 
+// All pump positions grouped for siphon breaker PM
+app.get('/api/pump-positions/all', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        pp.position_id,
+        pp.pump_letter,
+        b.building_id,
+        b.building_letter,
+        s.site_id,
+        s.site_name,
+        REGEXP_REPLACE(s.site_name, '[^0-9]', '', 'g') AS site_number
+      FROM pump_positions pp
+      JOIN buildings b ON pp.building_id = b.building_id
+      JOIN sites     s ON b.site_id      = s.site_id
+      WHERE LOWER(pp.status) != 'inactive' OR pp.status IS NULL
+      ORDER BY s.site_name, b.building_letter, pp.pump_letter
+    `);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/air-compressors', requireAuth, async (req, res) => {
   const { building_id } = req.query;
   if (!building_id) return res.status(400).json({ error: 'building_id required' });
@@ -468,17 +492,21 @@ app.get('/api/well-sets', requireAuth, async (req, res) => {
 
 // KF wells — includes GPS, last reading, days since reading
 app.get('/api/wells/kf', requireAuth, async (req, res) => {
+  const { start_date, end_date } = req.query;
   try {
     const { rows } = await pool.query(`
       SELECT
-        w.well_id, w.common_name, w.area, w.kf_set_id, ws.set_name,
+        w.well_id, w.common_name, w.state_well_number, w.area, w.kf_set_id, ws.set_name,
         w.gps_latitude, w.gps_longitude, w.is_important,
-        r.kf_reading_id    AS last_reading_id,
-        r.reading_date     AS last_reading_date,
-        r.dtw_reading      AS last_dtw,
-        r.plopper_sounder  AS last_method,
-        r.notes            AS last_notes,
-        (CURRENT_DATE - r.reading_date)::int AS days_since_reading
+        -- Most recent reading ever (for pre-fill and hint display)
+        prev.kf_reading_id   AS last_reading_id,
+        prev.reading_date    AS last_reading_date,
+        prev.dtw_reading     AS last_dtw,
+        prev.plopper_sounder AS last_method,
+        prev.notes           AS last_notes,
+        (CURRENT_DATE - prev.reading_date)::int AS days_since_reading,
+        -- Reading within widget date range (for done/not-read status only)
+        rng.reading_date     AS range_reading_date
       FROM wells w
       LEFT JOIN well_sets ws ON w.kf_set_id = ws.set_id
       LEFT JOIN LATERAL (
@@ -487,11 +515,19 @@ app.get('/api/wells/kf', requireAuth, async (req, res) => {
         WHERE well_id = w.well_id
         ORDER BY reading_date DESC, reading_time DESC
         LIMIT 1
-      ) r ON true
+      ) prev ON true
+      LEFT JOIN LATERAL (
+        SELECT reading_date
+        FROM readings_kf_monthly
+        WHERE well_id = w.well_id
+          AND ($1::date IS NULL OR reading_date BETWEEN $1::date AND $2::date)
+        ORDER BY reading_date DESC, reading_time DESC
+        LIMIT 1
+      ) rng ON true
       WHERE w.kf_set_id IS NOT NULL
         AND (LOWER(w.status) != 'inactive' OR w.status IS NULL)
-      ORDER BY ws.set_name, w.common_name
-    `);
+      ORDER BY ws.set_name, w.state_well_number, w.common_name
+    `, [start_date || null, end_date || null]);
     res.json(rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -917,9 +953,394 @@ app.post('/api/siphon-breakers/swap', requireAuth, async (req, res) => {
   }
 });
 
+// ── Well Issues ───────────────────────────────────────────────────────────────
+app.get('/api/well-issues', requireAuth, async (req, res) => {
+  const includeResolved = req.query.include_resolved === 'true';
+  try {
+    const { rows } = await pool.query(`
+      SELECT issue_id, well_id, well_name, well_area,
+             status, description, reported_date, resolved_date,
+             action_taken, resolution_notes, po_number, cost,
+             entered_by, assigned_to, notes, created_at
+      FROM well_issues
+      WHERE $1 OR status != 'resolved'
+      ORDER BY
+        CASE status WHEN 'open' THEN 1 WHEN 'in_progress' THEN 2 ELSE 3 END,
+        reported_date DESC
+    `, [includeResolved]);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/well-issues', requireAuth, async (req, res) => {
+  const { well_id, well_name, well_area, description,
+          reported_date, assigned_to, notes } = req.body;
+  if (!description) {
+    return res.status(400).json({ error: 'description is required' });
+  }
+  try {
+    const { rows } = await pool.query(`
+      INSERT INTO well_issues
+        (well_id, well_name, well_area, description,
+         reported_date, assigned_to, notes, entered_by)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+      RETURNING issue_id
+    `, [well_id || null, well_name || null, well_area || null, description,
+        reported_date || null, assigned_to || null, notes || null, req.user.username]);
+    res.json({ ok: true, issue_id: rows[0].issue_id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch('/api/well-issues/:id', requireAuth, async (req, res) => {
+  const { id } = req.params;
+  const { status, action_taken, resolution_notes, po_number, cost, assigned_to, notes } = req.body;
+  try {
+    await pool.query(`
+      UPDATE well_issues SET
+        status           = COALESCE($1, status),
+        action_taken     = COALESCE($2, action_taken),
+        resolution_notes = COALESCE($3, resolution_notes),
+        po_number        = COALESCE($4, po_number),
+        cost             = COALESCE($5, cost),
+        assigned_to      = COALESCE($6, assigned_to),
+        notes            = COALESCE($7, notes),
+        resolved_date    = CASE WHEN $1 = 'resolved' THEN CURRENT_DATE
+                                WHEN $1 IN ('open','in_progress') THEN NULL
+                                ELSE resolved_date END,
+        updated_at       = NOW()
+      WHERE issue_id = $8
+    `, [status || null, action_taken ?? null, resolution_notes ?? null,
+        po_number ?? null, cost ?? null, assigned_to ?? null, notes ?? null, id]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Building Issues ───────────────────────────────────────────────────────────
+app.get('/api/building-issues', requireAuth, async (req, res) => {
+  const includeResolved = req.query.include_resolved === 'true';
+  try {
+    const { rows } = await pool.query(`
+      SELECT issue_id, building_id, site_id, building_name, site_name,
+             status, description, reported_date, resolved_date,
+             action_taken, resolution_notes, po_number, cost,
+             entered_by, assigned_to, notes, created_at
+      FROM building_issues
+      WHERE $1 OR status != 'resolved'
+      ORDER BY
+        CASE status WHEN 'open' THEN 1 WHEN 'in_progress' THEN 2 ELSE 3 END,
+        reported_date DESC
+    `, [includeResolved]);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/building-issues', requireAuth, async (req, res) => {
+  const { building_id, site_id, building_name, site_name,
+          description, reported_date, assigned_to, notes } = req.body;
+  if (!description) {
+    return res.status(400).json({ error: 'description is required' });
+  }
+  try {
+    const { rows } = await pool.query(`
+      INSERT INTO building_issues
+        (building_id, site_id, building_name, site_name,
+         description, reported_date, assigned_to, notes, entered_by)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+      RETURNING issue_id
+    `, [building_id || null, site_id || null, building_name || null, site_name || null,
+        description, reported_date || null, assigned_to || null, notes || null, req.user.username]);
+    res.json({ ok: true, issue_id: rows[0].issue_id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch('/api/building-issues/:id', requireAuth, async (req, res) => {
+  const { id } = req.params;
+  const { status, action_taken, resolution_notes, po_number, cost, assigned_to, notes } = req.body;
+  try {
+    await pool.query(`
+      UPDATE building_issues SET
+        status           = COALESCE($1, status),
+        action_taken     = COALESCE($2, action_taken),
+        resolution_notes = COALESCE($3, resolution_notes),
+        po_number        = COALESCE($4, po_number),
+        cost             = COALESCE($5, cost),
+        assigned_to      = COALESCE($6, assigned_to),
+        notes            = COALESCE($7, notes),
+        resolved_date    = CASE WHEN $1 = 'resolved' THEN CURRENT_DATE
+                                WHEN $1 IN ('open','in_progress') THEN NULL
+                                ELSE resolved_date END,
+        updated_at       = NOW()
+      WHERE issue_id = $8
+    `, [status || null, action_taken ?? null, resolution_notes ?? null,
+        po_number ?? null, cost ?? null, assigned_to ?? null, notes ?? null, id]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Equipment Issues ──────────────────────────────────────────────────────────
+app.get('/api/equipment-issues', requireAuth, async (req, res) => {
+  const includeResolved = req.query.include_resolved === 'true';
+  try {
+    const { rows } = await pool.query(`
+      SELECT issue_id, equipment_type, equipment_id, equipment_name,
+             status, description, reported_date, resolved_date,
+             action_taken, resolution_notes, po_number, cost,
+             entered_by, assigned_to, notes, created_at
+      FROM equipment_issues
+      WHERE $1 OR status != 'resolved'
+      ORDER BY
+        CASE status WHEN 'open' THEN 1 WHEN 'in_progress' THEN 2 ELSE 3 END,
+        reported_date DESC
+    `, [includeResolved]);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/equipment-issues', requireAuth, async (req, res) => {
+  const { equipment_type, equipment_id, equipment_name, description,
+          reported_date, assigned_to, notes } = req.body;
+  if (!equipment_type || !description) {
+    return res.status(400).json({ error: 'equipment_type and description are required' });
+  }
+  try {
+    const { rows } = await pool.query(`
+      INSERT INTO equipment_issues
+        (equipment_type, equipment_id, equipment_name, description,
+         reported_date, assigned_to, notes, entered_by)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+      RETURNING issue_id
+    `, [equipment_type, equipment_id || null, equipment_name || null, description,
+        reported_date || null, assigned_to || null, notes || null, req.user.username]);
+    res.json({ ok: true, issue_id: rows[0].issue_id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch('/api/equipment-issues/:id', requireAuth, async (req, res) => {
+  const { id } = req.params;
+  const { status, action_taken, resolution_notes, po_number, cost, assigned_to, notes } = req.body;
+  try {
+    await pool.query(`
+      UPDATE equipment_issues SET
+        status           = COALESCE($1, status),
+        action_taken     = COALESCE($2, action_taken),
+        resolution_notes = COALESCE($3, resolution_notes),
+        po_number        = COALESCE($4, po_number),
+        cost             = COALESCE($5, cost),
+        assigned_to      = COALESCE($6, assigned_to),
+        notes            = COALESCE($7, notes),
+        resolved_date    = CASE WHEN $1 = 'resolved' THEN CURRENT_DATE
+                                WHEN $1 IN ('open','in_progress') THEN NULL
+                                ELSE resolved_date END,
+        updated_at       = NOW()
+      WHERE issue_id = $8
+    `, [status || null, action_taken ?? null, resolution_notes ?? null,
+        po_number ?? null, cost ?? null, assigned_to ?? null, notes ?? null, id]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Equipment Swap Units (unified, by category) ───────────────────────────────
+app.get('/api/equipment-swap-units/:category', requireAuth, async (req, res) => {
+  const { category } = req.params;
+
+  const TABLE_MAP = {
+    siphon_breaker: { table: 'siphon_breakers', id: 'pump_unit_id',  wellJoin: false },
+    motor:          { table: 'motors',          id: 'motor_id',       wellJoin: false },
+    pp_pump:        { table: 'pump_units',      id: 'pump_unit_id',   wellJoin: false },
+    well_motor:     { table: 'well_motors',     id: 'well_motor_id',  wellJoin: true  },
+    well_meter:     { table: 'well_meters',     id: 'well_meter_id',  wellJoin: true  },
+  };
+
+  const mapping = TABLE_MAP[category];
+  if (!mapping) return res.status(400).json({ error: 'Unknown category' });
+
+  try {
+    let rows;
+    if (mapping.wellJoin) {
+      ({ rows } = await pool.query(`
+        SELECT t.${mapping.id} AS id, t.manufacturer, t.model_number, t.well_id, t.status,
+          COALESCE(t.manufacturer,'') || ' ' || COALESCE(t.model_number,'') ||
+          CASE WHEN w.common_name IS NOT NULL THEN ' (' || w.common_name || ')' ELSE ' (spare)' END AS name,
+          w.common_name AS current_location
+        FROM ${mapping.table} t
+        LEFT JOIN wells w ON t.well_id = w.well_id
+        WHERE LOWER(t.status) != 'inactive'
+        ORDER BY t.status, w.common_name, t.manufacturer, t.model_number
+      `));
+    } else {
+      let nameExpr;
+      if (category === 'siphon_breaker') {
+        nameExpr = `'SB-' || COALESCE(current_location,'?') || ' (' || COALESCE(manufacturer,'') || ' ' || COALESCE(model_number,'') || ')'`;
+      } else {
+        nameExpr = `COALESCE(manufacturer,'') || ' ' || COALESCE(model_number,'') ||
+          CASE WHEN current_location IS NOT NULL AND current_location != ''
+               THEN ' (' || current_location || ')' ELSE ' (spare)' END`;
+      }
+      ({ rows } = await pool.query(`
+        SELECT ${mapping.id} AS id, manufacturer, model_number, current_location, status,
+          ${nameExpr} AS name
+        FROM ${mapping.table}
+        WHERE LOWER(status) != 'inactive'
+        ORDER BY status, current_location, manufacturer, model_number
+      `));
+    }
+
+    const active = rows.filter(r => r.status?.toLowerCase() === 'active');
+    const spares = rows.filter(r => r.status?.toLowerCase() !== 'active');
+    res.json({ active, spares });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Equipment Swap — unified (siphon_breaker / motor / pp_pump / well_motor / well_meter)
+app.post('/api/equipment-swaps', requireAuth, async (req, res) => {
+  const { category, remove_id, install_id, swap_date, performed_by, notes } = req.body;
+  if (!category || !remove_id || !install_id || !swap_date) {
+    return res.status(400).json({ error: 'category, remove_id, install_id, and swap_date are required' });
+  }
+  if (remove_id === install_id) {
+    return res.status(400).json({ error: 'Cannot swap a unit with itself' });
+  }
+
+  const TABLE_MAP = {
+    siphon_breaker: { table: 'siphon_breakers', id: 'pump_unit_id',  wellJoin: false },
+    motor:          { table: 'motors',          id: 'motor_id',       wellJoin: false },
+    pp_pump:        { table: 'pump_units',      id: 'pump_unit_id',   wellJoin: false },
+    well_motor:     { table: 'well_motors',     id: 'well_motor_id',  wellJoin: true  },
+    well_meter:     { table: 'well_meters',     id: 'well_meter_id',  wellJoin: true  },
+  };
+
+  const mapping = TABLE_MAP[category];
+  if (!mapping) return res.status(400).json({ error: 'Unknown category' });
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    let location, removedDesc;
+    if (mapping.wellJoin) {
+      const { rows: [removed] } = await client.query(
+        `SELECT t.well_id, w.common_name, t.manufacturer, t.model_number
+         FROM ${mapping.table} t
+         LEFT JOIN wells w ON t.well_id = w.well_id
+         WHERE t.${mapping.id} = $1`,
+        [remove_id]
+      );
+      if (!removed) throw new Error('Unit being removed not found');
+      location    = removed.common_name || String(removed.well_id || '');
+      removedDesc = `${removed.manufacturer || ''} ${removed.model_number || ''} from ${location}`.trim();
+
+      await client.query(
+        `UPDATE ${mapping.table} SET status = 'spare', well_id = NULL WHERE ${mapping.id} = $1`,
+        [remove_id]
+      );
+      await client.query(
+        `UPDATE ${mapping.table} SET status = 'active', well_id = $1 WHERE ${mapping.id} = $2`,
+        [removed.well_id, install_id]
+      );
+    } else {
+      const { rows: [removed] } = await client.query(
+        `SELECT current_location, manufacturer, model_number FROM ${mapping.table} WHERE ${mapping.id} = $1`,
+        [remove_id]
+      );
+      if (!removed) throw new Error('Unit being removed not found');
+      location    = removed.current_location;
+      removedDesc = `${removed.manufacturer || ''} ${removed.model_number || ''} from ${location}`.trim();
+
+      await client.query(
+        `UPDATE ${mapping.table} SET status = 'spare', current_location = NULL WHERE ${mapping.id} = $1`,
+        [remove_id]
+      );
+      await client.query(
+        `UPDATE ${mapping.table} SET status = 'active', current_location = $1 WHERE ${mapping.id} = $2`,
+        [location, install_id]
+      );
+    }
+
+    const { rows: [installed] } = await client.query(
+      `SELECT manufacturer, model_number FROM ${mapping.table} WHERE ${mapping.id} = $1`,
+      [install_id]
+    );
+    if (!installed) throw new Error('Unit being installed not found');
+    const installedDesc = `${installed.manufacturer || ''} ${installed.model_number || ''}`.trim();
+
+    await client.query(
+      `INSERT INTO equipment_swaps
+         (category, swap_date, location, item_removed_id, item_installed_id,
+          removed_description, installed_description, performed_by, notes, entered_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+      [category, swap_date, location, remove_id, install_id,
+       removedDesc, installedDesc, performed_by || null, notes || null, req.user.username]
+    );
+
+    await client.query('COMMIT');
+    res.json({ ok: true, location });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// ── Maintenance badge counts ──────────────────────────────────────────────────
+app.get('/api/maintenance/badge-counts', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        (SELECT COUNT(*) FROM equipment_issues
+         WHERE status IN ('open','in_progress')) AS equipment,
+        (SELECT COUNT(*) FROM building_issues
+         WHERE status IN ('open','in_progress')) AS buildings,
+        (SELECT COUNT(*) FROM well_issues
+         WHERE status IN ('open','in_progress')) AS wells
+    `);
+    const counts = rows[0];
+    res.json({
+      equipment: parseInt(counts.equipment) || 0,
+      buildings: parseInt(counts.buildings) || 0,
+      wells:     parseInt(counts.wells)     || 0,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Dashboard stats ───────────────────────────────────────────────────────────
 app.get('/api/dashboard/stats', requireAuth, async (req, res) => {
   try {
+    // Load KF widget date range from app_settings (fall back to current month)
+    const settingsRes = await pool.query(
+      `SELECT key, value FROM app_settings WHERE key IN ('kf_widget_start','kf_widget_end')`
+    ).catch(() => ({ rows: [] }));
+    const settingsMap = Object.fromEntries(settingsRes.rows.map(r => [r.key, r.value]));
+    const now = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    const defaultStart = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-01`;
+    const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    const defaultEnd = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(lastDay)}`;
+    const kfStart = settingsMap['kf_widget_start'] || defaultStart;
+    const kfEnd   = settingsMap['kf_widget_end']   || defaultEnd;
+
     const [kf, wells] = await Promise.all([
       pool.query(`
         SELECT
@@ -930,18 +1351,14 @@ app.get('/api/dashboard/stats', requireAuth, async (req, res) => {
           SELECT w.well_id,
             EXISTS (
               SELECT 1 FROM readings_kf_monthly r
-              WHERE r.well_id = w.well_id AND (
-                date_trunc('month', r.reading_date) = date_trunc('month', CURRENT_DATE)
-                OR r.reading_date BETWEEN
-                  (date_trunc('month', CURRENT_DATE) - INTERVAL '1 day')::date - INTERVAL '7 days'
-                  AND (date_trunc('month', CURRENT_DATE) - INTERVAL '1 day')::date
-              )
+              WHERE r.well_id = w.well_id
+                AND r.reading_date BETWEEN $1 AND $2
             ) AS is_done
           FROM wells w
           WHERE w.kf_set_id IS NOT NULL
             AND (LOWER(w.status) != 'inactive' OR w.status IS NULL)
         ) s
-      `),
+      `, [kfStart, kfEnd]),
       pool.query(`
         SELECT
           COUNT(*)                                                 AS total,
@@ -961,10 +1378,42 @@ app.get('/api/dashboard/stats', requireAuth, async (req, res) => {
       kf_total:         parseInt(kf.rows[0].total),
       kf_done:          parseInt(kf.rows[0].done),
       kf_due:           parseInt(kf.rows[0].due),
+      kf_widget_start:  kfStart,
+      kf_widget_end:    kfEnd,
       wells_total:      parseInt(wells.rows[0].total),
       wells_read_today: parseInt(wells.rows[0].read_today),
       wells_due_today:  parseInt(wells.rows[0].unread_today),
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── KF Widget Settings ────────────────────────────────────────────────────────
+app.get('/api/settings/kf-widget', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT key, value FROM app_settings WHERE key IN ('kf_widget_start','kf_widget_end')`
+    );
+    const m = Object.fromEntries(rows.map(r => [r.key, r.value]));
+    res.json({ start_date: m['kf_widget_start'] || null, end_date: m['kf_widget_end'] || null });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/settings/kf-widget', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+  const { start_date, end_date } = req.body;
+  if (!start_date || !end_date) return res.status(400).json({ error: 'start_date and end_date required' });
+  try {
+    await pool.query(
+      `INSERT INTO app_settings (key, value, updated_at) VALUES
+         ('kf_widget_start', $1, NOW()),
+         ('kf_widget_end',   $2, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+      [start_date, end_date]
+    );
+    res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1230,10 +1679,10 @@ app.get('/api/reports/mileage/export', async (req, res) => {
   }
 });
 
-// ── KF Operator Breakdown Report ──────────────────────────────────────────────
+// ── KF Breakdown Report ───────────────────────────────────────────────────────
 app.get('/api/reports/kf-operators', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
-  const { year, month } = req.query;
-  if (!year || !month) return res.status(400).json({ error: 'year and month required' });
+  const { start_date, end_date } = req.query;
+  if (!start_date || !end_date) return res.status(400).json({ error: 'start_date and end_date required' });
   try {
     const { rows } = await pool.query(
       `WITH total_wells AS (
@@ -1241,21 +1690,357 @@ app.get('/api/reports/kf-operators', requireAuth, requireRole('supervisor', 'adm
          FROM wells
          WHERE kf_set_id IS NOT NULL
            AND (LOWER(status) != 'inactive' OR status IS NULL)
+       ),
+       distinct_read AS (
+         SELECT COUNT(DISTINCT well_id) AS cnt
+         FROM readings_kf_monthly
+         WHERE reading_date BETWEEN $1 AND $2
        )
        SELECT
          COALESCE(r.operator, '(no operator)') AS operator,
          COUNT(DISTINCT r.well_id)             AS wells_read,
-         (SELECT cnt FROM total_wells)         AS total_wells
+         (SELECT cnt FROM total_wells)         AS total_wells,
+         (SELECT cnt FROM distinct_read)       AS distinct_read
        FROM readings_kf_monthly r
-       WHERE EXTRACT(YEAR  FROM r.reading_date) = $1
-         AND EXTRACT(MONTH FROM r.reading_date) = $2
+       WHERE r.reading_date BETWEEN $1 AND $2
        GROUP BY r.operator
        ORDER BY wells_read DESC`,
+      [start_date, end_date]
+    );
+    const totalWells = rows[0]?.total_wells ? parseInt(rows[0].total_wells) : 0;
+    const distinctRead = rows[0]?.distinct_read ? parseInt(rows[0].distinct_read) : 0;
+    res.json({ rows, distinctRead, totalWells });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Vehicle last-service report
+app.get('/api/reports/vehicle-service', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        v.vehicle_id, v.vehicle_number, v.vehicle_type, v.make, v.model,
+        v.assigned_user, v.reading_type,
+        r.odometer_miles        AS current_odometer,
+        r.engine_hours          AS current_engine_hours,
+        r.reading_date          AS current_reading_date,
+        m.work_date             AS last_service_date,
+        m.work_type             AS last_service_type,
+        m.odometer_at_service,
+        m.engine_hours_at_service,
+        m.next_service_miles,
+        m.next_service_hours
+      FROM vehicles v
+      LEFT JOIN LATERAL (
+        SELECT odometer_miles, engine_hours, reading_date
+        FROM readings_vehicle_monthly
+        WHERE vehicle_id = v.vehicle_id
+        ORDER BY reading_date DESC, reading_time DESC
+        LIMIT 1
+      ) r ON true
+      LEFT JOIN LATERAL (
+        SELECT work_date, work_type, odometer_at_service,
+               engine_hours_at_service, next_service_miles, next_service_hours
+        FROM maintenance_vehicles
+        WHERE vehicle_id = v.vehicle_id
+        ORDER BY work_date DESC
+        LIMIT 1
+      ) m ON true
+      WHERE LOWER(v.status) != 'inactive' OR v.status IS NULL
+      ORDER BY
+        CASE LOWER(v.vehicle_type)
+          WHEN 'truck'           THEN 1
+          WHEN 'heavy_equipment' THEN 2
+          WHEN 'trailer'         THEN 99
+          ELSE 3
+        END,
+        v.vehicle_number
+    `);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// KF set-by-set breakdown
+app.get('/api/reports/kf-sets', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+  const { start_date, end_date } = req.query;
+  if (!start_date || !end_date) return res.status(400).json({ error: 'start_date and end_date required' });
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        ws.set_name,
+        COUNT(DISTINCT w.well_id)                                              AS total_wells,
+        COUNT(DISTINCT CASE WHEN r.well_id IS NOT NULL THEN r.well_id END)     AS wells_read
+      FROM well_sets ws
+      JOIN wells w ON w.kf_set_id = ws.set_id
+        AND (LOWER(w.status) != 'inactive' OR w.status IS NULL)
+      LEFT JOIN readings_kf_monthly r
+        ON r.well_id = w.well_id
+        AND r.reading_date BETWEEN $1 AND $2
+      GROUP BY ws.set_id, ws.set_name
+      ORDER BY ws.set_name
+    `, [start_date, end_date]);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Open maintenance issues across all three categories
+app.get('/api/reports/maintenance-issues', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT 'Wells' AS category, issue_id,
+        COALESCE(well_name, 'Unknown') AS location_name,
+        description, status, reported_date, assigned_to, action_taken
+      FROM well_issues
+      WHERE status IN ('open','in_progress')
+      UNION ALL
+      SELECT 'Buildings', issue_id,
+        TRIM(COALESCE(site_name,'') ||
+          CASE WHEN building_name IS NOT NULL THEN ' — ' || building_name ELSE '' END
+        ) AS location_name,
+        description, status, reported_date, assigned_to, action_taken
+      FROM building_issues
+      WHERE status IN ('open','in_progress')
+      UNION ALL
+      SELECT 'Equipment', issue_id,
+        COALESCE(equipment_name, equipment_type, 'Unknown') AS location_name,
+        description, status, reported_date, assigned_to, action_taken
+      FROM equipment_issues
+      WHERE status IN ('open','in_progress')
+      ORDER BY category, reported_date ASC
+    `);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PM Grid report — latest per-plant siphon breaker + air compressor records + positions
+app.get('/api/reports/pm-grid', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+  try {
+    const [sbRes, acRes, posRes] = await Promise.all([
+      pool.query(`
+        SELECT DISTINCT ON (p.building)
+          p.building, p.completed_date, p.completed_time,
+          u.full_name AS applied_by, p.checklist
+        FROM pm_records p
+        LEFT JOIN users u ON u.user_id = p.completed_by
+        WHERE p.pm_type = 'siphon_breaker' AND p.building IS NOT NULL
+        ORDER BY p.building, p.completed_date DESC, p.completed_time DESC
+      `),
+      pool.query(`
+        SELECT DISTINCT ON (p.building)
+          p.building, p.completed_date, p.completed_time,
+          u.full_name AS applied_by, p.checklist
+        FROM pm_records p
+        LEFT JOIN users u ON u.user_id = p.completed_by
+        WHERE p.pm_type = 'air_compressor' AND p.building IS NOT NULL
+        ORDER BY p.building, p.completed_date DESC, p.completed_time DESC
+      `),
+      pool.query(`
+        SELECT pp.position_id, pp.pump_letter, b.building_letter,
+               s.site_id, s.site_name,
+               REGEXP_REPLACE(s.site_name, '[^0-9]', '', 'g') AS site_number
+        FROM pump_positions pp
+        JOIN buildings b ON pp.building_id = b.building_id
+        JOIN sites     s ON b.site_id = s.site_id
+        WHERE LOWER(pp.status) != 'inactive' OR pp.status IS NULL
+        ORDER BY s.site_name, b.building_letter, pp.pump_letter
+      `),
+    ]);
+    const sbRecords = {}, acRecords = {};
+    sbRes.rows.forEach(r => { sbRecords[r.building] = r; });
+    acRes.rows.forEach(r => { acRecords[r.building] = r; });
+    res.json({ sbRecords, acRecords, positions: posRes.rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Pesticides ────────────────────────────────────────────────────────────────
+
+// List pesticides (active only for operators; all for supervisor/admin)
+app.get('/api/pesticides', requireAuth, async (req, res) => {
+  try {
+    const supervisorRoles = ['supervisor', 'admin'];
+    const showAll = supervisorRoles.includes(req.user.role);
+    const { rows } = await pool.query(
+      `SELECT pesticide_id, name, epa_reg_number, unit_of_measure, active, created_at
+       FROM pesticides
+       ${showAll ? '' : 'WHERE active = TRUE'}
+       ORDER BY name`
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Add a new pesticide (all roles)
+app.post('/api/pesticides', requireAuth, async (req, res) => {
+  const { name, epa_reg_number, unit_of_measure } = req.body;
+  if (!name || !unit_of_measure) return res.status(400).json({ error: 'name and unit_of_measure required' });
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO pesticides (name, epa_reg_number, unit_of_measure)
+       VALUES ($1, $2, $3)
+       RETURNING *`,
+      [name.trim(), epa_reg_number?.trim() || null, unit_of_measure.trim()]
+    );
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Deactivate / reactivate a pesticide (supervisor/admin only)
+app.patch('/api/pesticides/:id', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+  const { active } = req.body;
+  if (active === undefined) return res.status(400).json({ error: 'active required' });
+  try {
+    const { rows } = await pool.query(
+      `UPDATE pesticides SET active = $1 WHERE pesticide_id = $2 RETURNING *`,
+      [active, req.params.id]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Not found' });
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// List usage entries (most recent first, joined with pesticide name)
+app.get('/api/pesticide-usage', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT u.usage_id, u.pesticide_id, p.name AS pesticide_name, p.unit_of_measure,
+              u.used_date, u.used_time, u.applied_by,
+              usr.full_name AS applicator_name,
+              u.quantity, u.location_description, u.notes, u.created_at
+       FROM pesticide_usage u
+       JOIN pesticides p ON p.pesticide_id = u.pesticide_id
+       LEFT JOIN users usr ON usr.user_id = u.applied_by
+       ORDER BY u.used_date DESC, u.used_time DESC
+       LIMIT 200`
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Log new usage entry (date/time/user auto from server)
+app.post('/api/pesticide-usage', requireAuth, async (req, res) => {
+  const { pesticide_id, quantity } = req.body;
+  if (!pesticide_id || quantity == null) return res.status(400).json({ error: 'pesticide_id and quantity required' });
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO pesticide_usage (pesticide_id, quantity, applied_by)
+       VALUES ($1, $2, $3)
+       RETURNING *`,
+      [pesticide_id, quantity, req.user.user_id]
+    );
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Update location/notes on a usage entry
+app.patch('/api/pesticide-usage/:id', requireAuth, async (req, res) => {
+  const { location_description, notes } = req.body;
+  try {
+    const { rows } = await pool.query(
+      `UPDATE pesticide_usage
+       SET location_description = $1, notes = $2
+       WHERE usage_id = $3
+       RETURNING *`,
+      [location_description || null, notes || null, req.params.id]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Not found' });
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Monthly totals report
+app.get('/api/pesticide-usage/monthly', requireAuth, async (req, res) => {
+  const { year, month } = req.query;
+  if (!year || !month) return res.status(400).json({ error: 'year and month required' });
+  try {
+    const { rows } = await pool.query(
+      `SELECT p.name AS pesticide_name, p.unit_of_measure,
+              SUM(u.quantity) AS total_quantity,
+              COUNT(*) AS entry_count
+       FROM pesticide_usage u
+       JOIN pesticides p ON p.pesticide_id = u.pesticide_id
+       WHERE EXTRACT(YEAR  FROM u.used_date) = $1
+         AND EXTRACT(MONTH FROM u.used_date) = $2
+       GROUP BY p.pesticide_id, p.name, p.unit_of_measure
+       ORDER BY p.name`,
       [parseInt(year), parseInt(month)]
     );
-    // Also include total distinct wells read this month
-    const totalRead = rows.reduce((s, r) => s + parseInt(r.wells_read), 0);
-    res.json({ rows, totalRead, totalWells: rows[0]?.total_wells ? parseInt(rows[0].total_wells) : 0 });
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── PM Records ────────────────────────────────────────────────────────────────
+
+// Last completed date per PM type (for tile badges)
+app.get('/api/pm-records/last-completed', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT DISTINCT ON (pm_type)
+         pm_type, completed_date, completed_time, u.full_name AS completed_by_name
+       FROM pm_records p
+       LEFT JOIN users u ON u.user_id = p.completed_by
+       ORDER BY pm_type, completed_date DESC, completed_time DESC`
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// List records for a PM type
+app.get('/api/pm-records', requireAuth, async (req, res) => {
+  const { type } = req.query;
+  if (!type) return res.status(400).json({ error: 'type required' });
+  try {
+    const { rows } = await pool.query(
+      `SELECT p.pm_id, p.pm_type, p.building, p.completed_date, p.completed_time,
+              u.full_name AS completed_by_name, p.checklist, p.notes, p.created_at
+       FROM pm_records p
+       LEFT JOIN users u ON u.user_id = p.completed_by
+       WHERE p.pm_type = $1
+       ORDER BY p.completed_date DESC, p.completed_time DESC
+       LIMIT 100`,
+      [type]
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Submit a new PM record (date/time/user auto from server)
+app.post('/api/pm-records', requireAuth, async (req, res) => {
+  const { pm_type, building, checklist, notes } = req.body;
+  if (!pm_type || !checklist) return res.status(400).json({ error: 'pm_type and checklist required' });
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO pm_records (pm_type, building, completed_by, checklist, notes)
+       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [pm_type, building || null, req.user.user_id, JSON.stringify(checklist), notes || null]
+    );
+    res.json(rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

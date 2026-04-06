@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EXIF Extractor</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exif-js/2.3.0/exif.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow+Condensed:wght@300;400;600;700&display=swap');
+
+  :root {
+    --bg: #0e0f11;
+    --surface: #16181c;
+    --border: #2a2d34;
+    --accent: #e8a020;
+    --accent2: #3b82f6;
+    --text: #c8ccd4;
+    --text-dim: #5a5f6b;
+    --mono: 'Share Tech Mono', monospace;
+    --sans: 'Barlow Condensed', sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  header {
+    padding: 16px 20px 14px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
+  }
+
+  header h1 {
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: #fff;
+  }
+
+  header span {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--accent);
+    letter-spacing: 0.08em;
+  }
+
+  .main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 20px;
+    gap: 16px;
+  }
+
+  #dropzone {
+    border: 1.5px dashed var(--border);
+    border-radius: 4px;
+    padding: 36px 24px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+    position: relative;
+    background: var(--surface);
+  }
+
+  #dropzone.drag-over {
+    border-color: var(--accent);
+    background: rgba(232, 160, 32, 0.05);
+  }
+
+  #dropzone input[type="file"] {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    cursor: pointer;
+    width: 100%;
+    height: 100%;
+  }
+
+  .drop-icon { font-size: 30px; margin-bottom: 10px; opacity: 0.4; }
+
+  .drop-label {
+    font-size: 18px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #fff;
+  }
+
+  .drop-sub {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 6px;
+    letter-spacing: 0.05em;
+  }
+
+  #controls { display: none; align-items: center; gap: 10px; flex-wrap: wrap; }
+  #controls.visible { display: flex; }
+
+  .stat-pill {
+    font-family: var(--mono);
+    font-size: 11px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 5px 12px;
+    border-radius: 2px;
+    color: var(--text-dim);
+  }
+  .stat-pill b { color: var(--accent); }
+  .spacer { flex: 1; }
+
+  button {
+    font-family: var(--sans);
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 7px 16px;
+    border: none;
+    border-radius: 2px;
+    cursor: pointer;
+    transition: opacity 0.15s, transform 0.1s;
+  }
+  button:active { transform: scale(0.97); }
+  .btn-primary  { background: var(--accent); color: #000; }
+  .btn-secondary { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+  .btn-danger   { background: transparent; color: #ef4444; border: 1px solid #ef444440; }
+  button:hover  { opacity: 0.85; }
+
+  #field-filter {
+    display: none;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 12px 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+  }
+  #field-filter.visible { display: flex; }
+
+  .filter-label {
+    font-size: 11px;
+    font-family: var(--mono);
+    color: var(--text-dim);
+    width: 100%;
+    margin-bottom: 4px;
+    letter-spacing: 0.06em;
+  }
+
+  .field-chip {
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 4px 10px;
+    border-radius: 2px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text-dim);
+    cursor: pointer;
+    transition: all 0.15s;
+    user-select: none;
+  }
+  .field-chip.active { background: rgba(232,160,32,0.12); border-color: var(--accent); color: var(--accent); }
+  .chip-all { border-color: var(--accent2); color: var(--accent2); background: rgba(59,130,246,0.08); }
+
+  #table-wrap {
+    display: none;
+    overflow: auto;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    flex: 1;
+  }
+  #table-wrap.visible { display: block; }
+
+  table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 12px; }
+
+  thead tr { background: #1d1f24; position: sticky; top: 0; z-index: 2; }
+
+  th {
+    padding: 10px 14px;
+    text-align: left;
+    font-family: var(--sans);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  th:first-child { color: var(--accent); }
+
+  tbody tr { border-bottom: 1px solid #1c1e22; transition: background 0.1s; }
+  tbody tr:hover { background: #1a1c21; }
+
+  td {
+    padding: 8px 14px;
+    color: var(--text);
+    white-space: nowrap;
+    max-width: 240px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  td:first-child { color: #fff; }
+  td.na { color: var(--text-dim); font-style: italic; }
+
+  #progress-bar-wrap { display: none; height: 3px; background: var(--border); border-radius: 2px; overflow: hidden; }
+  #progress-bar-wrap.visible { display: block; }
+  #progress-bar { height: 100%; background: var(--accent); width: 0%; transition: width 0.2s; }
+
+  #empty { text-align: center; padding: 48px; font-family: var(--mono); font-size: 12px; color: var(--text-dim); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>EXIF Extractor</h1>
+  <span>// iPhone metadata → CSV</span>
+</header>
+
+<div class="main">
+  <div id="dropzone">
+    <input type="file" id="file-input" accept="image/*" multiple>
+    <div class="drop-icon">📂</div>
+    <div class="drop-label">Drop images here or tap to browse</div>
+    <div class="drop-sub">Supports JPG / HEIC / PNG · Multiple files OK</div>
+  </div>
+
+  <div id="progress-bar-wrap"><div id="progress-bar"></div></div>
+
+  <div id="controls">
+    <div class="stat-pill">Images: <b id="stat-count">0</b></div>
+    <div class="stat-pill">Fields: <b id="stat-fields">0</b></div>
+    <div class="spacer"></div>
+    <button class="btn-secondary" id="btn-filter">Filter Fields</button>
+    <button class="btn-primary"   id="btn-export">Export CSV</button>
+    <button class="btn-danger"    id="btn-clear">Clear</button>
+  </div>
+
+  <div id="field-filter">
+    <div class="filter-label">// toggle columns to include in export</div>
+  </div>
+
+  <div id="table-wrap"><div id="empty">No data yet.</div></div>
+</div>
+
+<script>
+let allRows = [], allFields = [], activeFields = new Set();
+
+const FIELD_LABELS = {
+  Make:'Make', Model:'Model', Software:'Software',
+  DateTime:'Date/Time', DateTimeOriginal:'Date Taken', DateTimeDigitized:'Date Digitized',
+  ExposureTime:'Exposure Time', FNumber:'F-Number', ISOSpeedRatings:'ISO',
+  ShutterSpeedValue:'Shutter Speed', ApertureValue:'Aperture',
+  BrightnessValue:'Brightness', ExposureBiasValue:'Exposure Bias',
+  MaxApertureValue:'Max Aperture', MeteringMode:'Metering Mode',
+  Flash:'Flash', FocalLength:'Focal Length', FocalLengthIn35mmFilm:'Focal Length (35mm)',
+  WhiteBalance:'White Balance', DigitalZoomRatio:'Digital Zoom',
+  SceneCaptureType:'Scene Type', ExposureMode:'Exposure Mode',
+  ExposureProgram:'Exposure Program', ColorSpace:'Color Space',
+  PixelXDimension:'Width (px)', PixelYDimension:'Height (px)',
+  XResolution:'X Resolution', YResolution:'Y Resolution', ResolutionUnit:'Resolution Unit',
+  Orientation:'Orientation', ImageWidth:'Image Width', ImageLength:'Image Height',
+  GPSLatitude:'GPS Lat', GPSLongitude:'GPS Lon',
+  GPSLatitudeRef:'GPS Lat Ref', GPSLongitudeRef:'GPS Lon Ref',
+  GPSAltitude:'GPS Altitude', GPSAltitudeRef:'GPS Alt Ref',
+  GPSSpeed:'GPS Speed', GPSSpeedRef:'GPS Speed Ref',
+  GPSImgDirection:'GPS Direction', GPSImgDirectionRef:'GPS Dir Ref',
+  GPSTimeStamp:'GPS Time', GPSDateStamp:'GPS Date',
+  LensMake:'Lens Make', LensModel:'Lens Model',
+  SubjectDistance:'Subject Distance', SubjectDistanceRange:'Subject Dist Range',
+  SensingMethod:'Sensing Method', FileSource:'File Source',
+  CustomRendered:'Custom Rendered', GainControl:'Gain Control',
+  Contrast:'Contrast', Saturation:'Saturation', Sharpness:'Sharpness',
+  UserComment:'User Comment', ImageDescription:'Description',
+  Copyright:'Copyright', Artist:'Artist',
+};
+
+function formatVal(key, val) {
+  if (val === undefined || val === null || val === '') return '';
+  if (key === 'ExposureTime') return val < 1 ? `1/${Math.round(1/val)}s` : `${val}s`;
+  if (key === 'FNumber' || key === 'ApertureValue') return `f/${val}`;
+  if (key === 'FocalLength' || key === 'FocalLengthIn35mmFilm') return `${val}mm`;
+  if ((key === 'GPSLatitude' || key === 'GPSLongitude') && Array.isArray(val)) {
+    const [deg, min, sec] = val;
+    return `${deg}° ${min}' ${typeof sec === 'number' ? sec.toFixed(2) : sec}"`;
+  }
+  if (Array.isArray(val)) return val.join(', ');
+  return String(val);
+}
+
+function readExif(file) {
+  return new Promise(resolve => {
+    EXIF.getData(file, function() {
+      const data = EXIF.getAllTags(this);
+      const row = {
+        '⬛ Filename': file.name,
+        '⬛ File Size': (file.size / 1024).toFixed(1) + ' KB',
+        '⬛ File Type': file.type,
+      };
+      for (const key of Object.keys(FIELD_LABELS)) {
+        if (data[key] !== undefined) row[key] = formatVal(key, data[key]);
+      }
+      for (const key of Object.keys(data)) {
+        if (!(key in row) && typeof data[key] !== 'object') row[key] = String(data[key]);
+      }
+      resolve(row);
+    });
+  });
+}
+
+function mergeFields(rows) {
+  const seen = new Set(), fields = [];
+  for (const row of rows) for (const k of Object.keys(row)) if (!seen.has(k)) { seen.add(k); fields.push(k); }
+  return fields;
+}
+
+function lbl(k) { return k.startsWith('⬛ ') ? k.replace('⬛ ', '') : (FIELD_LABELS[k] || k); }
+
+function renderTable() {
+  const wrap = document.getElementById('table-wrap');
+  if (!allRows.length) { wrap.innerHTML = '<div id="empty">No data yet.</div>'; return; }
+  const cols = allFields.filter(f => activeFields.has(f));
+  let html = '<table><thead><tr>' + cols.map(f => `<th title="${f}">${lbl(f)}</th>`).join('') + '</tr></thead><tbody>';
+  for (const row of allRows) {
+    html += '<tr>' + cols.map(f => {
+      const v = row[f] || '';
+      return v ? `<td title="${v}">${v}</td>` : `<td class="na">—</td>`;
+    }).join('') + '</tr>';
+  }
+  wrap.innerHTML = html + '</tbody></table>';
+}
+
+function renderChips() {
+  const container = document.getElementById('field-filter');
+  container.innerHTML = '<div class="filter-label">// toggle columns to include in export</div>';
+  const allChip = Object.assign(document.createElement('div'), { className: 'field-chip chip-all', textContent: 'ALL / NONE' });
+  allChip.addEventListener('click', () => {
+    if (allFields.some(f => activeFields.has(f))) activeFields.clear();
+    else allFields.forEach(f => activeFields.add(f));
+    renderChips(); renderTable();
+  });
+  container.appendChild(allChip);
+  for (const f of allFields) {
+    const chip = Object.assign(document.createElement('div'), {
+      className: 'field-chip' + (activeFields.has(f) ? ' active' : ''),
+      textContent: lbl(f), title: f,
+    });
+    chip.addEventListener('click', () => {
+      activeFields[activeFields.has(f) ? 'delete' : 'add'](f);
+      chip.classList.toggle('active');
+      renderTable(); updateStats();
+    });
+    container.appendChild(chip);
+  }
+}
+
+function updateStats() {
+  document.getElementById('stat-count').textContent  = allRows.length;
+  document.getElementById('stat-fields').textContent = [...activeFields].length;
+}
+
+async function processFiles(files) {
+  if (!files.length) return;
+  const progWrap = document.getElementById('progress-bar-wrap');
+  const progBar  = document.getElementById('progress-bar');
+  progWrap.classList.add('visible');
+  progBar.style.width = '0%';
+  const newRows = [];
+  for (let i = 0; i < files.length; i++) {
+    newRows.push(await readExif(files[i]));
+    progBar.style.width = ((i + 1) / files.length * 100) + '%';
+  }
+  allRows = [...allRows, ...newRows];
+  allFields = mergeFields(allRows);
+  activeFields = new Set(allFields);
+  setTimeout(() => progWrap.classList.remove('visible'), 600);
+  document.getElementById('controls').classList.add('visible');
+  document.getElementById('table-wrap').classList.add('visible');
+  renderChips(); renderTable(); updateStats();
+}
+
+function exportCSV() {
+  if (!allRows.length) return;
+  const cols = allFields.filter(f => activeFields.has(f));
+  const esc  = v => `"${String(v).replace(/"/g, '""')}"`;
+  let csv = cols.map(f => esc(lbl(f))).join(',') + '\n';
+  for (const row of allRows) csv += cols.map(f => esc(row[f] || '')).join(',') + '\n';
+  const a = Object.assign(document.createElement('a'), {
+    href: URL.createObjectURL(new Blob([csv], { type: 'text/csv' })),
+    download: `exif_export_${new Date().toISOString().slice(0,10)}.csv`,
+  });
+  a.click(); URL.revokeObjectURL(a.href);
+}
+
+const dropzone  = document.getElementById('dropzone');
+const fileInput = document.getElementById('file-input');
+fileInput.addEventListener('change', e => processFiles([...e.target.files]));
+dropzone.addEventListener('dragover',  e => { e.preventDefault(); dropzone.classList.add('drag-over'); });
+dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag-over'));
+dropzone.addEventListener('drop', e => {
+  e.preventDefault(); dropzone.classList.remove('drag-over');
+  processFiles([...e.dataTransfer.files].filter(f => f.type.startsWith('image/')));
+});
+document.getElementById('btn-export').addEventListener('click', exportCSV);
+document.getElementById('btn-filter').addEventListener('click', () => document.getElementById('field-filter').classList.toggle('visible'));
+document.getElementById('btn-clear').addEventListener('click', () => {
+  allRows = []; allFields = []; activeFields.clear();
+  ['controls','table-wrap','field-filter'].forEach(id => document.getElementById(id).classList.remove('visible'));
+  document.getElementById('field-filter').innerHTML = '';
+  document.getElementById('table-wrap').innerHTML = '<div id="empty">No data yet.</div>';
+  fileInput.value = '';
+});
+</script>
+</body>
+</html>

@@ -77,7 +77,7 @@
         <div id="login-error" class="error-msg hidden"></div>
         <button type="submit" class="btn btn-primary btn-full">Sign In</button>
       </form>
-      <div class="login-version">v 0.81</div>
+      <div class="login-version">v 1.09</div>
     </div>
   </div>
 </div>
@@ -155,6 +155,7 @@
       <li><button class="nav-btn" data-screen="vehicles">&#128664; Vehicle Monthly</button></li>
       <li><button class="nav-btn" data-screen="kf-monthly">&#128200; KF Monthly</button></li>
       <li><button class="nav-btn" data-screen="maintenance">&#128295; Maintenance Log</button></li>
+      <li><button class="nav-btn" data-screen="pesticides">&#127807; Pesticides</button></li>
       <li class="nav-reports hidden" id="nav-reports-item"><button class="nav-btn" data-screen="reports">&#128202; Reports</button></li>
       <li class="nav-item" id="nav-admin-item"><button class="nav-btn" data-screen="admin">&#9881; Settings</button></li>
     </ul>
@@ -252,9 +253,14 @@
         <span class="dash-icon">&#128200;</span>
         <span class="dash-label">KF Monthly<br>Readings</span>
       </button>
-      <button class="dash-tile" data-screen="maintenance">
+      <button class="dash-tile" data-screen="maintenance" id="dash-maintenance-tile">
         <span class="dash-icon">&#128295;</span>
         <span class="dash-label">Maintenance<br>Log</span>
+        <span class="maint-badge hidden" id="maint-main-badge">0</span>
+      </button>
+      <button class="dash-tile" id="dash-pesticides-tile" data-screen="pesticides">
+        <span class="dash-icon">&#127807;</span>
+        <span class="dash-label">Pesticides</span>
       </button>
       <button class="dash-tile reports-tile hidden" id="dash-reports-tile" data-screen="reports">
         <span class="dash-icon">&#128202;</span>
@@ -332,54 +338,50 @@
 
   <!-- ── Maintenance Log ────────────────────────────────────────────────────── -->
   <div id="screen-maintenance" class="screen-content">
-    <div class="form-card">
-      <div class="form-group">
-        <label>Record Type</label>
-        <div class="seg-group" id="maint-type-seg">
-          <button class="seg-btn active" data-val="equipment">Equipment</button>
-          <button class="seg-btn" data-val="vehicle">Vehicle</button>
-          <button class="seg-btn" data-val="building">Building</button>
-          <button class="seg-btn" data-val="swap">SB Swap</button>
-        </div>
-      </div>
 
-      <!-- Equipment fields -->
-      <div id="maint-equipment-fields">
-        <div class="form-group">
-          <label>Equipment Type</label>
-          <select id="maint-equip-type" class="ctrl-select">
-            <option value="pump">Pump</option>
-            <option value="motor">Motor</option>
-            <option value="compressor">Air Compressor</option>
-            <option value="siphon_breaker">Siphon Breaker</option>
-            <option value="other">Other</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label>Equipment</label>
-          <select id="maint-equip-select" class="ctrl-select">
-            <option value="">Select equipment…</option>
-          </select>
-          <button type="button" class="btn btn-secondary btn-sm maint-hist-btn" id="maint-equip-hist-btn" style="margin-top:8px">&#128200; View History</button>
-        </div>
-        <div class="form-group">
-          <label>Location at Time</label>
-          <input type="text" id="maint-equip-loc" class="ctrl-input" placeholder="Location">
-        </div>
-        <div class="form-group">
-          <label>Hours at Service</label>
-          <input type="number" id="maint-equip-hours" step="0.1" class="ctrl-input" placeholder="0.0">
-        </div>
+    <!-- Sub-dashboard: 6 section tiles -->
+    <div id="maint-main">
+      <div class="dashboard-grid">
+        <button class="dash-tile" data-maint-panel="equipment">
+          <span class="dash-icon">&#9881;</span>
+          <span class="dash-label">Equipment</span>
+          <span class="maint-badge hidden" id="maint-badge-equipment">0</span>
+        </button>
+        <button class="dash-tile" data-maint-panel="vehicles">
+          <span class="dash-icon">&#128664;</span>
+          <span class="dash-label">Vehicles</span>
+        </button>
+        <button class="dash-tile" data-maint-panel="buildings">
+          <span class="dash-icon">&#127970;</span>
+          <span class="dash-label">Buildings</span>
+          <span class="maint-badge hidden" id="maint-badge-buildings">0</span>
+        </button>
+        <button class="dash-tile" data-maint-panel="wells">
+          <span class="dash-icon">&#128204;</span>
+          <span class="dash-label">Wells</span>
+          <span class="maint-badge hidden" id="maint-badge-wells">0</span>
+        </button>
+        <button class="dash-tile" data-maint-panel="swaps">
+          <span class="dash-icon">&#128260;</span>
+          <span class="dash-label">Equipment<br>Swaps</span>
+        </button>
+        <button class="dash-tile" data-maint-panel="pms">
+          <span class="dash-icon">&#128203;</span>
+          <span class="dash-label">PMs</span>
+        </button>
       </div>
+    </div>
 
-      <!-- Vehicle fields -->
-      <div id="maint-vehicle-fields" class="hidden">
+    <!-- Vehicles Panel — fully functional -->
+    <div id="maint-panel-vehicles" class="maint-panel hidden">
+      <button class="maint-back-btn">&#8249; Maintenance</button>
+      <div class="form-card">
         <div class="form-group">
           <label>Vehicle</label>
           <select id="maint-vehicle-select" class="ctrl-select">
             <option value="">Select vehicle…</option>
           </select>
-          <button type="button" class="btn btn-secondary btn-sm maint-hist-btn" id="maint-vehicle-hist-btn" style="margin-top:8px">&#128200; View History</button>
+          <button type="button" class="btn btn-secondary btn-sm" id="maint-vehicle-hist-btn" style="margin-top:8px">&#128200; View History</button>
           <div id="maint-vehicle-hint" class="form-hint hidden"></div>
         </div>
         <div class="form-group">
@@ -400,77 +402,256 @@
           <label>Next Service Hours</label>
           <input type="number" id="maint-vehicle-next-hours" step="1" class="ctrl-input" placeholder="e.g. 2500">
         </div>
+        <div class="two-col">
+          <div class="form-group">
+            <label>Work Date</label>
+            <input type="date" id="maint-date" class="ctrl-input">
+          </div>
+          <div class="form-group">
+            <label>Work Type</label>
+            <select id="maint-work-type" class="ctrl-select">
+              <option value="repair">Repair</option>
+              <option value="pm">Preventive Maint.</option>
+              <option value="inspection">Inspection</option>
+              <option value="replacement">Replacement</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+        </div>
+        <div class="two-col">
+          <div class="form-group">
+            <label>Performed By</label>
+            <input type="text" id="maint-performed-by" class="ctrl-input" placeholder="Name">
+          </div>
+          <div class="form-group toggle-row">
+            <label>Contractor?</label>
+            <div class="toggle-group">
+              <button class="toggle-btn" id="maint-contractor-yes" data-val="true">Yes</button>
+              <button class="toggle-btn active" id="maint-contractor-no" data-val="false">No</button>
+            </div>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Description / Work Performed</label>
+          <textarea id="maint-description" class="ctrl-textarea" rows="3" placeholder="Describe the work performed…"></textarea>
+        </div>
+        <div class="two-col">
+          <div class="form-group">
+            <label>Parts Used</label>
+            <input type="text" id="maint-parts" class="ctrl-input" placeholder="Part numbers / description">
+          </div>
+          <div class="form-group">
+            <label>Cost ($)</label>
+            <input type="number" id="maint-cost" step="0.01" class="ctrl-input" placeholder="0.00">
+          </div>
+        </div>
+        <div class="form-group">
+          <label>PO Number</label>
+          <input type="text" id="maint-po" class="ctrl-input" placeholder="PO #">
+        </div>
+        <div class="form-group">
+          <label>Next Service Date</label>
+          <input type="date" id="maint-next-service" class="ctrl-input">
+        </div>
+        <div class="form-group">
+          <label>Notes</label>
+          <textarea id="maint-notes" class="ctrl-textarea" rows="2" placeholder="Optional notes…"></textarea>
+        </div>
+        <div id="maint-error" class="error-msg hidden"></div>
+        <button class="btn btn-save btn-full" id="maint-save-btn">Save Vehicle Record</button>
+      </div>
+    </div>
+
+    <!-- Equipment Panel — fully functional -->
+    <div id="maint-panel-equipment" class="maint-panel hidden">
+      <button class="maint-back-btn">&#8249; Maintenance</button>
+
+      <div class="issue-toolbar">
+        <button class="btn btn-secondary btn-sm" id="equip-show-resolved-btn">Show Resolved</button>
+        <button class="btn btn-save btn-sm" id="equip-new-issue-btn">+ New Issue</button>
       </div>
 
-      <!-- Building fields -->
-      <div id="maint-building-fields" class="hidden">
+      <!-- New issue form -->
+      <div id="equip-new-issue-form" class="form-card hidden">
+        <div class="form-group">
+          <label>Equipment Type</label>
+          <div class="seg-group" id="equip-type-seg">
+            <button class="seg-btn active" data-val="pump">Pump</button>
+            <button class="seg-btn" data-val="motor">Motor</button>
+            <button class="seg-btn" data-val="compressor">Compressor</button>
+            <button class="seg-btn" data-val="siphon_breaker">SB</button>
+            <button class="seg-btn" data-val="other">Other</button>
+          </div>
+        </div>
+        <div class="form-group" id="equip-select-group">
+          <label>Equipment</label>
+          <select id="equip-issue-select" class="ctrl-select">
+            <option value="">Select equipment…</option>
+          </select>
+        </div>
+        <div class="form-group hidden" id="equip-other-group">
+          <label>Equipment Description</label>
+          <input type="text" id="equip-issue-other" class="ctrl-input" placeholder="e.g. Fuel tank, gate valve…">
+        </div>
+        <div class="form-group">
+          <label>Issue Description</label>
+          <textarea id="equip-issue-desc" class="ctrl-textarea" rows="3" placeholder="Describe the problem…"></textarea>
+        </div>
+        <div class="form-group">
+          <label>Reported Date</label>
+          <input type="date" id="equip-issue-date" class="ctrl-input">
+        </div>
+        <div class="form-group">
+          <label>Assigned To</label>
+          <input type="text" id="equip-issue-assigned" class="ctrl-input" placeholder="Optional">
+        </div>
+        <div id="equip-new-error" class="error-msg hidden"></div>
+        <div class="two-col">
+          <button class="btn btn-secondary" id="equip-cancel-btn">Cancel</button>
+          <button class="btn btn-save" id="equip-submit-btn">Submit Issue</button>
+        </div>
+      </div>
+
+      <!-- Issue list -->
+      <div id="equip-issue-list"></div>
+
+      <!-- Hidden stubs — preserve existing module-level event listener IDs -->
+      <div class="hidden">
+        <select id="maint-equip-type"><option value="pump">Pump</option><option value="motor">Motor</option><option value="compressor">Air Compressor</option><option value="siphon_breaker">Siphon Breaker</option><option value="other">Other</option></select>
+        <select id="maint-equip-select"><option value="">Select…</option></select>
+        <input type="text" id="maint-equip-loc">
+        <input type="number" id="maint-equip-hours">
+        <button id="maint-equip-hist-btn" type="button"></button>
+      </div>
+    </div>
+
+    <!-- Buildings Panel — fully functional -->
+    <div id="maint-panel-buildings" class="maint-panel hidden">
+      <button class="maint-back-btn">&#8249; Maintenance</button>
+
+      <div class="issue-toolbar">
+        <button class="btn btn-secondary btn-sm" id="bldg-show-resolved-btn">Show Resolved</button>
+        <button class="btn btn-save btn-sm" id="bldg-new-issue-btn">+ New Issue</button>
+      </div>
+
+      <!-- New issue form -->
+      <div id="bldg-new-issue-form" class="form-card hidden">
         <div class="form-group">
           <label>Site</label>
-          <select id="maint-site-select" class="ctrl-select">
+          <select id="bldg-issue-site" class="ctrl-select">
             <option value="">Select site…</option>
           </select>
         </div>
         <div class="form-group">
           <label>Building</label>
-          <select id="maint-building-select" class="ctrl-select" disabled>
+          <select id="bldg-issue-building" class="ctrl-select" disabled>
             <option value="">Select building…</option>
           </select>
-          <button type="button" class="btn btn-secondary btn-sm maint-hist-btn" id="maint-building-hist-btn" style="margin-top:8px">&#128200; View History</button>
         </div>
         <div class="form-group">
-          <label>Record Type</label>
-          <select id="maint-building-record-type" class="ctrl-select">
-            <option value="repair">Repair</option>
-            <option value="inspection">Inspection</option>
-            <option value="pm">Preventive Maintenance</option>
-            <option value="other">Other</option>
-          </select>
+          <label>Issue Description</label>
+          <textarea id="bldg-issue-desc" class="ctrl-textarea" rows="3" placeholder="Describe the problem…"></textarea>
         </div>
         <div class="form-group">
-          <label>Severity</label>
-          <select id="maint-severity" class="ctrl-select">
-            <option value="">None</option>
-            <option value="low">Low</option>
-            <option value="medium">Medium</option>
-            <option value="high">High</option>
-            <option value="critical">Critical</option>
-          </select>
+          <label>Reported Date</label>
+          <input type="date" id="bldg-issue-date" class="ctrl-input">
         </div>
         <div class="form-group">
-          <label>Work Order Status</label>
-          <select id="maint-status" class="ctrl-select">
-            <option value="open">Open</option>
-            <option value="in_progress">In Progress</option>
-            <option value="on_hold">On Hold</option>
-            <option value="resolved">Resolved</option>
-            <option value="closed">Closed</option>
-          </select>
+          <label>Assigned To</label>
+          <input type="text" id="bldg-issue-assigned" class="ctrl-input" placeholder="Optional">
         </div>
-      </div>
-      <div class="form-group" id="maint-resolution-group" style="display:none">
-        <label>Resolution Notes</label>
-        <textarea id="maint-resolution-notes" class="ctrl-textarea" rows="2" placeholder="Describe how the issue was resolved…"></textarea>
+        <div id="bldg-new-error" class="error-msg hidden"></div>
+        <div class="two-col">
+          <button class="btn btn-secondary" id="bldg-cancel-btn">Cancel</button>
+          <button class="btn btn-save" id="bldg-submit-btn">Submit Issue</button>
+        </div>
       </div>
 
-      <!-- Siphon Breaker Swap fields -->
-      <div id="maint-swap-fields" class="hidden">
-        <p class="swap-info">Swapping a unit updates both records in the database and logs the swap history.</p>
+      <!-- Issue list -->
+      <div id="bldg-issue-list"></div>
+
+      <!-- Hidden stubs — preserve existing module-level event listener IDs -->
+      <div class="hidden">
+        <select id="maint-site-select"><option value="">Select site…</option></select>
+        <select id="maint-building-select" disabled><option value="">Select building…</option></select>
+        <button id="maint-building-hist-btn" type="button"></button>
+        <select id="maint-building-record-type"></select>
+        <select id="maint-severity"></select>
+        <select id="maint-status"><option value="open">Open</option><option value="resolved">Resolved</option></select>
+        <div id="maint-resolution-group"><textarea id="maint-resolution-notes"></textarea></div>
+      </div>
+    </div>
+
+    <!-- Wells Panel — fully functional -->
+    <div id="maint-panel-wells" class="maint-panel hidden">
+      <button class="maint-back-btn">&#8249; Maintenance</button>
+
+      <div class="issue-toolbar">
+        <button class="btn btn-secondary btn-sm" id="well-show-resolved-btn">Show Resolved</button>
+        <button class="btn btn-save btn-sm" id="well-new-issue-btn">+ New Issue</button>
+      </div>
+
+      <!-- New issue form -->
+      <div id="well-new-issue-form" class="form-card hidden">
         <div class="form-group">
-          <label>Swap Date</label>
-          <input type="date" id="swap-date" class="ctrl-input">
+          <label>Well</label>
+          <select id="well-issue-select" class="ctrl-select">
+            <option value="">Select well…</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Issue Description</label>
+          <textarea id="well-issue-desc" class="ctrl-textarea" rows="3" placeholder="Describe the problem…"></textarea>
+        </div>
+        <div class="form-group">
+          <label>Reported Date</label>
+          <input type="date" id="well-issue-date" class="ctrl-input">
+        </div>
+        <div class="form-group">
+          <label>Assigned To</label>
+          <input type="text" id="well-issue-assigned" class="ctrl-input" placeholder="Optional">
+        </div>
+        <div id="well-new-error" class="error-msg hidden"></div>
+        <div class="two-col">
+          <button class="btn btn-secondary" id="well-cancel-btn">Cancel</button>
+          <button class="btn btn-save" id="well-submit-btn">Submit Issue</button>
+        </div>
+      </div>
+
+      <!-- Issue list -->
+      <div id="well-issue-list"></div>
+    </div>
+
+    <!-- Swaps Panel — fully functional -->
+    <div id="maint-panel-swaps" class="maint-panel hidden">
+      <button class="maint-back-btn">&#8249; Maintenance</button>
+      <div class="form-card">
+        <div class="form-group">
+          <label>Category</label>
+          <div class="seg-group" id="swap-category-seg">
+            <button class="seg-btn active" data-val="siphon_breaker">SB</button>
+            <button class="seg-btn" data-val="motor">Motor</button>
+            <button class="seg-btn" data-val="pp_pump">PP Pump</button>
+            <button class="seg-btn" data-val="well_motor">Well Motor</button>
+            <button class="seg-btn" data-val="well_meter">Well Meter</button>
+          </div>
         </div>
         <div class="form-group">
           <label>Active Unit Being Removed</label>
           <select id="swap-remove-select" class="ctrl-select">
             <option value="">Select active unit…</option>
           </select>
-          <div id="swap-location-hint" class="swap-location-hint hidden"></div>
+          <div id="swap-location-hint" class="form-hint hidden"></div>
         </div>
         <div class="form-group">
           <label>Spare Being Installed</label>
           <select id="swap-install-select" class="ctrl-select">
             <option value="">Select spare…</option>
           </select>
+        </div>
+        <div class="form-group">
+          <label>Swap Date</label>
+          <input type="date" id="swap-date" class="ctrl-input">
         </div>
         <div class="form-group">
           <label>Performed By</label>
@@ -483,86 +664,275 @@
         <div id="swap-error" class="error-msg hidden"></div>
         <button class="btn btn-save btn-full" id="swap-save-btn">Complete Swap</button>
       </div>
+    </div>
 
-      <!-- Common fields -->
-      <div id="maint-common-fields">
-      <div class="two-col">
-        <div class="form-group">
-          <label>Work Date</label>
-          <input type="date" id="maint-date" class="ctrl-input">
-        </div>
-        <div class="form-group">
-          <label>Work Type</label>
-          <select id="maint-work-type" class="ctrl-select">
-            <option value="repair">Repair</option>
-            <option value="pm">Preventive Maint.</option>
-            <option value="inspection">Inspection</option>
-            <option value="replacement">Replacement</option>
-            <option value="other">Other</option>
-          </select>
+    <!-- PMs Panel -->
+    <div id="maint-panel-pms" class="maint-panel hidden">
+
+      <!-- PM sub-dashboard -->
+      <div id="pm-main">
+        <button class="maint-back-btn">&#8249; Maintenance</button>
+        <div class="dashboard-grid">
+          <button class="dash-tile" data-pm-type="a_electrical">
+            <span class="dash-icon">&#9889;</span>
+            <span class="dash-label">A Plant<br>Electrical</span>
+            <span class="pm-last-label" id="pm-last-a-electrical"></span>
+          </button>
+          <button class="dash-tile" data-pm-type="b_electrical">
+            <span class="dash-icon">&#9889;</span>
+            <span class="dash-label">B Plant<br>Electrical</span>
+            <span class="pm-last-label" id="pm-last-b-electrical"></span>
+          </button>
+          <button class="dash-tile" data-pm-type="siphon_breaker">
+            <span class="dash-icon">&#128204;</span>
+            <span class="dash-label">Siphon<br>Breaker</span>
+            <span class="pm-last-label" id="pm-last-siphon-breaker"></span>
+          </button>
+          <button class="dash-tile" data-pm-type="air_compressor">
+            <span class="dash-icon">&#128168;</span>
+            <span class="dash-label">Air<br>Compressor</span>
+            <span class="pm-last-label" id="pm-last-air-compressor"></span>
+          </button>
+          <button class="dash-tile" data-pm-type="wells">
+            <span class="dash-icon">&#128167;</span>
+            <span class="dash-label">Wells</span>
+            <span class="pm-last-label" id="pm-last-wells"></span>
+          </button>
+          <button class="dash-tile" data-pm-type="annual_pp">
+            <span class="dash-icon">&#128221;</span>
+            <span class="dash-label">Annual<br>Pumping Plant</span>
+            <span class="pm-last-label" id="pm-last-annual-pp"></span>
+          </button>
         </div>
       </div>
-      <div class="two-col">
-        <div class="form-group">
-          <label>Performed By</label>
-          <input type="text" id="maint-performed-by" class="ctrl-input" placeholder="Name">
+
+      <!-- PM type panels (content populated by JS) -->
+      <div id="pm-panel-a-electrical"  class="pm-panel hidden"><button class="pm-back-btn">&#8249; PMs</button><div class="pm-type-content"></div></div>
+      <div id="pm-panel-b-electrical"  class="pm-panel hidden"><button class="pm-back-btn">&#8249; PMs</button><div class="pm-type-content"></div></div>
+      <div id="pm-panel-siphon-breaker" class="pm-panel hidden"><button class="pm-back-btn">&#8249; PMs</button><div class="pm-type-content"></div></div>
+      <div id="pm-panel-air-compressor" class="pm-panel hidden"><button class="pm-back-btn">&#8249; PMs</button><div class="pm-type-content"></div></div>
+      <div id="pm-panel-wells"         class="pm-panel hidden"><button class="pm-back-btn">&#8249; PMs</button><div class="pm-type-content"></div></div>
+      <div id="pm-panel-annual-pp"     class="pm-panel hidden"><button class="pm-back-btn">&#8249; PMs</button><div class="pm-type-content"></div></div>
+
+    </div><!-- /maint-panel-pms -->
+
+    <!-- PM Record View Modal -->
+    <div id="pm-view-modal" class="modal-overlay hidden">
+      <div class="modal-card pm-view-modal-card">
+        <div class="modal-header">
+          <h2 id="pm-view-modal-title">PM Record</h2>
+          <button class="modal-close" id="pm-view-modal-close">&times;</button>
         </div>
-        <div class="form-group toggle-row">
-          <label>Contractor?</label>
-          <div class="toggle-group">
-            <button class="toggle-btn" id="maint-contractor-yes" data-val="true">Yes</button>
-            <button class="toggle-btn active" id="maint-contractor-no" data-val="false">No</button>
+        <div class="modal-body" id="pm-view-modal-body"></div>
+      </div>
+    </div>
+
+  </div><!-- /screen-maintenance -->
+
+  <!-- ── Pesticides ───────────────────────────────────────────────────────── -->
+  <div id="screen-pesticides" class="screen-content">
+
+    <!-- Sub-dashboard: 4 section tiles -->
+    <div id="pest-main">
+      <div class="dashboard-grid">
+        <button class="dash-tile" data-pest-panel="usage">
+          <span class="dash-icon">&#128200;</span>
+          <span class="dash-label">Usage</span>
+        </button>
+        <button class="dash-tile" data-pest-panel="location">
+          <span class="dash-icon">&#128205;</span>
+          <span class="dash-label">Location</span>
+        </button>
+        <button class="dash-tile" data-pest-panel="reports">
+          <span class="dash-icon">&#128202;</span>
+          <span class="dash-label">Reports</span>
+        </button>
+        <button class="dash-tile" data-pest-panel="products">
+          <span class="dash-icon">&#127797;</span>
+          <span class="dash-label">Products</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Usage panel -->
+    <div id="pest-panel-usage" class="maint-panel hidden">
+      <button class="maint-back-btn">&#8249; Pesticides</button>
+      <h2 class="panel-heading">Usage Log</h2>
+      <div class="issue-toolbar">
+        <button class="btn btn-primary btn-sm" id="pest-usage-new-btn">+ Log Usage</button>
+      </div>
+
+      <!-- New usage form -->
+      <div id="pest-usage-form" class="settings-card hidden" style="margin-bottom:14px">
+        <div class="settings-pad">
+          <div class="form-group">
+            <label>Pesticide</label>
+            <select id="pest-usage-select" class="ctrl-select"></select>
+          </div>
+          <div class="form-group">
+            <label>Quantity <span id="pest-usage-uom-label" style="color:var(--text-dim);font-weight:400"></span></label>
+            <input type="number" id="pest-usage-qty" class="ctrl-input" step="0.01" min="0" placeholder="0.00">
+          </div>
+          <div class="form-row">
+            <button class="btn btn-primary" id="pest-usage-save-btn">Save</button>
+            <button class="btn btn-secondary" id="pest-usage-cancel-btn">Cancel</button>
           </div>
         </div>
       </div>
-      <div class="form-group">
-        <label>Description</label>
-        <textarea id="maint-description" class="ctrl-textarea" rows="3" placeholder="Describe the work performed…"></textarea>
-      </div>
-      <div class="two-col">
-        <div class="form-group">
-          <label>Parts Used</label>
-          <input type="text" id="maint-parts" class="ctrl-input" placeholder="Part numbers / description">
-        </div>
-        <div class="form-group">
-          <label>Cost ($)</label>
-          <input type="number" id="maint-cost" step="0.01" class="ctrl-input" placeholder="0.00">
-        </div>
-      </div>
-      <div class="form-group">
-        <label>PO Number</label>
-        <input type="text" id="maint-po" class="ctrl-input" placeholder="PO #">
-      </div>
-      <div class="form-group">
-        <label>Next Service Date</label>
-        <input type="date" id="maint-next-service" class="ctrl-input">
-      </div>
-      <div class="form-group">
-        <label>Notes</label>
-        <textarea id="maint-notes" class="ctrl-textarea" rows="2" placeholder="Optional notes…"></textarea>
-      </div>
-      <div id="maint-error" class="error-msg hidden"></div>
-      <button class="btn btn-save btn-full" id="maint-save-btn">Save Maintenance Record</button>
-      </div><!-- /maint-common-fields -->
+
+      <div id="pest-usage-list"></div>
     </div>
-  </div>
+
+    <!-- Location panel -->
+    <div id="pest-panel-location" class="maint-panel hidden">
+      <button class="maint-back-btn">&#8249; Pesticides</button>
+      <h2 class="panel-heading">Application Location</h2>
+      <p class="placeholder-msg" style="font-style:normal;color:var(--text-dim);margin-bottom:12px">Tap an entry to add where the pesticide was applied.</p>
+      <div id="pest-location-list"></div>
+    </div>
+
+    <!-- Reports panel -->
+    <div id="pest-panel-reports" class="maint-panel hidden">
+      <button class="maint-back-btn">&#8249; Pesticides</button>
+      <h2 class="panel-heading">Monthly Report</h2>
+      <div class="report-month-nav" style="margin-bottom:14px">
+        <button class="btn btn-secondary btn-sm" id="pest-report-prev">&#8592;</button>
+        <span id="pest-report-label" class="report-month-label"></span>
+        <button class="btn btn-secondary btn-sm" id="pest-report-next">&#8594;</button>
+      </div>
+      <div id="pest-report-output"></div>
+    </div>
+
+    <!-- Products panel -->
+    <div id="pest-panel-products" class="maint-panel hidden">
+      <button class="maint-back-btn">&#8249; Pesticides</button>
+      <h2 class="panel-heading">Products</h2>
+      <div class="issue-toolbar">
+        <button class="btn btn-primary btn-sm" id="pest-product-new-btn">+ Add Product</button>
+      </div>
+
+      <!-- New product form -->
+      <div id="pest-product-form" class="settings-card hidden" style="margin-bottom:14px">
+        <div class="settings-pad">
+          <div class="form-group">
+            <label>Product Name</label>
+            <input type="text" id="pest-product-name" class="ctrl-input" placeholder="e.g. Aquathol K">
+          </div>
+          <div class="form-group">
+            <label>EPA Reg. Number <span style="color:var(--text-dim);font-weight:400">(optional)</span></label>
+            <input type="text" id="pest-product-epa" class="ctrl-input" placeholder="e.g. 12345-67">
+          </div>
+          <div class="form-group">
+            <label>Unit of Measure</label>
+            <input type="text" id="pest-product-uom" class="ctrl-input" placeholder="e.g. fl oz, lbs, gal">
+          </div>
+          <div class="form-row">
+            <button class="btn btn-primary" id="pest-product-save-btn">Save</button>
+            <button class="btn btn-secondary" id="pest-product-cancel-btn">Cancel</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="pest-product-list"></div>
+    </div>
+
+    <!-- Location edit modal -->
+    <div id="pest-location-modal" class="modal-overlay hidden">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h2>Application Location</h2>
+          <button class="modal-close" id="pest-location-modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div id="pest-location-modal-meta" style="font-size:0.85rem;color:var(--text-dim);margin-bottom:12px"></div>
+          <div class="form-group">
+            <label>Location Description</label>
+            <textarea id="pest-location-desc" class="ctrl-input" rows="3" placeholder="Describe where the pesticide was applied…"></textarea>
+          </div>
+          <div class="form-group">
+            <label>Notes <span style="color:var(--text-dim);font-weight:400">(optional)</span></label>
+            <textarea id="pest-location-notes" class="ctrl-input" rows="2" placeholder="Any additional notes…"></textarea>
+          </div>
+          <div class="form-row">
+            <button class="btn btn-primary" id="pest-location-save-btn">Save</button>
+            <button class="btn btn-secondary" id="pest-location-cancel-btn">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /screen-pesticides -->
 
   <!-- ── Reports ───────────────────────────────────────────────────────────── -->
   <div id="screen-reports" class="screen-content">
-    <div class="report-toolbar">
-      <select id="report-select" class="ctrl-select" style="max-width:220px">
-        <option value="mileage">CVC Mileage</option>
-        <option value="kf-operators">KF Operator Breakdown</option>
-      </select>
-      <div class="report-month-nav">
-        <button class="btn btn-secondary btn-sm" id="report-prev-month">&#8592;</button>
-        <span id="report-month-label" class="report-month-label"></span>
-        <button class="btn btn-secondary btn-sm" id="report-next-month">&#8594;</button>
+
+    <!-- Category tiles -->
+    <div id="report-main" class="dash-grid">
+      <div class="dash-tile" data-report-cat="vehicles">
+        <div class="dash-icon">&#128665;</div>
+        <div class="dash-label">Vehicles</div>
       </div>
-      <button class="btn btn-secondary btn-sm" id="report-export-btn" style="margin-left:auto">&#8615; Export</button>
+      <div class="dash-tile" data-report-cat="kf">
+        <div class="dash-icon">&#128200;</div>
+        <div class="dash-label">KF</div>
+      </div>
+      <div class="dash-tile" data-report-cat="maintenance">
+        <div class="dash-icon">&#128295;</div>
+        <div class="dash-label">Maintenance Issues</div>
+      </div>
+      <div class="dash-tile" data-report-cat="pms">
+        <div class="dash-icon">&#9989;</div>
+        <div class="dash-label">Siphon &amp; AC PMs</div>
+      </div>
     </div>
-    <div id="report-output"></div>
-  </div>
+
+    <!-- Vehicles panel -->
+    <div id="report-panel-vehicles" class="maint-panel hidden">
+      <button class="maint-back-btn" id="report-vehicles-back">&#8249; Reports</button>
+      <div class="report-toolbar">
+        <div class="seg-group" id="vehicle-report-seg">
+          <button class="seg-btn active" data-val="mileage">CVC Mileage</button>
+          <button class="seg-btn" data-val="service">Last Service</button>
+        </div>
+        <div class="report-month-nav">
+          <button class="btn btn-secondary btn-sm" id="report-prev-month">&#8592;</button>
+          <span id="report-month-label" class="report-month-label"></span>
+          <button class="btn btn-secondary btn-sm" id="report-next-month">&#8594;</button>
+        </div>
+        <button class="btn btn-secondary btn-sm" id="report-export-btn" style="margin-left:auto">&#8615; Export</button>
+      </div>
+      <div id="report-output"></div>
+    </div>
+
+    <!-- KF panel -->
+    <div id="report-panel-kf" class="maint-panel hidden">
+      <button class="maint-back-btn" id="report-kf-back">&#8249; Reports</button>
+      <div class="report-toolbar">
+        <div class="report-month-nav">
+          <button class="btn btn-secondary btn-sm" id="kf-report-prev-month">&#8592;</button>
+          <span id="kf-report-month-label" class="report-month-label"></span>
+          <button class="btn btn-secondary btn-sm" id="kf-report-next-month">&#8594;</button>
+        </div>
+        <input type="date" id="report-start-date" class="ctrl-input ctrl-input-sm">
+        <span class="report-date-sep">&#8211;</span>
+        <input type="date" id="report-end-date" class="ctrl-input ctrl-input-sm">
+      </div>
+      <div id="report-kf-output"></div>
+    </div>
+
+    <!-- Maintenance Issues panel -->
+    <div id="report-panel-maintenance" class="maint-panel hidden">
+      <button class="maint-back-btn" id="report-maint-back">&#8249; Reports</button>
+      <div id="report-maint-output"></div>
+    </div>
+
+    <!-- PM Grid panel -->
+    <div id="report-panel-pms" class="maint-panel hidden">
+      <button class="maint-back-btn" id="report-pms-back">&#8249; Reports</button>
+      <div id="report-pms-output"></div>
+    </div>
+
+  </div><!-- /screen-reports -->
 
   <!-- ── Settings ─────────────────────────────────────────────────────────── -->
   <div id="screen-admin" class="screen-content">
@@ -584,6 +954,12 @@
         </button>
         <button class="settings-menu-row" data-panel="appinfo">
           <span>App Info</span><span class="settings-chevron">›</span>
+        </button>
+      </div>
+      <div class="settings-menu-card hidden" id="settings-widgets-section">
+        <div class="settings-menu-label">Widgets</div>
+        <button class="settings-menu-row" data-panel="kf-widget">
+          <span>KF Widget</span><span class="settings-chevron">›</span>
         </button>
       </div>
       <div class="settings-menu-card hidden" id="settings-admin-section">
@@ -663,14 +1039,79 @@
       </div>
     </div>
 
+    <!-- KF Widget panel -->
+    <div id="settings-panel-kf-widget" class="settings-panel hidden">
+      <button class="settings-back-btn">‹ Settings</button>
+      <div class="settings-section">
+        <p style="font-size:0.85rem;color:var(--text-dim);margin:0 0 12px">
+          Set the date range the KF dashboard widgets use to calculate completed and remaining counts.
+        </p>
+        <div class="settings-card">
+          <div class="settings-pad">
+            <div class="form-group">
+              <label>Start Date</label>
+              <input type="date" id="kf-widget-start" class="ctrl-input">
+            </div>
+            <div class="form-group">
+              <label>End Date</label>
+              <input type="date" id="kf-widget-end" class="ctrl-input">
+            </div>
+            <button class="btn btn-primary" id="kf-widget-save-btn">Save</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- App Info panel -->
     <div id="settings-panel-appinfo" class="settings-panel hidden">
       <button class="settings-back-btn">‹ Settings</button>
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value">v 0.81</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 1.09</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tools panel (secret) -->
+    <div id="settings-panel-tools" class="settings-panel hidden">
+      <button class="settings-back-btn">‹ Settings</button>
+      <div class="settings-section">
+        <div class="settings-card">
+          <button class="settings-menu-row" data-tool="exif">
+            <span>EXIF Extractor</span><span class="settings-chevron">›</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- EXIF Extractor tool panel (full-screen overlay) -->
+    <div id="exif-tool-overlay" class="hidden">
+      <div class="exif-nav">
+        <button class="exif-back-btn" id="exif-back-btn">&#8249; Tools</button>
+        <span class="exif-nav-title">EXIF Extractor</span>
+        <button class="btn btn-secondary btn-sm" id="exif-export-btn" style="display:none">Export CSV</button>
+      </div>
+      <div class="exif-body">
+        <div id="exif-dropzone" class="exif-dropzone">
+          <input type="file" id="exif-file-input" accept="image/*" multiple>
+          <div class="exif-drop-icon">&#128247;</div>
+          <div class="exif-drop-label">Tap to select images</div>
+          <div class="exif-drop-sub">JPG / HEIC / PNG &middot; multiple OK</div>
+        </div>
+        <div id="exif-progress-wrap" class="exif-progress-wrap hidden">
+          <div id="exif-progress-bar" class="exif-progress-bar"></div>
+        </div>
+        <div id="exif-stats" class="exif-stats hidden">
+          <span class="exif-stat">Images: <strong id="exif-stat-count">0</strong></span>
+          <span class="exif-stat">GPS: <strong id="exif-stat-gps">0</strong></span>
+          <button class="btn btn-secondary btn-sm" id="exif-filter-btn">Columns</button>
+          <button class="btn btn-danger btn-sm" id="exif-clear-btn">Clear</button>
+        </div>
+        <div id="exif-chips" class="exif-chips hidden"></div>
+        <div id="exif-table-wrap" class="exif-table-wrap hidden">
+          <table id="exif-table"></table>
         </div>
       </div>
     </div>
