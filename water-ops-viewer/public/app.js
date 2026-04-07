@@ -828,3 +828,22 @@ function loadingGrid() {
     }
   } catch (_) { /* ignore */ }
 })();
+
+// ── Init: skip connect overlay if DB already connected ─────────────────────
+(async () => {
+  try {
+    const res = await fetch('/api/db-status');
+    if (res.ok) {
+      const data = await res.json();
+      if (data.connected) {
+        state.connected = true;
+        state.dbLabel = `${data.user}@${data.database}`;
+        dbLabel.textContent = state.dbLabel;
+        connectOverlay.classList.remove('active');
+        connectOverlay.classList.add('hidden');
+        appEl.classList.remove('hidden');
+        loadTables();
+      }
+    }
+  } catch (_) { /* ignore — overlay stays visible */ }
+})();
