@@ -2013,18 +2013,21 @@ app.get('/api/pm-records/last-completed', requireAuth, async (req, res) => {
 
 // List records for a PM type
 app.get('/api/pm-records', requireAuth, async (req, res) => {
-  const { type } = req.query;
+  const { type, building } = req.query;
   if (!type) return res.status(400).json({ error: 'type required' });
   try {
+    const params = [type];
+    const buildingClause = building ? ` AND LOWER(p.building) = LOWER($2)` : '';
+    if (building) params.push(building);
     const { rows } = await pool.query(
       `SELECT p.pm_id, p.pm_type, p.building, p.completed_date, p.completed_time,
               u.full_name AS completed_by_name, p.checklist, p.notes, p.created_at
        FROM pm_records p
        LEFT JOIN users u ON u.user_id = p.completed_by
-       WHERE p.pm_type = $1
+       WHERE p.pm_type = $1${buildingClause}
        ORDER BY p.completed_date DESC, p.completed_time DESC
        LIMIT 100`,
-      [type]
+      params
     );
     res.json(rows);
   } catch (err) {

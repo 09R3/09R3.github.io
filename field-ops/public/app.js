@@ -5003,12 +5003,13 @@ async function renderPMGridReport() {
       });
       const sbRec = sbRecords[plant.name];
       const recDate = sbRec ? localDateStr(sbRec.completed_date, {month:'short',day:'numeric'}) : '—';
-      sbRows += `<td class="pmgrid-date-col">${recDate}</td></tr>`;
+      sbRows += `<td class="pmgrid-date-col">${recDate}</td>`;
+      sbRows += `<td><button class="pmgrid-hist-btn" data-pm-type="siphon_breaker" data-pm-building="${escHtml(plant.name)}" data-pm-label="PP ${escHtml(plant.num)} Siphon Breakers" title="View history">&#128203;</button></td></tr>`;
     });
 
     const sbHtml = `<div class="pmgrid-section-title">Siphon Breakers</div>
       <div class="pmgrid-scroll"><table class="pmgrid-table">
-        <thead><tr><th class="pmgrid-th pmgrid-th-left">Plant</th>${sbCols}<th class="pmgrid-th">Last PM</th></tr></thead>
+        <thead><tr><th class="pmgrid-th pmgrid-th-left">Plant</th>${sbCols}<th class="pmgrid-th">Last PM</th><th class="pmgrid-th">Hist</th></tr></thead>
         <tbody>${sbRows || '<tr><td colspan="99" class="report-empty">No positions found.</td></tr>'}</tbody>
       </table></div>`;
 
@@ -5038,6 +5039,12 @@ async function renderPMGridReport() {
       acRows += `<td class="pmgrid-date-col">${rec ? localDateStr(rec.completed_date, {month:'short',day:'numeric'}) : '—'}</td>`;
     });
     acRows += '</tr>';
+    // History row
+    acRows += `<tr><td class="pmgrid-check-label" style="font-style:italic;color:var(--text-dim)">History</td>`;
+    plants.forEach(plant => {
+      acRows += `<td><button class="pmgrid-hist-btn" data-pm-type="air_compressor" data-pm-building="${escHtml(plant.name)}" data-pm-label="PP ${escHtml(plant.num)} Air Compressors" title="View history">&#128203;</button></td>`;
+    });
+    acRows += '</tr>';
 
     const acHtml = `<div class="pmgrid-section-title" style="margin-top:20px">Air Compressors
       <span class="pmgrid-legend"> &nbsp;●A &nbsp;●B per plant</span></div>
@@ -5047,8 +5054,60 @@ async function renderPMGridReport() {
       </table></div>`;
 
     out.innerHTML = `<div class="report-card">${sbHtml}${acHtml}</div>`;
+
+    out.querySelectorAll('.pmgrid-hist-btn').forEach(btn => {
+      btn.addEventListener('click', () =>
+        openPMGridHistory(btn.dataset.pmType, btn.dataset.pmBuilding, btn.dataset.pmLabel)
+      );
+    });
   } catch (err) {
     out.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
+  }
+}
+
+async function openPMGridHistory(pmType, building, label) {
+  const def = PM_TYPES[pmType];
+  el('pm-view-modal-title').textContent = label || def.title;
+  const body = el('pm-view-modal-body');
+  body.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  el('pm-view-modal').classList.remove('hidden');
+
+  try {
+    const rows = await api('GET', `/api/pm-records?type=${pmType}&building=${encodeURIComponent(building)}`);
+    rows.forEach(r => { pmHistoryCache[r.pm_id] = r; });
+    if (!rows.length) {
+      body.innerHTML = '<div class="issue-empty">No records for this plant yet.</div>';
+      return;
+    }
+    body.innerHTML = rows.map(r => {
+      const d = localDateStr(r.completed_date, { month: 'short', day: 'numeric', year: 'numeric' });
+      const t = r.completed_time?.slice(0, 5) || '';
+      let totalItems = 0, checkedCount = 0;
+      if (def.customType === 'siphon') {
+        const vals = Object.values(r.checklist);
+        totalItems   = vals.length;
+        checkedCount = vals.filter(v => v?.checked === true).length;
+      } else if (def.customType === 'air_compressor') {
+        Object.values(r.checklist).forEach(comp => {
+          if (comp && typeof comp === 'object') Object.values(comp).forEach(v => { totalItems++; if (v === true) checkedCount++; });
+        });
+      }
+      const hasNotes = r.notes || Object.values(r.checklist).some(v => v?.notes);
+      return `<div class="pm-history-item">
+        <div class="pm-history-header">
+          <span class="pm-history-date">${d}${t ? ' · ' + t : ''}</span>
+          ${hasNotes ? '<span class="pmgrid-badge note" style="font-size:0.75rem">!</span>' : ''}
+        </div>
+        <div class="pm-history-meta">${escHtml(r.completed_by_name || 'Unknown')} · ${checkedCount}/${totalItems} items${r.notes ? ' · ' + escHtml(r.notes) : ''}</div>
+        <div class="pm-history-actions"><button class="btn btn-secondary btn-xs" data-pm-view="${r.pm_id}">View</button></div>
+      </div>`;
+    }).join('');
+
+    body.querySelectorAll('[data-pm-view]').forEach(btn => {
+      btn.addEventListener('click', () => showPMRecord(pmHistoryCache[parseInt(btn.dataset.pmView)], def));
+    });
+  } catch (err) {
+    body.innerHTML = `<div class="issue-empty" style="color:var(--red-light)">${err.message}</div>`;
   }
 }
 
