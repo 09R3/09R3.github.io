@@ -719,7 +719,8 @@ async function initPPScreen() {
     return;
   }
 
-  // Sort O&M to end
+  // Sort O&M to end; exclude Service Truck entirely
+  pp.sites = pp.sites.filter(s => !/service.truck/i.test(s.site_name));
   pp.sites.sort((a, b) => {
     const aOm = /o\s*&\s*m/i.test(a.site_name);
     const bOm = /o\s*&\s*m/i.test(b.site_name);
@@ -817,6 +818,7 @@ async function renderPPBody() {
 function buildBuildingRows(building) {
   const rows = [];
   building.pumps.forEach(pump => {
+    if (/spare/i.test(pump.status)) return; // spare pumps don't need hour readings
     rows.push(createReadingRow({
       type: 'pump', id: pump.position_id,
       label: `${pump.pump_letter} Pump Hours`,
