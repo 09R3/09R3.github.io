@@ -1571,12 +1571,13 @@ app.get('/api/reports/mileage', requireAuth, requireRole('supervisor', 'admin'),
       `SELECT DISTINCT ON (v.vehicle_id)
          v.vehicle_id, v.vehicle_number, v.make, v.model, v.assigned_user,
          v.reading_type, r.odometer_miles, r.engine_hours, r.reading_date
-       FROM readings_vehicle_monthly r
-       JOIN vehicles v ON v.vehicle_id = r.vehicle_id
-       WHERE EXTRACT(YEAR  FROM r.reading_date) = $1
+       FROM vehicles v
+       LEFT JOIN readings_vehicle_monthly r
+         ON r.vehicle_id = v.vehicle_id
+         AND EXTRACT(YEAR  FROM r.reading_date) = $1
          AND EXTRACT(MONTH FROM r.reading_date) = $2
-         AND (LOWER(v.status) != 'inactive' OR v.status IS NULL)
-       ORDER BY v.vehicle_id, r.reading_date DESC, r.reading_time DESC`,
+       WHERE (LOWER(v.status) != 'inactive' OR v.status IS NULL)
+       ORDER BY v.vehicle_id, r.reading_date DESC NULLS LAST, r.reading_time DESC NULLS LAST`,
       [parseInt(year), parseInt(month)]
     );
     res.json(rows);
@@ -1607,12 +1608,13 @@ app.get('/api/reports/mileage/export', async (req, res) => {
       `SELECT DISTINCT ON (v.vehicle_id)
          v.vehicle_id, v.vehicle_number, v.make, v.model, v.assigned_user,
          v.reading_type, r.odometer_miles, r.engine_hours, r.reading_date
-       FROM readings_vehicle_monthly r
-       JOIN vehicles v ON v.vehicle_id = r.vehicle_id
-       WHERE EXTRACT(YEAR  FROM r.reading_date) = $1
+       FROM vehicles v
+       LEFT JOIN readings_vehicle_monthly r
+         ON r.vehicle_id = v.vehicle_id
+         AND EXTRACT(YEAR  FROM r.reading_date) = $1
          AND EXTRACT(MONTH FROM r.reading_date) = $2
-         AND (LOWER(v.status) != 'inactive' OR v.status IS NULL)
-       ORDER BY v.vehicle_id, r.reading_date DESC, r.reading_time DESC`,
+       WHERE (LOWER(v.status) != 'inactive' OR v.status IS NULL)
+       ORDER BY v.vehicle_id, r.reading_date DESC NULLS LAST, r.reading_time DESC NULLS LAST`,
       [parseInt(year), parseInt(month)]
     );
 
