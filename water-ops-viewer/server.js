@@ -5,6 +5,7 @@ const ExcelJS = require('exceljs');
 const PDFDocument = require('pdfkit');
 const path = require('path');
 const crypto = require('crypto');
+const { version: APP_VERSION } = require('./package.json');
 
 const app = express();
 app.use(express.json());
@@ -70,6 +71,11 @@ app.post('/auth/logout', (req, res) => {
   if (cookies.waterops_session) sessions.delete(cookies.waterops_session);
   res.setHeader('Set-Cookie', 'waterops_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0');
   res.json({ success: true });
+});
+
+// Public: version info (no auth needed)
+app.get('/api/version', (req, res) => {
+  res.json({ version: APP_VERSION });
 });
 
 // Serve login page without auth; protect everything else

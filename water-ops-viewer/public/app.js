@@ -816,3 +816,15 @@ function errorState(msg) {
 function loadingGrid() {
   return '<div class="empty-state"><div class="empty-icon loading-row">⬡</div><p>Loading…</p></div>';
 }
+
+// ── Version ────────────────────────────────────────────────────────────────
+(async () => {
+  try {
+    const res = await fetch('/api/version');
+    if (res.ok) {
+      const { version } = await res.json();
+      const el = $('app-version');
+      if (el) el.textContent = `v${version}`;
+    }
+  } catch (_) { /* ignore */ }
+})();
