@@ -778,7 +778,7 @@ app.post('/api/saved-queries', requireDB, async (req, res) => {
     await pool.query(ENSURE_SAVED_TABLE);
     const result = await pool.query(
       'INSERT INTO _waterops_saved_queries (name, sql, created_by) VALUES ($1, $2, $3) RETURNING *',
-      [name.trim(), sql.trim(), AUTH_USER]
+      [name.trim(), sql.trim(), req.user?.username || 'admin']
     );
     res.json(result.rows[0]);
   } catch (err) {
@@ -793,6 +793,42 @@ app.delete('/api/saved-queries/:id', requireDB, async (req, res) => {
   try {
     await pool.query('DELETE FROM _waterops_saved_queries WHERE id = $1', [id]);
     res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Reports ──────────────────────────────────────────────────────────────────
+
+// GET /api/reports/pump-hours/plants — distinct position_id values for dropdown
+app.get('/api/reports/pump-hours/plants', requireDB, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT DISTINCT position_id FROM readings_pump_hours WHERE position_id IS NOT NULL ORDER BY position_id`
+    );
+    res.json(result.rows.map(r => r.position_id));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/pump-hours — fetch readings for a plant and date range
+app.get('/api/reports/pump-hours', requireDB, async (req, res) => {
+  const { plant, start, end } = req.query;
+  if (!plant || !start || !end) {
+    return res.status(400).json({ error: 'plant, start, and end are required.' });
+  }
+  try {
+    const result = await pool.query(
+      `SELECT position_id, reading_date, hour_reading
+       FROM readings_pump_hours
+       WHERE position_id ILIKE $1
+         AND reading_date >= $2
+         AND reading_date <= $3
+       ORDER BY reading_date ASC, position_id ASC`,
+      [`%${plant}%`, start, end]
+    );
+    res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
