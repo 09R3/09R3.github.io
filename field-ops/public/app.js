@@ -719,7 +719,8 @@ async function initPPScreen() {
     return;
   }
 
-  // Sort O&M to end
+  // Sort O&M to end; exclude Service Truck entirely
+  pp.sites = pp.sites.filter(s => !/service.truck/i.test(s.site_name));
   pp.sites.sort((a, b) => {
     const aOm = /o\s*&\s*m/i.test(a.site_name);
     const bOm = /o\s*&\s*m/i.test(b.site_name);
@@ -817,6 +818,7 @@ async function renderPPBody() {
 function buildBuildingRows(building) {
   const rows = [];
   building.pumps.forEach(pump => {
+    if (/spare/i.test(pump.status)) return; // spare pumps don't need hour readings
     rows.push(createReadingRow({
       type: 'pump', id: pump.position_id,
       label: `${pump.pump_letter} Pump Hours`,
@@ -990,9 +992,18 @@ async function savePPReadings() {
           (type === 'pge'        && savedPge.has(id)) ||
           (type === 'monitor'    && savedMonitors.has(id));
         if (shouldMark) {
+          const curInput = row.querySelector('.rr-current');
+          const newVal   = curInput.value.trim();
           row.classList.add('saved');
-          row.querySelector('.rr-current').value = '';
+          curInput.value = '';
           row.querySelector('.rr-notes').value = '';
+          // Update Prev column and date hint with the just-saved value
+          if (newVal !== '') {
+            const prevInput = row.querySelector('.rr-prev');
+            const dateDisp  = row.querySelector('.prev-date');
+            if (prevInput) prevInput.value = newVal;
+            if (dateDisp)  dateDisp.textContent = fmtDate(readingDate);
+          }
         }
       });
 
@@ -4689,14 +4700,15 @@ function buildMileageHTML(rows, year, month) {
   const trucks = rows.filter(r => !r.reading_type || r.reading_type === 'odometer');
   const heavy  = rows.filter(r => r.reading_type === 'hours' || r.reading_type === 'both');
   const ac = v => (v.assigned_user && v.assigned_user.trim().toLowerCase() !== 'ops & maint') ? v.assigned_user : '';
+  const miss = `<span style="color:var(--red-light);font-weight:600">✗</span>`;
   const truckRows = trucks.map(v => `<tr>
     <td>${v.vehicle_number||''}</td><td>${v.make||''}</td><td>${v.model||''}</td><td>${ac(v)}</td>
-    <td class="report-num">${v.odometer_miles!=null?Number(v.odometer_miles).toLocaleString():'—'}</td>
+    <td class="report-num">${v.odometer_miles!=null?Number(v.odometer_miles).toLocaleString():miss}</td>
   </tr>`).join('');
   const heavyRows = heavy.map(v => `<tr>
     <td>${v.vehicle_number||''}</td><td>${v.make||''}</td><td>${v.model||''}</td><td>${ac(v)}</td>
-    <td class="report-num">${v.odometer_miles!=null?Number(v.odometer_miles).toLocaleString():'—'}</td>
-    <td class="report-num">${v.engine_hours!=null?Number(v.engine_hours).toFixed(1):'—'}</td>
+    <td class="report-num">${v.odometer_miles!=null?Number(v.odometer_miles).toLocaleString():(v.reading_type==='hours'?'—':miss)}</td>
+    <td class="report-num">${v.engine_hours!=null?Number(v.engine_hours).toFixed(1):miss}</td>
   </tr>`).join('');
   return `
     <div class="report-title">CVC Mileage</div>
@@ -4706,13 +4718,13 @@ function buildMileageHTML(rows, year, month) {
       <colgroup><col><col><col><col><col></colgroup>
       <thead><tr><th>Unit #</th><th>Make</th><th>Model</th><th>Operator</th><th class="report-num">Odometer</th></tr></thead>
       <tbody>${truckRows}</tbody></table>`
-    : '<div class="report-empty">No truck readings this month.</div>'}
+    : '<div class="report-empty">No active trucks.</div>'}
     <div class="report-section-title">Heavy Equipment</div>
     ${heavy.length ? `<table class="report-table heavy">
       <colgroup><col><col><col><col><col><col></colgroup>
       <thead><tr><th>Unit #</th><th>Make</th><th>Model</th><th>Operator</th><th class="report-num">Odometer</th><th class="report-num">Eng. Hours</th></tr></thead>
       <tbody>${heavyRows}</tbody></table>`
-    : '<div class="report-empty">No heavy equipment readings this month.</div>'}`;
+    : '<div class="report-empty">No active heavy equipment.</div>'}`;
 }
 
 async function renderMileageReport() {
