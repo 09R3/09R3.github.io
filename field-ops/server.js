@@ -1823,6 +1823,15 @@ app.get('/api/reports/maintenance-issues', requireAuth, requireRole('supervisor'
 
 // PM Grid report — latest per-plant siphon breaker + air compressor records + positions
 app.get('/api/reports/pm-grid', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+  const { year, month } = req.query;
+  let dateClause = '';
+  const params = [];
+  if (year && month) {
+    const from = `${parseInt(year)}-${String(parseInt(month)).padStart(2,'0')}-01`;
+    const d = new Date(parseInt(year), parseInt(month), 0); // last day of month
+    const to = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    dateClause = `AND p.completed_date >= '${from}' AND p.completed_date <= '${to}'`;
+  }
   try {
     const [sbRes, acRes, posRes] = await Promise.all([
       pool.query(`
@@ -1831,7 +1840,7 @@ app.get('/api/reports/pm-grid', requireAuth, requireRole('supervisor', 'admin'),
           u.full_name AS applied_by, p.checklist
         FROM pm_records p
         LEFT JOIN users u ON u.user_id = p.completed_by
-        WHERE p.pm_type = 'siphon_breaker' AND p.building IS NOT NULL
+        WHERE p.pm_type = 'siphon_breaker' AND p.building IS NOT NULL ${dateClause}
         ORDER BY p.building, p.completed_date DESC, p.completed_time DESC
       `),
       pool.query(`
@@ -1840,7 +1849,7 @@ app.get('/api/reports/pm-grid', requireAuth, requireRole('supervisor', 'admin'),
           u.full_name AS applied_by, p.checklist
         FROM pm_records p
         LEFT JOIN users u ON u.user_id = p.completed_by
-        WHERE p.pm_type = 'air_compressor' AND p.building IS NOT NULL
+        WHERE p.pm_type = 'air_compressor' AND p.building IS NOT NULL ${dateClause}
         ORDER BY p.building, p.completed_date DESC, p.completed_time DESC
       `),
       pool.query(`

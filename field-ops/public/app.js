@@ -4962,15 +4962,48 @@ async function renderMaintenanceIssuesReport() {
 }
 
 // ── PM Grid Panel ─────────────────────────────────────────────────────────────
+let pmsYear  = new Date().getFullYear();
+let pmsMonth = new Date().getMonth() + 1;
+let pmsAllTime = true;
+
+function updatePMsMonthLabel() {
+  const d = new Date(pmsYear, pmsMonth - 1, 1);
+  el('pms-month-label').textContent = pmsAllTime
+    ? 'All Time'
+    : d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+}
+
+el('pms-prev-month').addEventListener('click', () => {
+  pmsAllTime = false;
+  pmsMonth--;
+  if (pmsMonth < 1) { pmsMonth = 12; pmsYear--; }
+  updatePMsMonthLabel();
+  renderPMGridReport();
+});
+el('pms-next-month').addEventListener('click', () => {
+  pmsAllTime = false;
+  pmsMonth++;
+  if (pmsMonth > 12) { pmsMonth = 1; pmsYear++; }
+  updatePMsMonthLabel();
+  renderPMGridReport();
+});
+el('pms-all-time').addEventListener('click', () => {
+  pmsAllTime = true;
+  updatePMsMonthLabel();
+  renderPMGridReport();
+});
+
 function initPMReportPanel() {
+  updatePMsMonthLabel();
   renderPMGridReport();
 }
 
 async function renderPMGridReport() {
   const out = el('report-pms-output');
   out.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  const qs = pmsAllTime ? '' : `?year=${pmsYear}&month=${pmsMonth}`;
   try {
-    const { sbRecords, acRecords, positions } = await api('GET', '/api/reports/pm-grid');
+    const { sbRecords, acRecords, positions } = await api('GET', `/api/reports/pm-grid${qs}`);
 
     // Build ordered plant list from positions; normalize "Site N" → "Pumping Plant N"
     const toPlantName = n => n.replace(/\bSite\b/g, 'Pumping Plant');
@@ -4999,7 +5032,8 @@ async function renderPMGridReport() {
         else if (!val)      { cls = 'empty'; text = '—'; }
         else if (val.checked) { cls = val.notes ? 'note' : 'pass'; text = val.notes ? '!' : '✓'; }
         else                { cls = 'fail';  text = '✗'; }
-        sbRows += `<td><span class="pmgrid-badge ${cls}" title="${escHtml(val?.notes||'')}">${text}</span></td>`;
+        const noteAttr = val?.notes ? ` data-note="${escHtml(val.notes)}"` : '';
+        sbRows += `<td><span class="pmgrid-badge ${cls}"${noteAttr} title="${escHtml(val?.notes||'')}">${text}</span></td>`;
       });
       const sbRec = sbRecords[plant.name];
       const recDate = sbRec ? localDateStr(sbRec.completed_date, {month:'short',day:'numeric'}) : '—';
@@ -5055,6 +5089,15 @@ async function renderPMGridReport() {
 
     out.innerHTML = `<div class="report-card">${sbHtml}${acHtml}</div>`;
 
+    // Tappable ! badges — show note popup
+    out.querySelectorAll('.pmgrid-badge.note[data-note]').forEach(badge => {
+      badge.style.cursor = 'pointer';
+      badge.addEventListener('click', e => {
+        e.stopPropagation();
+        showPMNotePopup(badge, badge.dataset.note);
+      });
+    });
+
     out.querySelectorAll('.pmgrid-hist-btn').forEach(btn => {
       btn.addEventListener('click', () =>
         openPMGridHistory(btn.dataset.pmType, btn.dataset.pmBuilding, btn.dataset.pmLabel)
@@ -5063,6 +5106,21 @@ async function renderPMGridReport() {
   } catch (err) {
     out.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
   }
+}
+
+function showPMNotePopup(anchor, noteText) {
+  const popup = el('pmgrid-note-popup');
+  popup.textContent = noteText;
+  popup.classList.remove('hidden');
+  // Position below the badge
+  const rect = anchor.getBoundingClientRect();
+  const scrollY = window.scrollY || window.pageYOffset;
+  const scrollX = window.scrollX || window.pageXOffset;
+  popup.style.top  = `${rect.bottom + scrollY + 6}px`;
+  popup.style.left = `${Math.min(rect.left + scrollX, window.innerWidth - 220)}px`;
+  // Dismiss on next tap/click anywhere
+  const dismiss = () => { popup.classList.add('hidden'); document.removeEventListener('click', dismiss, true); };
+  setTimeout(() => document.addEventListener('click', dismiss, true), 0);
 }
 
 async function openPMGridHistory(pmType, building, label) {

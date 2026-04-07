@@ -77,7 +77,7 @@
         <div id="login-error" class="error-msg hidden"></div>
         <button type="submit" class="btn btn-primary btn-full">Sign In</button>
       </form>
-      <div class="login-version">v 1.13</div>
+      <div class="login-version">v 1.14</div>
     </div>
   </div>
 </div>
@@ -918,6 +918,14 @@
     <!-- PM Grid panel -->
     <div id="report-panel-pms" class="maint-panel hidden">
       <button class="maint-back-btn" id="report-pms-back">&#8249; Reports</button>
+      <div class="report-toolbar">
+        <div class="report-month-nav">
+          <button class="btn btn-secondary btn-sm" id="pms-prev-month">&#8592;</button>
+          <span id="pms-month-label" class="report-month-label"></span>
+          <button class="btn btn-secondary btn-sm" id="pms-next-month">&#8594;</button>
+        </div>
+        <button class="btn btn-secondary btn-sm" id="pms-all-time">All Time</button>
+      </div>
       <div id="report-pms-output"></div>
     </div>
 
@@ -1056,7 +1064,7 @@
       <button class="settings-back-btn">‹ Settings</button>
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 1.13</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 1.14</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>
@@ -1265,6 +1273,9 @@
     <div class="modal-body" id="maint-history-body"></div>
   </div>
 </div>
+
+<!-- PM note popup (global) -->
+<div id="pmgrid-note-popup" class="pmgrid-note-popup hidden"></div>
 
 <!-- PM Record View Modal (global — used from maintenance and reports screens) -->
 <div id="pm-view-modal" class="modal-overlay hidden">

@@ -1201,6 +1201,10 @@ input[type="date"].ctrl-input { min-height: 44px; }
   padding: 16px;
   max-width: 700px;
   margin: 0 auto;
+  overflow-x: hidden;
+}
+@media (max-width: 480px) {
+  .report-card { padding: 8px 6px; }
 }
 .report-title {
   font-size: 1.4rem;
@@ -1318,8 +1322,8 @@ input[type="date"].ctrl-input { min-height: 44px; }
 
 /* ── PM Grid Report ──────────────────────────────────────────────────────── */
 /* ── PM Grid tables ──────────────────────────────────────────────────────── */
-.pmgrid-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; margin-bottom: 6px; }
-.pmgrid-table { border-collapse: collapse; min-width: 100%; }
+.pmgrid-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; margin-bottom: 6px; max-width: 100%; }
+.pmgrid-table { border-collapse: collapse; width: max-content; min-width: 100%; }
 .pmgrid-th {
   font-size: 0.72rem;
   font-weight: 700;
@@ -1397,6 +1401,20 @@ input[type="date"].ctrl-input { min-height: 44px; }
   color: var(--text);
 }
 .pmgrid-hist-btn:hover { opacity: 1; }
+.pmgrid-note-popup {
+  position: absolute;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 0.82rem;
+  color: var(--text);
+  max-width: 210px;
+  word-wrap: break-word;
+  z-index: 400;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.35);
+  pointer-events: none;
+}
 .pmgrid-ac-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
