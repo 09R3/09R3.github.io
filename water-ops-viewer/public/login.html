@@ -9,7 +9,8 @@
     :root {
       --bg: #0f1117; --bg2: #1a1d27; --bg3: #22263a; --border: #2e3247;
       --accent: #667eea; --accent2: #764ba2; --text: #e2e8f0;
-      --text-muted: #8892a4; --error: #fc8181; --radius: 8px;
+      --text-muted: #8892a4; --error: #fc8181; --success: #48bb78;
+      --warning: #f6ad55; --radius: 8px;
     }
     html, body {
       min-height: 100%; font-family: 'Segoe UI', system-ui, sans-serif;
@@ -17,17 +18,25 @@
       color: var(--text); display: flex; align-items: center; justify-content: center;
     }
     .card {
-      width: 400px; padding: 40px;
+      width: 420px; padding: 40px;
       background: rgba(30, 33, 55, 0.85);
       border: 1px solid var(--border); border-radius: 16px;
       backdrop-filter: blur(20px);
       box-shadow: 0 24px 60px rgba(0,0,0,0.5);
     }
-    .header { text-align: center; margin-bottom: 32px; }
+    .header { text-align: center; margin-bottom: 28px; }
     .logo { font-size: 36px; color: var(--accent); }
     h1 { font-size: 22px; font-weight: 700; margin: 10px 0 4px; }
-    p { font-size: 13px; color: var(--text-muted); }
-    .field { margin-bottom: 16px; }
+    .subtitle { font-size: 13px; color: var(--text-muted); }
+    .step-label {
+      font-size: 11px; font-weight: 700; color: var(--accent);
+      text-transform: uppercase; letter-spacing: 0.08em;
+      margin-bottom: 16px; display: flex; align-items: center; gap: 8px;
+    }
+    .step-label::after {
+      content: ''; flex: 1; height: 1px; background: var(--border);
+    }
+    .field { margin-bottom: 14px; }
     label { display: block; font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
     input {
       width: 100%; background: var(--bg3); border: 1px solid var(--border);
@@ -35,6 +44,9 @@
       font-size: 14px; outline: none; transition: border-color 0.2s;
     }
     input:focus { border-color: var(--accent); }
+    .row { display: flex; gap: 10px; }
+    .row .field { flex: 1; }
+    .row .field.shrink { flex: 0 0 100px; }
     .btn {
       width: 100%; padding: 13px; margin-top: 4px;
       background: linear-gradient(135deg, var(--accent), var(--accent2));
@@ -44,17 +56,38 @@
     }
     .btn:hover { filter: brightness(1.1); }
     .btn:disabled { opacity: 0.6; cursor: default; }
+    .btn-ghost {
+      background: transparent; border: 1px solid var(--border);
+      color: var(--text-muted); font-size: 13px; padding: 8px;
+      margin-top: 10px;
+    }
+    .btn-ghost:hover { border-color: var(--accent); color: var(--text); filter: none; }
     .error-box {
       background: rgba(252,129,129,0.1); border: 1px solid var(--error);
       border-radius: var(--radius); color: var(--error);
-      padding: 10px 14px; margin-bottom: 16px; font-size: 13px;
+      padding: 10px 14px; margin-bottom: 14px; font-size: 13px;
+      display: none;
+    }
+    .success-box {
+      background: rgba(72,187,120,0.1); border: 1px solid var(--success);
+      border-radius: var(--radius); color: var(--success);
+      padding: 10px 14px; margin-bottom: 14px; font-size: 13px;
       display: none;
     }
     .caps-warn {
-      font-size: 11px; color: #f6ad55; margin-top: 5px;
+      font-size: 11px; color: var(--warning); margin-top: 5px;
       display: none; align-items: center; gap: 4px;
     }
     .caps-warn.visible { display: flex; }
+    .db-badge {
+      display: flex; align-items: center; gap: 8px;
+      background: var(--bg3); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 8px 12px;
+      font-size: 12px; color: var(--text-muted); margin-bottom: 16px;
+    }
+    .db-badge .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); flex-shrink: 0; }
+    .db-badge .db-name { font-weight: 600; color: var(--text); }
+    .hidden { display: none !important; }
   </style>
 </head>
 <body>
@@ -62,61 +95,184 @@
     <div class="header">
       <div class="logo">⬡</div>
       <h1>Water Ops Viewer</h1>
-      <p>Sign in to access the database viewer</p>
+      <p class="subtitle" id="subtitle">Checking connection…</p>
     </div>
-    <div class="error-box" id="error-box"></div>
-    <form id="login-form">
-      <div class="field">
-        <label>Username</label>
-        <input type="text" id="username" name="username" autofocus required />
-      </div>
-      <div class="field">
-        <label>Password</label>
-        <input type="password" id="password" name="password" required />
-        <div class="caps-warn" id="caps-warn">⚠ Caps Lock is on</div>
-      </div>
-      <button type="submit" class="btn" id="login-btn">Sign In</button>
-    </form>
-  </div>
-  <script>
-    const passInput = document.getElementById('password');
-    const capsWarn  = document.getElementById('caps-warn');
-    passInput.addEventListener('keyup', e => {
-      capsWarn.classList.toggle('visible', e.getModifierState('CapsLock'));
-    });
-    passInput.addEventListener('blur', () => capsWarn.classList.remove('visible'));
 
-    document.getElementById('login-form').addEventListener('submit', async e => {
+    <!-- Step 1: DB Connection -->
+    <div id="db-section" class="hidden">
+      <div class="step-label">Step 1 — Database Connection</div>
+      <div class="error-box" id="db-error"></div>
+      <form id="db-form">
+        <div class="row">
+          <div class="field">
+            <label>Host</label>
+            <input type="text" id="db-host" placeholder="192.168.1.100" required />
+          </div>
+          <div class="field shrink">
+            <label>Port</label>
+            <input type="number" id="db-port" value="5432" required />
+          </div>
+        </div>
+        <div class="field">
+          <label>Database</label>
+          <input type="text" id="db-name" placeholder="my_database" required />
+        </div>
+        <div class="row">
+          <div class="field">
+            <label>Username</label>
+            <input type="text" id="db-user" placeholder="postgres" required />
+          </div>
+          <div class="field">
+            <label>Password</label>
+            <input type="password" id="db-pass" />
+          </div>
+        </div>
+        <button type="submit" class="btn" id="db-btn">Connect to Database</button>
+      </form>
+    </div>
+
+    <!-- Step 2: Login -->
+    <div id="login-section" class="hidden">
+      <div id="db-badge" class="db-badge hidden">
+        <span class="dot"></span>
+        <span>Connected to <span class="db-name" id="badge-db"></span></span>
+        <button id="change-db-btn" style="margin-left:auto;background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:11px;">Change</button>
+      </div>
+      <div class="step-label" id="login-step-label">Sign In</div>
+      <div class="error-box" id="login-error"></div>
+      <form id="login-form">
+        <div class="field">
+          <label>Username</label>
+          <input type="text" id="username" name="username" autofocus required />
+        </div>
+        <div class="field">
+          <label>Password</label>
+          <input type="password" id="password" name="password" required />
+          <div class="caps-warn" id="caps-warn">⚠ Caps Lock is on</div>
+        </div>
+        <button type="submit" class="btn" id="login-btn">Sign In</button>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    const $ = id => document.getElementById(id);
+
+    function showError(boxId, msg) {
+      const el = $(boxId);
+      el.textContent = msg;
+      el.style.display = msg ? 'block' : 'none';
+    }
+
+    // Caps lock
+    $('password').addEventListener('keyup', e => {
+      $('caps-warn').classList.toggle('visible', e.getModifierState('CapsLock'));
+    });
+    $('password').addEventListener('blur', () => $('caps-warn').classList.remove('visible'));
+
+    // On load: check if DB is already connected
+    async function init() {
+      try {
+        const res = await fetch('/api/db-status');
+        const data = await res.json();
+        if (data.connected) {
+          showLoginStep(data.database);
+        } else {
+          showDbStep();
+        }
+      } catch {
+        showDbStep();
+      }
+    }
+
+    function showDbStep() {
+      $('subtitle').textContent = 'Connect to your database to continue';
+      $('db-section').classList.remove('hidden');
+      $('login-section').classList.add('hidden');
+      setTimeout(() => $('db-host').focus(), 50);
+    }
+
+    function showLoginStep(dbName) {
+      $('subtitle').textContent = 'Sign in to access the database viewer';
+      $('db-section').classList.add('hidden');
+      $('login-section').classList.remove('hidden');
+      if (dbName) {
+        $('badge-db').textContent = dbName;
+        $('db-badge').classList.remove('hidden');
+      }
+      setTimeout(() => $('username').focus(), 50);
+    }
+
+    // DB connect form
+    $('db-form').addEventListener('submit', async e => {
       e.preventDefault();
-      const btn = document.getElementById('login-btn');
-      const errorBox = document.getElementById('error-box');
+      const btn = $('db-btn');
+      showError('db-error', '');
+      btn.disabled = true;
+      btn.textContent = 'Connecting…';
+      try {
+        const res = await fetch('/api/connect', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            host: $('db-host').value.trim(),
+            port: $('db-port').value.trim(),
+            database: $('db-name').value.trim(),
+            user: $('db-user').value.trim(),
+            password: $('db-pass').value,
+          }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          showLoginStep(data.database);
+        } else {
+          showError('db-error', data.error || 'Connection failed.');
+        }
+      } catch {
+        showError('db-error', 'Network error. Is the server running?');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Connect to Database';
+      }
+    });
+
+    // Change DB button
+    $('change-db-btn').addEventListener('click', () => {
+      showError('login-error', '');
+      showDbStep();
+    });
+
+    // Login form
+    $('login-form').addEventListener('submit', async e => {
+      e.preventDefault();
+      const btn = $('login-btn');
+      showError('login-error', '');
       btn.disabled = true;
       btn.textContent = 'Signing in…';
-      errorBox.style.display = 'none';
       try {
         const res = await fetch('/auth/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            username: document.getElementById('username').value,
-            password: document.getElementById('password').value,
+            username: $('username').value,
+            password: $('password').value,
           }),
         });
         const data = await res.json();
         if (res.ok) {
           window.location.href = '/';
         } else {
-          errorBox.textContent = data.error || 'Login failed.';
-          errorBox.style.display = 'block';
+          showError('login-error', data.error || 'Login failed.');
         }
       } catch {
-        errorBox.textContent = 'Network error. Is the server running?';
-        errorBox.style.display = 'block';
+        showError('login-error', 'Network error. Is the server running?');
       } finally {
         btn.disabled = false;
         btn.textContent = 'Sign In';
       }
     });
+
+    init();
   </script>
 </body>
 </html>

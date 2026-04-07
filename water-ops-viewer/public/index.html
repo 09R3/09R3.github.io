@@ -65,13 +65,40 @@
       <button class="icon-btn" id="disconnect-btn" title="Disconnect">✕</button>
     </div>
 
-    <div class="sidebar-search">
-      <input type="text" id="table-search" placeholder="Search tables…" />
+    <div class="sidebar-nav">
+
+      <!-- Tables Section -->
+      <div class="sidebar-section">
+        <button class="sidebar-section-header" id="tables-section-toggle">
+          <span>⊞ Tables</span>
+          <span class="section-chevron" id="tables-chevron">▾</span>
+        </button>
+        <div class="sidebar-section-body" id="tables-section-body">
+          <div class="sidebar-search">
+            <input type="text" id="table-search" placeholder="Search tables…" />
+          </div>
+          <nav class="table-list" id="table-list">
+            <div class="loading-tables">Loading tables…</div>
+          </nav>
+        </div>
+      </div>
+
+      <!-- Reports Section -->
+      <div class="sidebar-section">
+        <button class="sidebar-section-header" id="reports-section-toggle">
+          <span>⊟ Reports</span>
+          <span class="section-chevron" id="reports-chevron">▾</span>
+        </button>
+        <div class="sidebar-section-body" id="reports-section-body">
+          <button class="report-item" id="report-pump-hours">⏱ Pump Hours</button>
+        </div>
+      </div>
+
     </div>
 
-    <nav class="table-list" id="table-list">
-      <div class="loading-tables">Loading tables…</div>
-    </nav>
+    <div class="sidebar-footer">
+      <span class="app-version" id="app-version"></span>
+    </div>
 
   </aside>
 
@@ -102,6 +129,40 @@
       <button class="btn btn-ghost btn-sm" id="export-btn">↓ Export</button>
       <div class="import-divider"></div>
       <button class="btn btn-ghost btn-sm" id="import-btn" title="Import CSV or Excel into this table">↑ Import</button>
+    </div>
+
+    <!-- Report Panel -->
+    <div class="report-panel hidden" id="report-panel">
+
+      <!-- Pump Hours Report -->
+      <div id="report-pump-hours-panel">
+        <div class="report-controls">
+          <div class="report-control-group">
+            <label class="report-label">Pumping Plant</label>
+            <select id="rph-plant" class="report-select">
+              <option value="">Loading…</option>
+            </select>
+          </div>
+          <div class="report-control-group">
+            <label class="report-label">From</label>
+            <input type="date" id="rph-start" class="report-date" />
+          </div>
+          <div class="report-control-group">
+            <label class="report-label">To</label>
+            <input type="date" id="rph-end" class="report-date" />
+          </div>
+          <button class="btn btn-primary btn-sm" id="rph-run-btn">▶ Run Report</button>
+          <button class="btn btn-ghost btn-sm hidden" id="rph-export-btn">↓ Export</button>
+        </div>
+        <div class="report-status" id="rph-status"></div>
+        <div class="report-grid-wrap" id="rph-grid">
+          <div class="empty-state">
+            <div class="empty-icon">⊟</div>
+            <p>Select a pumping plant and date range,<br>then click Run Report</p>
+          </div>
+        </div>
+      </div>
+
     </div>
 
     <!-- Data Grid -->

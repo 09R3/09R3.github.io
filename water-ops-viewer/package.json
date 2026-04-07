@@ -1,6 +1,6 @@
 {
   "name": "water-ops-viewer",
-  "version": "1.0.0",
+  "version": "1.2.1",
   "description": "PostgreSQL database viewer and report exporter",
   "main": "server.js",
   "scripts": {
@@ -8,11 +8,12 @@
     "dev": "node --watch server.js"
   },
   "dependencies": {
-    "express": "^4.19.2",
-    "pg": "^8.11.5",
-    "exceljs": "^4.4.0",
-    "pdfkit": "^0.15.0",
+    "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
-    "dotenv": "^16.4.5"
+    "dotenv": "^16.4.5",
+    "exceljs": "^4.4.0",
+    "express": "^4.19.2",
+    "pdfkit": "^0.15.0",
+    "pg": "^8.11.5"
   }
 }

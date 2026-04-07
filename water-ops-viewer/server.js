@@ -3,86 +3,16 @@ const express = require('express');
 const { Pool } = require('pg');
 const ExcelJS = require('exceljs');
 const PDFDocument = require('pdfkit');
+const bcrypt = require('bcryptjs');
 const path = require('path');
 const crypto = require('crypto');
+const { version: APP_VERSION } = require('./package.json');
 
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
-// ─── Auth ─────────────────────────────────────────────────────────────────────
-
-const AUTH_USER = process.env.AUTH_USER || 'admin';
-const AUTH_PASS = process.env.AUTH_PASS || 'test';
-// In-memory session store: token -> expiry timestamp
-const sessions = new Map();
-const SESSION_TTL_MS = 8 * 60 * 60 * 1000; // 8 hours
-
-function createSession() {
-  const token = crypto.randomBytes(32).toString('hex');
-  sessions.set(token, Date.now() + SESSION_TTL_MS);
-  return token;
-}
-
-function isValidSession(token) {
-  if (!token) return false;
-  const expiry = sessions.get(token);
-  if (!expiry) return false;
-  if (Date.now() > expiry) { sessions.delete(token); return false; }
-  return true;
-}
-
-function parseCookies(req) {
-  const list = {};
-  const header = req.headers.cookie;
-  if (!header) return list;
-  for (const part of header.split(';')) {
-    const [k, ...v] = part.trim().split('=');
-    list[k.trim()] = decodeURIComponent(v.join('='));
-  }
-  return list;
-}
-
-function requireAuth(req, res, next) {
-  const cookies = parseCookies(req);
-  if (isValidSession(cookies.waterops_session)) return next();
-  if (req.path.startsWith('/api/')) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
-  res.redirect('/login.html');
-}
-
-// Login endpoint
-app.post('/auth/login', (req, res) => {
-  const { username, password } = req.body;
-  if (username === AUTH_USER && password === AUTH_PASS) {
-    const token = createSession();
-    res.setHeader('Set-Cookie', `waterops_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_TTL_MS / 1000}`);
-    res.json({ success: true });
-  } else {
-    res.status(401).json({ error: 'Invalid username or password.' });
-  }
-});
-
-// Logout
-app.post('/auth/logout', (req, res) => {
-  const cookies = parseCookies(req);
-  if (cookies.waterops_session) sessions.delete(cookies.waterops_session);
-  res.setHeader('Set-Cookie', 'waterops_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0');
-  res.json({ success: true });
-});
-
-// Serve login page without auth; protect everything else
-app.use((req, res, next) => {
-  if (req.path === '/login.html' || req.path === '/login.css' || req.path.startsWith('/auth/')) {
-    return next();
-  }
-  requireAuth(req, res, next);
-});
-
-app.use(express.static(path.join(__dirname, 'public')));
-
-// ─── DB Connection ────────────────────────────────────────────────────────────
+// ─── DB Pool ──────────────────────────────────────────────────────────────────
 
 let pool = null;
 
@@ -100,21 +30,66 @@ function createPool(config) {
   return pool;
 }
 
-// Middleware: ensure pool exists and is connected before DB routes
-async function requireDB(req, res, next) {
-  if (!pool) return res.status(400).json({ error: 'Not connected to a database. Configure the connection first.' });
-  try {
-    const client = await pool.connect();
-    client.release();
-    next();
-  } catch (err) {
-    res.status(500).json({ error: `Database connection failed: ${err.message}` });
-  }
+// ─── Auth ─────────────────────────────────────────────────────────────────────
+
+const SESSION_TTL_MS = 8 * 60 * 60 * 1000; // 8 hours
+// In-memory session store: token -> { user, expires }
+const sessions = new Map();
+
+function createSession(user) {
+  const token = crypto.randomBytes(32).toString('hex');
+  sessions.set(token, { user, expires: Date.now() + SESSION_TTL_MS });
+  return token;
 }
 
-// ─── API Routes ───────────────────────────────────────────────────────────────
+function getSession(token) {
+  if (!token) return null;
+  const s = sessions.get(token);
+  if (!s) return null;
+  if (Date.now() > s.expires) { sessions.delete(token); return null; }
+  return s.user;
+}
 
-// POST /api/connect — save connection config and test it
+function parseCookies(req) {
+  const list = {};
+  const header = req.headers.cookie;
+  if (!header) return list;
+  for (const part of header.split(';')) {
+    const [k, ...v] = part.trim().split('=');
+    list[k.trim()] = decodeURIComponent(v.join('='));
+  }
+  return list;
+}
+
+function requireAuth(req, res, next) {
+  const cookies = parseCookies(req);
+  const user = getSession(cookies.waterops_session);
+  if (user) { req.user = user; return next(); }
+  if (req.path.startsWith('/api/')) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  res.redirect('/login.html');
+}
+
+// ─── Public routes (no auth) ──────────────────────────────────────────────────
+
+app.get('/api/version', (req, res) => {
+  res.json({ version: APP_VERSION });
+});
+
+// DB status — lets login page know if a connection is already active
+app.get('/api/db-status', (req, res) => {
+  if (!pool) return res.json({ connected: false });
+  pool.query('SELECT current_database(), current_user')
+    .then(r => res.json({
+      connected: true,
+      database: r.rows[0].current_database,
+      user: r.rows[0].current_user,
+    }))
+    .catch(() => res.json({ connected: false }));
+});
+
+// Connect to DB — public so it can be called before login
 app.post('/api/connect', async (req, res) => {
   const { host, port, database, user, password } = req.body;
   if (!host || !database || !user) {
@@ -137,6 +112,93 @@ app.post('/api/connect', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// Login — authenticate against users table in the connected DB
+app.post('/auth/login', async (req, res) => {
+  const { username, password } = req.body || {};
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Username and password are required.' });
+  }
+  if (!pool) {
+    return res.status(503).json({ error: 'No database connected. Set up the connection first.' });
+  }
+  try {
+    const { rows } = await pool.query(
+      `SELECT * FROM users WHERE LOWER(username) = LOWER($1) AND (is_active IS NULL OR is_active = true)`,
+      [username]
+    );
+    const user = rows[0];
+    if (!user) return res.status(401).json({ error: 'Invalid username or password.' });
+
+    // Support bcrypt hashes and legacy plaintext
+    let valid = false;
+    if (user.password && user.password.startsWith('$2')) {
+      valid = await bcrypt.compare(password, user.password);
+    } else {
+      valid = user.password === password;
+      if (valid) {
+        // Upgrade plaintext to bcrypt on first successful login
+        const hashed = await bcrypt.hash(password, 10);
+        await pool.query('UPDATE users SET password = $1 WHERE user_id = $2', [hashed, user.user_id])
+          .catch(() => {});
+      }
+    }
+
+    if (!valid) return res.status(401).json({ error: 'Invalid username or password.' });
+
+    const sessionUser = {
+      user_id: user.user_id,
+      username: user.username,
+      full_name: user.full_name || user.username,
+      role: user.role || 'viewer',
+    };
+    const token = createSession(sessionUser);
+    res.setHeader('Set-Cookie', `waterops_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_TTL_MS / 1000}`);
+    res.json({ success: true, user: sessionUser });
+  } catch (err) {
+    // If users table doesn't exist, give a helpful error
+    if (err.code === '42P01') {
+      return res.status(500).json({ error: 'No "users" table found in this database.' });
+    }
+    console.error('Login error:', err.message);
+    res.status(500).json({ error: 'Server error during login.' });
+  }
+});
+
+// Logout
+app.post('/auth/logout', (req, res) => {
+  const cookies = parseCookies(req);
+  if (cookies.waterops_session) sessions.delete(cookies.waterops_session);
+  res.setHeader('Set-Cookie', 'waterops_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0');
+  res.json({ success: true });
+});
+
+// Current user info
+app.get('/auth/me', requireAuth, (req, res) => res.json({ user: req.user }));
+
+// Serve login page without auth; protect everything else
+app.use((req, res, next) => {
+  if (req.path === '/login.html' || req.path === '/login.css' || req.path.startsWith('/auth/')) {
+    return next();
+  }
+  requireAuth(req, res, next);
+});
+
+app.use(express.static(path.join(__dirname, 'public')));
+
+// Middleware: ensure pool exists and is connected before DB routes
+async function requireDB(req, res, next) {
+  if (!pool) return res.status(400).json({ error: 'Not connected to a database. Configure the connection first.' });
+  try {
+    const client = await pool.connect();
+    client.release();
+    next();
+  } catch (err) {
+    res.status(500).json({ error: `Database connection failed: ${err.message}` });
+  }
+}
+
+// ─── API Routes ───────────────────────────────────────────────────────────────
 
 // GET /api/tables — list all user tables and views
 app.get('/api/tables', requireDB, async (req, res) => {
@@ -716,7 +778,7 @@ app.post('/api/saved-queries', requireDB, async (req, res) => {
     await pool.query(ENSURE_SAVED_TABLE);
     const result = await pool.query(
       'INSERT INTO _waterops_saved_queries (name, sql, created_by) VALUES ($1, $2, $3) RETURNING *',
-      [name.trim(), sql.trim(), AUTH_USER]
+      [name.trim(), sql.trim(), req.user?.username || 'admin']
     );
     res.json(result.rows[0]);
   } catch (err) {
@@ -731,6 +793,43 @@ app.delete('/api/saved-queries/:id', requireDB, async (req, res) => {
   try {
     await pool.query('DELETE FROM _waterops_saved_queries WHERE id = $1', [id]);
     res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Reports ──────────────────────────────────────────────────────────────────
+
+// GET /api/reports/pump-hours/plants — distinct sites from pump_positions for dropdown
+app.get('/api/reports/pump-hours/plants', requireDB, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT DISTINCT site_id FROM pump_positions WHERE site_id IS NOT NULL ORDER BY site_id`
+    );
+    res.json(result.rows.map(r => r.site_id));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/pump-hours — readings joined to pump_positions, filtered by site_id and date range
+app.get('/api/reports/pump-hours', requireDB, async (req, res) => {
+  const { site_id, start, end } = req.query;
+  if (!site_id || !start || !end) {
+    return res.status(400).json({ error: 'site_id, start, and end are required.' });
+  }
+  try {
+    const result = await pool.query(
+      `SELECT r.position_id, r.reading_date, r.hour_reading
+       FROM readings_pump_hours r
+       JOIN pump_positions p ON p.position_id = r.position_id
+       WHERE p.site_id = $1
+         AND r.reading_date >= $2
+         AND r.reading_date <= $3
+       ORDER BY r.reading_date ASC, r.position_id ASC`,
+      [site_id, start, end]
+    );
+    res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

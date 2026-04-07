@@ -142,6 +142,7 @@ function renderTableList(tables) {
   tableList.innerHTML = html;
   tableList.querySelectorAll('.table-item').forEach(btn => {
     btn.addEventListener('click', () => {
+      hideReport();
       state.page = 1;
       state.search = '';
       state.sort = '';
@@ -816,3 +817,154 @@ function errorState(msg) {
 function loadingGrid() {
   return '<div class="empty-state"><div class="empty-icon loading-row">⬡</div><p>Loading…</p></div>';
 }
+
+// ── Sidebar Sections ───────────────────────────────────────────────────────
+function initSidebarSections() {
+  ['tables', 'reports'].forEach(name => {
+    const toggle = $(`${name}-section-toggle`);
+    const body   = $(`${name}-section-body`);
+    toggle.addEventListener('click', () => {
+      const collapsed = body.classList.toggle('collapsed');
+      toggle.classList.toggle('collapsed', collapsed);
+    });
+  });
+}
+initSidebarSections();
+
+// ── Reports ────────────────────────────────────────────────────────────────
+const reportPanel   = $('report-panel');
+const rphPlant      = $('rph-plant');
+const rphStart      = $('rph-start');
+const rphEnd        = $('rph-end');
+const rphRunBtn     = $('rph-run-btn');
+const rphExportBtn  = $('rph-export-btn');
+const rphGrid       = $('rph-grid');
+const rphStatus     = $('rph-status');
+
+let activeReport = null;
+let rphData = [];
+
+function showReport(name) {
+  // Deactivate table view
+  gridContainer.innerHTML = emptyState('Select a table from the sidebar\nor open the SQL Editor');
+  filterBar.classList.add('hidden');
+  pagination.classList.add('hidden');
+  state.currentTable = null;
+  state.currentSchema = null;
+  document.querySelectorAll('.table-item').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.report-item').forEach(el => el.classList.remove('active'));
+
+  activeReport = name;
+  reportPanel.classList.remove('hidden');
+  $(`report-pump-hours`).classList.toggle('active', name === 'pump-hours');
+  viewTitle.textContent = name === 'pump-hours' ? 'Pump Hours Report' : 'Report';
+  rowCount.textContent = '';
+}
+
+function hideReport() {
+  activeReport = null;
+  reportPanel.classList.add('hidden');
+}
+
+// Open Pump Hours report
+$('report-pump-hours').addEventListener('click', async () => {
+  showReport('pump-hours');
+  rphStatus.textContent = 'Loading pumping plants…';
+  rphGrid.innerHTML = emptyState('Select a pumping plant and date range,\nthen click Run Report');
+  rphExportBtn.classList.add('hidden');
+  try {
+    const sites = await get('/api/reports/pump-hours/plants');
+    rphPlant.innerHTML = sites.map(s =>
+      `<option value="${esc(s)}">Pumping Plant ${esc(s)}</option>`
+    ).join('');
+    rphStatus.textContent = `${sites.length} pumping plant(s) found.`;
+  } catch (err) {
+    rphStatus.textContent = `Error loading plants: ${err.message}`;
+  }
+});
+
+// Run the report
+rphRunBtn.addEventListener('click', async () => {
+  const siteId = rphPlant.value;
+  const start  = rphStart.value;
+  const end    = rphEnd.value;
+  if (!siteId) { rphStatus.textContent = 'Select a pumping plant.'; return; }
+  if (!start)  { rphStatus.textContent = 'Select a start date.'; return; }
+  if (!end)    { rphStatus.textContent = 'Select an end date.'; return; }
+  if (start > end) { rphStatus.textContent = 'Start date must be before end date.'; return; }
+
+  rphStatus.textContent = 'Running…';
+  rphGrid.innerHTML = loadingGrid();
+  rphExportBtn.classList.add('hidden');
+  rphData = [];
+
+  try {
+    const params = new URLSearchParams({ site_id: siteId, start, end });
+    rphData = await get(`/api/reports/pump-hours?${params}`);
+
+    if (!rphData.length) {
+      rphGrid.innerHTML = emptyState('No readings found for this plant and date range.');
+      rphStatus.textContent = 'No results.';
+      return;
+    }
+
+    const cols = ['position_id', 'reading_date', 'hour_reading'];
+    const headers = ['Position ID', 'Reading Date', 'Hour Reading'];
+
+    let html = `<table class="data-table"><thead><tr>
+      ${headers.map(h => `<th>${h}</th>`).join('')}
+    </tr></thead><tbody>`;
+    for (const row of rphData) {
+      html += `<tr>${cols.map(c => `<td>${formatCell(row[c])}</td>`).join('')}</tr>`;
+    }
+    html += '</tbody></table>';
+    rphGrid.innerHTML = html;
+    rphStatus.textContent = `${rphData.length} reading${rphData.length !== 1 ? 's' : ''} found.`;
+    rphExportBtn.classList.remove('hidden');
+  } catch (err) {
+    rphGrid.innerHTML = errorState(err.message);
+    rphStatus.textContent = 'Error running report.';
+  }
+});
+
+// Export report results
+rphExportBtn.addEventListener('click', () => {
+  if (!rphData.length) return;
+  const plantLabel = rphPlant.options[rphPlant.selectedIndex]?.text || rphPlant.value;
+  const start = rphStart.value;
+  const end   = rphEnd.value;
+  const cols  = ['position_id', 'reading_date', 'hour_reading'];
+  const hdrs  = ['Position ID', 'Reading Date', 'Hour Reading'];
+  showExportPreview(`Pump Hours — ${plantLabel} (${start} to ${end})`, hdrs, cols, rphData);
+});
+
+// ── Version ────────────────────────────────────────────────────────────────
+(async () => {
+  try {
+    const res = await fetch('/api/version');
+    if (res.ok) {
+      const { version } = await res.json();
+      const el = $('app-version');
+      if (el) el.textContent = `v${version}`;
+    }
+  } catch (_) { /* ignore */ }
+})();
+
+// ── Init: skip connect overlay if DB already connected ─────────────────────
+(async () => {
+  try {
+    const res = await fetch('/api/db-status');
+    if (res.ok) {
+      const data = await res.json();
+      if (data.connected) {
+        state.connected = true;
+        state.dbLabel = `${data.user}@${data.database}`;
+        dbLabel.textContent = state.dbLabel;
+        connectOverlay.classList.remove('active');
+        connectOverlay.classList.add('hidden');
+        appEl.classList.remove('hidden');
+        loadTables();
+      }
+    }
+  } catch (_) { /* ignore — overlay stays visible */ }
+})();
