@@ -873,11 +873,11 @@ $('report-pump-hours').addEventListener('click', async () => {
   rphGrid.innerHTML = emptyState('Select a pumping plant and date range,\nthen click Run Report');
   rphExportBtn.classList.add('hidden');
   try {
-    const plants = await get('/api/reports/pump-hours/plants');
-    rphPlant.innerHTML = plants.map(p =>
-      `<option value="${esc(p)}">${esc(p)}</option>`
+    const sites = await get('/api/reports/pump-hours/plants');
+    rphPlant.innerHTML = sites.map(s =>
+      `<option value="${esc(s)}">Pumping Plant ${esc(s)}</option>`
     ).join('');
-    rphStatus.textContent = `${plants.length} pumping plant(s) found.`;
+    rphStatus.textContent = `${sites.length} pumping plant(s) found.`;
   } catch (err) {
     rphStatus.textContent = `Error loading plants: ${err.message}`;
   }
@@ -885,10 +885,10 @@ $('report-pump-hours').addEventListener('click', async () => {
 
 // Run the report
 rphRunBtn.addEventListener('click', async () => {
-  const plant = rphPlant.value;
-  const start = rphStart.value;
-  const end   = rphEnd.value;
-  if (!plant)  { rphStatus.textContent = 'Select a pumping plant.'; return; }
+  const siteId = rphPlant.value;
+  const start  = rphStart.value;
+  const end    = rphEnd.value;
+  if (!siteId) { rphStatus.textContent = 'Select a pumping plant.'; return; }
   if (!start)  { rphStatus.textContent = 'Select a start date.'; return; }
   if (!end)    { rphStatus.textContent = 'Select an end date.'; return; }
   if (start > end) { rphStatus.textContent = 'Start date must be before end date.'; return; }
@@ -899,7 +899,7 @@ rphRunBtn.addEventListener('click', async () => {
   rphData = [];
 
   try {
-    const params = new URLSearchParams({ plant, start, end });
+    const params = new URLSearchParams({ site_id: siteId, start, end });
     rphData = await get(`/api/reports/pump-hours?${params}`);
 
     if (!rphData.length) {
@@ -930,12 +930,12 @@ rphRunBtn.addEventListener('click', async () => {
 // Export report results
 rphExportBtn.addEventListener('click', () => {
   if (!rphData.length) return;
-  const plant = rphPlant.value;
+  const plantLabel = rphPlant.options[rphPlant.selectedIndex]?.text || rphPlant.value;
   const start = rphStart.value;
   const end   = rphEnd.value;
   const cols  = ['position_id', 'reading_date', 'hour_reading'];
   const hdrs  = ['Position ID', 'Reading Date', 'Hour Reading'];
-  showExportPreview(`Pump Hours — ${plant} (${start} to ${end})`, hdrs, cols, rphData);
+  showExportPreview(`Pump Hours — ${plantLabel} (${start} to ${end})`, hdrs, cols, rphData);
 });
 
 // ── Version ────────────────────────────────────────────────────────────────

@@ -800,33 +800,34 @@ app.delete('/api/saved-queries/:id', requireDB, async (req, res) => {
 
 // ─── Reports ──────────────────────────────────────────────────────────────────
 
-// GET /api/reports/pump-hours/plants — distinct position_id values for dropdown
+// GET /api/reports/pump-hours/plants — distinct sites from pump_positions for dropdown
 app.get('/api/reports/pump-hours/plants', requireDB, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT DISTINCT position_id FROM readings_pump_hours WHERE position_id IS NOT NULL ORDER BY position_id`
+      `SELECT DISTINCT site_id FROM pump_positions WHERE site_id IS NOT NULL ORDER BY site_id`
     );
-    res.json(result.rows.map(r => r.position_id));
+    res.json(result.rows.map(r => r.site_id));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// GET /api/reports/pump-hours — fetch readings for a plant and date range
+// GET /api/reports/pump-hours — readings joined to pump_positions, filtered by site_id and date range
 app.get('/api/reports/pump-hours', requireDB, async (req, res) => {
-  const { plant, start, end } = req.query;
-  if (!plant || !start || !end) {
-    return res.status(400).json({ error: 'plant, start, and end are required.' });
+  const { site_id, start, end } = req.query;
+  if (!site_id || !start || !end) {
+    return res.status(400).json({ error: 'site_id, start, and end are required.' });
   }
   try {
     const result = await pool.query(
-      `SELECT position_id, reading_date, hour_reading
-       FROM readings_pump_hours
-       WHERE position_id ILIKE $1
-         AND reading_date >= $2
-         AND reading_date <= $3
-       ORDER BY reading_date ASC, position_id ASC`,
-      [`%${plant}%`, start, end]
+      `SELECT r.position_id, r.reading_date, r.hour_reading
+       FROM readings_pump_hours r
+       JOIN pump_positions p ON p.position_id = r.position_id
+       WHERE p.site_id = $1
+         AND r.reading_date >= $2
+         AND r.reading_date <= $3
+       ORDER BY r.reading_date ASC, r.position_id ASC`,
+      [site_id, start, end]
     );
     res.json(result.rows);
   } catch (err) {
