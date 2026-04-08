@@ -606,7 +606,73 @@ app.post('/api/readings/kf-monthly', requireAuth, async (req, res) => {
 app.delete('/api/readings/kf-monthly/:id', requireAuth, (req, res) =>
   deleteReading(req, res, 'readings_kf_monthly', 'kf_reading_id'));
 
-// ── Wells ─────────────────────────────────────────────────────────────────────
+// ── DWR Well Run ──────────────────────────────────────────────────────────────
+app.get('/api/wells/dwr', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        w.well_id, w.common_name, w.state_well_number, w.area,
+        w.gps_latitude, w.gps_longitude,
+        prev.reading_id      AS last_reading_id,
+        prev.reading_date    AS last_reading_date,
+        prev.depth_to_water  AS last_dtw,
+        prev.method          AS last_method,
+        prev.notes           AS last_notes,
+        prev.no_measurement  AS last_no_measurement,
+        (CURRENT_DATE - prev.reading_date)::int AS days_since_reading
+      FROM wells w
+      LEFT JOIN LATERAL (
+        SELECT reading_id, reading_date, depth_to_water, method, notes, no_measurement
+        FROM readings_run_dwr
+        WHERE well_id = w.well_id
+        ORDER BY reading_date DESC, reading_time DESC
+        LIMIT 1
+      ) prev ON true
+      WHERE w.well_run = 'DWR'
+        AND (LOWER(w.status) != 'inactive' OR w.status IS NULL)
+      ORDER BY w.state_well_number, w.common_name
+    `);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/readings/run-dwr', requireAuth, async (req, res) => {
+  const {
+    well_id, reading_date, reading_time,
+    depth_to_water, method, operator,
+    no_measurement, questionable_measurement, notes,
+  } = req.body;
+  if (!well_id || !reading_date) {
+    return res.status(400).json({ error: 'well_id and reading_date are required' });
+  }
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO readings_run_dwr
+         (well_id, reading_date, reading_time, depth_to_water, method, operator,
+          no_measurement, questionable_measurement, notes, entered_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+       RETURNING reading_id`,
+      [
+        well_id, reading_date, reading_time || null,
+        depth_to_water != null ? depth_to_water : null,
+        method || null, operator || null,
+        no_measurement?.length ? no_measurement : null,
+        questionable_measurement?.length ? questionable_measurement : null,
+        notes || null, req.user.username,
+      ]
+    );
+    res.json({ reading_id: rows[0].reading_id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/readings/run-dwr/:id', requireAuth, (req, res) =>
+  deleteReading(req, res, 'readings_run_dwr', 'reading_id'));
+
+
 app.get('/api/wells', requireAuth, async (req, res) => {
   try {
     const { rows } = await pool.query(
@@ -747,6 +813,13 @@ app.get('/api/history', requireAuth, async (req, res) => {
         `SELECT reading_id AS id, reading_date, reading_time, odometer_miles, engine_hours, entered_by, notes
          FROM readings_vehicle_monthly WHERE vehicle_id = $1
          ORDER BY reading_date DESC, reading_time DESC LIMIT $2`, [id, LIMIT]));
+    } else if (type === 'dwr') {
+      ({ rows } = await pool.query(
+        `SELECT reading_id AS id, reading_date, reading_time,
+                depth_to_water AS value, method, operator AS entered_by,
+                no_measurement, questionable_measurement, notes
+         FROM readings_run_dwr WHERE well_id = $1
+         ORDER BY reading_date DESC, reading_time DESC LIMIT $2`, [id, LIMIT]));
     } else {
       return res.status(400).json({ error: 'unknown type' });
     }
@@ -768,6 +841,7 @@ app.delete('/api/history/:type/:id', requireAuth, async (req, res) => {
     kf:         { table: 'readings_kf_monthly',       pk: 'kf_reading_id' },
     canal:      { table: 'readings_canal',            pk: 'reading_id' },
     vehicle:    { table: 'readings_vehicle_monthly',  pk: 'reading_id' },
+    dwr:        { table: 'readings_run_dwr',          pk: 'reading_id' },
   };
   const map = TABLE_MAP[type];
   if (!map) return res.status(400).json({ error: 'unknown type' });

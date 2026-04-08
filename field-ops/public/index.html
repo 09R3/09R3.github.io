@@ -77,7 +77,7 @@
         <div id="login-error" class="error-msg hidden"></div>
         <button type="submit" class="btn btn-primary btn-full">Sign In</button>
       </form>
-      <div class="login-version">v 1.16</div>
+      <div class="login-version">v 1.17</div>
     </div>
   </div>
 </div>
@@ -261,6 +261,10 @@
       <button class="dash-tile" id="dash-pesticides-tile" data-screen="pesticides">
         <span class="dash-icon">&#127807;</span>
         <span class="dash-label">Pesticides</span>
+      </button>
+      <button class="dash-tile" data-screen="well-runs">
+        <span class="dash-icon">&#128204;</span>
+        <span class="dash-label">Well Runs</span>
       </button>
       <button class="dash-tile reports-tile hidden" id="dash-reports-tile" data-screen="reports">
         <span class="dash-icon">&#128202;</span>
@@ -852,6 +856,57 @@
 
   </div><!-- /screen-pesticides -->
 
+  <!-- ── Well Runs ─────────────────────────────────────────────────────────── -->
+  <div id="screen-well-runs" class="screen-content">
+
+    <!-- Sub-dashboard -->
+    <div id="well-runs-main" class="dashboard-grid">
+      <div class="dash-tile" data-wr-panel="dwr">
+        <div class="dash-icon">&#128204;</div>
+        <div class="dash-label">DWR</div>
+      </div>
+      <div class="dash-tile wr-soon" data-wr-panel="kcwa">
+        <div class="dash-icon">&#128200;</div>
+        <div class="dash-label">KCWA Piezometers</div>
+      </div>
+      <div class="dash-tile wr-soon" data-wr-panel="shallow">
+        <div class="dash-icon">&#128204;</div>
+        <div class="dash-label">Shallow</div>
+      </div>
+      <div class="dash-tile wr-soon" data-wr-panel="iwv">
+        <div class="dash-icon">&#128204;</div>
+        <div class="dash-label">IWV</div>
+      </div>
+      <div class="dash-tile wr-soon" data-wr-panel="purge">
+        <div class="dash-icon">&#128204;</div>
+        <div class="dash-label">Purge</div>
+      </div>
+    </div>
+
+    <!-- Coming Soon panel (shared) -->
+    <div id="wr-panel-soon" class="maint-panel hidden">
+      <button class="maint-back-btn" id="wr-soon-back">&#8249; Well Runs</button>
+      <div class="placeholder-msg" style="margin-top:40px">Coming Soon</div>
+    </div>
+
+    <!-- DWR panel -->
+    <div id="wr-panel-dwr" class="maint-panel hidden">
+      <button class="maint-back-btn" id="wr-dwr-back">&#8249; Well Runs</button>
+      <div class="wr-dwr-header">
+        <div class="wr-dwr-datetime">
+          <input type="date" id="dwr-date" class="ctrl-input ctrl-input-sm">
+          <input type="time" id="dwr-time" class="ctrl-input ctrl-input-sm">
+        </div>
+        <div class="wr-dwr-counter">
+          <span id="dwr-done-count">0</span> / <span id="dwr-total-count">0</span> complete
+          <button class="btn btn-secondary btn-sm" id="dwr-map-btn" style="margin-left:10px">&#128506; Map</button>
+        </div>
+      </div>
+      <div id="dwr-list-body"></div>
+    </div>
+
+  </div><!-- /screen-well-runs -->
+
   <!-- ── Reports ───────────────────────────────────────────────────────────── -->
   <div id="screen-reports" class="screen-content">
 
@@ -1064,7 +1119,7 @@
       <button class="settings-back-btn">‹ Settings</button>
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 1.16</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 1.17</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>

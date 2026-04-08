@@ -2141,3 +2141,53 @@ input[type="date"].ctrl-input { min-height: 44px; }
 }
 .exif-table-wrap td.na { color: var(--text-muted); font-style: italic; }
 .exif-table-wrap tbody tr:hover { background: var(--surface2); }
+
+/* ── Well Runs ───────────────────────────────────────────────────────────── */
+.wr-soon { opacity: 0.55; }
+.wr-dwr-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  position: sticky;
+  top: var(--header-h, 56px);
+  z-index: 50;
+}
+.wr-dwr-datetime { display: flex; gap: 8px; flex-wrap: wrap; }
+.wr-dwr-counter  { display: flex; align-items: center; gap: 6px; font-size: 0.88rem; color: var(--text-dim); margin-left: auto; }
+/* status pill colours: green/yellow/red */
+.status-badge.wr-recent  { background: rgba(76,175,80,0.18);  color: #4caf50; }
+.status-badge.wr-none    { background: rgba(255,193,7,0.18);  color: #ffc107; }
+.status-badge.wr-old     { background: rgba(244,67,54,0.15);  color: #f44336; }
+/* multi-select dropdown */
+.dwr-ms-wrap   { position: relative; }
+.dwr-ms-btn    {
+  width: 100%; text-align: left; background: var(--surface2);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 8px 12px; font-size: 0.9rem; color: var(--text);
+  cursor: pointer; display: flex; justify-content: space-between; align-items: center;
+}
+.dwr-ms-btn:after { content: '▾'; font-size: 0.75rem; color: var(--text-dim); }
+.dwr-ms-panel  {
+  display: none;
+  position: absolute; left: 0; right: 0; top: calc(100% + 4px);
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: var(--radius); z-index: 60;
+  max-height: 220px; overflow-y: auto;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.35);
+}
+.dwr-ms-panel.open { display: block; }
+.dwr-ms-option {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 14px; font-size: 0.88rem; cursor: pointer;
+  border-bottom: 1px solid var(--border-subtle, rgba(255,255,255,0.05));
+}
+.dwr-ms-option:last-child { border-bottom: none; }
+.dwr-ms-option:hover { background: var(--surface); }
+.dwr-ms-option input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--accent); }
+.dwr-ms-option.selected { color: var(--accent); }
+/* DTW NM state */
+input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }

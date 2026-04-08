@@ -396,6 +396,7 @@ function showScreen(name) {
     vehicles:       'Vehicle Monthly',
     'kf-monthly':   'KF Monthly Readings',
     maintenance:    'Maintenance Log',
+    'well-runs':    'Well Runs',
     admin:          'Settings',
   };
   el('screen-title').textContent = titles[name] || 'Field Ops';
@@ -418,6 +419,7 @@ function showScreen(name) {
   if (name === 'kf-monthly')    initKFScreen();
   if (name === 'maintenance')   initMaintenanceScreen();
   if (name === 'pesticides')    initPesticideScreen();
+  if (name === 'well-runs')     initWellRunsScreen();
   if (name === 'reports')       initReportsScreen();
   if (name === 'admin')         { initAdminScreen(); initSettingsScreen(); }
 
@@ -635,6 +637,7 @@ const HIST_COLS = {
   monitor:     [{ key: 'value',         label: 'kWh' }],
   well:        [{ key: 'hour_reading',  label: 'Hours' }, { key: 'flow_cfs', label: 'Flow (cfs)' }, { key: 'totalizer', label: 'Totalizer' }],
   kf:          [{ key: 'value',         label: 'DTW (ft)' }, { key: 'method', label: 'Method' }, { key: 'entered_by', label: 'Operator' }],
+  dwr:         [{ key: 'value',         label: 'DTW (ft)' }, { key: 'method', label: 'Method' }, { key: 'entered_by', label: 'Operator' }],
   canal:       [{ key: 'flow',          label: 'Flow (cfs)' }, { key: 'totalizer', label: 'Totalizer (AF)' }, { key: 'gate_setting', label: 'Gate' }],
   vehicle:     [{ key: 'odometer_miles',label: 'Odometer' }, { key: 'engine_hours', label: 'Eng. Hrs' }],
 };
@@ -5286,6 +5289,342 @@ el('export-pdf-btn').addEventListener('click', () => {
     }
   }
 })();
+
+/* ── Well Runs ───────────────────────────────────────────────────────────── */
+const DWR_NO_MEAS = [
+  { code: '0', label: 'Meas. Discontinued' },
+  { code: '1', label: 'Pumping' },
+  { code: '2', label: 'Pump house locked' },
+  { code: '3', label: 'Tape hung up' },
+  { code: '4', label: "Can't get tape in" },
+  { code: '5', label: 'Unable to locate' },
+  { code: '6', label: 'Well destroyed' },
+  { code: '7', label: 'Special' },
+  { code: '8', label: 'Casing leaking or wet' },
+  { code: '9', label: 'Temp. inaccessible' },
+  { code: 'D', label: 'Dry' },
+];
+const DWR_QUEST_MEAS = [
+  { code: '0', label: 'Caved or deepened' },
+  { code: '1', label: 'Pumping' },
+  { code: '2', label: 'Nearby pump operating' },
+  { code: '3', label: 'Casing leaking or wet' },
+  { code: '4', label: 'Pumped recently' },
+  { code: '5', label: 'Air gauge meas.' },
+  { code: '6', label: 'Other' },
+  { code: '7', label: 'Recharge operation nearby' },
+  { code: '8', label: 'Oil in casing' },
+  { code: '9', label: 'Acoustic sounder meas.' },
+];
+
+let dwrWells = [];
+let dwrDoneThisSession = new Set(); // well_ids saved this session
+
+function initWellRunsScreen() {
+  // Sub-dashboard tiles
+  document.querySelectorAll('[data-wr-panel]').forEach(tile => {
+    tile.addEventListener('click', () => {
+      const panel = tile.dataset.wrPanel;
+      el('well-runs-main').classList.add('hidden');
+      if (panel === 'dwr') {
+        el('wr-panel-dwr').classList.remove('hidden');
+        initDWRScreen();
+      } else {
+        el('wr-panel-soon').classList.remove('hidden');
+      }
+    });
+  });
+  el('wr-dwr-back').addEventListener('click', () => {
+    el('wr-panel-dwr').classList.add('hidden');
+    el('well-runs-main').classList.remove('hidden');
+  });
+  el('wr-soon-back').addEventListener('click', () => {
+    el('wr-panel-soon').classList.add('hidden');
+    el('well-runs-main').classList.remove('hidden');
+  });
+}
+
+let dwrLoaded = false;
+async function initDWRScreen() {
+  el('dwr-date').value = todayISO();
+  el('dwr-time').value = nowHHMM();
+
+  if (!dwrLoaded) {
+    el('dwr-list-body').innerHTML = '<div class="placeholder-msg">Loading…</div>';
+    try {
+      dwrWells = await api('GET', '/api/wells/dwr');
+      dwrLoaded = true;
+    } catch (err) {
+      el('dwr-list-body').innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
+      return;
+    }
+  }
+
+  el('dwr-map-btn').onclick = () => openSetMapModal('DWR Wells', dwrWells);
+  renderDWRList();
+}
+
+function renderDWRList() {
+  const body    = el('dwr-list-body');
+  const dateIn  = el('dwr-date');
+  const timeIn  = el('dwr-time');
+
+  body.innerHTML = '';
+  el('dwr-total-count').textContent = dwrWells.length;
+  updateDWRCounter();
+
+  dwrWells.forEach(w => body.appendChild(createDWRItem(w, dateIn, timeIn)));
+}
+
+function updateDWRCounter() {
+  // Count wells that are completed = saved this session OR reading within last 30 days
+  const done = dwrWells.filter(w =>
+    dwrDoneThisSession.has(w.well_id) ||
+    (w.days_since_reading != null && w.days_since_reading <= 30)
+  ).length;
+  el('dwr-done-count').textContent = done;
+}
+
+function makeDWRMultiSelect(options, placeholder) {
+  const wrap = document.createElement('div');
+  wrap.className = 'dwr-ms-wrap form-group';
+
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'dwr-ms-btn';
+  btn.textContent = placeholder;
+
+  const panel = document.createElement('div');
+  panel.className = 'dwr-ms-panel';
+
+  options.forEach(opt => {
+    const row = document.createElement('label');
+    row.className = 'dwr-ms-option';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = opt.code;
+    row.appendChild(cb);
+    row.appendChild(document.createTextNode(`${opt.code}. ${opt.label}`));
+    panel.appendChild(row);
+
+    cb.addEventListener('change', () => {
+      updateDWRMultiBtn(btn, panel, placeholder);
+    });
+  });
+
+  btn.addEventListener('click', e => {
+    e.stopPropagation();
+    panel.classList.toggle('open');
+  });
+  // Close when clicking outside
+  document.addEventListener('click', e => {
+    if (!wrap.contains(e.target)) panel.classList.remove('open');
+  });
+
+  wrap.appendChild(btn);
+  wrap.appendChild(panel);
+
+  wrap.getSelected = () =>
+    [...panel.querySelectorAll('input:checked')].map(cb => cb.value);
+  wrap.clearAll = () => {
+    panel.querySelectorAll('input').forEach(cb => { cb.checked = false; });
+    btn.textContent = placeholder;
+    panel.querySelectorAll('.dwr-ms-option').forEach(r => r.classList.remove('selected'));
+  };
+  return wrap;
+}
+
+function updateDWRMultiBtn(btn, panel, placeholder) {
+  const selected = [...panel.querySelectorAll('input:checked')];
+  panel.querySelectorAll('.dwr-ms-option').forEach(r => {
+    r.classList.toggle('selected', r.querySelector('input').checked);
+  });
+  if (!selected.length) {
+    btn.textContent = placeholder;
+  } else {
+    btn.textContent = selected.map(cb => cb.value).join(', ');
+  }
+}
+
+function createDWRItem(w, dateInput, timeInput) {
+  const div = document.createElement('div');
+  div.className = 'list-item';
+
+  const days = w.days_since_reading;
+  const sessionDone = dwrDoneThisSession.has(w.well_id);
+  const recent = sessionDone || (days != null && days <= 30);
+  const noReading = days == null && !sessionDone;
+  const pillCls = sessionDone || (days != null && days <= 30) ? 'wr-recent'
+                : (days == null ? 'wr-none' : 'wr-old');
+  const pillTxt = sessionDone ? 'Done'
+                : (days != null ? localDateStr(w.last_reading_date, { month: 'short', day: 'numeric' }) : 'No reading');
+
+  const prevDTW = w.last_dtw != null ? `${Number(w.last_dtw).toFixed(2)} ft`
+                : (w.last_no_measurement?.length ? 'NM' : null);
+  const wellLabel = w.state_well_number ? `${w.state_well_number} | ${w.common_name}` : w.common_name;
+  const hasGPS = w.gps_latitude && w.gps_longitude;
+
+  div.innerHTML = `
+    <div class="list-item-header">
+      <span class="list-item-name">${wellLabel}</span>
+      <span class="status-badge ${pillCls}">${pillTxt}</span>
+      <span class="expand-chevron">&#9660;</span>
+    </div>
+    ${prevDTW ? `<div class="list-item-meta"><span>Prev: ${prevDTW}</span></div>` : ''}
+    <div class="list-item-form" style="display:none">
+      <div class="form-group">
+        <label>Depth to Water (ft)${prevDTW ? `<span class="prev-hint"> · Prev: ${prevDTW}</span>` : ''}</label>
+        <input type="number" class="ctrl-input dwr-dtw" step="0.01" placeholder="0.00">
+      </div>
+      <div class="dwr-ms-nm-slot"></div>
+      <div class="dwr-ms-qm-slot"></div>
+      <div class="form-group">
+        <label>Method</label>
+        <select class="ctrl-select dwr-method">
+          <option value="">Select…</option>
+          <option value="plopper">Plopper</option>
+          <option value="sounder">Sounder</option>
+          <option value="tape">Tape</option>
+          <option value="transducer">Transducer</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Operator</label>
+        <input type="text" class="ctrl-input dwr-op" placeholder="Initials" readonly>
+      </div>
+      <div class="form-group">
+        <label>Notes</label>
+        <textarea class="ctrl-textarea dwr-notes" rows="2" placeholder="Optional notes…"></textarea>
+      </div>
+      <div class="lif-error error-msg hidden"></div>
+      <div class="lif-footer">
+        ${hasGPS ? `<button class="btn btn-secondary btn-sm dwr-map-item-btn">&#128205; Map</button>` : ''}
+        <button class="btn btn-secondary btn-sm dwr-hist-btn">&#128200; History</button>
+        <button class="btn btn-save dwr-save-btn">Save Reading</button>
+      </div>
+    </div>`;
+
+  // Build multi-selects
+  const nmWrap = makeDWRMultiSelect(DWR_NO_MEAS,    'No Measurement: none');
+  const qmWrap = makeDWRMultiSelect(DWR_QUEST_MEAS, 'Questionable Measurement: none');
+  div.querySelector('.dwr-ms-nm-slot').replaceWith(nmWrap);
+  div.querySelector('.dwr-ms-qm-slot').replaceWith(qmWrap);
+
+  // If any NM code selected → set DTW to NM
+  const dtwInput = div.querySelector('.dwr-dtw');
+  nmWrap.addEventListener('change', () => {
+    const hasCodes = nmWrap.getSelected().length > 0;
+    if (hasCodes) {
+      dtwInput.value = '';
+      dtwInput.placeholder = 'NM';
+      dtwInput.classList.add('dwr-dtw-nm');
+      dtwInput.disabled = true;
+    } else {
+      dtwInput.placeholder = '0.00';
+      dtwInput.classList.remove('dwr-dtw-nm');
+      dtwInput.disabled = false;
+    }
+  });
+
+  // Auto-fill operator
+  if (currentUser) div.querySelector('.dwr-op').value = currentUser.initials || currentUser.username;
+  if (w.last_notes) div.querySelector('.dwr-notes').value = w.last_notes;
+
+  // Map button (individual well)
+  div.querySelector('.dwr-map-item-btn')?.addEventListener('click', e => {
+    e.stopPropagation();
+    const url = `https://maps.apple.com/?ll=${w.gps_latitude},${w.gps_longitude}&q=${encodeURIComponent(w.common_name)}`;
+    window.open(url, '_blank');
+  });
+
+  // History button
+  div.querySelector('.dwr-hist-btn').addEventListener('click', e => {
+    e.stopPropagation();
+    openHistoryModal('dwr', w.well_id, wellLabel);
+  });
+
+  // Expand/collapse — reset date/time on open
+  div.querySelector('.list-item-header').addEventListener('click', () => {
+    const open = div.classList.toggle('expanded');
+    div.querySelector('.list-item-form').style.display = open ? '' : 'none';
+    if (open) {
+      dateInput.value = todayISO();
+      timeInput.value = nowHHMM();
+    }
+  });
+
+  // Save
+  div.querySelector('.dwr-save-btn').addEventListener('click', async e => {
+    e.stopPropagation();
+    const errEl = div.querySelector('.lif-error');
+    errEl.classList.add('hidden');
+
+    const nmCodes = nmWrap.getSelected();
+    const qmCodes = qmWrap.getSelected();
+    const dtwRaw  = dtwInput.value;
+    const isNM    = nmCodes.length > 0;
+
+    if (!isNM && dtwRaw === '') {
+      errEl.textContent = 'Enter a depth or select a No Measurement code';
+      errEl.classList.remove('hidden');
+      return;
+    }
+
+    const body = {
+      well_id:                  w.well_id,
+      reading_date:             dateInput.value,
+      reading_time:             timeInput.value,
+      depth_to_water:           isNM ? null : parseFloat(dtwRaw),
+      method:                   div.querySelector('.dwr-method').value || null,
+      operator:                 div.querySelector('.dwr-op').value || null,
+      no_measurement:           nmCodes,
+      questionable_measurement: qmCodes,
+      notes:                    div.querySelector('.dwr-notes').value || null,
+    };
+
+    try {
+      await api('POST', '/api/readings/run-dwr', body, `DWR — ${w.common_name}`);
+
+      // Mark as done in session
+      dwrDoneThisSession.add(w.well_id);
+      w.last_reading_date = body.reading_date;
+      w.last_dtw = body.depth_to_water;
+      w.days_since_reading = 0;
+
+      // Update pill
+      const pill = div.querySelector('.status-badge');
+      pill.className = 'status-badge wr-recent';
+      pill.textContent = 'Done';
+
+      // Update prev hint
+      const newPrev = isNM ? 'NM' : `${Number(dtwRaw).toFixed(2)} ft`;
+      let meta = div.querySelector('.list-item-meta');
+      if (!meta) {
+        meta = document.createElement('div');
+        meta.className = 'list-item-meta';
+        div.querySelector('.list-item-header').after(meta);
+      }
+      meta.innerHTML = `<span>Prev: ${newPrev}</span>`;
+
+      // Collapse and reset
+      div.classList.remove('expanded');
+      div.querySelector('.list-item-form').style.display = 'none';
+      dtwInput.value = ''; dtwInput.disabled = false;
+      dtwInput.placeholder = '0.00'; dtwInput.classList.remove('dwr-dtw-nm');
+      nmWrap.clearAll(); qmWrap.clearAll();
+      div.querySelector('.dwr-notes').value = body.notes || '';
+
+      updateDWRCounter();
+      showToast(`${w.common_name} saved`, 'success');
+    } catch (err) {
+      errEl.textContent = err.message;
+      errEl.classList.remove('hidden');
+    }
+  });
+
+  return div;
+}
 
 /* ── Init ────────────────────────────────────────────────────────────────── */
 checkDBStatus();
