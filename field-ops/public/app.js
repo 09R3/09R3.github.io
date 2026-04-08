@@ -345,7 +345,7 @@ function openSetMapModal(setName, wells) {
         iconAnchor: [7, 7],
         popupAnchor: [0, -8],
       });
-      const label = w.state_well_number ? `${w.state_well_number} | ${w.common_name}` : (w.common_name || 'Well');
+      const label = [w.state_well_number, w.common_name].filter(Boolean).join(' | ') || 'Well';
       const status = done ? `<span style="color:#16a34a">✓ Read ${localDateStr(w.range_reading_date, {month:'short',day:'numeric'})}</span>` : `<span style="color:#dc2626">Not read</span>`;
       const m = L.marker([w.gps_latitude, w.gps_longitude], { icon }).addTo(_setLeafletMap);
       m.bindPopup(`<strong>${label}</strong><br>${status}`);
