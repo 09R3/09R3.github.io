@@ -429,12 +429,14 @@ async function deleteReading(req, res, table, idCol) {
     const row = rows[0];
     if (!row) return res.status(404).json({ error: 'Reading not found' });
 
-    if (req.user.role === 'operator') {
-      if (row.entered_by !== req.user.username || dateString(row.reading_date) !== todayString()) {
-        return res.status(403).json({ error: 'Operators can only delete their own readings from today' });
+    if (req.user.role !== 'admin') {
+      // Non-admins may only delete their own readings within 24 hours
+      const readingDT = new Date(`${dateString(row.reading_date)}T${(row.reading_time || '00:00').slice(0,5)}`);
+      const within24h = (Date.now() - readingDT.getTime()) <= 24 * 60 * 60 * 1000;
+      if (row.entered_by !== req.user.username || !within24h) {
+        return res.status(403).json({ error: 'You can only delete your own readings within 24 hours' });
       }
     }
-    // supervisors and admins can delete any
 
     await pool.query(`DELETE FROM ${table} WHERE ${idCol} = $1`, [id]);
     res.json({ ok: true });
@@ -767,8 +769,15 @@ app.delete('/api/history/:type/:id', requireAuth, async (req, res) => {
   const username = req.user.username;
 
   try {
-    if (role === 'operator') {
-      // Operators may only delete their own readings submitted within the last 24 hours
+    if (role === 'admin') {
+      // Admins can delete any reading
+      const { rows } = await pool.query(
+        `DELETE FROM ${map.table} WHERE ${map.pk} = $1 RETURNING ${map.pk}`,
+        [id]
+      );
+      if (!rows.length) return res.status(404).json({ error: 'Reading not found' });
+    } else {
+      // Everyone else: own entry only, within 24 hours
       const { rows } = await pool.query(
         `DELETE FROM ${map.table}
          WHERE ${map.pk} = $1
@@ -777,15 +786,7 @@ app.delete('/api/history/:type/:id', requireAuth, async (req, res) => {
          RETURNING ${map.pk}`,
         [id, username]
       );
-      if (!rows.length) return res.status(403).json({ error: 'Not authorized or outside 24-hour window' });
-    } else if (role === 'supervisor' || role === 'admin') {
-      const { rows } = await pool.query(
-        `DELETE FROM ${map.table} WHERE ${map.pk} = $1 RETURNING ${map.pk}`,
-        [id]
-      );
-      if (!rows.length) return res.status(404).json({ error: 'Reading not found' });
-    } else {
-      return res.status(403).json({ error: 'Insufficient permissions' });
+      if (!rows.length) return res.status(403).json({ error: 'You can only delete your own readings within 24 hours' });
     }
     res.json({ ok: true });
   } catch (err) {
