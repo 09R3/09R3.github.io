@@ -670,6 +670,7 @@ async function openHistoryModal(type, id, label) {
       const valCells = cols.map(c => `<td>${r[c.key] != null ? r[c.key] : '—'}</td>`).join('');
 
       const showDel = canDeleteAll ||
+        (role === 'supervisor' && isWithin24h(r.reading_date, r.reading_time)) ||
         (r.entered_by === username && isWithin24h(r.reading_date, r.reading_time));
 
       const tr = document.createElement('tr');

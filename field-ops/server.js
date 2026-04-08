@@ -429,11 +429,18 @@ async function deleteReading(req, res, table, idCol) {
     const row = rows[0];
     if (!row) return res.status(404).json({ error: 'Reading not found' });
 
-    if (req.user.role !== 'admin') {
-      // Non-admins may only delete their own readings within 24 hours
-      const readingDT = new Date(`${dateString(row.reading_date)}T${(row.reading_time || '00:00').slice(0,5)}`);
-      const within24h = (Date.now() - readingDT.getTime()) <= 24 * 60 * 60 * 1000;
-      if (row.entered_by !== req.user.username || !within24h) {
+    const role = req.user.role;
+    const username = req.user.username;
+    const readingDT = new Date(`${dateString(row.reading_date)}T${(row.reading_time || '00:00').slice(0,5)}`);
+    const within24h = (Date.now() - readingDT.getTime()) <= 24 * 60 * 60 * 1000;
+
+    if (role === 'admin') {
+      // admins: unrestricted
+    } else if (role === 'supervisor') {
+      if (!within24h) return res.status(403).json({ error: 'Supervisors can only delete readings within 24 hours' });
+    } else {
+      // operator (and any other role): own entry within 24h
+      if (row.entered_by !== username || !within24h) {
         return res.status(403).json({ error: 'You can only delete your own readings within 24 hours' });
       }
     }
@@ -770,14 +777,24 @@ app.delete('/api/history/:type/:id', requireAuth, async (req, res) => {
 
   try {
     if (role === 'admin') {
-      // Admins can delete any reading
+      // Admins: unrestricted
       const { rows } = await pool.query(
         `DELETE FROM ${map.table} WHERE ${map.pk} = $1 RETURNING ${map.pk}`,
         [id]
       );
       if (!rows.length) return res.status(404).json({ error: 'Reading not found' });
+    } else if (role === 'supervisor') {
+      // Supervisors: any reading within 24 hours
+      const { rows } = await pool.query(
+        `DELETE FROM ${map.table}
+         WHERE ${map.pk} = $1
+           AND (reading_date + COALESCE(reading_time, '00:00'::time)) >= NOW() - INTERVAL '24 hours'
+         RETURNING ${map.pk}`,
+        [id]
+      );
+      if (!rows.length) return res.status(403).json({ error: 'Supervisors can only delete readings within 24 hours' });
     } else {
-      // Everyone else: own entry only, within 24 hours
+      // Operators: own entry only, within 24 hours
       const { rows } = await pool.query(
         `DELETE FROM ${map.table}
          WHERE ${map.pk} = $1
