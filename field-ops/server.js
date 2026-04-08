@@ -429,12 +429,21 @@ async function deleteReading(req, res, table, idCol) {
     const row = rows[0];
     if (!row) return res.status(404).json({ error: 'Reading not found' });
 
-    if (req.user.role === 'operator') {
-      if (row.entered_by !== req.user.username || dateString(row.reading_date) !== todayString()) {
-        return res.status(403).json({ error: 'Operators can only delete their own readings from today' });
+    const role = req.user.role;
+    const username = req.user.username;
+    const readingDT = new Date(`${dateString(row.reading_date)}T${(row.reading_time || '00:00').slice(0,5)}`);
+    const within24h = (Date.now() - readingDT.getTime()) <= 24 * 60 * 60 * 1000;
+
+    if (role === 'admin') {
+      // admins: unrestricted
+    } else if (role === 'supervisor') {
+      if (!within24h) return res.status(403).json({ error: 'Supervisors can only delete readings within 24 hours' });
+    } else {
+      // operator (and any other role): own entry within 24h
+      if (row.entered_by !== username || !within24h) {
+        return res.status(403).json({ error: 'You can only delete your own readings within 24 hours' });
       }
     }
-    // supervisors and admins can delete any
 
     await pool.query(`DELETE FROM ${table} WHERE ${idCol} = $1`, [id]);
     res.json({ ok: true });
@@ -767,8 +776,25 @@ app.delete('/api/history/:type/:id', requireAuth, async (req, res) => {
   const username = req.user.username;
 
   try {
-    if (role === 'operator') {
-      // Operators may only delete their own readings submitted within the last 24 hours
+    if (role === 'admin') {
+      // Admins: unrestricted
+      const { rows } = await pool.query(
+        `DELETE FROM ${map.table} WHERE ${map.pk} = $1 RETURNING ${map.pk}`,
+        [id]
+      );
+      if (!rows.length) return res.status(404).json({ error: 'Reading not found' });
+    } else if (role === 'supervisor') {
+      // Supervisors: any reading within 24 hours
+      const { rows } = await pool.query(
+        `DELETE FROM ${map.table}
+         WHERE ${map.pk} = $1
+           AND (reading_date + COALESCE(reading_time, '00:00'::time)) >= NOW() - INTERVAL '24 hours'
+         RETURNING ${map.pk}`,
+        [id]
+      );
+      if (!rows.length) return res.status(403).json({ error: 'Supervisors can only delete readings within 24 hours' });
+    } else {
+      // Operators: own entry only, within 24 hours
       const { rows } = await pool.query(
         `DELETE FROM ${map.table}
          WHERE ${map.pk} = $1
@@ -777,15 +803,7 @@ app.delete('/api/history/:type/:id', requireAuth, async (req, res) => {
          RETURNING ${map.pk}`,
         [id, username]
       );
-      if (!rows.length) return res.status(403).json({ error: 'Not authorized or outside 24-hour window' });
-    } else if (role === 'supervisor' || role === 'admin') {
-      const { rows } = await pool.query(
-        `DELETE FROM ${map.table} WHERE ${map.pk} = $1 RETURNING ${map.pk}`,
-        [id]
-      );
-      if (!rows.length) return res.status(404).json({ error: 'Reading not found' });
-    } else {
-      return res.status(403).json({ error: 'Insufficient permissions' });
+      if (!rows.length) return res.status(403).json({ error: 'You can only delete your own readings within 24 hours' });
     }
     res.json({ ok: true });
   } catch (err) {
@@ -1823,6 +1841,15 @@ app.get('/api/reports/maintenance-issues', requireAuth, requireRole('supervisor'
 
 // PM Grid report — latest per-plant siphon breaker + air compressor records + positions
 app.get('/api/reports/pm-grid', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+  const { year, month } = req.query;
+  let dateClause = '';
+  const params = [];
+  if (year && month) {
+    const from = `${parseInt(year)}-${String(parseInt(month)).padStart(2,'0')}-01`;
+    const d = new Date(parseInt(year), parseInt(month), 0); // last day of month
+    const to = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    dateClause = `AND p.completed_date >= '${from}' AND p.completed_date <= '${to}'`;
+  }
   try {
     const [sbRes, acRes, posRes] = await Promise.all([
       pool.query(`
@@ -1831,7 +1858,7 @@ app.get('/api/reports/pm-grid', requireAuth, requireRole('supervisor', 'admin'),
           u.full_name AS applied_by, p.checklist
         FROM pm_records p
         LEFT JOIN users u ON u.user_id = p.completed_by
-        WHERE p.pm_type = 'siphon_breaker' AND p.building IS NOT NULL
+        WHERE p.pm_type = 'siphon_breaker' AND p.building IS NOT NULL ${dateClause}
         ORDER BY p.building, p.completed_date DESC, p.completed_time DESC
       `),
       pool.query(`
@@ -1840,7 +1867,7 @@ app.get('/api/reports/pm-grid', requireAuth, requireRole('supervisor', 'admin'),
           u.full_name AS applied_by, p.checklist
         FROM pm_records p
         LEFT JOIN users u ON u.user_id = p.completed_by
-        WHERE p.pm_type = 'air_compressor' AND p.building IS NOT NULL
+        WHERE p.pm_type = 'air_compressor' AND p.building IS NOT NULL ${dateClause}
         ORDER BY p.building, p.completed_date DESC, p.completed_time DESC
       `),
       pool.query(`
@@ -2013,18 +2040,21 @@ app.get('/api/pm-records/last-completed', requireAuth, async (req, res) => {
 
 // List records for a PM type
 app.get('/api/pm-records', requireAuth, async (req, res) => {
-  const { type } = req.query;
+  const { type, building } = req.query;
   if (!type) return res.status(400).json({ error: 'type required' });
   try {
+    const params = [type];
+    const buildingClause = building ? ` AND LOWER(p.building) = LOWER($2)` : '';
+    if (building) params.push(building);
     const { rows } = await pool.query(
       `SELECT p.pm_id, p.pm_type, p.building, p.completed_date, p.completed_time,
               u.full_name AS completed_by_name, p.checklist, p.notes, p.created_at
        FROM pm_records p
        LEFT JOIN users u ON u.user_id = p.completed_by
-       WHERE p.pm_type = $1
+       WHERE p.pm_type = $1${buildingClause}
        ORDER BY p.completed_date DESC, p.completed_time DESC
        LIMIT 100`,
-      [type]
+      params
     );
     res.json(rows);
   } catch (err) {
