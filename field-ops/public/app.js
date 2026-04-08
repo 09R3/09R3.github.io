@@ -5461,7 +5461,7 @@ function createDWRItem(w, dateInput, timeInput) {
 
   const prevDTW = w.last_dtw != null ? `${Number(w.last_dtw).toFixed(2)} ft`
                 : (w.last_no_measurement?.length ? 'NM' : null);
-  const wellLabel = w.state_well_number ? `${w.state_well_number} | ${w.common_name}` : w.common_name;
+  const wellLabel = w.state_well_number || w.common_name || 'Well';
   const hasGPS = w.gps_latitude && w.gps_longitude;
 
   div.innerHTML = `
@@ -5534,7 +5534,7 @@ function createDWRItem(w, dateInput, timeInput) {
   // Map button (individual well)
   div.querySelector('.dwr-map-item-btn')?.addEventListener('click', e => {
     e.stopPropagation();
-    const url = `https://maps.apple.com/?ll=${w.gps_latitude},${w.gps_longitude}&q=${encodeURIComponent(w.common_name)}`;
+    const url = `https://maps.apple.com/?ll=${w.gps_latitude},${w.gps_longitude}&q=${encodeURIComponent(wellLabel)}`;
     window.open(url, '_blank');
   });
 
