@@ -2899,7 +2899,9 @@ document.querySelectorAll('.settings-back-btn').forEach(btn => {
 
 el('settings-panel-tools').addEventListener('click', e => {
   const btn = e.target.closest('[data-tool]');
-  if (btn && btn.dataset.tool === 'exif') openExifTool();
+  if (!btn) return;
+  if (btn.dataset.tool === 'exif')   openExifTool();
+  if (btn.dataset.tool === 'upload') openUploadTool();
 });
 
 el('exif-back-btn').addEventListener('click', () => {
@@ -5631,6 +5633,231 @@ function createDWRItem(w, dateInput, timeInput) {
 
   return div;
 }
+
+// ── Upload Tool ───────────────────────────────────────────────────────────────
+(function () {
+  const CATEGORIES = ['pumps','wells','vehicles','electrical','structures','misc'];
+  let pendingFiles = [];     // File objects waiting to upload
+  let previewFile  = null;   // { url, name, isPdf }
+
+  function show(id)  { el(id).classList.remove('hidden'); }
+  function hide(id)  { el(id).classList.add('hidden'); }
+
+  /* ── Open / close ── */
+  window.openUploadTool = function () {
+    el('upload-tool-overlay').classList.remove('hidden');
+    switchTab('upload');
+  };
+
+  el('uptool-back-btn').addEventListener('click', () => {
+    el('upload-tool-overlay').classList.add('hidden');
+  });
+
+  /* ── Tabs ── */
+  function switchTab(name) {
+    document.querySelectorAll('.uptool-tab').forEach(t => {
+      t.classList.toggle('active', t.dataset.uptab === name);
+    });
+    el('uptool-tab-upload').classList.toggle('hidden', name !== 'upload');
+    el('uptool-tab-browse').classList.toggle('hidden', name !== 'browse');
+    if (name === 'browse') loadBrowse();
+  }
+
+  document.querySelectorAll('.uptool-tab').forEach(t => {
+    t.addEventListener('click', () => switchTab(t.dataset.uptab));
+  });
+
+  /* ── Upload tab: file selection ── */
+  const dropzone   = el('uptool-dropzone');
+  const fileInput  = el('uptool-file-input');
+
+  dropzone.addEventListener('dragover',  e => { e.preventDefault(); dropzone.classList.add('drag-over'); });
+  dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag-over'));
+  dropzone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropzone.classList.remove('drag-over');
+    addFiles([...e.dataTransfer.files]);
+  });
+
+  fileInput.addEventListener('change', () => {
+    addFiles([...fileInput.files]);
+    fileInput.value = '';
+  });
+
+  function addFiles(files) {
+    pendingFiles.push(...files);
+    renderQueue();
+  }
+
+  function renderQueue() {
+    const queue = el('uptool-queue');
+    const actions = el('uptool-actions');
+    hide('uptool-result');
+    if (!pendingFiles.length) {
+      queue.innerHTML = '';
+      hide('uptool-queue'); hide('uptool-actions'); return;
+    }
+    show('uptool-queue'); show('uptool-actions');
+    queue.innerHTML = pendingFiles.map((f, i) => {
+      const isPdf = f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf');
+      const thumb = isPdf
+        ? `<span class="uptool-qi-pdf">&#128196;</span>`
+        : `<img src="${URL.createObjectURL(f)}" alt="">`;
+      return `<div class="uptool-queue-item">${thumb}<div class="uptool-qi-name">${f.name}</div></div>`;
+    }).join('');
+  }
+
+  el('uptool-clear-btn').addEventListener('click', () => {
+    pendingFiles = [];
+    renderQueue();
+  });
+
+  /* ── Upload tab: submit ── */
+  el('uptool-upload-btn').addEventListener('click', async () => {
+    if (!pendingFiles.length) return;
+    const category = el('uptool-category').value;
+    const fd = new FormData();
+    pendingFiles.forEach(f => fd.append('files', f));
+
+    hide('uptool-actions'); show('uptool-progress-wrap');
+    const bar = el('uptool-progress-bar');
+    bar.style.width = '0%';
+
+    try {
+      // Animate bar while uploading (fake progress; real progress via XHR if desired)
+      let fakeT = 0;
+      const fakeInterval = setInterval(() => {
+        fakeT = Math.min(fakeT + 15, 85);
+        bar.style.width = fakeT + '%';
+      }, 150);
+
+      const res = await fetch(`/api/tools/upload?category=${encodeURIComponent(category)}`, {
+        method: 'POST',
+        body: fd
+        // no Content-Type header — browser sets multipart boundary automatically
+      });
+      clearInterval(fakeInterval);
+      bar.style.width = '100%';
+
+      if (!res.ok) throw new Error(await res.text());
+      const saved = await res.json();
+
+      hide('uptool-progress-wrap');
+      const resultEl = el('uptool-result');
+      resultEl.innerHTML = `<span style="color:var(--green-light,#4caf50)">&#10003; Uploaded ${saved.length} file${saved.length !== 1 ? 's' : ''}</span>`;
+      show('uptool-result');
+      pendingFiles = [];
+      renderQueue();
+    } catch (err) {
+      hide('uptool-progress-wrap');
+      const resultEl = el('uptool-result');
+      resultEl.innerHTML = `<span style="color:var(--red-light,#f44336)">Upload failed: ${err.message}</span>`;
+      show('uptool-result');
+      show('uptool-actions');
+    }
+  });
+
+  /* ── Browse tab ── */
+  async function loadBrowse() {
+    const cat = el('uptool-browse-cat').value;
+    const grid = el('uptool-file-grid');
+    grid.innerHTML = '<div class="uptool-empty">Loading…</div>';
+    try {
+      const url = '/api/tools/files' + (cat ? `?category=${encodeURIComponent(cat)}` : '');
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(await res.text());
+      const files = await res.json();
+      renderGrid(files);
+    } catch (err) {
+      grid.innerHTML = `<div class="uptool-empty" style="color:var(--red-light)">Error: ${err.message}</div>`;
+    }
+  }
+
+  function renderGrid(files) {
+    const grid = el('uptool-file-grid');
+    if (!files.length) {
+      grid.innerHTML = '<div class="uptool-empty">No files found</div>';
+      return;
+    }
+    grid.innerHTML = files.map(f => {
+      const isPdf = f.name.toLowerCase().endsWith('.pdf');
+      const thumb = isPdf
+        ? `<div class="uptool-fc-thumb"><span class="uptool-pdf-icon">&#128196;</span></div>`
+        : `<div class="uptool-fc-thumb"><img src="/uploads/${encodePathSegments(f.relPath)}" loading="lazy" alt=""></div>`;
+      return `<div class="uptool-file-card" data-rel="${escapeAttr(f.relPath)}" data-name="${escapeAttr(f.name)}" data-pdf="${isPdf}">
+        ${thumb}
+        <div class="uptool-fc-name">${escapeHtml(f.name)}</div>
+      </div>`;
+    }).join('');
+
+    grid.querySelectorAll('.uptool-file-card').forEach(card => {
+      card.addEventListener('click', () => openPreview(card.dataset.rel, card.dataset.name, card.dataset.pdf === 'true'));
+    });
+  }
+
+  function encodePathSegments(relPath) {
+    return relPath.split('/').map(encodeURIComponent).join('/');
+  }
+  function escapeAttr(s) { return s.replace(/"/g,'&quot;'); }
+  function escapeHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+  el('uptool-browse-cat').addEventListener('change', loadBrowse);
+  el('uptool-refresh-btn').addEventListener('click', loadBrowse);
+
+  /* ── Preview modal ── */
+  function openPreview(relPath, name, isPdf) {
+    previewFile = { relPath, name, isPdf };
+    el('uptool-preview-name').textContent = name;
+    const body = el('uptool-preview-body');
+    const url = `/uploads/${encodePathSegments(relPath)}`;
+    if (isPdf) {
+      body.innerHTML = `<div class="uptool-pdf-msg">
+        <p>&#128196; ${escapeHtml(name)}</p>
+        <p style="margin-top:8px;font-size:0.85rem;color:var(--text-dim)">Click "Save / Download" to open the PDF.</p>
+      </div>`;
+    } else {
+      body.innerHTML = `<img src="${url}" alt="${escapeAttr(name)}">`;
+    }
+    el('uptool-preview-modal').classList.remove('hidden');
+  }
+
+  el('uptool-preview-close').addEventListener('click', () => {
+    el('uptool-preview-modal').classList.add('hidden');
+    previewFile = null;
+  });
+
+  el('uptool-preview-save').addEventListener('click', () => {
+    if (!previewFile) return;
+    const url = `/uploads/${encodePathSegments(previewFile.relPath)}`;
+    if (previewFile.isPdf) {
+      window.open(url, '_blank');
+    } else {
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = previewFile.name;
+      a.click();
+    }
+  });
+
+  el('uptool-preview-delete').addEventListener('click', async () => {
+    if (!previewFile) return;
+    if (!confirm(`Delete "${previewFile.name}"?`)) return;
+    try {
+      const res = await fetch('/api/tools/file', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ relPath: previewFile.relPath })
+      });
+      if (!res.ok) throw new Error(await res.text());
+      el('uptool-preview-modal').classList.add('hidden');
+      previewFile = null;
+      showToast('File deleted', 'success');
+      loadBrowse();
+    } catch (err) {
+      showToast('Delete failed: ' + err.message, 'error');
+    }
+  });
+})();
 
 /* ── Init ────────────────────────────────────────────────────────────────── */
 checkDBStatus();

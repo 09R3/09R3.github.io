@@ -77,7 +77,7 @@
         <div id="login-error" class="error-msg hidden"></div>
         <button type="submit" class="btn btn-primary btn-full">Sign In</button>
       </form>
-      <div class="login-version">v 1.20</div>
+      <div class="login-version">v 1.21</div>
     </div>
   </div>
 </div>
@@ -1119,7 +1119,7 @@
       <button class="settings-back-btn">‹ Settings</button>
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 1.20</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 1.21</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>
@@ -1133,6 +1133,9 @@
         <div class="settings-card">
           <button class="settings-menu-row" data-tool="exif">
             <span>EXIF Extractor</span><span class="settings-chevron">›</span>
+          </button>
+          <button class="settings-menu-row" data-tool="upload">
+            <span>Photo / PDF Upload</span><span class="settings-chevron">›</span>
           </button>
         </div>
       </div>
@@ -1164,6 +1167,83 @@
         <div id="exif-chips" class="exif-chips hidden"></div>
         <div id="exif-table-wrap" class="exif-table-wrap hidden">
           <table id="exif-table"></table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Upload Tool overlay (full-screen) -->
+    <div id="upload-tool-overlay" class="hidden">
+      <div class="uptool-nav">
+        <button class="uptool-back-btn" id="uptool-back-btn">&#8249; Tools</button>
+        <span class="uptool-nav-title">Photo / PDF Upload</span>
+        <div class="uptool-tabs">
+          <button class="uptool-tab active" data-uptab="upload">Upload</button>
+          <button class="uptool-tab" data-uptab="browse">Browse</button>
+        </div>
+      </div>
+      <div class="uptool-body">
+
+        <!-- Upload tab -->
+        <div id="uptool-tab-upload" class="uptool-pane">
+          <div class="uptool-section">
+            <label class="uptool-label">Category</label>
+            <select id="uptool-category" class="ctrl-select">
+              <option value="pumps">Pumps</option>
+              <option value="wells">Wells</option>
+              <option value="vehicles">Vehicles</option>
+              <option value="electrical">Electrical</option>
+              <option value="structures">Structures</option>
+              <option value="misc">Misc</option>
+            </select>
+          </div>
+          <div id="uptool-dropzone" class="uptool-dropzone">
+            <input type="file" id="uptool-file-input" accept="image/*,.pdf" multiple>
+            <div class="uptool-drop-icon">&#128247;</div>
+            <div class="uptool-drop-label">Tap to select photos or PDFs</div>
+            <div class="uptool-drop-sub">JPG / PNG / HEIC / PDF &middot; multiple OK</div>
+          </div>
+          <div id="uptool-queue" class="uptool-queue hidden"></div>
+          <div class="uptool-actions hidden" id="uptool-actions">
+            <button class="btn btn-secondary btn-sm" id="uptool-clear-btn">Clear</button>
+            <button class="btn btn-primary" id="uptool-upload-btn">Upload</button>
+          </div>
+          <div id="uptool-progress-wrap" class="uptool-progress-wrap hidden">
+            <div id="uptool-progress-bar" class="uptool-progress-bar"></div>
+          </div>
+          <div id="uptool-result" class="uptool-result hidden"></div>
+        </div>
+
+        <!-- Browse tab -->
+        <div id="uptool-tab-browse" class="uptool-pane hidden">
+          <div class="uptool-browse-toolbar">
+            <select id="uptool-browse-cat" class="ctrl-select uptool-browse-cat-sel">
+              <option value="">All Categories</option>
+              <option value="pumps">Pumps</option>
+              <option value="wells">Wells</option>
+              <option value="vehicles">Vehicles</option>
+              <option value="electrical">Electrical</option>
+              <option value="structures">Structures</option>
+              <option value="misc">Misc</option>
+            </select>
+            <button class="btn btn-secondary btn-sm" id="uptool-refresh-btn">Refresh</button>
+          </div>
+          <div id="uptool-file-grid" class="uptool-file-grid"></div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Upload Tool preview modal -->
+    <div id="uptool-preview-modal" class="modal-overlay hidden">
+      <div class="modal-card uptool-preview-card">
+        <div class="modal-header">
+          <h2 id="uptool-preview-name" class="uptool-preview-name">Preview</h2>
+          <button class="modal-close" id="uptool-preview-close">&times;</button>
+        </div>
+        <div class="modal-body uptool-preview-body" id="uptool-preview-body"></div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" id="uptool-preview-delete" style="margin-right:auto">Delete</button>
+          <button class="btn btn-primary" id="uptool-preview-save">Save / Download</button>
         </div>
       </div>
     </div>

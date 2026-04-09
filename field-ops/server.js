@@ -5,12 +5,104 @@ const bcrypt       = require('bcryptjs');
 const crypto       = require('crypto');
 const cookieParser = require('cookie-parser');
 const path         = require('path');
+const fs           = require('fs');
+const multer       = require('multer');
 const XLSX         = require('xlsx');
 
 const app = express();
 app.use(express.json());
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
+
+// ── File Uploads ──────────────────────────────────────────────────────────────
+const UPLOADS_ROOT = process.env.UPLOADS_PATH || '/app/uploads';
+fs.mkdirSync(UPLOADS_ROOT, { recursive: true });
+
+// /uploads static route registered after sessions Map is declared (see below)
+
+const UPLOAD_CATEGORIES = ['general','pumps','motors','wells','vehicles',
+                           'siphon-breakers','air-compressors','canal'];
+
+const multerStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const cat = UPLOAD_CATEGORIES.includes(req.query.category)
+      ? req.query.category : 'general';
+    const now  = new Date();
+    const dir  = path.join(UPLOADS_ROOT, cat,
+                           String(now.getFullYear()),
+                           String(now.getMonth() + 1).padStart(2, '0'));
+    fs.mkdirSync(dir, { recursive: true });
+    cb(null, dir);
+  },
+  filename: (req, file, cb) => {
+    const ext  = path.extname(file.originalname).toLowerCase();
+    const base = path.basename(file.originalname, ext)
+                     .replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 60);
+    cb(null, `${Date.now()}_${base}${ext}`);
+  },
+});
+const upload = multer({
+  storage: multerStorage,
+  limits: { fileSize: 50 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const ok = /^image\/(jpeg|jpg|png|heic|heif|webp)|application\/pdf$/.test(file.mimetype);
+    cb(null, ok);
+  },
+});
+
+app.post('/api/tools/upload', requireAuth, requireRole('supervisor', 'admin'),
+  upload.array('files', 20), (req, res) => {
+    if (!req.files?.length) return res.status(400).json({ error: 'No valid files' });
+    const cat = UPLOAD_CATEGORIES.includes(req.query.category)
+      ? req.query.category : 'general';
+    res.json(req.files.map(f => ({
+      name:     f.originalname,
+      filename: f.filename,
+      url:      '/uploads/' + path.relative(UPLOADS_ROOT, f.path).replace(/\\/g, '/'),
+      size:     f.size,
+      mime:     f.mimetype,
+      category: cat,
+    })));
+  }
+);
+
+app.get('/api/tools/files', requireAuth, requireRole('supervisor', 'admin'), (req, res) => {
+  const cat     = req.query.category;
+  const scanDir = cat && UPLOAD_CATEGORIES.includes(cat)
+    ? path.join(UPLOADS_ROOT, cat) : UPLOADS_ROOT;
+
+  if (!fs.existsSync(scanDir)) return res.json([]);
+  const results = [];
+  (function scan(dir) {
+    fs.readdirSync(dir, { withFileTypes: true }).forEach(e => {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) { scan(full); return; }
+      const rel   = path.relative(UPLOADS_ROOT, full).replace(/\\/g, '/');
+      const parts = rel.split('/');
+      results.push({
+        url:      '/uploads/' + rel,
+        name:     e.name,
+        category: parts[0] || 'general',
+        year:     parts[1] || '',
+        month:    parts[2] || '',
+        size:     fs.statSync(full).size,
+        mtime:    fs.statSync(full).mtime,
+      });
+    });
+  })(scanDir);
+  results.sort((a, b) => new Date(b.mtime) - new Date(a.mtime));
+  res.json(results);
+});
+
+app.delete('/api/tools/file', requireAuth, requireRole('supervisor', 'admin'), (req, res) => {
+  const { filePath } = req.body;
+  if (!filePath) return res.status(400).json({ error: 'filePath required' });
+  const abs = path.resolve(UPLOADS_ROOT, filePath.replace(/^\/uploads\//, ''));
+  if (!abs.startsWith(path.resolve(UPLOADS_ROOT)))
+    return res.status(403).json({ error: 'Invalid path' });
+  try { fs.unlinkSync(abs); res.json({ ok: true }); }
+  catch (err) { res.status(500).json({ error: err.message }); }
+});
 
 // ── Database ──────────────────────────────────────────────────────────────────
 const pool = new Pool({
@@ -43,6 +135,13 @@ pool.query(`
 // ── Auth / Sessions ───────────────────────────────────────────────────────────
 const SESSION_TTL = 8 * 60 * 60 * 1000; // 8 hours
 const sessions = new Map();
+
+// Serve uploads behind session auth now that sessions Map exists
+app.use('/uploads', (req, res, next) => {
+  const session = sessions.get(req.cookies?.session_id);
+  if (!session || Date.now() > session.expires) return res.status(401).send('Unauthorized');
+  next();
+}, express.static(UPLOADS_ROOT));
 
 function createSession(user) {
   const token = crypto.randomBytes(32).toString('hex');
