@@ -63,10 +63,11 @@ equipment_issues          issue_id(PK), equipment_type, equipment_id, equipment_
 equipment_swaps           swap_id(PK), category, swap_date, location, item_removed_id, item_installed_id, removed_description, installed_description, performed_by, notes, entered_by, created_at
 maintenance_buildings     record_id(PK), building_id(→buildings), work_date, work_type, record_type, description, performed_by, is_contractor, entered_by, severity, status, cost, po_number, resolution_notes, next_service_date, notes
 maintenance_equipment     maintenance_id(PK), equipment_type, equipment_id, work_date, work_type, performed_by, is_contractor, entered_by, location_at_time, description, parts_used, cost, po_number, hours_at_service, next_service_date, notes
-maintenance_vehicles      maintenance_id(PK), vehicle_id(→vehicles), work_date, work_type, performed_by, is_contractor, entered_by, description, odometer_at_service, engine_hours_at_service, parts_used, cost, po_number, next_service_date, next_service_miles, notes, next_service_hours
+maintenance_vehicles      maintenance_id(PK), vehicle_id(→vehicles), work_date, work_type, performed_by, is_contractor, entered_by, description, odometer_at_service, engine_hours_at_service, parts_used, cost, po_number, next_service_date, next_service_miles, notes, next_service_hours, status
 motors                    motor_id(PK), serial_number, manufacturer, model_number, rated_hp, frame_type, oil_capacity_upper_qt, oil_capacity_lower_qt, install_date_current, current_location, status, notes
 pesticide_usage           usage_id(PK), pesticide_id(→pesticides), used_date, used_time, applied_by(→users), quantity, location_description, notes, created_at
 pesticides                pesticide_id(PK), name, epa_reg_number, unit_of_measure, active, created_at
+piezometers               piezometer_id(PK), piezometer_name, pool, sort_order, max_depth, status, gps_latitude, gps_longitude, notes, original_name
 pge_meters                pge_meter_id(PK), building_id(→buildings), meter_name, meter_number, account_number, utility_provider, notes
 pm_records                pm_id(PK), pm_type, building, completed_date, completed_time, completed_by(→users), checklist(jsonb), notes, created_at
 power_monitors            monitor_id(PK), building_id(→buildings), monitor_number, manufacturer, ip_address, notes
