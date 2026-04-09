@@ -2598,9 +2598,31 @@ el('maint-attach-photo-input').addEventListener('change', () => {
 });
 
 async function uploadMaintAttachments(maintenanceId, tableName) {
+  // Build naming context from the form at save time
+  const vehicleOpt = el('maint-vehicle-select').options[el('maint-vehicle-select').selectedIndex];
+  const vehicleNum = (vehicleOpt?.text || '').split('—')[0].trim()
+    .replace(/[^a-zA-Z0-9-]/g, '_').replace(/_+/g, '_').replace(/^_|_$/, '')
+    || 'vehicle';
+  const [y, m, d] = (el('maint-date').value || todayISO()).split('-');
+  const dateStr = `${m}${d}${y}`;                   // MMDDYYYY
+  const workType = el('maint-work-type').value || 'service';
+
+  let invoiceIdx = 0, photoIdx = 0;
   for (const att of maintPendingAttachments) {
+    const origExt = att.file.name.includes('.') ? att.file.name.split('.').pop().toLowerCase() : 'jpg';
+    let newName;
+    if (att.fileType === 'invoice') {
+      invoiceIdx++;
+      const sfx = invoiceIdx > 1 ? `_${invoiceIdx}` : '';
+      newName = `invoice_${vehicleNum}_${dateStr}${sfx}.pdf`;
+    } else {
+      photoIdx++;
+      const sfx = photoIdx > 1 ? `_${photoIdx}` : '';
+      newName = `${vehicleNum}_${workType}_${dateStr}${sfx}.${origExt}`;
+    }
+    const renamed = new File([att.file], newName, { type: att.file.type });
     const fd = new FormData();
-    fd.append('file', att.file);
+    fd.append('file', renamed);
     try {
       await fetch(
         `/api/maintenance/attachment?table_name=${tableName}&record_id=${maintenanceId}&file_type=${att.fileType}&category=vehicles`,
