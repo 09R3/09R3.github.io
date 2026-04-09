@@ -18,6 +18,7 @@ CONTAINER_NAME="field-ops-beta"
 IMAGE_NAME="field-ops-beta"
 HOST_PORT=3066          # port exposed on Unraid (production uses 3067)
 CONTAINER_PORT=4000     # port inside the container (matches PORT in .env)
+UPLOADS_SHARE="/mnt/user/field-ops-uploads"     # Unraid share for photo/PDF uploads
 # ─────────────────────────────────────────────────────────────────────────────
 
 ENV_FILE="$APPDATA_DIR/.env"
@@ -115,12 +116,14 @@ echo "      Done."
 
 # ── 7. Run the container ──────────────────────────────────────────────────────
 echo "[5/5] Starting container..."
+mkdir -p "$UPLOADS_SHARE"
 docker run \
     --detach \
     --name "$CONTAINER_NAME" \
     --restart unless-stopped \
     --publish "${HOST_PORT}:${CONTAINER_PORT}" \
     --env-file "$ENV_FILE" \
+    --volume "${UPLOADS_SHARE}:/app/uploads" \
     "$IMAGE_NAME" \
     >/dev/null
 
