@@ -857,7 +857,7 @@ app.get('/api/reports/well-readings', requireDB, async (req, res) => {
     const result = await pool.query(
       `SELECT r.reading_date,
               r.reading_time,
-              w.state_well_name,
+              w.state_well_number,
               w.common_name,
               r.hour_reading,
               r.flow_rate,

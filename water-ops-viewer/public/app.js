@@ -950,8 +950,8 @@ const rwrGrid      = $('rwr-grid');
 const rwrStatus    = $('rwr-status');
 let rwrData = [];
 
-const RWR_COLS = ['reading_date', 'reading_time', 'state_well_name', 'common_name', 'hour_reading', 'flow_rate', 'totalizer', 'pge_kwh'];
-const RWR_HDRS = ['Date', 'Time', 'State Well Name', 'Common Name', 'Hour Reading', 'Flow Rate', 'Totalizer', 'PG&E kWh'];
+const RWR_COLS = ['reading_date', 'reading_time', 'state_well_number', 'common_name', 'hour_reading', 'flow_rate', 'totalizer', 'pge_kwh'];
+const RWR_HDRS = ['Date', 'Time', 'State Well #', 'Common Name', 'Hour Reading', 'Flow Rate', 'Totalizer', 'PG&E kWh'];
 
 $('report-well-readings').addEventListener('click', async () => {
   showReport('well-readings');
