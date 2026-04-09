@@ -2197,8 +2197,8 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
   display: inline-block; font-size: 0.72rem; font-weight: 600;
   padding: 2px 8px; border-radius: 20px; white-space: nowrap;
 }
-.maint-status-open        { background: rgba(255,152,0,0.18);  color: #ff9800; }
-.maint-status-in-progress { background: rgba(33,150,243,0.18); color: #2196f3; }
+.maint-status-open        { background: rgba(244,67,54,0.15);  color: #f44336; }
+.maint-status-in-progress { background: rgba(255,152,0,0.18);  color: #ff9800; }
 .maint-status-resolved    { background: rgba(76,175,80,0.18);  color: #4caf50; }
 .maint-hist-header { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
 .maint-hist-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 4px; }
