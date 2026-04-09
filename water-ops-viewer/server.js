@@ -860,7 +860,7 @@ app.get('/api/reports/well-readings', requireDB, async (req, res) => {
               w.state_well_number,
               w.common_name,
               r.hour_reading,
-              r.flow_rate,
+              r.flow_cfs,
               r.totalizer,
               r.pge_kwh
        FROM readings_well r
