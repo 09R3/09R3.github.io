@@ -2500,6 +2500,118 @@ el('swap-save-btn').addEventListener('click', async () => {
   }
 });
 
+/* ── Maintenance Attachments ─────────────────────────────────────────────── */
+let maintPendingAttachments = []; // { file, fileType }
+
+function renderMaintAttachQueue() {
+  const queue = el('maint-attach-queue');
+  if (!maintPendingAttachments.length) { queue.innerHTML = ''; queue.classList.add('hidden'); return; }
+  queue.classList.remove('hidden');
+  queue.innerHTML = maintPendingAttachments.map((a, i) => {
+    const isPdf = a.file.type === 'application/pdf' || a.file.name.endsWith('.pdf');
+    const badge = a.fileType === 'invoice' ? 'INV' : 'PIC';
+    const thumb = isPdf
+      ? `<span class="maint-aq-icon">&#128196;</span>`
+      : `<img src="${URL.createObjectURL(a.file)}" alt="">`;
+    return `<div class="maint-aq-item">
+      ${thumb}
+      <span class="maint-aq-badge">${badge}</span>
+      <button class="maint-aq-remove" data-idx="${i}">&times;</button>
+      <div class="maint-aq-name">${a.file.name}</div>
+    </div>`;
+  }).join('');
+  queue.querySelectorAll('.maint-aq-remove').forEach(btn => {
+    btn.addEventListener('click', () => {
+      maintPendingAttachments.splice(parseInt(btn.dataset.idx), 1);
+      renderMaintAttachQueue();
+    });
+  });
+}
+
+async function loadJsPDF() {
+  if (window.jspdf) return;
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+    s.onload = resolve; s.onerror = reject;
+    document.head.appendChild(s);
+  });
+}
+
+async function imageToPdf(file) {
+  await loadJsPDF();
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      const img = new Image();
+      img.onload = () => {
+        let w = img.width, h = img.height;
+        const maxPx = 2480;
+        if (w > maxPx || h > maxPx) {
+          const scale = maxPx / Math.max(w, h);
+          w = Math.round(w * scale); h = Math.round(h * scale);
+        }
+        const { jsPDF } = window.jspdf;
+        const pdf = new jsPDF({ orientation: w > h ? 'l' : 'p', unit: 'px', format: [w, h], hotfixes: ['px_scaling'] });
+        pdf.addImage(e.target.result, 'JPEG', 0, 0, w, h, undefined, 'FAST');
+        const name = file.name.replace(/\.[^.]+$/, '.pdf');
+        resolve(new File([pdf.output('blob')], name, { type: 'application/pdf' }));
+      };
+      img.onerror = reject;
+      img.src = e.target.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+el('maint-attach-invoice-btn').addEventListener('click', () => el('maint-attach-invoice-input').click());
+el('maint-attach-photo-btn').addEventListener('click',   () => el('maint-attach-photo-input').click());
+
+el('maint-attach-invoice-input').addEventListener('change', async () => {
+  const files = [...el('maint-attach-invoice-input').files];
+  el('maint-attach-invoice-input').value = '';
+  const converting = el('maint-attach-converting');
+  for (const f of files) {
+    if (f.type.startsWith('image/')) {
+      converting.classList.remove('hidden');
+      try {
+        const pdf = await imageToPdf(f);
+        maintPendingAttachments.push({ file: pdf, fileType: 'invoice' });
+      } catch {
+        maintPendingAttachments.push({ file: f, fileType: 'invoice' });
+      }
+      converting.classList.add('hidden');
+    } else {
+      maintPendingAttachments.push({ file: f, fileType: 'invoice' });
+    }
+  }
+  renderMaintAttachQueue();
+});
+
+el('maint-attach-photo-input').addEventListener('change', () => {
+  [...el('maint-attach-photo-input').files].forEach(f =>
+    maintPendingAttachments.push({ file: f, fileType: 'photo' })
+  );
+  el('maint-attach-photo-input').value = '';
+  renderMaintAttachQueue();
+});
+
+async function uploadMaintAttachments(maintenanceId, tableName) {
+  for (const att of maintPendingAttachments) {
+    const fd = new FormData();
+    fd.append('file', att.file);
+    try {
+      await fetch(
+        `/api/maintenance/attachment?table_name=${tableName}&record_id=${maintenanceId}&file_type=${att.fileType}&category=vehicles`,
+        { method: 'POST', body: fd }
+      );
+    } catch { /* non-fatal — record was saved, file upload failed */ }
+  }
+  maintPendingAttachments = [];
+  renderMaintAttachQueue();
+}
+
 el('maint-save-btn').addEventListener('click', async () => {
   clearError('maint-error');
   const common = {
@@ -2535,7 +2647,11 @@ el('maint-save-btn').addEventListener('click', async () => {
         engine_hours_at_service:  el('maint-vehicle-hours').value || null,
         next_service_miles:       el('maint-vehicle-next-miles').value || null,
         next_service_hours:       el('maint-vehicle-next-hours').value || null,
+        status:                   el('maint-vehicle-status').value,
       }, 'Maintenance — Vehicle');
+      if (r.maintenance_id && maintPendingAttachments.length) {
+        await uploadMaintAttachments(r.maintenance_id, 'maintenance_vehicles');
+      }
     } else {
       const buildingId = el('maint-building-select').value;
       if (!buildingId) return showError('maint-error', 'Please select a building');
@@ -3484,6 +3600,7 @@ async function openMaintHistoryModal(type, id, label, equip_type) {
       return;
     }
 
+    const statusLabel = { open: 'Open', 'in-progress': 'In Progress', resolved: 'Resolved' };
     body.innerHTML = rows.map(r => {
       const details = [];
       if (r.odometer_at_service) details.push(`${Number(r.odometer_at_service).toLocaleString()} mi`);
@@ -3493,18 +3610,70 @@ async function openMaintHistoryModal(type, id, label, equip_type) {
       if (r.parts_used) details.push(`Parts: ${r.parts_used}`);
       if (r.next_service_miles) details.push(`Next svc: ${Number(r.next_service_miles).toLocaleString()} mi`);
       if (r.next_service_hours) details.push(`Next svc: ${r.next_service_hours} hrs`);
+      const statusBadge = r.status
+        ? `<span class="maint-status-badge maint-status-${r.status}">${statusLabel[r.status] || r.status}</span>` : '';
+      const attachBtn = Number(r.attachment_count) > 0
+        ? `<button class="btn btn-secondary btn-xs maint-hist-attach-btn" data-id="${r.maintenance_id}">&#128206; ${r.attachment_count} file${r.attachment_count > 1 ? 's' : ''}</button>` : '';
       return `
         <div class="maint-hist-row">
           <div class="maint-hist-header">
             <span class="maint-hist-date">${String(r.work_date).slice(0,10)}</span>
             <span class="maint-hist-type">${r.work_type || ''}${r.record_type ? ` · ${r.record_type}` : ''}${r.is_contractor ? ' · Contractor' : ''}</span>
+            ${statusBadge}
           </div>
           ${r.description ? `<div class="maint-hist-desc">${r.description}</div>` : ''}
           ${details.length ? `<div class="maint-hist-details">${details.join(' · ')}</div>` : ''}
           ${r.notes ? `<div class="maint-hist-notes">${r.notes}</div>` : ''}
-          <div class="maint-hist-by">By: ${r.performed_by || r.entered_by || '—'}</div>
+          <div class="maint-hist-footer">
+            <span class="maint-hist-by">By: ${r.performed_by || r.entered_by || '—'}</span>
+            ${attachBtn}
+          </div>
+          ${r.maintenance_id ? `<div class="maint-hist-attach-area hidden" data-id="${r.maintenance_id}"></div>` : ''}
         </div>`;
     }).join('');
+
+    // Wire attachment expand buttons
+    body.querySelectorAll('.maint-hist-attach-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.dataset.id;
+        const area = body.querySelector(`.maint-hist-attach-area[data-id="${id}"]`);
+        if (!area) return;
+        if (!area.classList.contains('hidden')) { area.classList.add('hidden'); return; }
+        area.classList.remove('hidden');
+        if (area.dataset.loaded) return;
+        area.innerHTML = '<div class="placeholder-msg" style="font-size:0.8rem">Loading…</div>';
+        try {
+          const atts = await api('GET', `/api/maintenance/attachments?table_name=maintenance_vehicles&record_id=${id}`);
+          area.dataset.loaded = '1';
+          if (!atts.length) { area.innerHTML = '<div class="maint-att-empty">No files</div>'; return; }
+          area.innerHTML = atts.map(a => {
+            const isPdf = a.mime_type === 'application/pdf' || a.original_name.endsWith('.pdf');
+            const url = `/uploads/${a.rel_path.split('/').map(encodeURIComponent).join('/')}`;
+            const thumb = isPdf
+              ? `<span class="maint-att-pdf-icon">&#128196;</span>`
+              : `<img src="${url}" alt="" loading="lazy">`;
+            const typeLabel = a.file_type === 'invoice' ? 'INV' : 'PIC';
+            return `<div class="maint-att-item" data-url="${url}" data-pdf="${isPdf}" data-name="${a.original_name.replace(/"/g,'&quot;')}" data-id="${a.attachment_id}">
+              <div class="maint-att-thumb">${thumb}</div>
+              <span class="maint-att-type-badge">${typeLabel}</span>
+              <div class="maint-att-name">${a.original_name}</div>
+            </div>`;
+          }).join('');
+          area.querySelectorAll('.maint-att-item').forEach(card => {
+            card.addEventListener('click', () => {
+              const url = card.dataset.url;
+              if (card.dataset.pdf === 'true') { window.open(url, '_blank'); }
+              else {
+                const a = document.createElement('a');
+                a.href = url; a.download = card.dataset.name; a.click();
+              }
+            });
+          });
+        } catch (err) {
+          area.innerHTML = `<div class="maint-att-empty" style="color:var(--red-light)">${err.message}</div>`;
+        }
+      });
+    });
   } catch (err) {
     body.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
   }

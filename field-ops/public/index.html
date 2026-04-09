@@ -77,7 +77,7 @@
         <div id="login-error" class="error-msg hidden"></div>
         <button type="submit" class="btn btn-primary btn-full">Sign In</button>
       </form>
-      <div class="login-version">v 1.21</div>
+      <div class="login-version">v 1.22</div>
     </div>
   </div>
 </div>
@@ -454,12 +454,31 @@
           <input type="text" id="maint-po" class="ctrl-input" placeholder="PO #">
         </div>
         <div class="form-group">
+          <label>Status</label>
+          <select id="maint-vehicle-status" class="ctrl-select">
+            <option value="open">Open</option>
+            <option value="in-progress">In Progress</option>
+            <option value="resolved" selected>Resolved</option>
+          </select>
+        </div>
+        <div class="form-group">
           <label>Next Service Date</label>
           <input type="date" id="maint-next-service" class="ctrl-input">
         </div>
         <div class="form-group">
           <label>Notes</label>
           <textarea id="maint-notes" class="ctrl-textarea" rows="2" placeholder="Optional notes…"></textarea>
+        </div>
+        <div class="form-group">
+          <label>Attachments</label>
+          <div class="maint-attach-btns">
+            <button type="button" class="btn btn-secondary btn-sm" id="maint-attach-invoice-btn">&#128196; Invoice</button>
+            <button type="button" class="btn btn-secondary btn-sm" id="maint-attach-photo-btn">&#128247; Photo(s)</button>
+          </div>
+          <input type="file" id="maint-attach-invoice-input" accept="image/*,.pdf" style="display:none">
+          <input type="file" id="maint-attach-photo-input" accept="image/*" multiple style="display:none">
+          <div id="maint-attach-converting" class="form-hint hidden">Converting image to PDF…</div>
+          <div id="maint-attach-queue" class="maint-attach-queue hidden"></div>
         </div>
         <div id="maint-error" class="error-msg hidden"></div>
         <button class="btn btn-save btn-full" id="maint-save-btn">Save Vehicle Record</button>
@@ -1119,7 +1138,7 @@
       <button class="settings-back-btn">‹ Settings</button>
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 1.21</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 1.22</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>

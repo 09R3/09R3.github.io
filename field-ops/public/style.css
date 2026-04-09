@@ -2192,6 +2192,78 @@ input[type="date"].ctrl-input { min-height: 44px; }
 /* DTW NM state */
 input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
 
+/* ── Maintenance Vehicle Status & Attachments ───────────────────────────── */
+.maint-status-badge {
+  display: inline-block; font-size: 0.72rem; font-weight: 600;
+  padding: 2px 8px; border-radius: 20px; white-space: nowrap;
+}
+.maint-status-open        { background: rgba(255,152,0,0.18);  color: #ff9800; }
+.maint-status-in-progress { background: rgba(33,150,243,0.18); color: #2196f3; }
+.maint-status-resolved    { background: rgba(76,175,80,0.18);  color: #4caf50; }
+.maint-hist-header { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.maint-hist-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 4px; }
+.maint-hist-by { font-size: 0.8rem; color: var(--text-dim); }
+.btn-xs { font-size: 0.75rem; padding: 3px 8px; }
+/* Attachment queue (in form) */
+.maint-attach-btns { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.maint-attach-queue {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  gap: 8px; margin-top: 8px;
+}
+.maint-aq-item {
+  position: relative; background: var(--surface2); border-radius: var(--radius);
+  overflow: hidden; display: flex; flex-direction: column; align-items: center;
+  padding-bottom: 4px;
+}
+.maint-aq-item img { width: 100%; aspect-ratio: 1; object-fit: cover; }
+.maint-aq-icon { font-size: 1.8rem; padding: 8px 0; }
+.maint-aq-badge {
+  position: absolute; top: 3px; left: 3px;
+  background: var(--accent); color: #fff;
+  font-size: 0.6rem; font-weight: 700;
+  padding: 1px 5px; border-radius: 10px;
+}
+.maint-aq-remove {
+  position: absolute; top: 2px; right: 2px;
+  background: rgba(0,0,0,0.55); color: #fff; border: none;
+  border-radius: 50%; width: 18px; height: 18px;
+  font-size: 0.75rem; line-height: 18px; text-align: center;
+  cursor: pointer; padding: 0;
+}
+.maint-aq-name {
+  font-size: 0.6rem; color: var(--text-dim);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  width: 100%; text-align: center; padding: 0 3px;
+}
+/* Attachment list (in history) */
+.maint-hist-attach-area {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(68px,1fr));
+  gap: 7px; margin-top: 8px; padding-top: 8px;
+  border-top: 1px solid var(--border-subtle, rgba(255,255,255,0.06));
+}
+.maint-hist-attach-area.hidden { display: none; }
+.maint-att-item {
+  position: relative; background: var(--surface2); border-radius: var(--radius);
+  overflow: hidden; cursor: pointer; display: flex; flex-direction: column;
+  align-items: center; padding-bottom: 4px;
+  border: 2px solid transparent; transition: border-color 0.15s;
+}
+.maint-att-item:hover { border-color: var(--accent); }
+.maint-att-thumb { width: 100%; aspect-ratio: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.maint-att-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.maint-att-pdf-icon { font-size: 1.8rem; }
+.maint-att-type-badge {
+  position: absolute; top: 2px; left: 2px;
+  background: rgba(0,0,0,0.6); color: #fff;
+  font-size: 0.58rem; font-weight: 700; padding: 1px 5px; border-radius: 8px;
+}
+.maint-att-name {
+  font-size: 0.58rem; color: var(--text-dim);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  width: 100%; text-align: center; padding: 2px 3px 0;
+}
+.maint-att-empty { font-size: 0.8rem; color: var(--text-dim); padding: 6px 0; }
+
 /* ── Upload Tool ─────────────────────────────────────────────────────────── */
 #upload-tool-overlay {
   position: fixed; inset: 0; z-index: 300;

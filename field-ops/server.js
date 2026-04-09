@@ -135,6 +135,23 @@ pool.query(`
   )
 `).catch(err => console.error('Migration error:', err.message));
 
+pool.query(`ALTER TABLE maintenance_vehicles ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'open'`)
+  .catch(err => console.error('Migration error (mv_status):', err.message));
+
+pool.query(`
+  CREATE TABLE IF NOT EXISTS maintenance_attachments (
+    attachment_id  SERIAL PRIMARY KEY,
+    table_name     TEXT NOT NULL,
+    record_id      INTEGER NOT NULL,
+    rel_path       TEXT NOT NULL,
+    original_name  TEXT NOT NULL,
+    file_type      TEXT DEFAULT 'photo',
+    mime_type      TEXT,
+    uploaded_by    TEXT,
+    uploaded_at    TIMESTAMPTZ DEFAULT NOW()
+  )
+`).catch(err => console.error('Migration error (maint_attachments):', err.message));
+
 // ── Auth / Sessions ───────────────────────────────────────────────────────────
 const SESSION_TTL = 8 * 60 * 60 * 1000; // 8 hours
 const sessions = new Map();
@@ -1658,20 +1675,21 @@ app.post('/api/maintenance/vehicle', requireAuth, async (req, res) => {
   const {
     vehicle_id, work_date, work_type, performed_by, is_contractor,
     description, odometer_at_service, engine_hours_at_service,
-    parts_used, cost, po_number, next_service_date, next_service_miles, next_service_hours, notes,
+    parts_used, cost, po_number, next_service_date, next_service_miles, next_service_hours,
+    notes, status,
   } = req.body;
   try {
     const { rows } = await pool.query(
       `INSERT INTO maintenance_vehicles
          (vehicle_id, work_date, work_type, performed_by, is_contractor, entered_by,
           description, odometer_at_service, engine_hours_at_service, parts_used, cost,
-          po_number, next_service_date, next_service_miles, next_service_hours, notes)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING maintenance_id`,
+          po_number, next_service_date, next_service_miles, next_service_hours, notes, status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING maintenance_id`,
       [vehicle_id, work_date, work_type, performed_by, is_contractor ?? false,
        req.user.username, description || null, odometer_at_service ?? null,
        engine_hours_at_service ?? null, parts_used || null, cost ?? null,
        po_number || null, next_service_date || null, next_service_miles ?? null,
-       next_service_hours ?? null, notes || null]
+       next_service_hours ?? null, notes || null, status || 'open']
     );
     res.json({ ok: true, maintenance_id: rows[0].maintenance_id });
   } catch (err) {
@@ -1720,12 +1738,17 @@ app.get('/api/maintenance/history', requireAuth, async (req, res) => {
       ));
     } else if (type === 'vehicle') {
       ({ rows } = await pool.query(
-        `SELECT work_date, work_type, description, performed_by, is_contractor,
-                parts_used, cost, odometer_at_service, engine_hours_at_service,
-                next_service_miles, next_service_hours, notes, entered_by
-         FROM maintenance_vehicles
-         WHERE vehicle_id = $1
-         ORDER BY work_date DESC LIMIT 15`,
+        `SELECT mv.maintenance_id, mv.work_date, mv.work_type, mv.description,
+                mv.performed_by, mv.is_contractor, mv.parts_used, mv.cost,
+                mv.odometer_at_service, mv.engine_hours_at_service,
+                mv.next_service_miles, mv.next_service_hours, mv.notes,
+                mv.entered_by, mv.status,
+                (SELECT COUNT(*) FROM maintenance_attachments
+                 WHERE table_name = 'maintenance_vehicles' AND record_id = mv.maintenance_id
+                ) AS attachment_count
+         FROM maintenance_vehicles mv
+         WHERE mv.vehicle_id = $1
+         ORDER BY mv.work_date DESC LIMIT 15`,
         [id]
       ));
     } else if (type === 'building') {
@@ -1741,6 +1764,65 @@ app.get('/api/maintenance/history', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'Invalid type' });
     }
     res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Maintenance Attachments ───────────────────────────────────────────────────
+app.post('/api/maintenance/attachment', requireAuth,
+  upload.single('file'), async (req, res) => {
+    if (!req.file) return res.status(400).json({ error: 'No file received' });
+    const { table_name, record_id, file_type } = req.query;
+    const rel = path.relative(UPLOADS_ROOT, req.file.path).replace(/\\/g, '/');
+    try {
+      const { rows } = await pool.query(
+        `INSERT INTO maintenance_attachments
+           (table_name, record_id, rel_path, original_name, file_type, mime_type, uploaded_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING attachment_id`,
+        [table_name || 'maintenance_vehicles', parseInt(record_id), rel,
+         req.file.originalname, file_type || 'photo', req.file.mimetype, req.user.username]
+      );
+      res.json({ ok: true, attachment_id: rows[0].attachment_id, rel_path: rel });
+    } catch (err) {
+      try { fs.unlinkSync(req.file.path); } catch {}
+      res.status(500).json({ error: err.message });
+    }
+  }
+);
+
+app.get('/api/maintenance/attachments', requireAuth, async (req, res) => {
+  const { table_name, record_id } = req.query;
+  if (!table_name || !record_id) return res.status(400).json({ error: 'table_name and record_id required' });
+  try {
+    const { rows } = await pool.query(
+      `SELECT attachment_id, rel_path, original_name, file_type, mime_type, uploaded_by, uploaded_at
+       FROM maintenance_attachments
+       WHERE table_name = $1 AND record_id = $2
+       ORDER BY uploaded_at`,
+      [table_name, parseInt(record_id)]
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/maintenance/attachment/:id', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT rel_path, uploaded_by FROM maintenance_attachments WHERE attachment_id = $1`,
+      [parseInt(req.params.id)]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Not found' });
+    const { rel_path, uploaded_by } = rows[0];
+    if (req.user.username !== uploaded_by && !['admin', 'supervisor'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Cannot delete another user\'s attachment' });
+    }
+    await pool.query(`DELETE FROM maintenance_attachments WHERE attachment_id = $1`, [parseInt(req.params.id)]);
+    const abs = path.join(UPLOADS_ROOT, rel_path);
+    if (fs.existsSync(abs)) fs.unlinkSync(abs);
+    res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
