@@ -2244,6 +2244,155 @@ let maintContractor = false;
 let maintVehicles   = [];
 let maintVehiclesLoaded = false;
 
+// Vehicle record list state
+let vehRecords       = [];
+let vehShowResolved  = false;
+
+async function loadVehRecords() {
+  try {
+    vehRecords = await api('GET', `/api/maintenance/vehicles-list?include_resolved=${vehShowResolved}`);
+    renderVehRecords();
+    setBadge('maint-badge-vehicles', vehRecords.filter(r => r.status === 'open' || r.status === 'in-progress').length);
+  } catch {
+    el('veh-record-list').innerHTML = '<div class="issue-empty">Failed to load records</div>';
+  }
+}
+
+function renderVehRecords() {
+  const list = el('veh-record-list');
+  if (!vehRecords.length) {
+    list.innerHTML = `<div class="issue-empty">No ${vehShowResolved ? '' : 'open '}records</div>`;
+    return;
+  }
+  const statusLabel = { open: 'Open', 'in-progress': 'In Progress', resolved: 'Resolved' };
+  list.innerHTML = vehRecords.map(r => {
+    const statusClass = (r.status || 'open').replace('-', '-');
+    const vehicleName = [r.vehicle_number, r.model].filter(Boolean).join(' — ');
+    const snippet = (r.description || '').slice(0, 80) + ((r.description || '').length > 80 ? '…' : '');
+    const attBtn = Number(r.attachment_count) > 0
+      ? `<button class="btn btn-secondary btn-xs maint-hist-attach-btn" data-id="${r.maintenance_id}">&#128206; ${r.attachment_count}</button>` : '';
+    return `
+      <div class="equip-issue-item" data-record-id="${r.maintenance_id}">
+        <div class="equip-issue-header">
+          <div class="equip-issue-meta">
+            <div class="equip-issue-name">${escHtml(vehicleName)}</div>
+            <div class="equip-issue-snippet">${escHtml(snippet) || escHtml(r.work_type || '')}</div>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+            <span class="maint-status-badge maint-status-${escHtml(r.status || 'open')}">${escHtml(statusLabel[r.status] || r.status || 'Open')}</span>
+            <span class="equip-issue-date">${(r.work_date || '').slice(0,10)}</span>
+          </div>
+        </div>
+        <div class="equip-issue-body hidden">
+          <div class="form-group">
+            <label>Description</label>
+            <div style="font-size:0.9rem;padding:6px 0">${escHtml(r.description || '—')}</div>
+          </div>
+          ${r.parts_used || r.cost || r.po_number ? `<div class="maint-hist-details" style="margin-bottom:8px">${[r.parts_used ? `Parts: ${r.parts_used}` : '', r.cost ? `$${Number(r.cost).toFixed(2)}` : '', r.po_number ? `PO: ${r.po_number}` : ''].filter(Boolean).join(' · ')}</div>` : ''}
+          <div class="form-group">
+            <label>Status</label>
+            <select class="ctrl-select veh-status-select">
+              <option value="open"        ${r.status==='open'        ?'selected':''}>Open</option>
+              <option value="in-progress" ${r.status==='in-progress' ?'selected':''}>In Progress</option>
+              <option value="resolved"    ${r.status==='resolved'    ?'selected':''}>Resolved</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Notes</label>
+            <textarea class="ctrl-textarea veh-notes-input" rows="2">${escHtml(r.notes || '')}</textarea>
+          </div>
+          ${attBtn ? `<div style="margin-bottom:8px">${attBtn}</div>` : ''}
+          <div class="maint-hist-attach-area hidden" data-id="${r.maintenance_id}"></div>
+          <div class="error-msg hidden veh-update-error"></div>
+          <div class="maint-hist-footer">
+            <span class="maint-hist-by">By: ${escHtml(r.performed_by || r.entered_by || '—')} &middot; ${escHtml(r.work_type || '')}</span>
+            <button class="btn btn-save btn-sm veh-record-save-btn">Save</button>
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+el('veh-show-resolved-btn').addEventListener('click', () => {
+  vehShowResolved = !vehShowResolved;
+  el('veh-show-resolved-btn').textContent = vehShowResolved ? 'Hide Resolved' : 'Show Resolved';
+  loadVehRecords();
+});
+
+el('veh-new-record-btn').addEventListener('click', () => {
+  el('veh-new-record-form').classList.remove('hidden');
+  el('veh-new-record-btn').classList.add('hidden');
+  el('maint-date').value = todayISO();
+});
+
+el('veh-cancel-btn').addEventListener('click', () => {
+  el('veh-new-record-form').classList.add('hidden');
+  el('veh-new-record-btn').classList.remove('hidden');
+});
+
+el('veh-record-list').addEventListener('click', async e => {
+  const item = e.target.closest('.equip-issue-item');
+  if (!item) return;
+
+  if (e.target.closest('.equip-issue-header')) {
+    item.querySelector('.equip-issue-body').classList.toggle('hidden');
+    return;
+  }
+
+  // Attachment expand (reuse existing logic)
+  if (e.target.classList.contains('maint-hist-attach-btn')) {
+    const id = e.target.dataset.id;
+    const area = item.querySelector(`.maint-hist-attach-area[data-id="${id}"]`);
+    if (!area) return;
+    if (!area.classList.contains('hidden')) { area.classList.add('hidden'); return; }
+    area.classList.remove('hidden');
+    if (area.dataset.loaded) return;
+    area.innerHTML = '<div style="font-size:0.8rem;color:var(--text-dim)">Loading…</div>';
+    try {
+      const atts = await api('GET', `/api/maintenance/attachments?table_name=maintenance_vehicles&record_id=${id}`);
+      area.dataset.loaded = '1';
+      if (!atts.length) { area.innerHTML = '<div class="maint-att-empty">No files</div>'; return; }
+      area.innerHTML = atts.map(a => {
+        const isPdf = a.mime_type === 'application/pdf' || a.original_name.endsWith('.pdf');
+        const url = `/uploads/${a.rel_path.split('/').map(encodeURIComponent).join('/')}`;
+        return `<div class="maint-att-item" data-url="${url}" data-pdf="${isPdf}" data-name="${a.original_name.replace(/"/g,'&quot;')}">
+          <div class="maint-att-thumb">${isPdf ? '<span class="maint-att-pdf-icon">&#128196;</span>' : `<img src="${url}" loading="lazy" alt="">`}</div>
+          <span class="maint-att-type-badge">${a.file_type === 'invoice' ? 'INV' : 'PIC'}</span>
+          <div class="maint-att-name">${escHtml(a.original_name)}</div>
+        </div>`;
+      }).join('');
+      area.querySelectorAll('.maint-att-item').forEach(card => {
+        card.addEventListener('click', () => {
+          if (card.dataset.pdf === 'true') window.open(card.dataset.url, '_blank');
+          else { const a = document.createElement('a'); a.href = card.dataset.url; a.download = card.dataset.name; a.click(); }
+        });
+      });
+    } catch (err) {
+      area.innerHTML = `<div class="maint-att-empty" style="color:var(--red-light)">${err.message}</div>`;
+    }
+    return;
+  }
+
+  if (e.target.classList.contains('veh-record-save-btn')) {
+    const recordId = item.dataset.recordId;
+    const status   = item.querySelector('.veh-status-select').value;
+    const notes    = item.querySelector('.veh-notes-input').value.trim() || null;
+    const errEl    = item.querySelector('.veh-update-error');
+    errEl.classList.add('hidden');
+    e.target.disabled = true;
+    try {
+      await api('PATCH', `/api/maintenance/vehicle/${recordId}`, { status, notes });
+      await loadVehRecords();
+      showToast('Record updated', 'success');
+      refreshMaintenanceBadges();
+    } catch (err) {
+      errEl.textContent = err.message;
+      errEl.classList.remove('hidden');
+      e.target.disabled = false;
+    }
+  }
+});
+
 function openMaintPanel(panelId) {
   el('maint-main').classList.add('hidden');
   document.querySelectorAll('.maint-panel').forEach(p => p.classList.add('hidden'));
@@ -2280,7 +2429,8 @@ async function refreshMaintenanceBadges() {
     setBadge('maint-badge-equipment', counts.equipment);
     setBadge('maint-badge-buildings', counts.buildings);
     setBadge('maint-badge-wells',     counts.wells);
-    setBadge('maint-main-badge', counts.equipment + counts.buildings + counts.wells);
+    setBadge('maint-badge-vehicles',  counts.vehicles);
+    setBadge('maint-main-badge', counts.equipment + counts.buildings + counts.wells + counts.vehicles);
   } catch { /* non-critical — badges stay at last known value */ }
 }
 
@@ -2295,11 +2445,11 @@ document.querySelectorAll('.maint-back-btn').forEach(btn => {
 });
 
 async function initMaintVehiclesPanel() {
+  maintType = 'vehicle';
+  loadVehRecords();
+
   if (maintVehiclesLoaded) return;
   maintVehiclesLoaded = true;
-  maintType = 'vehicle';
-
-  el('maint-date').value = todayISO();
 
   try {
     const vehicles = await api('GET', '/api/vehicles');
@@ -2674,6 +2824,11 @@ el('maint-save-btn').addEventListener('click', async () => {
       if (r.maintenance_id && maintPendingAttachments.length) {
         await uploadMaintAttachments(r.maintenance_id, 'maintenance_vehicles');
       }
+      // Collapse form, show button, reload list
+      el('veh-new-record-form').classList.add('hidden');
+      el('veh-new-record-btn').classList.remove('hidden');
+      loadVehRecords();
+      refreshMaintenanceBadges();
     } else {
       const buildingId = el('maint-building-select').value;
       if (!buildingId) return showError('maint-error', 'Please select a building');

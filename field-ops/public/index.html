@@ -77,7 +77,7 @@
         <div id="login-error" class="error-msg hidden"></div>
         <button type="submit" class="btn btn-primary btn-full">Sign In</button>
       </form>
-      <div class="login-version">v 1.22</div>
+      <div class="login-version">v 1.23</div>
     </div>
   </div>
 </div>
@@ -354,6 +354,7 @@
         <button class="dash-tile" data-maint-panel="vehicles">
           <span class="dash-icon">&#128664;</span>
           <span class="dash-label">Vehicles</span>
+          <span class="maint-badge hidden" id="maint-badge-vehicles">0</span>
         </button>
         <button class="dash-tile" data-maint-panel="buildings">
           <span class="dash-icon">&#127970;</span>
@@ -379,6 +380,17 @@
     <!-- Vehicles Panel — fully functional -->
     <div id="maint-panel-vehicles" class="maint-panel hidden">
       <button class="maint-back-btn">&#8249; Maintenance</button>
+
+      <div class="issue-toolbar">
+        <button class="btn btn-secondary btn-sm" id="veh-show-resolved-btn">Show Resolved</button>
+        <button class="btn btn-save btn-sm" id="veh-new-record-btn">+ New Record</button>
+      </div>
+
+      <!-- Record list -->
+      <div id="veh-record-list"></div>
+
+      <!-- New record form (collapsible) -->
+      <div id="veh-new-record-form" class="hidden">
       <div class="form-card">
         <div class="form-group">
           <label>Vehicle</label>
@@ -481,8 +493,12 @@
           <div id="maint-attach-queue" class="maint-attach-queue hidden"></div>
         </div>
         <div id="maint-error" class="error-msg hidden"></div>
-        <button class="btn btn-save btn-full" id="maint-save-btn">Save Vehicle Record</button>
+        <div class="two-col">
+          <button class="btn btn-secondary" id="veh-cancel-btn">Cancel</button>
+          <button class="btn btn-save" id="maint-save-btn">Save Record</button>
+        </div>
       </div>
+      </div><!-- /veh-new-record-form -->
     </div>
 
     <!-- Equipment Panel — fully functional -->
@@ -1138,7 +1154,7 @@
       <button class="settings-back-btn">‹ Settings</button>
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 1.22</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 1.23</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>

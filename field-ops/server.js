@@ -1523,14 +1523,53 @@ app.get('/api/maintenance/badge-counts', requireAuth, async (req, res) => {
         (SELECT COUNT(*) FROM building_issues
          WHERE status IN ('open','in_progress')) AS buildings,
         (SELECT COUNT(*) FROM well_issues
-         WHERE status IN ('open','in_progress')) AS wells
+         WHERE status IN ('open','in_progress')) AS wells,
+        (SELECT COUNT(*) FROM maintenance_vehicles
+         WHERE status IN ('open','in-progress')) AS vehicles
     `);
     const counts = rows[0];
     res.json({
       equipment: parseInt(counts.equipment) || 0,
       buildings: parseInt(counts.buildings) || 0,
       wells:     parseInt(counts.wells)     || 0,
+      vehicles:  parseInt(counts.vehicles)  || 0,
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/maintenance/vehicles-list', requireAuth, async (req, res) => {
+  const includeResolved = req.query.include_resolved === 'true';
+  try {
+    const { rows } = await pool.query(`
+      SELECT mv.maintenance_id, mv.work_date, mv.work_type, mv.description,
+             mv.status, mv.notes, mv.performed_by, mv.entered_by,
+             mv.parts_used, mv.cost, mv.po_number,
+             v.vehicle_number, v.make, v.model,
+             (SELECT COUNT(*) FROM maintenance_attachments
+              WHERE table_name = 'maintenance_vehicles' AND record_id = mv.maintenance_id
+             ) AS attachment_count
+      FROM maintenance_vehicles mv
+      JOIN vehicles v ON v.vehicle_id = mv.vehicle_id
+      WHERE ($1 OR mv.status NOT IN ('resolved'))
+      ORDER BY mv.work_date DESC, mv.maintenance_id DESC
+      LIMIT 100
+    `, [includeResolved]);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch('/api/maintenance/vehicle/:id', requireAuth, async (req, res) => {
+  const { status, notes } = req.body;
+  try {
+    await pool.query(
+      `UPDATE maintenance_vehicles SET status=$1, notes=$2 WHERE maintenance_id=$3`,
+      [status, notes || null, parseInt(req.params.id)]
+    );
+    res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
