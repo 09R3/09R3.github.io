@@ -20,8 +20,9 @@ fs.mkdirSync(UPLOADS_ROOT, { recursive: true });
 
 // /uploads static route registered after sessions Map is declared (see below)
 
-const UPLOAD_CATEGORIES = ['general','pumps','motors','wells','vehicles',
-                           'siphon-breakers','air-compressors','canal'];
+const UPLOAD_CATEGORIES = ['pumps','motors','wells','vehicles','electrical',
+                           'structures','siphon-breakers','air-compressors',
+                           'canal','misc','general'];
 
 const multerStorage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -81,6 +82,7 @@ app.get('/api/tools/files', requireAuth, requireRole('supervisor', 'admin'), (re
       const parts = rel.split('/');
       results.push({
         url:      '/uploads/' + rel,
+        relPath:  rel,
         name:     e.name,
         category: parts[0] || 'general',
         year:     parts[1] || '',
@@ -95,9 +97,10 @@ app.get('/api/tools/files', requireAuth, requireRole('supervisor', 'admin'), (re
 });
 
 app.delete('/api/tools/file', requireAuth, requireRole('supervisor', 'admin'), (req, res) => {
-  const { filePath } = req.body;
-  if (!filePath) return res.status(400).json({ error: 'filePath required' });
-  const abs = path.resolve(UPLOADS_ROOT, filePath.replace(/^\/uploads\//, ''));
+  const { relPath, filePath } = req.body;
+  const target = relPath || filePath;
+  if (!target) return res.status(400).json({ error: 'relPath required' });
+  const abs = path.resolve(UPLOADS_ROOT, target.replace(/^\/uploads\//, ''));
   if (!abs.startsWith(path.resolve(UPLOADS_ROOT)))
     return res.status(403).json({ error: 'Invalid path' });
   try { fs.unlinkSync(abs); res.json({ ok: true }); }
