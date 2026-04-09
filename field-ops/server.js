@@ -1563,11 +1563,15 @@ app.get('/api/maintenance/vehicles-list', requireAuth, async (req, res) => {
 });
 
 app.patch('/api/maintenance/vehicle/:id', requireAuth, async (req, res) => {
-  const { status, notes } = req.body;
+  const { status, notes, performed_by, po_number, cost } = req.body;
   try {
     await pool.query(
-      `UPDATE maintenance_vehicles SET status=$1, notes=$2 WHERE maintenance_id=$3`,
-      [status, notes || null, parseInt(req.params.id)]
+      `UPDATE maintenance_vehicles
+       SET status=$1, notes=$2, performed_by=$3, po_number=$4, cost=$5
+       WHERE maintenance_id=$6`,
+      [status, notes || null, performed_by || null, po_number || null,
+       cost != null && cost !== '' ? parseFloat(cost) : null,
+       parseInt(req.params.id)]
     );
     res.json({ ok: true });
   } catch (err) {

@@ -2258,6 +2258,73 @@ async function loadVehRecords() {
   }
 }
 
+// Per-card pending files: Map<maintenance_id, [{file, fileType}]>
+const vehCardFiles = new Map();
+let vehCardActiveId = null;
+
+// Shared hidden inputs for card file picks
+const vehCardInvInput = Object.assign(document.createElement('input'),
+  { type: 'file', accept: 'image/*,.pdf', style: 'display:none' });
+const vehCardPicInput = Object.assign(document.createElement('input'),
+  { type: 'file', accept: 'image/*', multiple: true, style: 'display:none' });
+document.body.append(vehCardInvInput, vehCardPicInput);
+
+vehCardInvInput.addEventListener('change', async () => {
+  const files = [...vehCardInvInput.files];
+  vehCardInvInput.value = '';
+  if (!vehCardActiveId || !files.length) return;
+  const id = vehCardActiveId;
+  const queue = vehCardFiles.get(id) || [];
+  const convertingEl = document.querySelector(`#veh-card-queue-${id}`);
+  if (convertingEl) { convertingEl.classList.remove('hidden'); convertingEl.innerHTML = '<div style="font-size:0.8rem;color:var(--text-dim)">Converting…</div>'; }
+  for (const f of files) {
+    if (f.type.startsWith('image/')) {
+      try { queue.push({ file: await imageToPdf(f), fileType: 'invoice' }); }
+      catch { queue.push({ file: f, fileType: 'invoice' }); }
+    } else {
+      queue.push({ file: f, fileType: 'invoice' });
+    }
+  }
+  vehCardFiles.set(id, queue);
+  renderVehCardQueue(id);
+});
+
+vehCardPicInput.addEventListener('change', () => {
+  const files = [...vehCardPicInput.files];
+  vehCardPicInput.value = '';
+  if (!vehCardActiveId || !files.length) return;
+  const id = vehCardActiveId;
+  const queue = vehCardFiles.get(id) || [];
+  files.forEach(f => queue.push({ file: f, fileType: 'photo' }));
+  vehCardFiles.set(id, queue);
+  renderVehCardQueue(id);
+});
+
+function renderVehCardQueue(id) {
+  const el2 = document.getElementById(`veh-card-queue-${id}`);
+  if (!el2) return;
+  const queue = vehCardFiles.get(id) || [];
+  if (!queue.length) { el2.classList.add('hidden'); el2.innerHTML = ''; return; }
+  el2.classList.remove('hidden');
+  el2.innerHTML = queue.map((a, i) => {
+    const isPdf = a.file.type === 'application/pdf' || a.file.name.endsWith('.pdf');
+    return `<div class="maint-aq-item">
+      ${isPdf ? '<span class="maint-aq-icon">&#128196;</span>' : `<img src="${URL.createObjectURL(a.file)}" alt="">`}
+      <span class="maint-aq-badge">${a.fileType === 'invoice' ? 'INV' : 'PIC'}</span>
+      <button class="maint-aq-remove" data-cardid="${id}" data-idx="${i}">&times;</button>
+      <div class="maint-aq-name">${a.file.name}</div>
+    </div>`;
+  }).join('');
+  el2.querySelectorAll('.maint-aq-remove').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const q = vehCardFiles.get(btn.dataset.cardid) || [];
+      q.splice(parseInt(btn.dataset.idx), 1);
+      vehCardFiles.set(btn.dataset.cardid, q);
+      renderVehCardQueue(btn.dataset.cardid);
+    });
+  });
+}
+
 function renderVehRecords() {
   const list = el('veh-record-list');
   if (!vehRecords.length) {
@@ -2266,13 +2333,17 @@ function renderVehRecords() {
   }
   const statusLabel = { open: 'Open', 'in-progress': 'In Progress', resolved: 'Resolved' };
   list.innerHTML = vehRecords.map(r => {
-    const statusClass = (r.status || 'open').replace('-', '-');
+    const id = r.maintenance_id;
     const vehicleName = [r.vehicle_number, r.model].filter(Boolean).join(' — ');
     const snippet = (r.description || '').slice(0, 80) + ((r.description || '').length > 80 ? '…' : '');
-    const attBtn = Number(r.attachment_count) > 0
-      ? `<button class="btn btn-secondary btn-xs maint-hist-attach-btn" data-id="${r.maintenance_id}">&#128206; ${r.attachment_count}</button>` : '';
+    const existingFiles = Number(r.attachment_count) > 0
+      ? `<div class="form-group">
+           <label>Existing Files</label>
+           <button class="btn btn-secondary btn-xs maint-hist-attach-btn" data-id="${id}">&#128206; ${r.attachment_count} file${r.attachment_count > 1 ? 's' : ''} — tap to view</button>
+           <div class="maint-hist-attach-area hidden" data-id="${id}"></div>
+         </div>` : '';
     return `
-      <div class="equip-issue-item" data-record-id="${r.maintenance_id}">
+      <div class="equip-issue-item" data-record-id="${id}">
         <div class="equip-issue-header">
           <div class="equip-issue-meta">
             <div class="equip-issue-name">${escHtml(vehicleName)}</div>
@@ -2288,7 +2359,6 @@ function renderVehRecords() {
             <label>Description</label>
             <div style="font-size:0.9rem;padding:6px 0">${escHtml(r.description || '—')}</div>
           </div>
-          ${r.parts_used || r.cost || r.po_number ? `<div class="maint-hist-details" style="margin-bottom:8px">${[r.parts_used ? `Parts: ${r.parts_used}` : '', r.cost ? `$${Number(r.cost).toFixed(2)}` : '', r.po_number ? `PO: ${r.po_number}` : ''].filter(Boolean).join(' · ')}</div>` : ''}
           <div class="form-group">
             <label>Status</label>
             <select class="ctrl-select veh-status-select">
@@ -2301,11 +2371,32 @@ function renderVehRecords() {
             <label>Notes</label>
             <textarea class="ctrl-textarea veh-notes-input" rows="2">${escHtml(r.notes || '')}</textarea>
           </div>
-          ${attBtn ? `<div style="margin-bottom:8px">${attBtn}</div>` : ''}
-          <div class="maint-hist-attach-area hidden" data-id="${r.maintenance_id}"></div>
+          <div class="form-group">
+            <label>Performed By</label>
+            <input type="text" class="ctrl-input veh-perf-input" value="${escHtml(r.performed_by || '')}" placeholder="Name">
+          </div>
+          <div class="two-col">
+            <div class="form-group">
+              <label>PO Number</label>
+              <input type="text" class="ctrl-input veh-po-input" value="${escHtml(r.po_number || '')}" placeholder="PO #">
+            </div>
+            <div class="form-group">
+              <label>Cost ($)</label>
+              <input type="number" class="ctrl-input veh-cost-input" value="${r.cost != null ? r.cost : ''}" step="0.01" min="0" placeholder="0.00">
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Add Attachments</label>
+            <div class="maint-attach-btns">
+              <button type="button" class="btn btn-secondary btn-sm veh-card-inv-btn" data-id="${id}">&#128196; Invoice</button>
+              <button type="button" class="btn btn-secondary btn-sm veh-card-pic-btn" data-id="${id}">&#128247; Photo(s)</button>
+            </div>
+            <div class="maint-attach-queue veh-card-queue hidden" id="veh-card-queue-${id}"></div>
+          </div>
+          ${existingFiles}
           <div class="error-msg hidden veh-update-error"></div>
           <div class="maint-hist-footer">
-            <span class="maint-hist-by">By: ${escHtml(r.performed_by || r.entered_by || '—')} &middot; ${escHtml(r.work_type || '')}</span>
+            <span class="maint-hist-by">${escHtml(r.work_type || '')} &middot; ${(r.work_date || '').slice(0,10)}</span>
             <button class="btn btn-save btn-sm veh-record-save-btn">Save</button>
           </div>
         </div>
@@ -2334,12 +2425,25 @@ el('veh-record-list').addEventListener('click', async e => {
   const item = e.target.closest('.equip-issue-item');
   if (!item) return;
 
+  // Expand/collapse header
   if (e.target.closest('.equip-issue-header')) {
     item.querySelector('.equip-issue-body').classList.toggle('hidden');
     return;
   }
 
-  // Attachment expand (reuse existing logic)
+  // Invoice / photo pick buttons on card
+  if (e.target.classList.contains('veh-card-inv-btn')) {
+    vehCardActiveId = e.target.dataset.id;
+    vehCardInvInput.click();
+    return;
+  }
+  if (e.target.classList.contains('veh-card-pic-btn')) {
+    vehCardActiveId = e.target.dataset.id;
+    vehCardPicInput.click();
+    return;
+  }
+
+  // Existing files expand
   if (e.target.classList.contains('maint-hist-attach-btn')) {
     const id = e.target.dataset.id;
     const area = item.querySelector(`.maint-hist-attach-area[data-id="${id}"]`);
@@ -2373,15 +2477,31 @@ el('veh-record-list').addEventListener('click', async e => {
     return;
   }
 
+  // Save card changes
   if (e.target.classList.contains('veh-record-save-btn')) {
-    const recordId = item.dataset.recordId;
-    const status   = item.querySelector('.veh-status-select').value;
-    const notes    = item.querySelector('.veh-notes-input').value.trim() || null;
-    const errEl    = item.querySelector('.veh-update-error');
+    const recordId    = item.dataset.recordId;
+    const status      = item.querySelector('.veh-status-select').value;
+    const notes       = item.querySelector('.veh-notes-input').value.trim()  || null;
+    const performed_by= item.querySelector('.veh-perf-input').value.trim()   || null;
+    const po_number   = item.querySelector('.veh-po-input').value.trim()     || null;
+    const costVal     = item.querySelector('.veh-cost-input').value;
+    const cost        = costVal !== '' ? parseFloat(costVal) : null;
+    const errEl       = item.querySelector('.veh-update-error');
     errEl.classList.add('hidden');
     e.target.disabled = true;
     try {
-      await api('PATCH', `/api/maintenance/vehicle/${recordId}`, { status, notes });
+      // Find the record data for naming
+      const rec = vehRecords.find(r => String(r.maintenance_id) === String(recordId)) || {};
+      const vehicleNum = (rec.vehicle_number || 'vehicle').replace(/[^a-zA-Z0-9-]/g, '_').replace(/_+/g,'_').replace(/^_|_$/,'');
+      const [ry, rm, rd] = (rec.work_date || todayISO()).slice(0,10).split('-');
+      const dateStr = `${rm}${rd}${ry}`;
+      const workType = rec.work_type || 'service';
+      await api('PATCH', `/api/maintenance/vehicle/${recordId}`, { status, notes, performed_by, po_number, cost });
+      const pending = vehCardFiles.get(recordId) || [];
+      if (pending.length) {
+        await doUploadAttachments(parseInt(recordId), vehicleNum, dateStr, workType, pending);
+        vehCardFiles.delete(recordId);
+      }
       await loadVehRecords();
       showToast('Record updated', 'success');
       refreshMaintenanceBadges();
@@ -2747,18 +2867,10 @@ el('maint-attach-photo-input').addEventListener('change', () => {
   renderMaintAttachQueue();
 });
 
-async function uploadMaintAttachments(maintenanceId, tableName) {
-  // Build naming context from the form at save time
-  const vehicleOpt = el('maint-vehicle-select').options[el('maint-vehicle-select').selectedIndex];
-  const vehicleNum = (vehicleOpt?.text || '').split('—')[0].trim()
-    .replace(/[^a-zA-Z0-9-]/g, '_').replace(/_+/g, '_').replace(/^_|_$/, '')
-    || 'vehicle';
-  const [y, m, d] = (el('maint-date').value || todayISO()).split('-');
-  const dateStr = `${m}${d}${y}`;                   // MMDDYYYY
-  const workType = el('maint-work-type').value || 'service';
-
+// Shared upload helper used by both new-record form and card updates
+async function doUploadAttachments(maintenanceId, vehicleNum, dateStr, workType, pending) {
   let invoiceIdx = 0, photoIdx = 0;
-  for (const att of maintPendingAttachments) {
+  for (const att of pending) {
     const origExt = att.file.name.includes('.') ? att.file.name.split('.').pop().toLowerCase() : 'jpg';
     let newName;
     if (att.fileType === 'invoice') {
@@ -2775,11 +2887,20 @@ async function uploadMaintAttachments(maintenanceId, tableName) {
     fd.append('file', renamed);
     try {
       await fetch(
-        `/api/maintenance/attachment?table_name=${tableName}&record_id=${maintenanceId}&file_type=${att.fileType}&category=vehicles`,
+        `/api/maintenance/attachment?table_name=maintenance_vehicles&record_id=${maintenanceId}&file_type=${att.fileType}&category=vehicles`,
         { method: 'POST', body: fd }
       );
-    } catch { /* non-fatal — record was saved, file upload failed */ }
+    } catch { /* non-fatal */ }
   }
+}
+
+async function uploadMaintAttachments(maintenanceId) {
+  const vehicleOpt = el('maint-vehicle-select').options[el('maint-vehicle-select').selectedIndex];
+  const vehicleNum = (vehicleOpt?.text || '').split('—')[0].trim()
+    .replace(/[^a-zA-Z0-9-]/g, '_').replace(/_+/g, '_').replace(/^_|_$/, '') || 'vehicle';
+  const [y, m, d] = (el('maint-date').value || todayISO()).split('-');
+  const workType = el('maint-work-type').value || 'service';
+  await doUploadAttachments(maintenanceId, vehicleNum, `${m}${d}${y}`, workType, maintPendingAttachments);
   maintPendingAttachments = [];
   renderMaintAttachQueue();
 }
@@ -2822,7 +2943,7 @@ el('maint-save-btn').addEventListener('click', async () => {
         status:                   el('maint-vehicle-status').value,
       }, 'Maintenance — Vehicle');
       if (r.maintenance_id && maintPendingAttachments.length) {
-        await uploadMaintAttachments(r.maintenance_id, 'maintenance_vehicles');
+        await uploadMaintAttachments(r.maintenance_id);
       }
       // Collapse form, show button, reload list
       el('veh-new-record-form').classList.add('hidden');
