@@ -835,6 +835,48 @@ app.get('/api/reports/pump-hours', requireDB, async (req, res) => {
   }
 });
 
+// GET /api/reports/well-readings/areas — distinct areas from wells table
+app.get('/api/reports/well-readings/areas', requireDB, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT DISTINCT area FROM wells WHERE area IS NOT NULL ORDER BY area`
+    );
+    res.json(result.rows.map(r => r.area));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/well-readings — readings joined to wells, filtered by area and date range
+app.get('/api/reports/well-readings', requireDB, async (req, res) => {
+  const { area, start, end } = req.query;
+  if (!area || !start || !end) {
+    return res.status(400).json({ error: 'area, start, and end are required.' });
+  }
+  try {
+    const result = await pool.query(
+      `SELECT r.reading_date,
+              r.reading_time,
+              w.state_well_name,
+              w.common_name,
+              r.hour_reading,
+              r.flow_rate,
+              r.totalizer,
+              r.pge_kwh
+       FROM readings_well r
+       JOIN wells w ON w.well_id = r.well_id
+       WHERE w.area = $1
+         AND r.reading_date >= $2
+         AND r.reading_date <= $3
+       ORDER BY r.reading_date ASC, w.common_name ASC`,
+      [area, start, end]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── Start Server ─────────────────────────────────────────────────────────────
 
 const PORT = process.env.PORT || 3000;

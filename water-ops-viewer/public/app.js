@@ -869,6 +869,8 @@ function hideReport() {
 // Open Pump Hours report
 $('report-pump-hours').addEventListener('click', async () => {
   showReport('pump-hours');
+  $('report-pump-hours-panel').classList.remove('hidden');
+  $('report-well-readings-panel').classList.add('hidden');
   rphStatus.textContent = 'Loading pumping plants…';
   rphGrid.innerHTML = emptyState('Select a pumping plant and date range,\nthen click Run Report');
   rphExportBtn.classList.add('hidden');
@@ -936,6 +938,86 @@ rphExportBtn.addEventListener('click', () => {
   const cols  = ['position_id', 'reading_date', 'hour_reading'];
   const hdrs  = ['Position ID', 'Reading Date', 'Hour Reading'];
   showExportPreview(`Pump Hours — ${plantLabel} (${start} to ${end})`, hdrs, cols, rphData);
+});
+
+// ── Well Readings Report ───────────────────────────────────────────────────
+const rwrArea      = $('rwr-area');
+const rwrStart     = $('rwr-start');
+const rwrEnd       = $('rwr-end');
+const rwrRunBtn    = $('rwr-run-btn');
+const rwrExportBtn = $('rwr-export-btn');
+const rwrGrid      = $('rwr-grid');
+const rwrStatus    = $('rwr-status');
+let rwrData = [];
+
+const RWR_COLS = ['reading_date', 'reading_time', 'state_well_name', 'common_name', 'hour_reading', 'flow_rate', 'totalizer', 'pge_kwh'];
+const RWR_HDRS = ['Date', 'Time', 'State Well Name', 'Common Name', 'Hour Reading', 'Flow Rate', 'Totalizer', 'PG&E kWh'];
+
+$('report-well-readings').addEventListener('click', async () => {
+  showReport('well-readings');
+  // Show the right sub-panel
+  $('report-pump-hours-panel').classList.add('hidden');
+  $('report-well-readings-panel').classList.remove('hidden');
+  rwrStatus.textContent = 'Loading areas…';
+  rwrGrid.innerHTML = emptyState('Select an area and date range,\nthen click Run Report');
+  rwrExportBtn.classList.add('hidden');
+  try {
+    const areas = await get('/api/reports/well-readings/areas');
+    rwrArea.innerHTML = areas.map(a =>
+      `<option value="${esc(a)}">${esc(a)}</option>`
+    ).join('');
+    rwrStatus.textContent = `${areas.length} area(s) found.`;
+  } catch (err) {
+    rwrStatus.textContent = `Error loading areas: ${err.message}`;
+  }
+});
+
+rwrRunBtn.addEventListener('click', async () => {
+  const area  = rwrArea.value;
+  const start = rwrStart.value;
+  const end   = rwrEnd.value;
+  if (!area)  { rwrStatus.textContent = 'Select an area.'; return; }
+  if (!start) { rwrStatus.textContent = 'Select a start date.'; return; }
+  if (!end)   { rwrStatus.textContent = 'Select an end date.'; return; }
+  if (start > end) { rwrStatus.textContent = 'Start date must be before end date.'; return; }
+
+  rwrStatus.textContent = 'Running…';
+  rwrGrid.innerHTML = loadingGrid();
+  rwrExportBtn.classList.add('hidden');
+  rwrData = [];
+
+  try {
+    const params = new URLSearchParams({ area, start, end });
+    rwrData = await get(`/api/reports/well-readings?${params}`);
+
+    if (!rwrData.length) {
+      rwrGrid.innerHTML = emptyState('No readings found for this area and date range.');
+      rwrStatus.textContent = 'No results.';
+      return;
+    }
+
+    let html = `<table class="data-table"><thead><tr>
+      ${RWR_HDRS.map(h => `<th>${h}</th>`).join('')}
+    </tr></thead><tbody>`;
+    for (const row of rwrData) {
+      html += `<tr>${RWR_COLS.map(c => `<td>${formatCell(row[c])}</td>`).join('')}</tr>`;
+    }
+    html += '</tbody></table>';
+    rwrGrid.innerHTML = html;
+    rwrStatus.textContent = `${rwrData.length} reading${rwrData.length !== 1 ? 's' : ''} found.`;
+    rwrExportBtn.classList.remove('hidden');
+  } catch (err) {
+    rwrGrid.innerHTML = errorState(err.message);
+    rwrStatus.textContent = 'Error running report.';
+  }
+});
+
+rwrExportBtn.addEventListener('click', () => {
+  if (!rwrData.length) return;
+  const area  = rwrArea.value;
+  const start = rwrStart.value;
+  const end   = rwrEnd.value;
+  showExportPreview(`Well Readings — ${area} (${start} to ${end})`, RWR_HDRS, RWR_COLS, rwrData);
 });
 
 // ── Version ────────────────────────────────────────────────────────────────

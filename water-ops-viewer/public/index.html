@@ -91,6 +91,7 @@
         </button>
         <div class="sidebar-section-body" id="reports-section-body">
           <button class="report-item" id="report-pump-hours">⏱ Pump Hours</button>
+          <button class="report-item" id="report-well-readings">💧 Well Readings</button>
         </div>
       </div>
 
@@ -159,6 +160,35 @@
           <div class="empty-state">
             <div class="empty-icon">⊟</div>
             <p>Select a pumping plant and date range,<br>then click Run Report</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Well Readings Report -->
+      <div id="report-well-readings-panel" class="hidden">
+        <div class="report-controls">
+          <div class="report-control-group">
+            <label class="report-label">Area</label>
+            <select id="rwr-area" class="report-select">
+              <option value="">Loading…</option>
+            </select>
+          </div>
+          <div class="report-control-group">
+            <label class="report-label">From</label>
+            <input type="date" id="rwr-start" class="report-date" />
+          </div>
+          <div class="report-control-group">
+            <label class="report-label">To</label>
+            <input type="date" id="rwr-end" class="report-date" />
+          </div>
+          <button class="btn btn-primary btn-sm" id="rwr-run-btn">▶ Run Report</button>
+          <button class="btn btn-ghost btn-sm hidden" id="rwr-export-btn">↓ Export</button>
+        </div>
+        <div class="report-status" id="rwr-status"></div>
+        <div class="report-grid-wrap" id="rwr-grid">
+          <div class="empty-state">
+            <div class="empty-icon">💧</div>
+            <p>Select an area and date range,<br>then click Run Report</p>
           </div>
         </div>
       </div>
