@@ -141,7 +141,7 @@ const sessions = new Map();
 
 // Serve uploads behind session auth now that sessions Map exists
 app.use('/uploads', (req, res, next) => {
-  const session = sessions.get(req.cookies?.session_id);
+  const session = sessions.get(req.cookies?.fo_session);
   if (!session || Date.now() > session.expires) return res.status(401).send('Unauthorized');
   next();
 }, express.static(UPLOADS_ROOT));
