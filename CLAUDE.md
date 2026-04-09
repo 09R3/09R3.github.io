@@ -21,6 +21,8 @@ by field operators. Includes report generation and CSV/Excel/PDF export.
 | water-ops-viewer | `main` | `/mnt/user/appdata/water-ops-viewer` | 3069 |
 | water-ops-viewer | beta (`claude/database-viewer-reports-i8gRu`) | `/mnt/user/appdata/water-ops-viewer-beta` | 3068 |
 
+-if the any of the deploy files change in any way remind me to get the new one from github
+
 ---
 
 ## Branch Strategy
