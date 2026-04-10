@@ -77,7 +77,7 @@
         <div id="login-error" class="error-msg hidden"></div>
         <button type="submit" class="btn btn-primary btn-full">Sign In</button>
       </form>
-      <div class="login-version">v 1.16</div>
+      <div class="login-version">v 1.25</div>
     </div>
   </div>
 </div>
@@ -154,6 +154,7 @@
       <li><button class="nav-btn" data-screen="canal">&#127754; Canal Readings</button></li>
       <li><button class="nav-btn" data-screen="vehicles">&#128664; Vehicle Monthly</button></li>
       <li><button class="nav-btn" data-screen="kf-monthly">&#128200; KF Monthly</button></li>
+      <li><button class="nav-btn" data-screen="well-runs">&#128204; Well Runs</button></li>
       <li><button class="nav-btn" data-screen="maintenance">&#128295; Maintenance Log</button></li>
       <li><button class="nav-btn" data-screen="pesticides">&#127807; Pesticides</button></li>
       <li class="nav-reports hidden" id="nav-reports-item"><button class="nav-btn" data-screen="reports">&#128202; Reports</button></li>
@@ -262,6 +263,10 @@
         <span class="dash-icon">&#127807;</span>
         <span class="dash-label">Pesticides</span>
       </button>
+      <button class="dash-tile" data-screen="well-runs">
+        <span class="dash-icon">&#128204;</span>
+        <span class="dash-label">Well Runs</span>
+      </button>
       <button class="dash-tile reports-tile hidden" id="dash-reports-tile" data-screen="reports">
         <span class="dash-icon">&#128202;</span>
         <span class="dash-label">Reports</span>
@@ -350,6 +355,7 @@
         <button class="dash-tile" data-maint-panel="vehicles">
           <span class="dash-icon">&#128664;</span>
           <span class="dash-label">Vehicles</span>
+          <span class="maint-badge hidden" id="maint-badge-vehicles">0</span>
         </button>
         <button class="dash-tile" data-maint-panel="buildings">
           <span class="dash-icon">&#127970;</span>
@@ -375,6 +381,17 @@
     <!-- Vehicles Panel — fully functional -->
     <div id="maint-panel-vehicles" class="maint-panel hidden">
       <button class="maint-back-btn">&#8249; Maintenance</button>
+
+      <div class="issue-toolbar">
+        <button class="btn btn-secondary btn-sm" id="veh-show-resolved-btn">Show Resolved</button>
+        <button class="btn btn-save btn-sm" id="veh-new-record-btn">+ New Record</button>
+      </div>
+
+      <!-- Record list -->
+      <div id="veh-record-list"></div>
+
+      <!-- New record form (collapsible) -->
+      <div id="veh-new-record-form" class="hidden">
       <div class="form-card">
         <div class="form-group">
           <label>Vehicle</label>
@@ -450,6 +467,14 @@
           <input type="text" id="maint-po" class="ctrl-input" placeholder="PO #">
         </div>
         <div class="form-group">
+          <label>Status</label>
+          <select id="maint-vehicle-status" class="ctrl-select">
+            <option value="open">Open</option>
+            <option value="in-progress">In Progress</option>
+            <option value="resolved" selected>Resolved</option>
+          </select>
+        </div>
+        <div class="form-group">
           <label>Next Service Date</label>
           <input type="date" id="maint-next-service" class="ctrl-input">
         </div>
@@ -457,9 +482,24 @@
           <label>Notes</label>
           <textarea id="maint-notes" class="ctrl-textarea" rows="2" placeholder="Optional notes…"></textarea>
         </div>
+        <div class="form-group">
+          <label>Attachments</label>
+          <div class="maint-attach-btns">
+            <button type="button" class="btn btn-secondary btn-sm" id="maint-attach-invoice-btn">&#128196; Invoice</button>
+            <button type="button" class="btn btn-secondary btn-sm" id="maint-attach-photo-btn">&#128247; Photo(s)</button>
+          </div>
+          <input type="file" id="maint-attach-invoice-input" accept="image/*,.pdf" style="display:none">
+          <input type="file" id="maint-attach-photo-input" accept="image/*" multiple style="display:none">
+          <div id="maint-attach-converting" class="form-hint hidden">Converting image to PDF…</div>
+          <div id="maint-attach-queue" class="maint-attach-queue hidden"></div>
+        </div>
         <div id="maint-error" class="error-msg hidden"></div>
-        <button class="btn btn-save btn-full" id="maint-save-btn">Save Vehicle Record</button>
+        <div class="two-col">
+          <button class="btn btn-secondary" id="veh-cancel-btn">Cancel</button>
+          <button class="btn btn-save" id="maint-save-btn">Save Record</button>
+        </div>
       </div>
+      </div><!-- /veh-new-record-form -->
     </div>
 
     <!-- Equipment Panel — fully functional -->
@@ -852,6 +892,80 @@
 
   </div><!-- /screen-pesticides -->
 
+  <!-- ── Well Runs ─────────────────────────────────────────────────────────── -->
+  <div id="screen-well-runs" class="screen-content">
+
+    <!-- Sub-dashboard -->
+    <div id="well-runs-main" class="dashboard-grid">
+      <div class="dash-tile" data-wr-panel="dwr">
+        <div class="dash-icon">&#128204;</div>
+        <div class="dash-label">DWR</div>
+      </div>
+      <div class="dash-tile" data-wr-panel="kcwa">
+        <div class="dash-icon">&#128200;</div>
+        <div class="dash-label">KCWA Piezometers</div>
+      </div>
+      <div class="dash-tile wr-soon" data-wr-panel="shallow">
+        <div class="dash-icon">&#128204;</div>
+        <div class="dash-label">Shallow</div>
+      </div>
+      <div class="dash-tile wr-soon" data-wr-panel="iwv">
+        <div class="dash-icon">&#128204;</div>
+        <div class="dash-label">IWV</div>
+      </div>
+      <div class="dash-tile wr-soon" data-wr-panel="purge">
+        <div class="dash-icon">&#128204;</div>
+        <div class="dash-label">Purge</div>
+      </div>
+    </div>
+
+    <!-- Coming Soon panel (shared) -->
+    <div id="wr-panel-soon" class="maint-panel hidden">
+      <button class="maint-back-btn" id="wr-soon-back">&#8249; Well Runs</button>
+      <div class="placeholder-msg" style="margin-top:40px">Coming Soon</div>
+    </div>
+
+    <!-- DWR panel -->
+    <div id="wr-panel-dwr" class="maint-panel hidden">
+      <div class="wr-dwr-header">
+        <div class="wr-panel-nav">
+          <button class="wr-back-btn" id="wr-dwr-back">&#8249; Well Runs</button>
+          <span class="wr-panel-title">DWR</span>
+        </div>
+        <div class="wr-panel-controls">
+          <div class="wr-dwr-datetime">
+            <input type="date" id="dwr-date" class="ctrl-input ctrl-input-sm">
+            <input type="time" id="dwr-time" class="ctrl-input ctrl-input-sm">
+          </div>
+          <div class="wr-dwr-counter">
+            <span id="dwr-done-count">0</span> / <span id="dwr-total-count">0</span> complete
+            <button class="btn btn-secondary btn-sm" id="dwr-map-btn" style="margin-left:10px">&#128506; Map</button>
+          </div>
+        </div>
+      </div>
+      <div id="dwr-list-body"></div>
+    </div>
+
+    <!-- KCWA Piezometers panel -->
+    <div id="wr-panel-kcwa" class="maint-panel hidden">
+      <div class="wr-dwr-header">
+        <div class="wr-panel-nav">
+          <button class="wr-back-btn" id="wr-kcwa-back">&#8249; Well Runs</button>
+          <span class="wr-panel-title">KCWA Piezometers</span>
+        </div>
+        <div class="wr-panel-controls">
+          <div class="wr-dwr-datetime">
+            <input type="date" id="piez-date" class="ctrl-input ctrl-input-sm">
+            <input type="time" id="piez-time" class="ctrl-input ctrl-input-sm">
+          </div>
+          <div id="piez-pool-tabs" class="set-tabs" style="flex:1"></div>
+        </div>
+      </div>
+      <div id="piez-list-body"><div class="placeholder-msg">Loading piezometers…</div></div>
+    </div>
+
+  </div><!-- /screen-well-runs -->
+
   <!-- ── Reports ───────────────────────────────────────────────────────────── -->
   <div id="screen-reports" class="screen-content">
 
@@ -1064,7 +1178,7 @@
       <button class="settings-back-btn">‹ Settings</button>
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 1.16</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 1.25</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>
@@ -1078,6 +1192,9 @@
         <div class="settings-card">
           <button class="settings-menu-row" data-tool="exif">
             <span>EXIF Extractor</span><span class="settings-chevron">›</span>
+          </button>
+          <button class="settings-menu-row" data-tool="upload">
+            <span>Photo / PDF Upload</span><span class="settings-chevron">›</span>
           </button>
         </div>
       </div>
@@ -1109,6 +1226,93 @@
         <div id="exif-chips" class="exif-chips hidden"></div>
         <div id="exif-table-wrap" class="exif-table-wrap hidden">
           <table id="exif-table"></table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Upload Tool overlay (full-screen) -->
+    <div id="upload-tool-overlay" class="hidden">
+      <div class="uptool-nav">
+        <button class="uptool-back-btn" id="uptool-back-btn">&#8249; Tools</button>
+        <span class="uptool-nav-title">Photo / PDF Upload</span>
+        <div class="uptool-tabs">
+          <button class="uptool-tab active" data-uptab="upload">Upload</button>
+          <button class="uptool-tab" data-uptab="browse">Browse</button>
+        </div>
+      </div>
+      <div class="uptool-body">
+
+        <!-- Upload tab -->
+        <div id="uptool-tab-upload" class="uptool-pane">
+          <div class="uptool-section">
+            <label class="uptool-label">Category</label>
+            <select id="uptool-category" class="ctrl-select">
+              <option value="pumps">Pumps</option>
+              <option value="motors">Motors</option>
+              <option value="wells">Wells</option>
+              <option value="vehicles">Vehicles</option>
+              <option value="electrical">Electrical</option>
+              <option value="structures">Structures</option>
+              <option value="siphon-breakers">Siphon Breakers</option>
+              <option value="air-compressors">Air Compressors</option>
+              <option value="canal">Canal</option>
+              <option value="misc">Misc</option>
+              <option value="general">General</option>
+            </select>
+          </div>
+          <div id="uptool-dropzone" class="uptool-dropzone">
+            <input type="file" id="uptool-file-input" accept="image/*,.pdf" multiple>
+            <div class="uptool-drop-icon">&#128247;</div>
+            <div class="uptool-drop-label">Tap to select photos or PDFs</div>
+            <div class="uptool-drop-sub">JPG / PNG / HEIC / PDF &middot; multiple OK</div>
+          </div>
+          <div id="uptool-queue" class="uptool-queue hidden"></div>
+          <div class="uptool-actions hidden" id="uptool-actions">
+            <button class="btn btn-secondary btn-sm" id="uptool-clear-btn">Clear</button>
+            <button class="btn btn-primary" id="uptool-upload-btn">Upload</button>
+          </div>
+          <div id="uptool-progress-wrap" class="uptool-progress-wrap hidden">
+            <div id="uptool-progress-bar" class="uptool-progress-bar"></div>
+          </div>
+          <div id="uptool-result" class="uptool-result hidden"></div>
+        </div>
+
+        <!-- Browse tab -->
+        <div id="uptool-tab-browse" class="uptool-pane hidden">
+          <div class="uptool-browse-toolbar">
+            <select id="uptool-browse-cat" class="ctrl-select uptool-browse-cat-sel">
+              <option value="">All Categories</option>
+              <option value="pumps">Pumps</option>
+              <option value="motors">Motors</option>
+              <option value="wells">Wells</option>
+              <option value="vehicles">Vehicles</option>
+              <option value="electrical">Electrical</option>
+              <option value="structures">Structures</option>
+              <option value="siphon-breakers">Siphon Breakers</option>
+              <option value="air-compressors">Air Compressors</option>
+              <option value="canal">Canal</option>
+              <option value="misc">Misc</option>
+              <option value="general">General</option>
+            </select>
+            <button class="btn btn-secondary btn-sm" id="uptool-refresh-btn">Refresh</button>
+          </div>
+          <div id="uptool-file-grid" class="uptool-file-grid"></div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Upload Tool preview modal -->
+    <div id="uptool-preview-modal" class="modal-overlay hidden">
+      <div class="modal-card uptool-preview-card">
+        <div class="modal-header">
+          <h2 id="uptool-preview-name" class="uptool-preview-name">Preview</h2>
+          <button class="modal-close" id="uptool-preview-close">&times;</button>
+        </div>
+        <div class="modal-body uptool-preview-body" id="uptool-preview-body"></div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" id="uptool-preview-delete" style="margin-right:auto">Delete</button>
+          <button class="btn btn-primary" id="uptool-preview-save">Save / Download</button>
         </div>
       </div>
     </div>
@@ -1191,6 +1395,20 @@
     <div class="modal-footer">
       <button class="btn btn-secondary" id="notes-modal-cancel">Cancel</button>
       <button class="btn btn-primary" id="notes-modal-ok">OK</button>
+    </div>
+  </div>
+</div>
+
+<!-- Attachment Preview Modal -->
+<div id="att-preview-modal" class="modal-overlay hidden">
+  <div class="modal-card uptool-preview-card">
+    <div class="modal-header">
+      <h2 id="att-preview-name" class="uptool-preview-name">Preview</h2>
+      <button class="modal-close" id="att-preview-close">&times;</button>
+    </div>
+    <div class="modal-body uptool-preview-body" id="att-preview-body"></div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" id="att-preview-download">&#11015; Save / Download</button>
     </div>
   </div>
 </div>

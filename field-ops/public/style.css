@@ -2141,3 +2141,281 @@ input[type="date"].ctrl-input { min-height: 44px; }
 }
 .exif-table-wrap td.na { color: var(--text-muted); font-style: italic; }
 .exif-table-wrap tbody tr:hover { background: var(--surface2); }
+
+/* ── Well Runs ───────────────────────────────────────────────────────────── */
+.wr-soon { opacity: 0.55; }
+.wr-dwr-header {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  margin-bottom: 8px;
+}
+.wr-panel-nav {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.wr-back-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  border: none;
+  color: var(--accent);
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 2px 0;
+}
+.wr-back-btn:active { opacity: 0.7; }
+.wr-panel-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.wr-panel-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.wr-dwr-datetime { display: flex; gap: 8px; flex-wrap: wrap; }
+.wr-dwr-counter  { display: flex; align-items: center; gap: 6px; font-size: 0.88rem; color: var(--text-dim); margin-left: auto; }
+/* status pill colours: green/yellow/red */
+.status-badge.wr-recent  { background: rgba(76,175,80,0.18);  color: #4caf50; }
+.status-badge.wr-none    { background: rgba(255,193,7,0.18);  color: #ffc107; }
+.status-badge.wr-old     { background: rgba(244,67,54,0.15);  color: #f44336; }
+/* multi-select dropdown */
+.dwr-ms-wrap   { position: relative; }
+.dwr-ms-btn    {
+  width: 100%; text-align: left; background: var(--surface2);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 8px 12px; font-size: 0.9rem; color: var(--text);
+  cursor: pointer; display: flex; justify-content: space-between; align-items: center;
+}
+.dwr-ms-btn:after { content: '▾'; font-size: 0.75rem; color: var(--text-dim); }
+.dwr-ms-panel  {
+  display: none;
+  position: absolute; left: 0; right: 0; top: calc(100% + 4px);
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: var(--radius); z-index: 60;
+  max-height: 220px; overflow-y: auto;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.35);
+}
+.dwr-ms-panel.open { display: block; }
+.dwr-ms-option {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 14px; font-size: 0.88rem; cursor: pointer;
+  border-bottom: 1px solid var(--border-subtle, rgba(255,255,255,0.05));
+}
+.dwr-ms-option:last-child { border-bottom: none; }
+.dwr-ms-option:hover { background: var(--surface); }
+.dwr-ms-option input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--accent); }
+.dwr-ms-option.selected { color: var(--accent); }
+/* DTW NM state */
+input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
+
+/* ── Maintenance Vehicle Status & Attachments ───────────────────────────── */
+.maint-status-badge {
+  display: inline-block; font-size: 0.72rem; font-weight: 600;
+  padding: 2px 8px; border-radius: 20px; white-space: nowrap;
+}
+.maint-status-open        { background: rgba(244,67,54,0.15);  color: #f44336; }
+.maint-status-in-progress { background: rgba(255,152,0,0.18);  color: #ff9800; }
+.maint-status-resolved    { background: rgba(76,175,80,0.18);  color: #4caf50; }
+.maint-hist-header { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.maint-hist-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 4px; }
+.maint-hist-by { font-size: 0.8rem; color: var(--text-dim); }
+.btn-xs { font-size: 0.75rem; padding: 3px 8px; }
+/* Attachment queue (in form) */
+.maint-attach-btns { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.maint-attach-queue {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  gap: 8px; margin-top: 8px;
+}
+.maint-aq-item {
+  position: relative; background: var(--surface2); border-radius: var(--radius);
+  overflow: hidden; display: flex; flex-direction: column; align-items: center;
+  padding-bottom: 4px;
+}
+.maint-aq-item img { width: 100%; aspect-ratio: 1; object-fit: cover; }
+.maint-aq-icon { font-size: 1.8rem; padding: 8px 0; }
+.maint-aq-badge {
+  position: absolute; top: 3px; left: 3px;
+  background: var(--accent); color: #fff;
+  font-size: 0.6rem; font-weight: 700;
+  padding: 1px 5px; border-radius: 10px;
+}
+.maint-aq-remove {
+  position: absolute; top: 2px; right: 2px;
+  background: rgba(0,0,0,0.55); color: #fff; border: none;
+  border-radius: 50%; width: 18px; height: 18px;
+  font-size: 0.75rem; line-height: 18px; text-align: center;
+  cursor: pointer; padding: 0;
+}
+.maint-aq-name {
+  font-size: 0.6rem; color: var(--text-dim);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  width: 100%; text-align: center; padding: 0 3px;
+}
+/* Attachment list (in history) */
+.maint-hist-attach-area {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(68px,1fr));
+  gap: 7px; margin-top: 8px; padding-top: 8px;
+  border-top: 1px solid var(--border-subtle, rgba(255,255,255,0.06));
+}
+.maint-hist-attach-area.hidden { display: none; }
+.maint-att-item {
+  position: relative; background: var(--surface2); border-radius: var(--radius);
+  overflow: hidden; cursor: pointer; display: flex; flex-direction: column;
+  align-items: center; padding-bottom: 4px;
+  border: 2px solid transparent; transition: border-color 0.15s;
+}
+.maint-att-item:hover { border-color: var(--accent); }
+.maint-att-thumb { width: 100%; aspect-ratio: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.maint-att-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.maint-att-pdf-icon { font-size: 1.8rem; }
+.maint-att-type-badge {
+  position: absolute; top: 2px; left: 2px;
+  background: rgba(0,0,0,0.6); color: #fff;
+  font-size: 0.58rem; font-weight: 700; padding: 1px 5px; border-radius: 8px;
+}
+.maint-att-name {
+  font-size: 0.58rem; color: var(--text-dim);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  width: 100%; text-align: center; padding: 2px 3px 0;
+}
+.maint-att-empty { font-size: 0.8rem; color: var(--text-dim); padding: 6px 0; }
+
+/* ── Upload Tool ─────────────────────────────────────────────────────────── */
+#upload-tool-overlay {
+  position: fixed; inset: 0; z-index: 300;
+  background: var(--bg);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+#upload-tool-overlay.hidden { display: none; }
+.uptool-nav {
+  display: flex; align-items: center; gap: 8px;
+  padding: 0 12px;
+  height: var(--header-h, 56px);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.uptool-back-btn {
+  background: none; border: none; color: var(--accent);
+  font-size: 1.1rem; padding: 6px 8px 6px 2px; cursor: pointer;
+  white-space: nowrap;
+}
+.uptool-nav-title { font-weight: 600; font-size: 1rem; flex: 1; }
+.uptool-tabs { display: flex; gap: 4px; }
+.uptool-tab {
+  background: none; border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 5px 14px;
+  color: var(--text-dim); font-size: 0.88rem; cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.uptool-tab.active {
+  background: var(--accent); border-color: var(--accent);
+  color: #fff; font-weight: 600;
+}
+.uptool-body { flex: 1; overflow-y: auto; }
+.uptool-pane { padding: 16px; }
+.uptool-pane.hidden { display: none; }
+.uptool-section { margin-bottom: 14px; }
+.uptool-label { display: block; font-size: 0.82rem; color: var(--text-dim); margin-bottom: 5px; font-weight: 600; }
+.uptool-dropzone {
+  border: 2px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 32px 16px;
+  text-align: center;
+  cursor: pointer;
+  position: relative;
+  transition: border-color 0.2s, background 0.2s;
+}
+.uptool-dropzone.drag-over {
+  border-color: var(--accent); background: rgba(var(--accent-rgb,33,150,243),0.08);
+}
+#uptool-file-input {
+  position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
+}
+.uptool-drop-icon { font-size: 2.2rem; margin-bottom: 8px; }
+.uptool-drop-label { font-size: 1rem; font-weight: 600; color: var(--text); }
+.uptool-drop-sub { font-size: 0.8rem; color: var(--text-dim); margin-top: 4px; }
+.uptool-queue {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(80px,1fr));
+  gap: 8px; margin: 12px 0;
+}
+.uptool-queue-item {
+  position: relative; border-radius: var(--radius);
+  overflow: hidden; aspect-ratio: 1; background: var(--surface2);
+  display: flex; align-items: center; justify-content: center;
+}
+.uptool-queue-item img { width: 100%; height: 100%; object-fit: cover; }
+.uptool-queue-item .uptool-qi-name {
+  position: absolute; bottom: 0; left: 0; right: 0;
+  background: rgba(0,0,0,0.6); color: #fff;
+  font-size: 0.65rem; padding: 2px 4px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  text-align: center;
+}
+.uptool-queue-item .uptool-qi-pdf { font-size: 1.6rem; }
+.uptool-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 10px; }
+.uptool-actions.hidden { display: none; }
+.uptool-progress-wrap { margin: 12px 0; background: var(--surface2); border-radius: 4px; overflow: hidden; height: 6px; }
+.uptool-progress-wrap.hidden { display: none; }
+.uptool-progress-bar { height: 100%; background: var(--accent); width: 0; transition: width 0.3s; }
+.uptool-result { margin-top: 12px; font-size: 0.9rem; }
+.uptool-result.hidden { display: none; }
+/* Browse */
+.uptool-browse-toolbar {
+  display: flex; gap: 8px; align-items: center; margin-bottom: 14px;
+}
+.uptool-browse-cat-sel { flex: 1; }
+.uptool-file-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(90px,1fr));
+  gap: 10px;
+}
+.uptool-file-card {
+  background: var(--surface2); border-radius: var(--radius);
+  overflow: hidden; cursor: pointer;
+  border: 2px solid transparent;
+  transition: border-color 0.15s;
+  display: flex; flex-direction: column;
+}
+.uptool-file-card:hover { border-color: var(--accent); }
+.uptool-file-card .uptool-fc-thumb {
+  aspect-ratio: 1; display: flex; align-items: center; justify-content: center;
+  overflow: hidden; background: var(--surface);
+}
+.uptool-fc-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.uptool-fc-thumb .uptool-pdf-icon { font-size: 2rem; }
+.uptool-file-card .uptool-fc-name {
+  padding: 4px 6px;
+  font-size: 0.65rem; color: var(--text-dim);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  text-align: center;
+}
+.uptool-empty { text-align: center; color: var(--text-dim); padding: 40px 16px; }
+/* Preview modal */
+.uptool-preview-card { max-width: 600px; width: 96vw; }
+.uptool-preview-name { font-size: 0.9rem; word-break: break-all; }
+.uptool-preview-body { display: flex; justify-content: center; align-items: center; min-height: 200px; }
+.uptool-preview-body img { max-width: 100%; max-height: 60vh; border-radius: 6px; }
+.uptool-pdf-msg { text-align: center; color: var(--text-dim); }
+
+/* ── Piezometer permanent notes hint ─────────────────────────────────────── */
+.piez-perm-notes {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  background: var(--surface);
+  border-left: 3px solid var(--accent);
+  padding: 6px 10px;
+  border-radius: 4px;
+  margin-bottom: 10px;
+  line-height: 1.4;
+}

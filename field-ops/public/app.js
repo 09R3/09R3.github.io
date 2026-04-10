@@ -336,7 +336,10 @@ function openSetMapModal(setName, wells) {
     if (_setLocationMarker) { _setLocationMarker.remove(); _setLocationMarker = null; }
 
     _setLeafletMarkers = validWells.map(w => {
-      const done = w.range_reading_date != null;
+      // KF wells carry range_reading_date (null = not read in range); DWR uses session + recency
+      const done = 'range_reading_date' in w
+        ? w.range_reading_date != null
+        : (dwrDoneThisSession.has(w.well_id) || (w.days_since_reading != null && w.days_since_reading <= 30));
       const color = done ? '#22c55e' : '#ef4444';
       const icon = L.divIcon({
         className: '',
@@ -345,8 +348,12 @@ function openSetMapModal(setName, wells) {
         iconAnchor: [7, 7],
         popupAnchor: [0, -8],
       });
-      const label = w.state_well_number ? `${w.state_well_number} | ${w.common_name}` : (w.common_name || 'Well');
-      const status = done ? `<span style="color:#16a34a">✓ Read ${localDateStr(w.range_reading_date, {month:'short',day:'numeric'})}</span>` : `<span style="color:#dc2626">Not read</span>`;
+      const label = [w.state_well_number, w.common_name].filter(Boolean).join(' | ') || 'Well';
+      const readDate = w.range_reading_date || w.last_reading_date;
+      const status = done && readDate
+        ? `<span style="color:#16a34a">✓ Read ${localDateStr(readDate, {month:'short',day:'numeric'})}</span>`
+        : done ? `<span style="color:#16a34a">✓ Read</span>`
+        : `<span style="color:#dc2626">Not read</span>`;
       const m = L.marker([w.gps_latitude, w.gps_longitude], { icon }).addTo(_setLeafletMap);
       m.bindPopup(`<strong>${label}</strong><br>${status}`);
       return m;
@@ -396,6 +403,7 @@ function showScreen(name) {
     vehicles:       'Vehicle Monthly',
     'kf-monthly':   'KF Monthly Readings',
     maintenance:    'Maintenance Log',
+    'well-runs':    'Well Runs',
     admin:          'Settings',
   };
   el('screen-title').textContent = titles[name] || 'Field Ops';
@@ -418,6 +426,7 @@ function showScreen(name) {
   if (name === 'kf-monthly')    initKFScreen();
   if (name === 'maintenance')   initMaintenanceScreen();
   if (name === 'pesticides')    initPesticideScreen();
+  if (name === 'well-runs')     initWellRunsScreen();
   if (name === 'reports')       initReportsScreen();
   if (name === 'admin')         { initAdminScreen(); initSettingsScreen(); }
 
@@ -635,9 +644,53 @@ const HIST_COLS = {
   monitor:     [{ key: 'value',         label: 'kWh' }],
   well:        [{ key: 'hour_reading',  label: 'Hours' }, { key: 'flow_cfs', label: 'Flow (cfs)' }, { key: 'totalizer', label: 'Totalizer' }],
   kf:          [{ key: 'value',         label: 'DTW (ft)' }, { key: 'method', label: 'Method' }, { key: 'entered_by', label: 'Operator' }],
+  piezometer:  [{ key: 'value',         label: 'DTW (ft)' }, { key: 'method', label: 'Method' }, { key: 'wet_dry_moist', label: 'Condition' }, { key: 'entered_by', label: 'Operator' }],
+  dwr:         [{ key: 'value',         label: 'DTW (ft)' }, { key: 'method', label: 'Method' }, { key: 'entered_by', label: 'Operator' }],
   canal:       [{ key: 'flow',          label: 'Flow (cfs)' }, { key: 'totalizer', label: 'Totalizer (AF)' }, { key: 'gate_setting', label: 'Gate' }],
   vehicle:     [{ key: 'odometer_miles',label: 'Odometer' }, { key: 'engine_hours', label: 'Eng. Hrs' }],
 };
+
+/* ── Attachment Preview Modal ────────────────────────────────────────────── */
+let _attPreviewCurrent = null;
+
+function openAttachmentPreview(url, name, isPdf) {
+  _attPreviewCurrent = { url, name, isPdf };
+  el('att-preview-name').textContent = name;
+  const body = el('att-preview-body');
+  if (isPdf) {
+    body.innerHTML = `<div class="uptool-pdf-msg">
+      <p style="font-size:2rem">&#128196;</p>
+      <p style="margin-top:8px">${name}</p>
+      <p style="margin-top:8px;font-size:0.85rem;color:var(--text-dim)">Click "Save / Download" to open the PDF.</p>
+    </div>`;
+  } else {
+    body.innerHTML = `<img src="${url}" alt="${name.replace(/"/g,'&quot;')}">`;
+  }
+  el('att-preview-modal').classList.remove('hidden');
+}
+
+el('att-preview-close').addEventListener('click', () => {
+  el('att-preview-modal').classList.add('hidden');
+  _attPreviewCurrent = null;
+});
+
+el('att-preview-modal').addEventListener('click', e => {
+  if (e.target === el('att-preview-modal')) {
+    el('att-preview-modal').classList.add('hidden');
+    _attPreviewCurrent = null;
+  }
+});
+
+el('att-preview-download').addEventListener('click', () => {
+  if (!_attPreviewCurrent) return;
+  const { url, name, isPdf } = _attPreviewCurrent;
+  if (isPdf) {
+    window.open(url, '_blank');
+  } else {
+    const a = document.createElement('a');
+    a.href = url; a.download = name; a.click();
+  }
+});
 
 async function openHistoryModal(type, id, label) {
   const body = el('history-modal-body');
@@ -2235,6 +2288,274 @@ let maintContractor = false;
 let maintVehicles   = [];
 let maintVehiclesLoaded = false;
 
+// Vehicle record list state
+let vehRecords       = [];
+let vehShowResolved  = false;
+
+async function loadVehRecords() {
+  try {
+    vehRecords = await api('GET', `/api/maintenance/vehicles-list?include_resolved=${vehShowResolved}`);
+    renderVehRecords();
+    setBadge('maint-badge-vehicles', vehRecords.filter(r => r.status === 'open' || r.status === 'in-progress').length);
+  } catch {
+    el('veh-record-list').innerHTML = '<div class="issue-empty">Failed to load records</div>';
+  }
+}
+
+// Per-card pending files: Map<maintenance_id, [{file, fileType}]>
+const vehCardFiles = new Map();
+let vehCardActiveId = null;
+
+// Shared hidden inputs for card file picks
+const vehCardInvInput = Object.assign(document.createElement('input'),
+  { type: 'file', accept: 'image/*,.pdf', style: 'display:none' });
+const vehCardPicInput = Object.assign(document.createElement('input'),
+  { type: 'file', accept: 'image/*', multiple: true, style: 'display:none' });
+document.body.append(vehCardInvInput, vehCardPicInput);
+
+vehCardInvInput.addEventListener('change', async () => {
+  const files = [...vehCardInvInput.files];
+  vehCardInvInput.value = '';
+  if (!vehCardActiveId || !files.length) return;
+  const id = vehCardActiveId;
+  const queue = vehCardFiles.get(id) || [];
+  const convertingEl = document.querySelector(`#veh-card-queue-${id}`);
+  if (convertingEl) { convertingEl.classList.remove('hidden'); convertingEl.innerHTML = '<div style="font-size:0.8rem;color:var(--text-dim)">Converting…</div>'; }
+  for (const f of files) {
+    if (f.type.startsWith('image/')) {
+      try { queue.push({ file: await imageToPdf(f), fileType: 'invoice' }); }
+      catch { queue.push({ file: f, fileType: 'invoice' }); }
+    } else {
+      queue.push({ file: f, fileType: 'invoice' });
+    }
+  }
+  vehCardFiles.set(id, queue);
+  renderVehCardQueue(id);
+});
+
+vehCardPicInput.addEventListener('change', () => {
+  const files = [...vehCardPicInput.files];
+  vehCardPicInput.value = '';
+  if (!vehCardActiveId || !files.length) return;
+  const id = vehCardActiveId;
+  const queue = vehCardFiles.get(id) || [];
+  files.forEach(f => queue.push({ file: f, fileType: 'photo' }));
+  vehCardFiles.set(id, queue);
+  renderVehCardQueue(id);
+});
+
+function renderVehCardQueue(id) {
+  const el2 = document.getElementById(`veh-card-queue-${id}`);
+  if (!el2) return;
+  const queue = vehCardFiles.get(id) || [];
+  if (!queue.length) { el2.classList.add('hidden'); el2.innerHTML = ''; return; }
+  el2.classList.remove('hidden');
+  el2.innerHTML = queue.map((a, i) => {
+    const isPdf = a.file.type === 'application/pdf' || a.file.name.endsWith('.pdf');
+    return `<div class="maint-aq-item">
+      ${isPdf ? '<span class="maint-aq-icon">&#128196;</span>' : `<img src="${URL.createObjectURL(a.file)}" alt="">`}
+      <span class="maint-aq-badge">${a.fileType === 'invoice' ? 'INV' : 'PIC'}</span>
+      <button class="maint-aq-remove" data-cardid="${id}" data-idx="${i}">&times;</button>
+      <div class="maint-aq-name">${a.file.name}</div>
+    </div>`;
+  }).join('');
+  el2.querySelectorAll('.maint-aq-remove').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const q = vehCardFiles.get(btn.dataset.cardid) || [];
+      q.splice(parseInt(btn.dataset.idx), 1);
+      vehCardFiles.set(btn.dataset.cardid, q);
+      renderVehCardQueue(btn.dataset.cardid);
+    });
+  });
+}
+
+function renderVehRecords() {
+  const list = el('veh-record-list');
+  if (!vehRecords.length) {
+    list.innerHTML = `<div class="issue-empty">No ${vehShowResolved ? '' : 'open '}records</div>`;
+    return;
+  }
+  const statusLabel = { open: 'Open', 'in-progress': 'In Progress', resolved: 'Resolved' };
+  list.innerHTML = vehRecords.map(r => {
+    const id = r.maintenance_id;
+    const vehicleName = [r.vehicle_number, r.model].filter(Boolean).join(' — ');
+    const snippet = (r.description || '').slice(0, 80) + ((r.description || '').length > 80 ? '…' : '');
+    const existingFiles = Number(r.attachment_count) > 0
+      ? `<div class="form-group">
+           <label>Existing Files</label>
+           <button class="btn btn-secondary btn-xs maint-hist-attach-btn" data-id="${id}">&#128206; ${r.attachment_count} file${r.attachment_count > 1 ? 's' : ''} — tap to view</button>
+           <div class="maint-hist-attach-area hidden" data-id="${id}"></div>
+         </div>` : '';
+    return `
+      <div class="equip-issue-item" data-record-id="${id}">
+        <div class="equip-issue-header">
+          <div class="equip-issue-meta">
+            <div class="equip-issue-name">${escHtml(vehicleName)}</div>
+            <div class="equip-issue-snippet">${escHtml(snippet) || escHtml(r.work_type || '')}</div>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+            <span class="maint-status-badge maint-status-${escHtml(r.status || 'open')}">${escHtml(statusLabel[r.status] || r.status || 'Open')}</span>
+            <span class="equip-issue-date">${(r.work_date || '').slice(0,10)}</span>
+          </div>
+        </div>
+        <div class="equip-issue-body hidden">
+          <div class="form-group">
+            <label>Description</label>
+            <div style="font-size:0.9rem;padding:6px 0">${escHtml(r.description || '—')}</div>
+          </div>
+          <div class="form-group">
+            <label>Status</label>
+            <select class="ctrl-select veh-status-select">
+              <option value="open"        ${r.status==='open'        ?'selected':''}>Open</option>
+              <option value="in-progress" ${r.status==='in-progress' ?'selected':''}>In Progress</option>
+              <option value="resolved"    ${r.status==='resolved'    ?'selected':''}>Resolved</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Notes</label>
+            <textarea class="ctrl-textarea veh-notes-input" rows="2">${escHtml(r.notes || '')}</textarea>
+          </div>
+          <div class="form-group">
+            <label>Performed By</label>
+            <input type="text" class="ctrl-input veh-perf-input" value="${escHtml(r.performed_by || '')}" placeholder="Name">
+          </div>
+          <div class="two-col">
+            <div class="form-group">
+              <label>PO Number</label>
+              <input type="text" class="ctrl-input veh-po-input" value="${escHtml(r.po_number || '')}" placeholder="PO #">
+            </div>
+            <div class="form-group">
+              <label>Cost ($)</label>
+              <input type="number" class="ctrl-input veh-cost-input" value="${r.cost != null ? r.cost : ''}" step="0.01" min="0" placeholder="0.00">
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Add Attachments</label>
+            <div class="maint-attach-btns">
+              <button type="button" class="btn btn-secondary btn-sm veh-card-inv-btn" data-id="${id}">&#128196; Invoice</button>
+              <button type="button" class="btn btn-secondary btn-sm veh-card-pic-btn" data-id="${id}">&#128247; Photo(s)</button>
+            </div>
+            <div class="maint-attach-queue veh-card-queue hidden" id="veh-card-queue-${id}"></div>
+          </div>
+          ${existingFiles}
+          <div class="error-msg hidden veh-update-error"></div>
+          <div class="maint-hist-footer">
+            <span class="maint-hist-by">${escHtml(r.work_type || '')} &middot; ${(r.work_date || '').slice(0,10)}</span>
+            <button class="btn btn-save btn-sm veh-record-save-btn">Save</button>
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+el('veh-show-resolved-btn').addEventListener('click', () => {
+  vehShowResolved = !vehShowResolved;
+  el('veh-show-resolved-btn').textContent = vehShowResolved ? 'Hide Resolved' : 'Show Resolved';
+  loadVehRecords();
+});
+
+el('veh-new-record-btn').addEventListener('click', () => {
+  el('veh-new-record-form').classList.remove('hidden');
+  el('veh-new-record-btn').classList.add('hidden');
+  el('maint-date').value = todayISO();
+});
+
+el('veh-cancel-btn').addEventListener('click', () => {
+  el('veh-new-record-form').classList.add('hidden');
+  el('veh-new-record-btn').classList.remove('hidden');
+});
+
+el('veh-record-list').addEventListener('click', async e => {
+  const item = e.target.closest('.equip-issue-item');
+  if (!item) return;
+
+  // Expand/collapse header
+  if (e.target.closest('.equip-issue-header')) {
+    item.querySelector('.equip-issue-body').classList.toggle('hidden');
+    return;
+  }
+
+  // Invoice / photo pick buttons on card
+  if (e.target.classList.contains('veh-card-inv-btn')) {
+    vehCardActiveId = e.target.dataset.id;
+    vehCardInvInput.click();
+    return;
+  }
+  if (e.target.classList.contains('veh-card-pic-btn')) {
+    vehCardActiveId = e.target.dataset.id;
+    vehCardPicInput.click();
+    return;
+  }
+
+  // Existing files expand
+  if (e.target.classList.contains('maint-hist-attach-btn')) {
+    const id = e.target.dataset.id;
+    const area = item.querySelector(`.maint-hist-attach-area[data-id="${id}"]`);
+    if (!area) return;
+    if (!area.classList.contains('hidden')) { area.classList.add('hidden'); return; }
+    area.classList.remove('hidden');
+    if (area.dataset.loaded) return;
+    area.innerHTML = '<div style="font-size:0.8rem;color:var(--text-dim)">Loading…</div>';
+    try {
+      const atts = await api('GET', `/api/maintenance/attachments?table_name=maintenance_vehicles&record_id=${id}`);
+      area.dataset.loaded = '1';
+      if (!atts.length) { area.innerHTML = '<div class="maint-att-empty">No files</div>'; return; }
+      area.innerHTML = atts.map(a => {
+        const isPdf = a.mime_type === 'application/pdf' || a.original_name.endsWith('.pdf');
+        const url = `/uploads/${a.rel_path.split('/').map(encodeURIComponent).join('/')}`;
+        return `<div class="maint-att-item" data-url="${url}" data-pdf="${isPdf}" data-name="${a.original_name.replace(/"/g,'&quot;')}">
+          <div class="maint-att-thumb">${isPdf ? '<span class="maint-att-pdf-icon">&#128196;</span>' : `<img src="${url}" loading="lazy" alt="">`}</div>
+          <span class="maint-att-type-badge">${a.file_type === 'invoice' ? 'INV' : 'PIC'}</span>
+          <div class="maint-att-name">${escHtml(a.original_name)}</div>
+        </div>`;
+      }).join('');
+      area.querySelectorAll('.maint-att-item').forEach(card => {
+        card.addEventListener('click', () => {
+          openAttachmentPreview(card.dataset.url, card.dataset.name, card.dataset.pdf === 'true');
+        });
+      });
+    } catch (err) {
+      area.innerHTML = `<div class="maint-att-empty" style="color:var(--red-light)">${err.message}</div>`;
+    }
+    return;
+  }
+
+  // Save card changes
+  if (e.target.classList.contains('veh-record-save-btn')) {
+    const recordId    = item.dataset.recordId;
+    const status      = item.querySelector('.veh-status-select').value;
+    const notes       = item.querySelector('.veh-notes-input').value.trim()  || null;
+    const performed_by= item.querySelector('.veh-perf-input').value.trim()   || null;
+    const po_number   = item.querySelector('.veh-po-input').value.trim()     || null;
+    const costVal     = item.querySelector('.veh-cost-input').value;
+    const cost        = costVal !== '' ? parseFloat(costVal) : null;
+    const errEl       = item.querySelector('.veh-update-error');
+    errEl.classList.add('hidden');
+    e.target.disabled = true;
+    try {
+      // Find the record data for naming
+      const rec = vehRecords.find(r => String(r.maintenance_id) === String(recordId)) || {};
+      const vehicleNum = (rec.vehicle_number || 'vehicle').replace(/[^a-zA-Z0-9-]/g, '_').replace(/_+/g,'_').replace(/^_|_$/,'');
+      const [ry, rm, rd] = (rec.work_date || todayISO()).slice(0,10).split('-');
+      const dateStr = `${rm}${rd}${ry}`;
+      const workType = rec.work_type || 'service';
+      await api('PATCH', `/api/maintenance/vehicle/${recordId}`, { status, notes, performed_by, po_number, cost });
+      const pending = vehCardFiles.get(recordId) || [];
+      if (pending.length) {
+        await doUploadAttachments(parseInt(recordId), vehicleNum, dateStr, workType, pending);
+        vehCardFiles.delete(recordId);
+      }
+      await loadVehRecords();
+      showToast('Record updated', 'success');
+      refreshMaintenanceBadges();
+    } catch (err) {
+      errEl.textContent = err.message;
+      errEl.classList.remove('hidden');
+      e.target.disabled = false;
+    }
+  }
+});
+
 function openMaintPanel(panelId) {
   el('maint-main').classList.add('hidden');
   document.querySelectorAll('.maint-panel').forEach(p => p.classList.add('hidden'));
@@ -2271,7 +2592,8 @@ async function refreshMaintenanceBadges() {
     setBadge('maint-badge-equipment', counts.equipment);
     setBadge('maint-badge-buildings', counts.buildings);
     setBadge('maint-badge-wells',     counts.wells);
-    setBadge('maint-main-badge', counts.equipment + counts.buildings + counts.wells);
+    setBadge('maint-badge-vehicles',  counts.vehicles);
+    setBadge('maint-main-badge', counts.equipment + counts.buildings + counts.wells + counts.vehicles);
   } catch { /* non-critical — badges stay at last known value */ }
 }
 
@@ -2286,11 +2608,11 @@ document.querySelectorAll('.maint-back-btn').forEach(btn => {
 });
 
 async function initMaintVehiclesPanel() {
+  maintType = 'vehicle';
+  loadVehRecords();
+
   if (maintVehiclesLoaded) return;
   maintVehiclesLoaded = true;
-  maintType = 'vehicle';
-
-  el('maint-date').value = todayISO();
 
   try {
     const vehicles = await api('GET', '/api/vehicles');
@@ -2491,6 +2813,141 @@ el('swap-save-btn').addEventListener('click', async () => {
   }
 });
 
+/* ── Maintenance Attachments ─────────────────────────────────────────────── */
+let maintPendingAttachments = []; // { file, fileType }
+
+function renderMaintAttachQueue() {
+  const queue = el('maint-attach-queue');
+  if (!maintPendingAttachments.length) { queue.innerHTML = ''; queue.classList.add('hidden'); return; }
+  queue.classList.remove('hidden');
+  queue.innerHTML = maintPendingAttachments.map((a, i) => {
+    const isPdf = a.file.type === 'application/pdf' || a.file.name.endsWith('.pdf');
+    const badge = a.fileType === 'invoice' ? 'INV' : 'PIC';
+    const thumb = isPdf
+      ? `<span class="maint-aq-icon">&#128196;</span>`
+      : `<img src="${URL.createObjectURL(a.file)}" alt="">`;
+    return `<div class="maint-aq-item">
+      ${thumb}
+      <span class="maint-aq-badge">${badge}</span>
+      <button class="maint-aq-remove" data-idx="${i}">&times;</button>
+      <div class="maint-aq-name">${a.file.name}</div>
+    </div>`;
+  }).join('');
+  queue.querySelectorAll('.maint-aq-remove').forEach(btn => {
+    btn.addEventListener('click', () => {
+      maintPendingAttachments.splice(parseInt(btn.dataset.idx), 1);
+      renderMaintAttachQueue();
+    });
+  });
+}
+
+async function loadJsPDF() {
+  if (window.jspdf) return;
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+    s.onload = resolve; s.onerror = reject;
+    document.head.appendChild(s);
+  });
+}
+
+async function imageToPdf(file) {
+  await loadJsPDF();
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      const img = new Image();
+      img.onload = () => {
+        let w = img.width, h = img.height;
+        const maxPx = 2480;
+        if (w > maxPx || h > maxPx) {
+          const scale = maxPx / Math.max(w, h);
+          w = Math.round(w * scale); h = Math.round(h * scale);
+        }
+        const { jsPDF } = window.jspdf;
+        const pdf = new jsPDF({ orientation: w > h ? 'l' : 'p', unit: 'px', format: [w, h], hotfixes: ['px_scaling'] });
+        pdf.addImage(e.target.result, 'JPEG', 0, 0, w, h, undefined, 'FAST');
+        const name = file.name.replace(/\.[^.]+$/, '.pdf');
+        resolve(new File([pdf.output('blob')], name, { type: 'application/pdf' }));
+      };
+      img.onerror = reject;
+      img.src = e.target.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+el('maint-attach-invoice-btn').addEventListener('click', () => el('maint-attach-invoice-input').click());
+el('maint-attach-photo-btn').addEventListener('click',   () => el('maint-attach-photo-input').click());
+
+el('maint-attach-invoice-input').addEventListener('change', async () => {
+  const files = [...el('maint-attach-invoice-input').files];
+  el('maint-attach-invoice-input').value = '';
+  const converting = el('maint-attach-converting');
+  for (const f of files) {
+    if (f.type.startsWith('image/')) {
+      converting.classList.remove('hidden');
+      try {
+        const pdf = await imageToPdf(f);
+        maintPendingAttachments.push({ file: pdf, fileType: 'invoice' });
+      } catch {
+        maintPendingAttachments.push({ file: f, fileType: 'invoice' });
+      }
+      converting.classList.add('hidden');
+    } else {
+      maintPendingAttachments.push({ file: f, fileType: 'invoice' });
+    }
+  }
+  renderMaintAttachQueue();
+});
+
+el('maint-attach-photo-input').addEventListener('change', () => {
+  [...el('maint-attach-photo-input').files].forEach(f =>
+    maintPendingAttachments.push({ file: f, fileType: 'photo' })
+  );
+  el('maint-attach-photo-input').value = '';
+  renderMaintAttachQueue();
+});
+
+// Shared upload helper used by both new-record form and card updates
+async function doUploadAttachments(maintenanceId, vehicleNum, dateStr, workType, pending) {
+  let invoiceIdx = 0, photoIdx = 0;
+  for (const att of pending) {
+    const origExt = att.file.name.includes('.') ? att.file.name.split('.').pop().toLowerCase() : 'jpg';
+    let newName;
+    if (att.fileType === 'invoice') {
+      invoiceIdx++;
+      const sfx = invoiceIdx > 1 ? `_${invoiceIdx}` : '';
+      newName = `invoice_${vehicleNum}_${dateStr}${sfx}.pdf`;
+    } else {
+      photoIdx++;
+      const sfx = photoIdx > 1 ? `_${photoIdx}` : '';
+      newName = `${vehicleNum}_${workType}_${dateStr}${sfx}.${origExt}`;
+    }
+    const renamed = new File([att.file], newName, { type: att.file.type });
+    const fd = new FormData();
+    fd.append('file', renamed);
+    try {
+      await fetch(
+        `/api/maintenance/attachment?table_name=maintenance_vehicles&record_id=${maintenanceId}&file_type=${att.fileType}&category=vehicles`,
+        { method: 'POST', body: fd }
+      );
+    } catch { /* non-fatal */ }
+  }
+}
+
+async function uploadMaintAttachments(maintenanceId) {
+  const vehicleOpt = el('maint-vehicle-select').options[el('maint-vehicle-select').selectedIndex];
+  const vehicleNum = (vehicleOpt?.text || '').split('—')[0].trim()
+    .replace(/[^a-zA-Z0-9-]/g, '_').replace(/_+/g, '_').replace(/^_|_$/, '') || 'vehicle';
+  const [y, m, d] = (el('maint-date').value || todayISO()).split('-');
+  const workType = el('maint-work-type').value || 'service';
+  await doUploadAttachments(maintenanceId, vehicleNum, `${m}${d}${y}`, workType, maintPendingAttachments);
+  maintPendingAttachments = [];
+  renderMaintAttachQueue();
+}
+
 el('maint-save-btn').addEventListener('click', async () => {
   clearError('maint-error');
   const common = {
@@ -2526,7 +2983,16 @@ el('maint-save-btn').addEventListener('click', async () => {
         engine_hours_at_service:  el('maint-vehicle-hours').value || null,
         next_service_miles:       el('maint-vehicle-next-miles').value || null,
         next_service_hours:       el('maint-vehicle-next-hours').value || null,
+        status:                   el('maint-vehicle-status').value,
       }, 'Maintenance — Vehicle');
+      if (r.maintenance_id && maintPendingAttachments.length) {
+        await uploadMaintAttachments(r.maintenance_id);
+      }
+      // Collapse form, show button, reload list
+      el('veh-new-record-form').classList.add('hidden');
+      el('veh-new-record-btn').classList.remove('hidden');
+      loadVehRecords();
+      refreshMaintenanceBadges();
     } else {
       const buildingId = el('maint-building-select').value;
       if (!buildingId) return showError('maint-error', 'Please select a building');
@@ -2814,6 +3280,287 @@ function createKFItem(w, dateInput, timeInput) {
   return div;
 }
 
+/* ── Piezometer Readings ─────────────────────────────────────────────────── */
+let piezLoaded      = false;
+let piezAllItems    = [];
+let piezPools       = [];
+let piezActivePool  = null;
+
+async function initPiezScreen() {
+  if (piezLoaded) return;
+  piezLoaded = true;
+
+  el('piez-date').value = todayISO();
+  el('piez-time').value = nowHHMM();
+
+  try {
+    piezAllItems = await api('GET', '/api/piezometers');
+  } catch (err) {
+    el('piez-list-body').innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
+    showToast('Failed to load piezometers: ' + err.message, 'error');
+    return;
+  }
+
+  // Derive unique pool list: Pool 1-8 numerically first, then everything else alphabetically
+  const rawPools = [...new Set(piezAllItems.map(p => p.pool).filter(Boolean))];
+  const poolNum  = n => { const m = /^Pool\s+(\d+)$/i.exec(n); return m ? parseInt(m[1]) : null; };
+  piezPools = rawPools.sort((a, b) => {
+    const na = poolNum(a), nb = poolNum(b);
+    if (na !== null && nb !== null) return na - nb;          // both numbered: numeric order
+    if (na !== null) return -1;                               // numbered before named
+    if (nb !== null) return 1;
+    return a.localeCompare(b);                                // both named: alpha
+  });
+
+  // Build pool tabs
+  const tabsEl = el('piez-pool-tabs');
+  tabsEl.innerHTML = '';
+  piezPools.forEach(pool => {
+    const btn = document.createElement('button');
+    btn.className = 'set-tab';
+    btn.textContent = pool;
+    btn.dataset.pool = pool;
+    tabsEl.appendChild(btn);
+  });
+
+  // Default to first pool
+  if (tabsEl.children.length) {
+    tabsEl.children[0].classList.add('active');
+    piezActivePool = tabsEl.children[0].dataset.pool;
+  }
+
+  tabsEl.addEventListener('click', e => {
+    const tab = e.target.closest('.set-tab');
+    if (!tab) return;
+    tabsEl.querySelectorAll('.set-tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    piezActivePool = tab.dataset.pool || null;
+    el('piez-time').value = nowHHMM();
+    renderPiezList();
+  });
+
+  renderPiezList();
+}
+
+function renderPiezList() {
+  const body   = el('piez-list-body');
+  const dateIn = el('piez-date');
+  const timeIn = el('piez-time');
+
+  const filtered = piezActivePool
+    ? piezAllItems.filter(p => p.pool === piezActivePool)
+    : piezAllItems;
+
+  if (!filtered.length) {
+    body.innerHTML = '<div class="placeholder-msg">No active piezometers in this pool.</div>';
+    return;
+  }
+
+  body.innerHTML = '';
+
+  // Pool title card with count and map button
+  const doneCount  = filtered.filter(p => p.last_reading_date != null).length;
+  const totalCount = filtered.length;
+
+  const titleCard = document.createElement('div');
+  titleCard.className = 'kf-set-title-card';
+  titleCard.innerHTML = `
+    <div class="kf-set-title-info">
+      <span class="kf-set-title-name">Pool: ${piezActivePool || 'All'}</span>
+      <span class="kf-set-title-count">${doneCount} / ${totalCount} have readings</span>
+    </div>
+    <button class="btn btn-secondary btn-sm piez-pool-map-btn">&#128506; Map</button>`;
+  titleCard.querySelector('.piez-pool-map-btn').addEventListener('click', () => {
+    openSetMapModal(`Pool: ${piezActivePool}`, filtered.map(p => ({
+      common_name:   p.piezometer_name,
+      gps_latitude:  p.gps_latitude,
+      gps_longitude: p.gps_longitude,
+    })));
+  });
+  body.appendChild(titleCard);
+
+  filtered.forEach(p => body.appendChild(createPiezItem(p, dateIn, timeIn)));
+}
+
+function createPiezItem(p, dateInput, timeInput) {
+  const div = document.createElement('div');
+  div.className = 'list-item';
+
+  const hasReading = p.last_reading_date != null;
+  const sc         = hasReading ? 'done' : 'due';
+  const badge      = hasReading
+    ? localDateStr(p.last_reading_date, { month: 'short', day: 'numeric' })
+    : 'No reading';
+  const prevDTW    = p.last_dtw != null ? `${Number(p.last_dtw).toFixed(2)} ft` : null;
+  const prevMethod = p.last_method ? p.last_method.charAt(0).toUpperCase() + p.last_method.slice(1) : null;
+  const prevCond   = p.last_wet_dry_moist ? p.last_wet_dry_moist.charAt(0).toUpperCase() + p.last_wet_dry_moist.slice(1) : null;
+  const prevParts  = [prevDTW, prevMethod, prevCond].filter(Boolean);
+  const prevMeta   = prevParts.length ? prevParts.join(' · ') : null;
+  const hasGPS     = p.gps_latitude && p.gps_longitude;
+
+  div.innerHTML = `
+    <div class="list-item-header">
+      <span class="status-dot ${sc}"></span>
+      <span class="list-item-name">${p.piezometer_name}</span>
+      <span class="status-badge ${sc}">${badge}</span>
+      <span class="expand-chevron">&#9660;</span>
+    </div>
+    ${prevMeta ? `<div class="list-item-meta"><span>Prev: ${prevMeta}</span></div>` : ''}
+    <div class="list-item-form">
+      ${p.notes ? `<div class="piez-perm-notes">${p.notes}</div>` : ''}
+      <div class="form-group">
+        <label>Depth to Water (ft)${prevDTW ? `<span class="prev-hint"> · Prev: ${prevDTW}</span>` : ''}</label>
+        <input type="number" class="ctrl-input piez-dtw" step="0.01" placeholder="0.00">
+      </div>
+      <div class="two-col">
+        <div class="form-group toggle-row">
+          <label>Method</label>
+          <div class="toggle-group">
+            <button class="toggle-btn active piez-plopper">Plopper</button>
+            <button class="toggle-btn piez-sounder">Sounder</button>
+          </div>
+        </div>
+        <div class="form-group toggle-row">
+          <label>Condition</label>
+          <div class="toggle-group">
+            <button class="toggle-btn active piez-wet">Wet</button>
+            <button class="toggle-btn piez-dry">Dry</button>
+            <button class="toggle-btn piez-moist">Moist</button>
+          </div>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Operator</label>
+        <input type="text" class="ctrl-input piez-op" placeholder="Initials">
+      </div>
+      <div class="form-group">
+        <label>Notes</label>
+        <textarea class="ctrl-textarea piez-notes" rows="2" placeholder="Optional notes…"></textarea>
+      </div>
+      <div class="lif-error error-msg hidden"></div>
+      <div class="lif-footer">
+        ${hasGPS ? `<button class="btn btn-secondary btn-sm piez-map-btn">&#128205; Map</button>` : ''}
+        <button class="btn btn-secondary btn-sm piez-hist-btn">&#128200; History</button>
+        <button class="btn btn-save piez-save">Save Reading</button>
+      </div>
+    </div>`;
+
+  // Auto-fill operator
+  if (currentUser) {
+    div.querySelector('.piez-op').value = currentUser.initials || currentUser.username;
+  }
+
+  // Toggle state
+  let piezMethod = 'plopper';
+  let piezCond   = 'wet';
+
+  const plBtn  = div.querySelector('.piez-plopper');
+  const soBtn  = div.querySelector('.piez-sounder');
+  const wetBtn = div.querySelector('.piez-wet');
+  const dryBtn = div.querySelector('.piez-dry');
+  const moBtn  = div.querySelector('.piez-moist');
+
+  // Pre-fill previous method/condition if available
+  if (p.last_method === 'sounder') {
+    piezMethod = 'sounder';
+    plBtn.classList.remove('active');
+    soBtn.classList.add('active');
+  }
+  if (p.last_wet_dry_moist) {
+    piezCond = p.last_wet_dry_moist;
+    wetBtn.classList.remove('active');
+    dryBtn.classList.remove('active');
+    moBtn.classList.remove('active');
+    div.querySelector(`.piez-${piezCond}`).classList.add('active');
+  }
+
+  plBtn.addEventListener('click', e => {
+    piezMethod = 'plopper';
+    plBtn.classList.add('active'); soBtn.classList.remove('active');
+  });
+  soBtn.addEventListener('click', e => {
+    piezMethod = 'sounder';
+    soBtn.classList.add('active'); plBtn.classList.remove('active');
+  });
+  wetBtn.addEventListener('click', e => {
+    piezCond = 'wet';
+    wetBtn.classList.add('active'); dryBtn.classList.remove('active'); moBtn.classList.remove('active');
+  });
+  dryBtn.addEventListener('click', e => {
+    piezCond = 'dry';
+    dryBtn.classList.add('active'); wetBtn.classList.remove('active'); moBtn.classList.remove('active');
+  });
+  moBtn.addEventListener('click', e => {
+    piezCond = 'moist';
+    moBtn.classList.add('active'); wetBtn.classList.remove('active'); dryBtn.classList.remove('active');
+  });
+
+  const mapBtn = div.querySelector('.piez-map-btn');
+  if (mapBtn) {
+    mapBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      openLocationModal(p.gps_latitude, p.gps_longitude, p.piezometer_name);
+    });
+  }
+
+  div.querySelector('.piez-hist-btn').addEventListener('click', e => {
+    e.stopPropagation();
+    openHistoryModal('piezometer', p.piezometer_id, p.piezometer_name);
+  });
+
+  div.querySelector('.list-item-header').addEventListener('click', () => {
+    const open = div.classList.toggle('expanded');
+    div.querySelector('.list-item-form').style.display = open ? '' : 'none';
+    if (open) el('piez-time').value = nowHHMM();
+  });
+
+  div.querySelector('.piez-save').addEventListener('click', async e => {
+    e.stopPropagation();
+    const errEl = div.querySelector('.lif-error');
+    errEl.classList.add('hidden');
+    const dtw = div.querySelector('.piez-dtw').value;
+    if (!dtw) { errEl.textContent = 'Depth to water is required'; errEl.classList.remove('hidden'); return; }
+
+    const body = {
+      piezometer_id:  p.piezometer_id,
+      reading_date:   dateInput.value,
+      reading_time:   timeInput.value,
+      dtw_reading:    parseFloat(dtw),
+      operator:       div.querySelector('.piez-op').value || null,
+      plopper_sounder: piezMethod,
+      wet_dry_moist:  piezCond,
+      notes:          div.querySelector('.piez-notes').value || null,
+    };
+    try {
+      const r = await api('POST', '/api/readings/piezometer', body, `Piez — ${p.piezometer_name}`);
+      div.querySelector('.status-dot').className = 'status-dot done';
+      div.querySelector('.status-badge').textContent = r.queued ? 'Offline' : 'Today';
+      div.querySelector('.status-badge').className = 'status-badge done';
+      div.classList.remove('expanded');
+      div.querySelector('.list-item-form').style.display = 'none';
+      if (!r.queued) {
+        const condStr = piezCond.charAt(0).toUpperCase() + piezCond.slice(1);
+        const methStr = piezMethod.charAt(0).toUpperCase() + piezMethod.slice(1);
+        const newPrev = [`${Number(dtw).toFixed(2)} ft`, methStr, condStr].join(' · ');
+        let meta = div.querySelector('.list-item-meta');
+        if (!meta) {
+          meta = document.createElement('div');
+          meta.className = 'list-item-meta';
+          div.querySelector('.list-item-header').after(meta);
+        }
+        meta.innerHTML = `<span>Prev: ${newPrev}</span>`;
+      }
+      showToast(r.queued ? `${p.piezometer_name} queued offline` : `${p.piezometer_name} saved`, r.queued ? 'warn' : 'success');
+    } catch (err) {
+      errEl.textContent = err.message;
+      errEl.classList.remove('hidden');
+    }
+  });
+
+  div.querySelector('.list-item-form').style.display = 'none';
+  return div;
+}
+
 /* ── Settings Screen ─────────────────────────────────────────────────────── */
 
 // Text size preference — apply on load
@@ -2890,7 +3637,9 @@ document.querySelectorAll('.settings-back-btn').forEach(btn => {
 
 el('settings-panel-tools').addEventListener('click', e => {
   const btn = e.target.closest('[data-tool]');
-  if (btn && btn.dataset.tool === 'exif') openExifTool();
+  if (!btn) return;
+  if (btn.dataset.tool === 'exif')   openExifTool();
+  if (btn.dataset.tool === 'upload') openUploadTool();
 });
 
 el('exif-back-btn').addEventListener('click', () => {
@@ -3473,6 +4222,7 @@ async function openMaintHistoryModal(type, id, label, equip_type) {
       return;
     }
 
+    const statusLabel = { open: 'Open', 'in-progress': 'In Progress', resolved: 'Resolved' };
     body.innerHTML = rows.map(r => {
       const details = [];
       if (r.odometer_at_service) details.push(`${Number(r.odometer_at_service).toLocaleString()} mi`);
@@ -3482,18 +4232,65 @@ async function openMaintHistoryModal(type, id, label, equip_type) {
       if (r.parts_used) details.push(`Parts: ${r.parts_used}`);
       if (r.next_service_miles) details.push(`Next svc: ${Number(r.next_service_miles).toLocaleString()} mi`);
       if (r.next_service_hours) details.push(`Next svc: ${r.next_service_hours} hrs`);
+      const statusBadge = r.status
+        ? `<span class="maint-status-badge maint-status-${r.status}">${statusLabel[r.status] || r.status}</span>` : '';
+      const attachBtn = Number(r.attachment_count) > 0
+        ? `<button class="btn btn-secondary btn-xs maint-hist-attach-btn" data-id="${r.maintenance_id}">&#128206; ${r.attachment_count} file${r.attachment_count > 1 ? 's' : ''}</button>` : '';
       return `
         <div class="maint-hist-row">
           <div class="maint-hist-header">
             <span class="maint-hist-date">${String(r.work_date).slice(0,10)}</span>
             <span class="maint-hist-type">${r.work_type || ''}${r.record_type ? ` · ${r.record_type}` : ''}${r.is_contractor ? ' · Contractor' : ''}</span>
+            ${statusBadge}
           </div>
           ${r.description ? `<div class="maint-hist-desc">${r.description}</div>` : ''}
           ${details.length ? `<div class="maint-hist-details">${details.join(' · ')}</div>` : ''}
           ${r.notes ? `<div class="maint-hist-notes">${r.notes}</div>` : ''}
-          <div class="maint-hist-by">By: ${r.performed_by || r.entered_by || '—'}</div>
+          <div class="maint-hist-footer">
+            <span class="maint-hist-by">By: ${r.performed_by || r.entered_by || '—'}</span>
+            ${attachBtn}
+          </div>
+          ${r.maintenance_id ? `<div class="maint-hist-attach-area hidden" data-id="${r.maintenance_id}"></div>` : ''}
         </div>`;
     }).join('');
+
+    // Wire attachment expand buttons
+    body.querySelectorAll('.maint-hist-attach-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.dataset.id;
+        const area = body.querySelector(`.maint-hist-attach-area[data-id="${id}"]`);
+        if (!area) return;
+        if (!area.classList.contains('hidden')) { area.classList.add('hidden'); return; }
+        area.classList.remove('hidden');
+        if (area.dataset.loaded) return;
+        area.innerHTML = '<div class="placeholder-msg" style="font-size:0.8rem">Loading…</div>';
+        try {
+          const atts = await api('GET', `/api/maintenance/attachments?table_name=maintenance_vehicles&record_id=${id}`);
+          area.dataset.loaded = '1';
+          if (!atts.length) { area.innerHTML = '<div class="maint-att-empty">No files</div>'; return; }
+          area.innerHTML = atts.map(a => {
+            const isPdf = a.mime_type === 'application/pdf' || a.original_name.endsWith('.pdf');
+            const url = `/uploads/${a.rel_path.split('/').map(encodeURIComponent).join('/')}`;
+            const thumb = isPdf
+              ? `<span class="maint-att-pdf-icon">&#128196;</span>`
+              : `<img src="${url}" alt="" loading="lazy">`;
+            const typeLabel = a.file_type === 'invoice' ? 'INV' : 'PIC';
+            return `<div class="maint-att-item" data-url="${url}" data-pdf="${isPdf}" data-name="${a.original_name.replace(/"/g,'&quot;')}" data-id="${a.attachment_id}">
+              <div class="maint-att-thumb">${thumb}</div>
+              <span class="maint-att-type-badge">${typeLabel}</span>
+              <div class="maint-att-name">${a.original_name}</div>
+            </div>`;
+          }).join('');
+          area.querySelectorAll('.maint-att-item').forEach(card => {
+            card.addEventListener('click', () => {
+              openAttachmentPreview(card.dataset.url, card.dataset.name, card.dataset.pdf === 'true');
+            });
+          });
+        } catch (err) {
+          area.innerHTML = `<div class="maint-att-empty" style="color:var(--red-light)">${err.message}</div>`;
+        }
+      });
+    });
   } catch (err) {
     body.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
   }
@@ -5285,6 +6082,574 @@ el('export-pdf-btn').addEventListener('click', () => {
       showScreen('dashboard');
     }
   }
+})();
+
+/* ── Well Runs ───────────────────────────────────────────────────────────── */
+const DWR_NO_MEAS = [
+  { code: '0', label: 'Meas. Discontinued' },
+  { code: '1', label: 'Pumping' },
+  { code: '2', label: 'Pump house locked' },
+  { code: '3', label: 'Tape hung up' },
+  { code: '4', label: "Can't get tape in" },
+  { code: '5', label: 'Unable to locate' },
+  { code: '6', label: 'Well destroyed' },
+  { code: '7', label: 'Special' },
+  { code: '8', label: 'Casing leaking or wet' },
+  { code: '9', label: 'Temp. inaccessible' },
+  { code: 'D', label: 'Dry' },
+];
+const DWR_QUEST_MEAS = [
+  { code: '0', label: 'Caved or deepened' },
+  { code: '1', label: 'Pumping' },
+  { code: '2', label: 'Nearby pump operating' },
+  { code: '3', label: 'Casing leaking or wet' },
+  { code: '4', label: 'Pumped recently' },
+  { code: '5', label: 'Air gauge meas.' },
+  { code: '6', label: 'Other' },
+  { code: '7', label: 'Recharge operation nearby' },
+  { code: '8', label: 'Oil in casing' },
+  { code: '9', label: 'Acoustic sounder meas.' },
+];
+
+let dwrWells = [];
+let dwrDoneThisSession = new Set(); // well_ids saved this session
+
+function initWellRunsScreen() {
+  // Sub-dashboard tiles
+  document.querySelectorAll('[data-wr-panel]').forEach(tile => {
+    tile.addEventListener('click', () => {
+      const panel = tile.dataset.wrPanel;
+      el('well-runs-main').classList.add('hidden');
+      if (panel === 'dwr') {
+        el('wr-panel-dwr').classList.remove('hidden');
+        initDWRScreen();
+      } else if (panel === 'kcwa') {
+        el('wr-panel-kcwa').classList.remove('hidden');
+        initPiezScreen();
+      } else {
+        el('wr-panel-soon').classList.remove('hidden');
+      }
+    });
+  });
+  el('wr-dwr-back').addEventListener('click', () => {
+    el('wr-panel-dwr').classList.add('hidden');
+    el('well-runs-main').classList.remove('hidden');
+  });
+  el('wr-kcwa-back').addEventListener('click', () => {
+    el('wr-panel-kcwa').classList.add('hidden');
+    el('well-runs-main').classList.remove('hidden');
+  });
+  el('wr-soon-back').addEventListener('click', () => {
+    el('wr-panel-soon').classList.add('hidden');
+    el('well-runs-main').classList.remove('hidden');
+  });
+}
+
+let dwrLoaded = false;
+async function initDWRScreen() {
+  el('dwr-date').value = todayISO();
+  el('dwr-time').value = nowHHMM();
+
+  if (!dwrLoaded) {
+    el('dwr-list-body').innerHTML = '<div class="placeholder-msg">Loading…</div>';
+    try {
+      dwrWells = await api('GET', '/api/wells/dwr');
+      dwrLoaded = true;
+    } catch (err) {
+      el('dwr-list-body').innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
+      return;
+    }
+  }
+
+  el('dwr-map-btn').onclick = () => openSetMapModal('DWR Wells', dwrWells);
+  renderDWRList();
+}
+
+function renderDWRList() {
+  const body    = el('dwr-list-body');
+  const dateIn  = el('dwr-date');
+  const timeIn  = el('dwr-time');
+
+  body.innerHTML = '';
+  el('dwr-total-count').textContent = dwrWells.length;
+  updateDWRCounter();
+
+  dwrWells.forEach(w => body.appendChild(createDWRItem(w, dateIn, timeIn)));
+}
+
+function updateDWRCounter() {
+  // Count wells that are completed = saved this session OR reading within last 30 days
+  const done = dwrWells.filter(w =>
+    dwrDoneThisSession.has(w.well_id) ||
+    (w.days_since_reading != null && w.days_since_reading <= 30)
+  ).length;
+  el('dwr-done-count').textContent = done;
+}
+
+function makeDWRMultiSelect(options, placeholder) {
+  const wrap = document.createElement('div');
+  wrap.className = 'dwr-ms-wrap form-group';
+
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'dwr-ms-btn';
+  btn.textContent = placeholder;
+
+  const panel = document.createElement('div');
+  panel.className = 'dwr-ms-panel';
+
+  options.forEach(opt => {
+    const row = document.createElement('label');
+    row.className = 'dwr-ms-option';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = opt.code;
+    row.appendChild(cb);
+    row.appendChild(document.createTextNode(`${opt.code}. ${opt.label}`));
+    panel.appendChild(row);
+
+    cb.addEventListener('change', () => {
+      updateDWRMultiBtn(btn, panel, placeholder);
+    });
+  });
+
+  btn.addEventListener('click', e => {
+    e.stopPropagation();
+    panel.classList.toggle('open');
+  });
+  // Close when clicking outside
+  document.addEventListener('click', e => {
+    if (!wrap.contains(e.target)) panel.classList.remove('open');
+  });
+
+  wrap.appendChild(btn);
+  wrap.appendChild(panel);
+
+  wrap.getSelected = () =>
+    [...panel.querySelectorAll('input:checked')].map(cb => cb.value);
+  wrap.clearAll = () => {
+    panel.querySelectorAll('input').forEach(cb => { cb.checked = false; });
+    btn.textContent = placeholder;
+    panel.querySelectorAll('.dwr-ms-option').forEach(r => r.classList.remove('selected'));
+  };
+  return wrap;
+}
+
+function updateDWRMultiBtn(btn, panel, placeholder) {
+  const selected = [...panel.querySelectorAll('input:checked')];
+  panel.querySelectorAll('.dwr-ms-option').forEach(r => {
+    r.classList.toggle('selected', r.querySelector('input').checked);
+  });
+  if (!selected.length) {
+    btn.textContent = placeholder;
+  } else {
+    btn.textContent = selected.map(cb => cb.value).join(', ');
+  }
+}
+
+function createDWRItem(w, dateInput, timeInput) {
+  const div = document.createElement('div');
+  div.className = 'list-item';
+
+  const days = w.days_since_reading;
+  const sessionDone = dwrDoneThisSession.has(w.well_id);
+  const recent = sessionDone || (days != null && days <= 30);
+  const noReading = days == null && !sessionDone;
+  const pillCls = sessionDone || (days != null && days <= 30) ? 'wr-recent'
+                : (days == null ? 'wr-none' : 'wr-old');
+  const pillTxt = sessionDone ? 'Done'
+                : (days != null ? localDateStr(w.last_reading_date, { month: 'short', day: 'numeric' }) : 'No reading');
+
+  const prevDTW = w.last_dtw != null ? `${Number(w.last_dtw).toFixed(2)} ft`
+                : (w.last_no_measurement?.length ? 'NM' : null);
+  const wellLabel = w.state_well_number || w.common_name || 'Well';
+  const hasGPS = w.gps_latitude && w.gps_longitude;
+
+  div.innerHTML = `
+    <div class="list-item-header">
+      <span class="list-item-name">${wellLabel}</span>
+      <span class="status-badge ${pillCls}">${pillTxt}</span>
+      <span class="expand-chevron">&#9660;</span>
+    </div>
+    ${prevDTW ? `<div class="list-item-meta"><span>Prev: ${prevDTW}</span></div>` : ''}
+    <div class="list-item-form" style="display:none">
+      <div class="form-group">
+        <label>Depth to Water (ft)${prevDTW ? `<span class="prev-hint"> · Prev: ${prevDTW}</span>` : ''}</label>
+        <input type="number" class="ctrl-input dwr-dtw" step="0.01" placeholder="0.00">
+      </div>
+      <div class="dwr-ms-nm-slot"></div>
+      <div class="dwr-ms-qm-slot"></div>
+      <div class="form-group">
+        <label>Method</label>
+        <select class="ctrl-select dwr-method">
+          <option value="">Select…</option>
+          <option value="plopper">Plopper</option>
+          <option value="sounder">Sounder</option>
+          <option value="tape">Tape</option>
+          <option value="transducer">Transducer</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Operator</label>
+        <input type="text" class="ctrl-input dwr-op" placeholder="Initials" readonly>
+      </div>
+      <div class="form-group">
+        <label>Notes</label>
+        <textarea class="ctrl-textarea dwr-notes" rows="2" placeholder="Optional notes…"></textarea>
+      </div>
+      <div class="lif-error error-msg hidden"></div>
+      <div class="lif-footer">
+        ${hasGPS ? `<button class="btn btn-secondary btn-sm dwr-map-item-btn">&#128205; Map</button>` : ''}
+        <button class="btn btn-secondary btn-sm dwr-hist-btn">&#128200; History</button>
+        <button class="btn btn-save dwr-save-btn">Save Reading</button>
+      </div>
+    </div>`;
+
+  // Build multi-selects
+  const nmWrap = makeDWRMultiSelect(DWR_NO_MEAS,    'No Measurement: none');
+  const qmWrap = makeDWRMultiSelect(DWR_QUEST_MEAS, 'Questionable Measurement: none');
+  div.querySelector('.dwr-ms-nm-slot').replaceWith(nmWrap);
+  div.querySelector('.dwr-ms-qm-slot').replaceWith(qmWrap);
+
+  // If any NM code selected → set DTW to NM
+  const dtwInput = div.querySelector('.dwr-dtw');
+  nmWrap.addEventListener('change', () => {
+    const hasCodes = nmWrap.getSelected().length > 0;
+    if (hasCodes) {
+      dtwInput.value = '';
+      dtwInput.placeholder = 'NM';
+      dtwInput.classList.add('dwr-dtw-nm');
+      dtwInput.disabled = true;
+    } else {
+      dtwInput.placeholder = '0.00';
+      dtwInput.classList.remove('dwr-dtw-nm');
+      dtwInput.disabled = false;
+    }
+  });
+
+  // Auto-fill operator
+  if (currentUser) div.querySelector('.dwr-op').value = currentUser.initials || currentUser.username;
+  if (w.last_notes) div.querySelector('.dwr-notes').value = w.last_notes;
+
+  // Map button (individual well)
+  div.querySelector('.dwr-map-item-btn')?.addEventListener('click', e => {
+    e.stopPropagation();
+    const url = `https://maps.apple.com/?ll=${w.gps_latitude},${w.gps_longitude}&q=${encodeURIComponent(wellLabel)}`;
+    window.open(url, '_blank');
+  });
+
+  // History button
+  div.querySelector('.dwr-hist-btn').addEventListener('click', e => {
+    e.stopPropagation();
+    openHistoryModal('dwr', w.well_id, wellLabel);
+  });
+
+  // Expand/collapse — reset date/time on open
+  div.querySelector('.list-item-header').addEventListener('click', () => {
+    const open = div.classList.toggle('expanded');
+    div.querySelector('.list-item-form').style.display = open ? '' : 'none';
+    if (open) {
+      dateInput.value = todayISO();
+      timeInput.value = nowHHMM();
+    }
+  });
+
+  // Save
+  div.querySelector('.dwr-save-btn').addEventListener('click', async e => {
+    e.stopPropagation();
+    const errEl = div.querySelector('.lif-error');
+    errEl.classList.add('hidden');
+
+    const nmCodes = nmWrap.getSelected();
+    const qmCodes = qmWrap.getSelected();
+    const dtwRaw  = dtwInput.value;
+    const isNM    = nmCodes.length > 0;
+
+    if (!isNM && dtwRaw === '') {
+      errEl.textContent = 'Enter a depth or select a No Measurement code';
+      errEl.classList.remove('hidden');
+      return;
+    }
+
+    const body = {
+      well_id:                  w.well_id,
+      reading_date:             dateInput.value,
+      reading_time:             timeInput.value,
+      depth_to_water:           isNM ? null : parseFloat(dtwRaw),
+      method:                   div.querySelector('.dwr-method').value || null,
+      operator:                 div.querySelector('.dwr-op').value || null,
+      no_measurement:           nmCodes,
+      questionable_measurement: qmCodes,
+      notes:                    div.querySelector('.dwr-notes').value || null,
+    };
+
+    try {
+      await api('POST', '/api/readings/run-dwr', body, `DWR — ${w.common_name}`);
+
+      // Mark as done in session
+      dwrDoneThisSession.add(w.well_id);
+      w.last_reading_date = body.reading_date;
+      w.last_dtw = body.depth_to_water;
+      w.days_since_reading = 0;
+
+      // Update pill
+      const pill = div.querySelector('.status-badge');
+      pill.className = 'status-badge wr-recent';
+      pill.textContent = 'Done';
+
+      // Update prev hint
+      const newPrev = isNM ? 'NM' : `${Number(dtwRaw).toFixed(2)} ft`;
+      let meta = div.querySelector('.list-item-meta');
+      if (!meta) {
+        meta = document.createElement('div');
+        meta.className = 'list-item-meta';
+        div.querySelector('.list-item-header').after(meta);
+      }
+      meta.innerHTML = `<span>Prev: ${newPrev}</span>`;
+
+      // Collapse and reset
+      div.classList.remove('expanded');
+      div.querySelector('.list-item-form').style.display = 'none';
+      dtwInput.value = ''; dtwInput.disabled = false;
+      dtwInput.placeholder = '0.00'; dtwInput.classList.remove('dwr-dtw-nm');
+      nmWrap.clearAll(); qmWrap.clearAll();
+      div.querySelector('.dwr-notes').value = body.notes || '';
+
+      updateDWRCounter();
+      showToast(`${w.common_name} saved`, 'success');
+    } catch (err) {
+      errEl.textContent = err.message;
+      errEl.classList.remove('hidden');
+    }
+  });
+
+  return div;
+}
+
+// ── Upload Tool ───────────────────────────────────────────────────────────────
+(function () {
+  const CATEGORIES = ['pumps','wells','vehicles','electrical','structures','misc'];
+  let pendingFiles = [];     // File objects waiting to upload
+  let previewFile  = null;   // { url, name, isPdf }
+
+  function show(id)  { el(id).classList.remove('hidden'); }
+  function hide(id)  { el(id).classList.add('hidden'); }
+
+  /* ── Open / close ── */
+  window.openUploadTool = function () {
+    el('upload-tool-overlay').classList.remove('hidden');
+    switchTab('upload');
+  };
+
+  el('uptool-back-btn').addEventListener('click', () => {
+    el('upload-tool-overlay').classList.add('hidden');
+  });
+
+  /* ── Tabs ── */
+  function switchTab(name) {
+    document.querySelectorAll('.uptool-tab').forEach(t => {
+      t.classList.toggle('active', t.dataset.uptab === name);
+    });
+    el('uptool-tab-upload').classList.toggle('hidden', name !== 'upload');
+    el('uptool-tab-browse').classList.toggle('hidden', name !== 'browse');
+    if (name === 'browse') loadBrowse();
+  }
+
+  document.querySelectorAll('.uptool-tab').forEach(t => {
+    t.addEventListener('click', () => switchTab(t.dataset.uptab));
+  });
+
+  /* ── Upload tab: file selection ── */
+  const dropzone   = el('uptool-dropzone');
+  const fileInput  = el('uptool-file-input');
+
+  dropzone.addEventListener('dragover',  e => { e.preventDefault(); dropzone.classList.add('drag-over'); });
+  dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag-over'));
+  dropzone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropzone.classList.remove('drag-over');
+    addFiles([...e.dataTransfer.files]);
+  });
+
+  fileInput.addEventListener('change', () => {
+    addFiles([...fileInput.files]);
+    fileInput.value = '';
+  });
+
+  function addFiles(files) {
+    pendingFiles.push(...files);
+    renderQueue();
+  }
+
+  function renderQueue() {
+    const queue = el('uptool-queue');
+    const actions = el('uptool-actions');
+    hide('uptool-result');
+    if (!pendingFiles.length) {
+      queue.innerHTML = '';
+      hide('uptool-queue'); hide('uptool-actions'); return;
+    }
+    show('uptool-queue'); show('uptool-actions');
+    queue.innerHTML = pendingFiles.map((f, i) => {
+      const isPdf = f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf');
+      const thumb = isPdf
+        ? `<span class="uptool-qi-pdf">&#128196;</span>`
+        : `<img src="${URL.createObjectURL(f)}" alt="">`;
+      return `<div class="uptool-queue-item">${thumb}<div class="uptool-qi-name">${f.name}</div></div>`;
+    }).join('');
+  }
+
+  el('uptool-clear-btn').addEventListener('click', () => {
+    pendingFiles = [];
+    renderQueue();
+  });
+
+  /* ── Upload tab: submit ── */
+  el('uptool-upload-btn').addEventListener('click', async () => {
+    if (!pendingFiles.length) return;
+    const category = el('uptool-category').value;
+    const fd = new FormData();
+    pendingFiles.forEach(f => fd.append('files', f));
+
+    hide('uptool-actions'); show('uptool-progress-wrap');
+    const bar = el('uptool-progress-bar');
+    bar.style.width = '0%';
+
+    try {
+      // Animate bar while uploading (fake progress; real progress via XHR if desired)
+      let fakeT = 0;
+      const fakeInterval = setInterval(() => {
+        fakeT = Math.min(fakeT + 15, 85);
+        bar.style.width = fakeT + '%';
+      }, 150);
+
+      const res = await fetch(`/api/tools/upload?category=${encodeURIComponent(category)}`, {
+        method: 'POST',
+        body: fd
+        // no Content-Type header — browser sets multipart boundary automatically
+      });
+      clearInterval(fakeInterval);
+      bar.style.width = '100%';
+
+      if (!res.ok) throw new Error(await res.text());
+      const saved = await res.json();
+
+      hide('uptool-progress-wrap');
+      const resultEl = el('uptool-result');
+      resultEl.innerHTML = `<span style="color:var(--green-light,#4caf50)">&#10003; Uploaded ${saved.length} file${saved.length !== 1 ? 's' : ''}</span>`;
+      show('uptool-result');
+      pendingFiles = [];
+      renderQueue();
+    } catch (err) {
+      hide('uptool-progress-wrap');
+      const resultEl = el('uptool-result');
+      resultEl.innerHTML = `<span style="color:var(--red-light,#f44336)">Upload failed: ${err.message}</span>`;
+      show('uptool-result');
+      show('uptool-actions');
+    }
+  });
+
+  /* ── Browse tab ── */
+  async function loadBrowse() {
+    const cat = el('uptool-browse-cat').value;
+    const grid = el('uptool-file-grid');
+    grid.innerHTML = '<div class="uptool-empty">Loading…</div>';
+    try {
+      const url = '/api/tools/files' + (cat ? `?category=${encodeURIComponent(cat)}` : '');
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(await res.text());
+      const files = await res.json();
+      renderGrid(files);
+    } catch (err) {
+      grid.innerHTML = `<div class="uptool-empty" style="color:var(--red-light)">Error: ${err.message}</div>`;
+    }
+  }
+
+  function renderGrid(files) {
+    const grid = el('uptool-file-grid');
+    if (!files.length) {
+      grid.innerHTML = '<div class="uptool-empty">No files found</div>';
+      return;
+    }
+    grid.innerHTML = files.map(f => {
+      const isPdf = f.name.toLowerCase().endsWith('.pdf');
+      const thumb = isPdf
+        ? `<div class="uptool-fc-thumb"><span class="uptool-pdf-icon">&#128196;</span></div>`
+        : `<div class="uptool-fc-thumb"><img src="/uploads/${encodePathSegments(f.relPath)}" loading="lazy" alt=""></div>`;
+      return `<div class="uptool-file-card" data-rel="${escapeAttr(f.relPath)}" data-name="${escapeAttr(f.name)}" data-pdf="${isPdf}">
+        ${thumb}
+        <div class="uptool-fc-name">${escapeHtml(f.name)}</div>
+      </div>`;
+    }).join('');
+
+    grid.querySelectorAll('.uptool-file-card').forEach(card => {
+      card.addEventListener('click', () => openPreview(card.dataset.rel, card.dataset.name, card.dataset.pdf === 'true'));
+    });
+  }
+
+  function encodePathSegments(relPath) {
+    return relPath.split('/').map(encodeURIComponent).join('/');
+  }
+  function escapeAttr(s) { return s.replace(/"/g,'&quot;'); }
+  function escapeHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+  el('uptool-browse-cat').addEventListener('change', loadBrowse);
+  el('uptool-refresh-btn').addEventListener('click', loadBrowse);
+
+  /* ── Preview modal ── */
+  function openPreview(relPath, name, isPdf) {
+    previewFile = { relPath, name, isPdf };
+    el('uptool-preview-name').textContent = name;
+    const body = el('uptool-preview-body');
+    const url = `/uploads/${encodePathSegments(relPath)}`;
+    if (isPdf) {
+      body.innerHTML = `<div class="uptool-pdf-msg">
+        <p>&#128196; ${escapeHtml(name)}</p>
+        <p style="margin-top:8px;font-size:0.85rem;color:var(--text-dim)">Click "Save / Download" to open the PDF.</p>
+      </div>`;
+    } else {
+      body.innerHTML = `<img src="${url}" alt="${escapeAttr(name)}">`;
+    }
+    el('uptool-preview-modal').classList.remove('hidden');
+  }
+
+  el('uptool-preview-close').addEventListener('click', () => {
+    el('uptool-preview-modal').classList.add('hidden');
+    previewFile = null;
+  });
+
+  el('uptool-preview-save').addEventListener('click', () => {
+    if (!previewFile) return;
+    const url = `/uploads/${encodePathSegments(previewFile.relPath)}`;
+    if (previewFile.isPdf) {
+      window.open(url, '_blank');
+    } else {
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = previewFile.name;
+      a.click();
+    }
+  });
+
+  el('uptool-preview-delete').addEventListener('click', async () => {
+    if (!previewFile) return;
+    if (!confirm(`Delete "${previewFile.name}"?`)) return;
+    try {
+      const res = await fetch('/api/tools/file', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ relPath: previewFile.relPath })
+      });
+      if (!res.ok) throw new Error(await res.text());
+      el('uptool-preview-modal').classList.add('hidden');
+      previewFile = null;
+      showToast('File deleted', 'success');
+      loadBrowse();
+    } catch (err) {
+      showToast('Delete failed: ' + err.message, 'error');
+    }
+  });
 })();
 
 /* ── Init ────────────────────────────────────────────────────────────────── */

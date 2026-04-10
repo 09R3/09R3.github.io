@@ -5,12 +5,107 @@ const bcrypt       = require('bcryptjs');
 const crypto       = require('crypto');
 const cookieParser = require('cookie-parser');
 const path         = require('path');
+const fs           = require('fs');
+const multer       = require('multer');
 const XLSX         = require('xlsx');
 
 const app = express();
 app.use(express.json());
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
+
+// ── File Uploads ──────────────────────────────────────────────────────────────
+const UPLOADS_ROOT = process.env.UPLOADS_PATH || '/app/uploads';
+fs.mkdirSync(UPLOADS_ROOT, { recursive: true });
+
+// /uploads static route registered after sessions Map is declared (see below)
+
+const UPLOAD_CATEGORIES = ['pumps','motors','wells','vehicles','electrical',
+                           'structures','siphon-breakers','air-compressors',
+                           'canal','misc','general'];
+
+const multerStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const cat = UPLOAD_CATEGORIES.includes(req.query.category)
+      ? req.query.category : 'general';
+    const now  = new Date();
+    const dir  = path.join(UPLOADS_ROOT, cat,
+                           String(now.getFullYear()),
+                           String(now.getMonth() + 1).padStart(2, '0'));
+    fs.mkdirSync(dir, { recursive: true });
+    cb(null, dir);
+  },
+  filename: (req, file, cb) => {
+    const ext  = path.extname(file.originalname).toLowerCase();
+    const base = path.basename(file.originalname, ext)
+                     .replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 60);
+    cb(null, `${base}${ext}`);
+  },
+});
+const upload = multer({
+  storage: multerStorage,
+  limits: { fileSize: 50 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const ok = /^image\/(jpeg|jpg|png|heic|heif|webp)|application\/pdf$/.test(file.mimetype);
+    cb(null, ok);
+  },
+});
+
+app.post('/api/tools/upload', requireAuth, requireRole('supervisor', 'admin'),
+  upload.array('files', 20), (req, res) => {
+    if (!req.files?.length) return res.status(400).json({ error: 'No valid files' });
+    const cat = UPLOAD_CATEGORIES.includes(req.query.category)
+      ? req.query.category : 'general';
+    res.json(req.files.map(f => ({
+      name:     f.originalname,
+      filename: f.filename,
+      url:      '/uploads/' + path.relative(UPLOADS_ROOT, f.path).replace(/\\/g, '/'),
+      size:     f.size,
+      mime:     f.mimetype,
+      category: cat,
+    })));
+  }
+);
+
+app.get('/api/tools/files', requireAuth, requireRole('supervisor', 'admin'), (req, res) => {
+  const cat     = req.query.category;
+  const scanDir = cat && UPLOAD_CATEGORIES.includes(cat)
+    ? path.join(UPLOADS_ROOT, cat) : UPLOADS_ROOT;
+
+  if (!fs.existsSync(scanDir)) return res.json([]);
+  const results = [];
+  (function scan(dir) {
+    fs.readdirSync(dir, { withFileTypes: true }).forEach(e => {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) { scan(full); return; }
+      const rel   = path.relative(UPLOADS_ROOT, full).replace(/\\/g, '/');
+      const parts = rel.split('/');
+      results.push({
+        url:      '/uploads/' + rel,
+        relPath:  rel,
+        name:     e.name,
+        category: parts[0] || 'general',
+        year:     parts[1] || '',
+        month:    parts[2] || '',
+        size:     fs.statSync(full).size,
+        mtime:    fs.statSync(full).mtime,
+      });
+    });
+  })(scanDir);
+  results.sort((a, b) => new Date(b.mtime) - new Date(a.mtime));
+  res.json(results);
+});
+
+app.delete('/api/tools/file', requireAuth, requireRole('supervisor', 'admin'), (req, res) => {
+  const { relPath, filePath } = req.body;
+  const target = relPath || filePath;
+  if (!target) return res.status(400).json({ error: 'relPath required' });
+  const abs = path.resolve(UPLOADS_ROOT, target.replace(/^\/uploads\//, ''));
+  if (!abs.startsWith(path.resolve(UPLOADS_ROOT)))
+    return res.status(403).json({ error: 'Invalid path' });
+  try { fs.unlinkSync(abs); res.json({ ok: true }); }
+  catch (err) { res.status(500).json({ error: err.message }); }
+});
 
 // ── Database ──────────────────────────────────────────────────────────────────
 const pool = new Pool({
@@ -40,9 +135,47 @@ pool.query(`
   )
 `).catch(err => console.error('Migration error:', err.message));
 
+pool.query(`ALTER TABLE maintenance_vehicles ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'open'`)
+  .catch(err => console.error('Migration error (mv_status):', err.message));
+
+pool.query(`
+  CREATE TABLE IF NOT EXISTS readings_piezometers (
+    piezometer_reading_id SERIAL PRIMARY KEY,
+    piezometer_id         INTEGER REFERENCES piezometers(piezometer_id),
+    reading_date          DATE,
+    reading_time          TIME,
+    dtw_reading           NUMERIC,
+    operator              TEXT,
+    plopper_sounder       TEXT CHECK (plopper_sounder IN ('plopper','sounder')),
+    wet_dry_moist         TEXT CHECK (wet_dry_moist IN ('wet','dry','moist')),
+    notes                 TEXT
+  )
+`).catch(err => console.error('Migration error (readings_piezometers):', err.message));
+
+pool.query(`
+  CREATE TABLE IF NOT EXISTS maintenance_attachments (
+    attachment_id  SERIAL PRIMARY KEY,
+    table_name     TEXT NOT NULL,
+    record_id      INTEGER NOT NULL,
+    rel_path       TEXT NOT NULL,
+    original_name  TEXT NOT NULL,
+    file_type      TEXT DEFAULT 'photo',
+    mime_type      TEXT,
+    uploaded_by    TEXT,
+    uploaded_at    TIMESTAMPTZ DEFAULT NOW()
+  )
+`).catch(err => console.error('Migration error (maint_attachments):', err.message));
+
 // ── Auth / Sessions ───────────────────────────────────────────────────────────
 const SESSION_TTL = 8 * 60 * 60 * 1000; // 8 hours
 const sessions = new Map();
+
+// Serve uploads behind session auth now that sessions Map exists
+app.use('/uploads', (req, res, next) => {
+  const session = sessions.get(req.cookies?.fo_session);
+  if (!session || Date.now() > session.expires) return res.status(401).send('Unauthorized');
+  next();
+}, express.static(UPLOADS_ROOT));
 
 function createSession(user) {
   const token = crypto.randomBytes(32).toString('hex');
@@ -606,7 +739,126 @@ app.post('/api/readings/kf-monthly', requireAuth, async (req, res) => {
 app.delete('/api/readings/kf-monthly/:id', requireAuth, (req, res) =>
   deleteReading(req, res, 'readings_kf_monthly', 'kf_reading_id'));
 
-// ── Wells ─────────────────────────────────────────────────────────────────────
+// ── Piezometers ───────────────────────────────────────────────────────────────
+app.get('/api/piezometers', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        p.piezometer_id, p.piezometer_name, p.pool, p.sort_order,
+        p.max_depth, p.gps_latitude, p.gps_longitude, p.notes,
+        prev.piezometer_reading_id AS last_reading_id,
+        prev.reading_date          AS last_reading_date,
+        prev.dtw_reading           AS last_dtw,
+        prev.plopper_sounder       AS last_method,
+        prev.wet_dry_moist         AS last_wet_dry_moist,
+        prev.notes                 AS last_reading_notes
+      FROM piezometers p
+      LEFT JOIN LATERAL (
+        SELECT piezometer_reading_id, reading_date, dtw_reading, plopper_sounder, wet_dry_moist, notes
+        FROM readings_piezometers
+        WHERE piezometer_id = p.piezometer_id
+        ORDER BY reading_date DESC, reading_time DESC
+        LIMIT 1
+      ) prev ON true
+      WHERE LOWER(p.status) = 'active'
+      ORDER BY p.pool, p.sort_order, p.piezometer_name
+    `);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/readings/piezometer', requireAuth, async (req, res) => {
+  const {
+    piezometer_id, reading_date, reading_time,
+    dtw_reading, operator, plopper_sounder, wet_dry_moist, notes,
+  } = req.body;
+  if (!piezometer_id || !reading_date) {
+    return res.status(400).json({ error: 'piezometer_id and reading_date are required' });
+  }
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO readings_piezometers
+         (piezometer_id, reading_date, reading_time, dtw_reading, operator, plopper_sounder, wet_dry_moist, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+       RETURNING piezometer_reading_id`,
+      [piezometer_id, reading_date, reading_time || null, dtw_reading ?? null,
+       operator || null, plopper_sounder || null, wet_dry_moist || null, notes || null]
+    );
+    res.json({ ok: true, piezometer_reading_id: rows[0].piezometer_reading_id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── DWR Well Run ──────────────────────────────────────────────────────────────
+app.get('/api/wells/dwr', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        w.well_id, w.common_name, w.state_well_number, w.area,
+        w.gps_latitude, w.gps_longitude,
+        prev.reading_id      AS last_reading_id,
+        prev.reading_date    AS last_reading_date,
+        prev.depth_to_water  AS last_dtw,
+        prev.method          AS last_method,
+        prev.notes           AS last_notes,
+        prev.no_measurement  AS last_no_measurement,
+        (CURRENT_DATE - prev.reading_date)::int AS days_since_reading
+      FROM wells w
+      LEFT JOIN LATERAL (
+        SELECT reading_id, reading_date, depth_to_water, method, notes, no_measurement
+        FROM readings_run_dwr
+        WHERE well_id = w.well_id
+        ORDER BY reading_date DESC, reading_time DESC
+        LIMIT 1
+      ) prev ON true
+      WHERE w.well_run = 'DWR'
+        AND (LOWER(w.status) != 'inactive' OR w.status IS NULL)
+      ORDER BY w.state_well_number, w.common_name
+    `);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/readings/run-dwr', requireAuth, async (req, res) => {
+  const {
+    well_id, reading_date, reading_time,
+    depth_to_water, method, operator,
+    no_measurement, questionable_measurement, notes,
+  } = req.body;
+  if (!well_id || !reading_date) {
+    return res.status(400).json({ error: 'well_id and reading_date are required' });
+  }
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO readings_run_dwr
+         (well_id, reading_date, reading_time, depth_to_water, method, operator,
+          no_measurement, questionable_measurement, notes, entered_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+       RETURNING reading_id`,
+      [
+        well_id, reading_date, reading_time || null,
+        depth_to_water != null ? depth_to_water : null,
+        method || null, operator || null,
+        no_measurement?.length ? no_measurement : null,
+        questionable_measurement?.length ? questionable_measurement : null,
+        notes || null, req.user.username,
+      ]
+    );
+    res.json({ reading_id: rows[0].reading_id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/readings/run-dwr/:id', requireAuth, (req, res) =>
+  deleteReading(req, res, 'readings_run_dwr', 'reading_id'));
+
+
 app.get('/api/wells', requireAuth, async (req, res) => {
   try {
     const { rows } = await pool.query(
@@ -747,6 +999,20 @@ app.get('/api/history', requireAuth, async (req, res) => {
         `SELECT reading_id AS id, reading_date, reading_time, odometer_miles, engine_hours, entered_by, notes
          FROM readings_vehicle_monthly WHERE vehicle_id = $1
          ORDER BY reading_date DESC, reading_time DESC LIMIT $2`, [id, LIMIT]));
+    } else if (type === 'dwr') {
+      ({ rows } = await pool.query(
+        `SELECT reading_id AS id, reading_date, reading_time,
+                depth_to_water AS value, method, operator AS entered_by,
+                no_measurement, questionable_measurement, notes
+         FROM readings_run_dwr WHERE well_id = $1
+         ORDER BY reading_date DESC, reading_time DESC LIMIT $2`, [id, LIMIT]));
+    } else if (type === 'piezometer') {
+      ({ rows } = await pool.query(
+        `SELECT piezometer_reading_id AS id, reading_date, reading_time,
+                dtw_reading AS value, plopper_sounder AS method, wet_dry_moist,
+                operator AS entered_by, notes
+         FROM readings_piezometers WHERE piezometer_id = $1
+         ORDER BY reading_date DESC, reading_time DESC LIMIT $2`, [id, LIMIT]));
     } else {
       return res.status(400).json({ error: 'unknown type' });
     }
@@ -768,6 +1034,8 @@ app.delete('/api/history/:type/:id', requireAuth, async (req, res) => {
     kf:         { table: 'readings_kf_monthly',       pk: 'kf_reading_id' },
     canal:      { table: 'readings_canal',            pk: 'reading_id' },
     vehicle:    { table: 'readings_vehicle_monthly',  pk: 'reading_id' },
+    dwr:        { table: 'readings_run_dwr',          pk: 'reading_id' },
+    piezometer: { table: 'readings_piezometers',      pk: 'piezometer_reading_id' },
   };
   const map = TABLE_MAP[type];
   if (!map) return res.status(400).json({ error: 'unknown type' });
@@ -1330,14 +1598,57 @@ app.get('/api/maintenance/badge-counts', requireAuth, async (req, res) => {
         (SELECT COUNT(*) FROM building_issues
          WHERE status IN ('open','in_progress')) AS buildings,
         (SELECT COUNT(*) FROM well_issues
-         WHERE status IN ('open','in_progress')) AS wells
+         WHERE status IN ('open','in_progress')) AS wells,
+        (SELECT COUNT(*) FROM maintenance_vehicles
+         WHERE status IN ('open','in-progress')) AS vehicles
     `);
     const counts = rows[0];
     res.json({
       equipment: parseInt(counts.equipment) || 0,
       buildings: parseInt(counts.buildings) || 0,
       wells:     parseInt(counts.wells)     || 0,
+      vehicles:  parseInt(counts.vehicles)  || 0,
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/maintenance/vehicles-list', requireAuth, async (req, res) => {
+  const includeResolved = req.query.include_resolved === 'true';
+  try {
+    const { rows } = await pool.query(`
+      SELECT mv.maintenance_id, mv.work_date, mv.work_type, mv.description,
+             mv.status, mv.notes, mv.performed_by, mv.entered_by,
+             mv.parts_used, mv.cost, mv.po_number,
+             v.vehicle_number, v.make, v.model,
+             (SELECT COUNT(*) FROM maintenance_attachments
+              WHERE table_name = 'maintenance_vehicles' AND record_id = mv.maintenance_id
+             ) AS attachment_count
+      FROM maintenance_vehicles mv
+      JOIN vehicles v ON v.vehicle_id = mv.vehicle_id
+      WHERE ($1 OR mv.status NOT IN ('resolved'))
+      ORDER BY mv.work_date DESC, mv.maintenance_id DESC
+      LIMIT 100
+    `, [includeResolved]);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch('/api/maintenance/vehicle/:id', requireAuth, async (req, res) => {
+  const { status, notes, performed_by, po_number, cost } = req.body;
+  try {
+    await pool.query(
+      `UPDATE maintenance_vehicles
+       SET status=$1, notes=$2, performed_by=$3, po_number=$4, cost=$5
+       WHERE maintenance_id=$6`,
+      [status, notes || null, performed_by || null, po_number || null,
+       cost != null && cost !== '' ? parseFloat(cost) : null,
+       parseInt(req.params.id)]
+    );
+    res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1482,20 +1793,21 @@ app.post('/api/maintenance/vehicle', requireAuth, async (req, res) => {
   const {
     vehicle_id, work_date, work_type, performed_by, is_contractor,
     description, odometer_at_service, engine_hours_at_service,
-    parts_used, cost, po_number, next_service_date, next_service_miles, next_service_hours, notes,
+    parts_used, cost, po_number, next_service_date, next_service_miles, next_service_hours,
+    notes, status,
   } = req.body;
   try {
     const { rows } = await pool.query(
       `INSERT INTO maintenance_vehicles
          (vehicle_id, work_date, work_type, performed_by, is_contractor, entered_by,
           description, odometer_at_service, engine_hours_at_service, parts_used, cost,
-          po_number, next_service_date, next_service_miles, next_service_hours, notes)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING maintenance_id`,
+          po_number, next_service_date, next_service_miles, next_service_hours, notes, status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING maintenance_id`,
       [vehicle_id, work_date, work_type, performed_by, is_contractor ?? false,
        req.user.username, description || null, odometer_at_service ?? null,
        engine_hours_at_service ?? null, parts_used || null, cost ?? null,
        po_number || null, next_service_date || null, next_service_miles ?? null,
-       next_service_hours ?? null, notes || null]
+       next_service_hours ?? null, notes || null, status || 'open']
     );
     res.json({ ok: true, maintenance_id: rows[0].maintenance_id });
   } catch (err) {
@@ -1544,12 +1856,17 @@ app.get('/api/maintenance/history', requireAuth, async (req, res) => {
       ));
     } else if (type === 'vehicle') {
       ({ rows } = await pool.query(
-        `SELECT work_date, work_type, description, performed_by, is_contractor,
-                parts_used, cost, odometer_at_service, engine_hours_at_service,
-                next_service_miles, next_service_hours, notes, entered_by
-         FROM maintenance_vehicles
-         WHERE vehicle_id = $1
-         ORDER BY work_date DESC LIMIT 15`,
+        `SELECT mv.maintenance_id, mv.work_date, mv.work_type, mv.description,
+                mv.performed_by, mv.is_contractor, mv.parts_used, mv.cost,
+                mv.odometer_at_service, mv.engine_hours_at_service,
+                mv.next_service_miles, mv.next_service_hours, mv.notes,
+                mv.entered_by, mv.status,
+                (SELECT COUNT(*) FROM maintenance_attachments
+                 WHERE table_name = 'maintenance_vehicles' AND record_id = mv.maintenance_id
+                ) AS attachment_count
+         FROM maintenance_vehicles mv
+         WHERE mv.vehicle_id = $1
+         ORDER BY mv.work_date DESC LIMIT 15`,
         [id]
       ));
     } else if (type === 'building') {
@@ -1565,6 +1882,65 @@ app.get('/api/maintenance/history', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'Invalid type' });
     }
     res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Maintenance Attachments ───────────────────────────────────────────────────
+app.post('/api/maintenance/attachment', requireAuth,
+  upload.single('file'), async (req, res) => {
+    if (!req.file) return res.status(400).json({ error: 'No file received' });
+    const { table_name, record_id, file_type } = req.query;
+    const rel = path.relative(UPLOADS_ROOT, req.file.path).replace(/\\/g, '/');
+    try {
+      const { rows } = await pool.query(
+        `INSERT INTO maintenance_attachments
+           (table_name, record_id, rel_path, original_name, file_type, mime_type, uploaded_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING attachment_id`,
+        [table_name || 'maintenance_vehicles', parseInt(record_id), rel,
+         req.file.originalname, file_type || 'photo', req.file.mimetype, req.user.username]
+      );
+      res.json({ ok: true, attachment_id: rows[0].attachment_id, rel_path: rel });
+    } catch (err) {
+      try { fs.unlinkSync(req.file.path); } catch {}
+      res.status(500).json({ error: err.message });
+    }
+  }
+);
+
+app.get('/api/maintenance/attachments', requireAuth, async (req, res) => {
+  const { table_name, record_id } = req.query;
+  if (!table_name || !record_id) return res.status(400).json({ error: 'table_name and record_id required' });
+  try {
+    const { rows } = await pool.query(
+      `SELECT attachment_id, rel_path, original_name, file_type, mime_type, uploaded_by, uploaded_at
+       FROM maintenance_attachments
+       WHERE table_name = $1 AND record_id = $2
+       ORDER BY uploaded_at`,
+      [table_name, parseInt(record_id)]
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/maintenance/attachment/:id', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT rel_path, uploaded_by FROM maintenance_attachments WHERE attachment_id = $1`,
+      [parseInt(req.params.id)]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Not found' });
+    const { rel_path, uploaded_by } = rows[0];
+    if (req.user.username !== uploaded_by && !['admin', 'supervisor'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Cannot delete another user\'s attachment' });
+    }
+    await pool.query(`DELETE FROM maintenance_attachments WHERE attachment_id = $1`, [parseInt(req.params.id)]);
+    const abs = path.join(UPLOADS_ROOT, rel_path);
+    if (fs.existsSync(abs)) fs.unlinkSync(abs);
+    res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
