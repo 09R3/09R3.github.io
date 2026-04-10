@@ -2151,9 +2151,7 @@ input[type="date"].ctrl-input { min-height: 44px; }
   padding: 10px 12px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
-  position: sticky;
-  top: 0;
-  z-index: 50;
+  margin-bottom: 8px;
 }
 .wr-panel-nav {
   display: flex;
