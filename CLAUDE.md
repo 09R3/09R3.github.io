@@ -77,6 +77,7 @@ readings_canal            reading_id(PK), structure_id(→canal_structures), rea
 readings_compressor_hours reading_id(PK), compressor_id(→air_compressors), reading_date, reading_time, hour_reading, entered_by, notes
 readings_kf_monthly       kf_reading_id(PK), well_id(→wells), reading_date, reading_time, dtw_reading, operator, plopper_sounder, well_on_off, notes, common_name
 readings_pge_meters       reading_id(PK), pge_meter_id(→pge_meters), reading_date, reading_time, kwh_reading, entered_by, notes
+readings_piezometers      piezometer_reading_id(PK), piezometer_id(→piezometers), reading_date, reading_time, dtw_reading, operator, plopper_sounder, wet_dry_moist, notes
 readings_power_monitors   reading_id(PK), monitor_id(→power_monitors), reading_date, reading_time, kwh_reading, entered_by, notes
 readings_pump_hours       reading_id(PK), position_id(→pump_positions), reading_date, reading_time, hour_reading, entered_by, notes
 readings_run_dwr          reading_id(PK), well_id(→wells), reading_date, reading_time, depth_to_water, method, operator, no_measurement(text[]), questionable_measurement(text[]), notes, entered_by, created_at

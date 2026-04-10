@@ -139,6 +139,20 @@ pool.query(`ALTER TABLE maintenance_vehicles ADD COLUMN IF NOT EXISTS status TEX
   .catch(err => console.error('Migration error (mv_status):', err.message));
 
 pool.query(`
+  CREATE TABLE IF NOT EXISTS readings_piezometers (
+    piezometer_reading_id SERIAL PRIMARY KEY,
+    piezometer_id         INTEGER REFERENCES piezometers(piezometer_id),
+    reading_date          DATE,
+    reading_time          TIME,
+    dtw_reading           NUMERIC,
+    operator              TEXT,
+    plopper_sounder       TEXT CHECK (plopper_sounder IN ('plopper','sounder')),
+    wet_dry_moist         TEXT CHECK (wet_dry_moist IN ('wet','dry','moist')),
+    notes                 TEXT
+  )
+`).catch(err => console.error('Migration error (readings_piezometers):', err.message));
+
+pool.query(`
   CREATE TABLE IF NOT EXISTS maintenance_attachments (
     attachment_id  SERIAL PRIMARY KEY,
     table_name     TEXT NOT NULL,
