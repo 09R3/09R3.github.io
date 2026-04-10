@@ -1244,15 +1244,17 @@ app.get('/api/well-issues', requireAuth, async (req, res) => {
   const includeResolved = req.query.include_resolved === 'true';
   try {
     const { rows } = await pool.query(`
-      SELECT issue_id, well_id, well_name, well_area,
-             status, description, reported_date, resolved_date,
-             action_taken, resolution_notes, po_number, cost,
-             entered_by, assigned_to, notes, created_at
-      FROM well_issues
-      WHERE $1 OR status != 'resolved'
+      SELECT wi.issue_id, wi.well_id, wi.well_name, wi.well_area,
+             wi.status, wi.description, wi.reported_date, wi.resolved_date,
+             wi.action_taken, wi.resolution_notes, wi.po_number, wi.cost,
+             wi.entered_by, wi.assigned_to, wi.notes, wi.created_at,
+             (SELECT COUNT(*) FROM maintenance_attachments
+              WHERE table_name = 'well_issues' AND record_id = wi.issue_id) AS attachment_count
+      FROM well_issues wi
+      WHERE $1 OR wi.status != 'resolved'
       ORDER BY
-        CASE status WHEN 'open' THEN 1 WHEN 'in_progress' THEN 2 ELSE 3 END,
-        reported_date DESC
+        CASE wi.status WHEN 'open' THEN 1 WHEN 'in_progress' THEN 2 ELSE 3 END,
+        wi.reported_date DESC
     `, [includeResolved]);
     res.json(rows);
   } catch (err) {
@@ -1312,15 +1314,17 @@ app.get('/api/building-issues', requireAuth, async (req, res) => {
   const includeResolved = req.query.include_resolved === 'true';
   try {
     const { rows } = await pool.query(`
-      SELECT issue_id, building_id, site_id, building_name, site_name,
-             status, description, reported_date, resolved_date,
-             action_taken, resolution_notes, po_number, cost,
-             entered_by, assigned_to, notes, created_at
-      FROM building_issues
-      WHERE $1 OR status != 'resolved'
+      SELECT bi.issue_id, bi.building_id, bi.site_id, bi.building_name, bi.site_name,
+             bi.status, bi.description, bi.reported_date, bi.resolved_date,
+             bi.action_taken, bi.resolution_notes, bi.po_number, bi.cost,
+             bi.entered_by, bi.assigned_to, bi.notes, bi.created_at,
+             (SELECT COUNT(*) FROM maintenance_attachments
+              WHERE table_name = 'building_issues' AND record_id = bi.issue_id) AS attachment_count
+      FROM building_issues bi
+      WHERE $1 OR bi.status != 'resolved'
       ORDER BY
-        CASE status WHEN 'open' THEN 1 WHEN 'in_progress' THEN 2 ELSE 3 END,
-        reported_date DESC
+        CASE bi.status WHEN 'open' THEN 1 WHEN 'in_progress' THEN 2 ELSE 3 END,
+        bi.reported_date DESC
     `, [includeResolved]);
     res.json(rows);
   } catch (err) {
@@ -1380,15 +1384,17 @@ app.get('/api/equipment-issues', requireAuth, async (req, res) => {
   const includeResolved = req.query.include_resolved === 'true';
   try {
     const { rows } = await pool.query(`
-      SELECT issue_id, equipment_type, equipment_id, equipment_name,
-             status, description, reported_date, resolved_date,
-             action_taken, resolution_notes, po_number, cost,
-             entered_by, assigned_to, notes, created_at
-      FROM equipment_issues
-      WHERE $1 OR status != 'resolved'
+      SELECT ei.issue_id, ei.equipment_type, ei.equipment_id, ei.equipment_name,
+             ei.status, ei.description, ei.reported_date, ei.resolved_date,
+             ei.action_taken, ei.resolution_notes, ei.po_number, ei.cost,
+             ei.entered_by, ei.assigned_to, ei.notes, ei.created_at,
+             (SELECT COUNT(*) FROM maintenance_attachments
+              WHERE table_name = 'equipment_issues' AND record_id = ei.issue_id) AS attachment_count
+      FROM equipment_issues ei
+      WHERE $1 OR ei.status != 'resolved'
       ORDER BY
-        CASE status WHEN 'open' THEN 1 WHEN 'in_progress' THEN 2 ELSE 3 END,
-        reported_date DESC
+        CASE ei.status WHEN 'open' THEN 1 WHEN 'in_progress' THEN 2 ELSE 3 END,
+        ei.reported_date DESC
     `, [includeResolved]);
     res.json(rows);
   } catch (err) {
