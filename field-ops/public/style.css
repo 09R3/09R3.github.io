@@ -2146,15 +2146,43 @@ input[type="date"].ctrl-input { min-height: 44px; }
 .wr-soon { opacity: 0.55; }
 .wr-dwr-header {
   display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 10px;
+  flex-direction: column;
+  gap: 8px;
   padding: 10px 12px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
   position: sticky;
-  top: var(--header-h, 56px);
+  top: 0;
   z-index: 50;
+}
+.wr-panel-nav {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.wr-back-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  border: none;
+  color: var(--accent);
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 2px 0;
+}
+.wr-back-btn:active { opacity: 0.7; }
+.wr-panel-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.wr-panel-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 .wr-dwr-datetime { display: flex; gap: 8px; flex-wrap: wrap; }
 .wr-dwr-counter  { display: flex; align-items: center; gap: 6px; font-size: 0.88rem; color: var(--text-dim); margin-left: auto; }

@@ -154,6 +154,7 @@
       <li><button class="nav-btn" data-screen="canal">&#127754; Canal Readings</button></li>
       <li><button class="nav-btn" data-screen="vehicles">&#128664; Vehicle Monthly</button></li>
       <li><button class="nav-btn" data-screen="kf-monthly">&#128200; KF Monthly</button></li>
+      <li><button class="nav-btn" data-screen="well-runs">&#128204; Well Runs</button></li>
       <li><button class="nav-btn" data-screen="maintenance">&#128295; Maintenance Log</button></li>
       <li><button class="nav-btn" data-screen="pesticides">&#127807; Pesticides</button></li>
       <li class="nav-reports hidden" id="nav-reports-item"><button class="nav-btn" data-screen="reports">&#128202; Reports</button></li>
@@ -926,15 +927,20 @@
 
     <!-- DWR panel -->
     <div id="wr-panel-dwr" class="maint-panel hidden">
-      <button class="maint-back-btn" id="wr-dwr-back">&#8249; Well Runs</button>
       <div class="wr-dwr-header">
-        <div class="wr-dwr-datetime">
-          <input type="date" id="dwr-date" class="ctrl-input ctrl-input-sm">
-          <input type="time" id="dwr-time" class="ctrl-input ctrl-input-sm">
+        <div class="wr-panel-nav">
+          <button class="wr-back-btn" id="wr-dwr-back">&#8249; Well Runs</button>
+          <span class="wr-panel-title">DWR</span>
         </div>
-        <div class="wr-dwr-counter">
-          <span id="dwr-done-count">0</span> / <span id="dwr-total-count">0</span> complete
-          <button class="btn btn-secondary btn-sm" id="dwr-map-btn" style="margin-left:10px">&#128506; Map</button>
+        <div class="wr-panel-controls">
+          <div class="wr-dwr-datetime">
+            <input type="date" id="dwr-date" class="ctrl-input ctrl-input-sm">
+            <input type="time" id="dwr-time" class="ctrl-input ctrl-input-sm">
+          </div>
+          <div class="wr-dwr-counter">
+            <span id="dwr-done-count">0</span> / <span id="dwr-total-count">0</span> complete
+            <button class="btn btn-secondary btn-sm" id="dwr-map-btn" style="margin-left:10px">&#128506; Map</button>
+          </div>
         </div>
       </div>
       <div id="dwr-list-body"></div>
@@ -942,13 +948,18 @@
 
     <!-- KCWA Piezometers panel -->
     <div id="wr-panel-kcwa" class="maint-panel hidden">
-      <button class="maint-back-btn" id="wr-kcwa-back">&#8249; Well Runs</button>
       <div class="wr-dwr-header">
-        <div class="wr-dwr-datetime">
-          <input type="date" id="piez-date" class="ctrl-input ctrl-input-sm">
-          <input type="time" id="piez-time" class="ctrl-input ctrl-input-sm">
+        <div class="wr-panel-nav">
+          <button class="wr-back-btn" id="wr-kcwa-back">&#8249; Well Runs</button>
+          <span class="wr-panel-title">KCWA Piezometers</span>
         </div>
-        <div id="piez-pool-tabs" class="set-tabs kf-tabs-inline" style="flex:1;margin-left:8px"></div>
+        <div class="wr-panel-controls">
+          <div class="wr-dwr-datetime">
+            <input type="date" id="piez-date" class="ctrl-input ctrl-input-sm">
+            <input type="time" id="piez-time" class="ctrl-input ctrl-input-sm">
+          </div>
+          <div id="piez-pool-tabs" class="set-tabs" style="flex:1"></div>
+        </div>
       </div>
       <div id="piez-list-body"><div class="placeholder-msg">Loading piezometers…</div></div>
     </div>
