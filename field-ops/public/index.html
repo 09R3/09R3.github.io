@@ -154,7 +154,6 @@
       <li><button class="nav-btn" data-screen="canal">&#127754; Canal Readings</button></li>
       <li><button class="nav-btn" data-screen="vehicles">&#128664; Vehicle Monthly</button></li>
       <li><button class="nav-btn" data-screen="kf-monthly">&#128200; KF Monthly</button></li>
-      <li><button class="nav-btn" data-screen="piezometers">&#128204; Piezometers</button></li>
       <li><button class="nav-btn" data-screen="maintenance">&#128295; Maintenance Log</button></li>
       <li><button class="nav-btn" data-screen="pesticides">&#127807; Pesticides</button></li>
       <li class="nav-reports hidden" id="nav-reports-item"><button class="nav-btn" data-screen="reports">&#128202; Reports</button></li>
@@ -339,18 +338,6 @@
       <div id="kf-set-tabs" class="set-tabs kf-tabs-inline"></div>
     </div>
     <div id="kf-list-body"><div class="placeholder-msg">Loading KF wells…</div></div>
-  </div>
-
-  <!-- ── Piezometer Readings ──────────────────────────────────────────────── -->
-  <div id="screen-piezometers" class="screen-content">
-    <div class="date-bar">
-      <span class="ctrl-label">Date</span>
-      <input type="date" id="piez-date" class="ctrl-input ctrl-date">
-      <span class="ctrl-label">Time</span>
-      <input type="time" id="piez-time" class="ctrl-input ctrl-time">
-      <div id="piez-pool-tabs" class="set-tabs kf-tabs-inline"></div>
-    </div>
-    <div id="piez-list-body"><div class="placeholder-msg">Loading piezometers…</div></div>
   </div>
 
   <!-- ── Maintenance Log ────────────────────────────────────────────────────── -->
@@ -913,7 +900,7 @@
         <div class="dash-icon">&#128204;</div>
         <div class="dash-label">DWR</div>
       </div>
-      <div class="dash-tile wr-soon" data-wr-panel="kcwa">
+      <div class="dash-tile" data-wr-panel="kcwa">
         <div class="dash-icon">&#128200;</div>
         <div class="dash-label">KCWA Piezometers</div>
       </div>
@@ -951,6 +938,19 @@
         </div>
       </div>
       <div id="dwr-list-body"></div>
+    </div>
+
+    <!-- KCWA Piezometers panel -->
+    <div id="wr-panel-kcwa" class="maint-panel hidden">
+      <button class="maint-back-btn" id="wr-kcwa-back">&#8249; Well Runs</button>
+      <div class="wr-dwr-header">
+        <div class="wr-dwr-datetime">
+          <input type="date" id="piez-date" class="ctrl-input ctrl-input-sm">
+          <input type="time" id="piez-time" class="ctrl-input ctrl-input-sm">
+        </div>
+        <div id="piez-pool-tabs" class="set-tabs kf-tabs-inline" style="flex:1;margin-left:8px"></div>
+      </div>
+      <div id="piez-list-body"><div class="placeholder-msg">Loading piezometers…</div></div>
     </div>
 
   </div><!-- /screen-well-runs -->

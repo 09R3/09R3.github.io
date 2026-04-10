@@ -424,7 +424,6 @@ function showScreen(name) {
   if (name === 'canal')         initCanalScreen();
   if (name === 'vehicles')      initVehiclesScreen();
   if (name === 'kf-monthly')    initKFScreen();
-  if (name === 'piezometers')   initPiezScreen();
   if (name === 'maintenance')   initMaintenanceScreen();
   if (name === 'pesticides')    initPesticideScreen();
   if (name === 'well-runs')     initWellRunsScreen();
@@ -6080,6 +6079,9 @@ function initWellRunsScreen() {
       if (panel === 'dwr') {
         el('wr-panel-dwr').classList.remove('hidden');
         initDWRScreen();
+      } else if (panel === 'kcwa') {
+        el('wr-panel-kcwa').classList.remove('hidden');
+        initPiezScreen();
       } else {
         el('wr-panel-soon').classList.remove('hidden');
       }
@@ -6087,6 +6089,10 @@ function initWellRunsScreen() {
   });
   el('wr-dwr-back').addEventListener('click', () => {
     el('wr-panel-dwr').classList.add('hidden');
+    el('well-runs-main').classList.remove('hidden');
+  });
+  el('wr-kcwa-back').addEventListener('click', () => {
+    el('wr-panel-kcwa').classList.add('hidden');
     el('well-runs-main').classList.remove('hidden');
   });
   el('wr-soon-back').addEventListener('click', () => {
