@@ -39,7 +39,7 @@ const multerStorage = multer.diskStorage({
     const ext  = path.extname(file.originalname).toLowerCase();
     const base = path.basename(file.originalname, ext)
                      .replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 60);
-    cb(null, `${Date.now()}_${base}${ext}`);
+    cb(null, `${base}${ext}`);
   },
 });
 const upload = multer({

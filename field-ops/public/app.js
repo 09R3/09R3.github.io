@@ -650,6 +650,48 @@ const HIST_COLS = {
   vehicle:     [{ key: 'odometer_miles',label: 'Odometer' }, { key: 'engine_hours', label: 'Eng. Hrs' }],
 };
 
+/* ── Attachment Preview Modal ────────────────────────────────────────────── */
+let _attPreviewCurrent = null;
+
+function openAttachmentPreview(url, name, isPdf) {
+  _attPreviewCurrent = { url, name, isPdf };
+  el('att-preview-name').textContent = name;
+  const body = el('att-preview-body');
+  if (isPdf) {
+    body.innerHTML = `<div class="uptool-pdf-msg">
+      <p style="font-size:2rem">&#128196;</p>
+      <p style="margin-top:8px">${name}</p>
+      <p style="margin-top:8px;font-size:0.85rem;color:var(--text-dim)">Click "Save / Download" to open the PDF.</p>
+    </div>`;
+  } else {
+    body.innerHTML = `<img src="${url}" alt="${name.replace(/"/g,'&quot;')}">`;
+  }
+  el('att-preview-modal').classList.remove('hidden');
+}
+
+el('att-preview-close').addEventListener('click', () => {
+  el('att-preview-modal').classList.add('hidden');
+  _attPreviewCurrent = null;
+});
+
+el('att-preview-modal').addEventListener('click', e => {
+  if (e.target === el('att-preview-modal')) {
+    el('att-preview-modal').classList.add('hidden');
+    _attPreviewCurrent = null;
+  }
+});
+
+el('att-preview-download').addEventListener('click', () => {
+  if (!_attPreviewCurrent) return;
+  const { url, name, isPdf } = _attPreviewCurrent;
+  if (isPdf) {
+    window.open(url, '_blank');
+  } else {
+    const a = document.createElement('a');
+    a.href = url; a.download = name; a.click();
+  }
+});
+
 async function openHistoryModal(type, id, label) {
   const body = el('history-modal-body');
   el('history-modal-title').textContent = `History — ${label}`;
@@ -2469,8 +2511,7 @@ el('veh-record-list').addEventListener('click', async e => {
       }).join('');
       area.querySelectorAll('.maint-att-item').forEach(card => {
         card.addEventListener('click', () => {
-          if (card.dataset.pdf === 'true') window.open(card.dataset.url, '_blank');
-          else { const a = document.createElement('a'); a.href = card.dataset.url; a.download = card.dataset.name; a.click(); }
+          openAttachmentPreview(card.dataset.url, card.dataset.name, card.dataset.pdf === 'true');
         });
       });
     } catch (err) {
@@ -4242,12 +4283,7 @@ async function openMaintHistoryModal(type, id, label, equip_type) {
           }).join('');
           area.querySelectorAll('.maint-att-item').forEach(card => {
             card.addEventListener('click', () => {
-              const url = card.dataset.url;
-              if (card.dataset.pdf === 'true') { window.open(url, '_blank'); }
-              else {
-                const a = document.createElement('a');
-                a.href = url; a.download = card.dataset.name; a.click();
-              }
+              openAttachmentPreview(card.dataset.url, card.dataset.name, card.dataset.pdf === 'true');
             });
           });
         } catch (err) {
