@@ -77,7 +77,7 @@
         <div id="login-error" class="error-msg hidden"></div>
         <button type="submit" class="btn btn-primary btn-full">Sign In</button>
       </form>
-      <div class="login-version">v 1.24</div>
+      <div class="login-version">v 1.25</div>
     </div>
   </div>
 </div>
@@ -154,6 +154,7 @@
       <li><button class="nav-btn" data-screen="canal">&#127754; Canal Readings</button></li>
       <li><button class="nav-btn" data-screen="vehicles">&#128664; Vehicle Monthly</button></li>
       <li><button class="nav-btn" data-screen="kf-monthly">&#128200; KF Monthly</button></li>
+      <li><button class="nav-btn" data-screen="piezometers">&#128204; Piezometers</button></li>
       <li><button class="nav-btn" data-screen="maintenance">&#128295; Maintenance Log</button></li>
       <li><button class="nav-btn" data-screen="pesticides">&#127807; Pesticides</button></li>
       <li class="nav-reports hidden" id="nav-reports-item"><button class="nav-btn" data-screen="reports">&#128202; Reports</button></li>
@@ -338,6 +339,18 @@
       <div id="kf-set-tabs" class="set-tabs kf-tabs-inline"></div>
     </div>
     <div id="kf-list-body"><div class="placeholder-msg">Loading KF wells…</div></div>
+  </div>
+
+  <!-- ── Piezometer Readings ──────────────────────────────────────────────── -->
+  <div id="screen-piezometers" class="screen-content">
+    <div class="date-bar">
+      <span class="ctrl-label">Date</span>
+      <input type="date" id="piez-date" class="ctrl-input ctrl-date">
+      <span class="ctrl-label">Time</span>
+      <input type="time" id="piez-time" class="ctrl-input ctrl-time">
+      <div id="piez-pool-tabs" class="set-tabs kf-tabs-inline"></div>
+    </div>
+    <div id="piez-list-body"><div class="placeholder-msg">Loading piezometers…</div></div>
   </div>
 
   <!-- ── Maintenance Log ────────────────────────────────────────────────────── -->
@@ -1154,7 +1167,7 @@
       <button class="settings-back-btn">‹ Settings</button>
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 1.24</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 1.25</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>

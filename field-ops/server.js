@@ -739,6 +739,59 @@ app.post('/api/readings/kf-monthly', requireAuth, async (req, res) => {
 app.delete('/api/readings/kf-monthly/:id', requireAuth, (req, res) =>
   deleteReading(req, res, 'readings_kf_monthly', 'kf_reading_id'));
 
+// ── Piezometers ───────────────────────────────────────────────────────────────
+app.get('/api/piezometers', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        p.piezometer_id, p.piezometer_name, p.pool, p.sort_order,
+        p.max_depth, p.gps_latitude, p.gps_longitude, p.notes,
+        prev.piezometer_reading_id AS last_reading_id,
+        prev.reading_date          AS last_reading_date,
+        prev.dtw_reading           AS last_dtw,
+        prev.plopper_sounder       AS last_method,
+        prev.wet_dry_moist         AS last_wet_dry_moist,
+        prev.notes                 AS last_reading_notes
+      FROM piezometers p
+      LEFT JOIN LATERAL (
+        SELECT piezometer_reading_id, reading_date, dtw_reading, plopper_sounder, wet_dry_moist, notes
+        FROM readings_piezometers
+        WHERE piezometer_id = p.piezometer_id
+        ORDER BY reading_date DESC, reading_time DESC
+        LIMIT 1
+      ) prev ON true
+      WHERE LOWER(p.status) = 'active'
+      ORDER BY p.pool, p.sort_order, p.piezometer_name
+    `);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/readings/piezometer', requireAuth, async (req, res) => {
+  const {
+    piezometer_id, reading_date, reading_time,
+    dtw_reading, operator, plopper_sounder, wet_dry_moist, notes,
+  } = req.body;
+  if (!piezometer_id || !reading_date) {
+    return res.status(400).json({ error: 'piezometer_id and reading_date are required' });
+  }
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO readings_piezometers
+         (piezometer_id, reading_date, reading_time, dtw_reading, operator, plopper_sounder, wet_dry_moist, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+       RETURNING piezometer_reading_id`,
+      [piezometer_id, reading_date, reading_time || null, dtw_reading ?? null,
+       operator || null, plopper_sounder || null, wet_dry_moist || null, notes || null]
+    );
+    res.json({ ok: true, piezometer_reading_id: rows[0].piezometer_reading_id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── DWR Well Run ──────────────────────────────────────────────────────────────
 app.get('/api/wells/dwr', requireAuth, async (req, res) => {
   try {
@@ -953,6 +1006,13 @@ app.get('/api/history', requireAuth, async (req, res) => {
                 no_measurement, questionable_measurement, notes
          FROM readings_run_dwr WHERE well_id = $1
          ORDER BY reading_date DESC, reading_time DESC LIMIT $2`, [id, LIMIT]));
+    } else if (type === 'piezometer') {
+      ({ rows } = await pool.query(
+        `SELECT piezometer_reading_id AS id, reading_date, reading_time,
+                dtw_reading AS value, plopper_sounder AS method, wet_dry_moist,
+                operator AS entered_by, notes
+         FROM readings_piezometers WHERE piezometer_id = $1
+         ORDER BY reading_date DESC, reading_time DESC LIMIT $2`, [id, LIMIT]));
     } else {
       return res.status(400).json({ error: 'unknown type' });
     }
@@ -975,6 +1035,7 @@ app.delete('/api/history/:type/:id', requireAuth, async (req, res) => {
     canal:      { table: 'readings_canal',            pk: 'reading_id' },
     vehicle:    { table: 'readings_vehicle_monthly',  pk: 'reading_id' },
     dwr:        { table: 'readings_run_dwr',          pk: 'reading_id' },
+    piezometer: { table: 'readings_piezometers',      pk: 'piezometer_reading_id' },
   };
   const map = TABLE_MAP[type];
   if (!map) return res.status(400).json({ error: 'unknown type' });

@@ -2381,3 +2381,15 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
 .uptool-preview-body { display: flex; justify-content: center; align-items: center; min-height: 200px; }
 .uptool-preview-body img { max-width: 100%; max-height: 60vh; border-radius: 6px; }
 .uptool-pdf-msg { text-align: center; color: var(--text-dim); }
+
+/* ── Piezometer permanent notes hint ─────────────────────────────────────── */
+.piez-perm-notes {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  background: var(--surface);
+  border-left: 3px solid var(--accent);
+  padding: 6px 10px;
+  border-radius: 4px;
+  margin-bottom: 10px;
+  line-height: 1.4;
+}

@@ -423,6 +423,7 @@ function showScreen(name) {
   if (name === 'canal')         initCanalScreen();
   if (name === 'vehicles')      initVehiclesScreen();
   if (name === 'kf-monthly')    initKFScreen();
+  if (name === 'piezometers')   initPiezScreen();
   if (name === 'maintenance')   initMaintenanceScreen();
   if (name === 'pesticides')    initPesticideScreen();
   if (name === 'well-runs')     initWellRunsScreen();
@@ -643,6 +644,7 @@ const HIST_COLS = {
   monitor:     [{ key: 'value',         label: 'kWh' }],
   well:        [{ key: 'hour_reading',  label: 'Hours' }, { key: 'flow_cfs', label: 'Flow (cfs)' }, { key: 'totalizer', label: 'Totalizer' }],
   kf:          [{ key: 'value',         label: 'DTW (ft)' }, { key: 'method', label: 'Method' }, { key: 'entered_by', label: 'Operator' }],
+  piezometer:  [{ key: 'value',         label: 'DTW (ft)' }, { key: 'method', label: 'Method' }, { key: 'wet_dry_moist', label: 'Condition' }, { key: 'entered_by', label: 'Operator' }],
   dwr:         [{ key: 'value',         label: 'DTW (ft)' }, { key: 'method', label: 'Method' }, { key: 'entered_by', label: 'Operator' }],
   canal:       [{ key: 'flow',          label: 'Flow (cfs)' }, { key: 'totalizer', label: 'Totalizer (AF)' }, { key: 'gate_setting', label: 'Gate' }],
   vehicle:     [{ key: 'odometer_miles',label: 'Odometer' }, { key: 'engine_hours', label: 'Eng. Hrs' }],
@@ -3227,6 +3229,279 @@ function createKFItem(w, dateInput, timeInput) {
         meta.innerHTML = `<span>Prev: ${newPrev}</span>`;
       }
       showToast(r.queued ? `${w.common_name} queued offline` : `${w.common_name} saved`, r.queued ? 'warn' : 'success');
+    } catch (err) {
+      errEl.textContent = err.message;
+      errEl.classList.remove('hidden');
+    }
+  });
+
+  div.querySelector('.list-item-form').style.display = 'none';
+  return div;
+}
+
+/* ── Piezometer Readings ─────────────────────────────────────────────────── */
+let piezLoaded      = false;
+let piezAllItems    = [];
+let piezPools       = [];
+let piezActivePool  = null;
+
+async function initPiezScreen() {
+  if (piezLoaded) return;
+  piezLoaded = true;
+
+  el('piez-date').value = todayISO();
+  el('piez-time').value = nowHHMM();
+
+  try {
+    piezAllItems = await api('GET', '/api/piezometers');
+  } catch (err) {
+    el('piez-list-body').innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
+    showToast('Failed to load piezometers: ' + err.message, 'error');
+    return;
+  }
+
+  // Derive sorted unique pool list
+  piezPools = [...new Set(piezAllItems.map(p => p.pool).filter(Boolean))].sort();
+
+  // Build pool tabs
+  const tabsEl = el('piez-pool-tabs');
+  tabsEl.innerHTML = '';
+  piezPools.forEach(pool => {
+    const btn = document.createElement('button');
+    btn.className = 'set-tab';
+    btn.textContent = pool;
+    btn.dataset.pool = pool;
+    tabsEl.appendChild(btn);
+  });
+
+  // Default to first pool
+  if (tabsEl.children.length) {
+    tabsEl.children[0].classList.add('active');
+    piezActivePool = tabsEl.children[0].dataset.pool;
+  }
+
+  tabsEl.addEventListener('click', e => {
+    const tab = e.target.closest('.set-tab');
+    if (!tab) return;
+    tabsEl.querySelectorAll('.set-tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    piezActivePool = tab.dataset.pool || null;
+    el('piez-time').value = nowHHMM();
+    renderPiezList();
+  });
+
+  renderPiezList();
+}
+
+function renderPiezList() {
+  const body   = el('piez-list-body');
+  const dateIn = el('piez-date');
+  const timeIn = el('piez-time');
+
+  const filtered = piezActivePool
+    ? piezAllItems.filter(p => p.pool === piezActivePool)
+    : piezAllItems;
+
+  if (!filtered.length) {
+    body.innerHTML = '<div class="placeholder-msg">No active piezometers in this pool.</div>';
+    return;
+  }
+
+  body.innerHTML = '';
+
+  // Pool title card with count and map button
+  const doneCount  = filtered.filter(p => p.last_reading_date != null).length;
+  const totalCount = filtered.length;
+
+  const titleCard = document.createElement('div');
+  titleCard.className = 'kf-set-title-card';
+  titleCard.innerHTML = `
+    <div class="kf-set-title-info">
+      <span class="kf-set-title-name">Pool: ${piezActivePool || 'All'}</span>
+      <span class="kf-set-title-count">${doneCount} / ${totalCount} have readings</span>
+    </div>
+    <button class="btn btn-secondary btn-sm piez-pool-map-btn">&#128506; Map</button>`;
+  titleCard.querySelector('.piez-pool-map-btn').addEventListener('click', () => {
+    openSetMapModal(`Pool: ${piezActivePool}`, filtered.map(p => ({
+      common_name:   p.piezometer_name,
+      gps_latitude:  p.gps_latitude,
+      gps_longitude: p.gps_longitude,
+    })));
+  });
+  body.appendChild(titleCard);
+
+  filtered.forEach(p => body.appendChild(createPiezItem(p, dateIn, timeIn)));
+}
+
+function createPiezItem(p, dateInput, timeInput) {
+  const div = document.createElement('div');
+  div.className = 'list-item';
+
+  const hasReading = p.last_reading_date != null;
+  const sc         = hasReading ? 'done' : 'due';
+  const badge      = hasReading
+    ? localDateStr(p.last_reading_date, { month: 'short', day: 'numeric' })
+    : 'No reading';
+  const prevDTW    = p.last_dtw != null ? `${Number(p.last_dtw).toFixed(2)} ft` : null;
+  const prevMethod = p.last_method ? p.last_method.charAt(0).toUpperCase() + p.last_method.slice(1) : null;
+  const prevCond   = p.last_wet_dry_moist ? p.last_wet_dry_moist.charAt(0).toUpperCase() + p.last_wet_dry_moist.slice(1) : null;
+  const prevParts  = [prevDTW, prevMethod, prevCond].filter(Boolean);
+  const prevMeta   = prevParts.length ? prevParts.join(' · ') : null;
+  const hasGPS     = p.gps_latitude && p.gps_longitude;
+
+  div.innerHTML = `
+    <div class="list-item-header">
+      <span class="status-dot ${sc}"></span>
+      <span class="list-item-name">${p.piezometer_name}</span>
+      <span class="status-badge ${sc}">${badge}</span>
+      <span class="expand-chevron">&#9660;</span>
+    </div>
+    ${prevMeta ? `<div class="list-item-meta"><span>Prev: ${prevMeta}</span></div>` : ''}
+    <div class="list-item-form">
+      ${p.notes ? `<div class="piez-perm-notes">${p.notes}</div>` : ''}
+      <div class="form-group">
+        <label>Depth to Water (ft)${prevDTW ? `<span class="prev-hint"> · Prev: ${prevDTW}</span>` : ''}</label>
+        <input type="number" class="ctrl-input piez-dtw" step="0.01" placeholder="0.00">
+      </div>
+      <div class="two-col">
+        <div class="form-group toggle-row">
+          <label>Method</label>
+          <div class="toggle-group">
+            <button class="toggle-btn active piez-plopper">Plopper</button>
+            <button class="toggle-btn piez-sounder">Sounder</button>
+          </div>
+        </div>
+        <div class="form-group toggle-row">
+          <label>Condition</label>
+          <div class="toggle-group">
+            <button class="toggle-btn active piez-wet">Wet</button>
+            <button class="toggle-btn piez-dry">Dry</button>
+            <button class="toggle-btn piez-moist">Moist</button>
+          </div>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Operator</label>
+        <input type="text" class="ctrl-input piez-op" placeholder="Initials">
+      </div>
+      <div class="form-group">
+        <label>Notes</label>
+        <textarea class="ctrl-textarea piez-notes" rows="2" placeholder="Optional notes…"></textarea>
+      </div>
+      <div class="lif-error error-msg hidden"></div>
+      <div class="lif-footer">
+        ${hasGPS ? `<button class="btn btn-secondary btn-sm piez-map-btn">&#128205; Map</button>` : ''}
+        <button class="btn btn-secondary btn-sm piez-hist-btn">&#128200; History</button>
+        <button class="btn btn-save piez-save">Save Reading</button>
+      </div>
+    </div>`;
+
+  // Auto-fill operator
+  if (currentUser) {
+    div.querySelector('.piez-op').value = currentUser.initials || currentUser.username;
+  }
+
+  // Toggle state
+  let piezMethod = 'plopper';
+  let piezCond   = 'wet';
+
+  const plBtn  = div.querySelector('.piez-plopper');
+  const soBtn  = div.querySelector('.piez-sounder');
+  const wetBtn = div.querySelector('.piez-wet');
+  const dryBtn = div.querySelector('.piez-dry');
+  const moBtn  = div.querySelector('.piez-moist');
+
+  // Pre-fill previous method/condition if available
+  if (p.last_method === 'sounder') {
+    piezMethod = 'sounder';
+    plBtn.classList.remove('active');
+    soBtn.classList.add('active');
+  }
+  if (p.last_wet_dry_moist) {
+    piezCond = p.last_wet_dry_moist;
+    wetBtn.classList.remove('active');
+    dryBtn.classList.remove('active');
+    moBtn.classList.remove('active');
+    div.querySelector(`.piez-${piezCond}`).classList.add('active');
+  }
+
+  plBtn.addEventListener('click', e => {
+    piezMethod = 'plopper';
+    plBtn.classList.add('active'); soBtn.classList.remove('active');
+  });
+  soBtn.addEventListener('click', e => {
+    piezMethod = 'sounder';
+    soBtn.classList.add('active'); plBtn.classList.remove('active');
+  });
+  wetBtn.addEventListener('click', e => {
+    piezCond = 'wet';
+    wetBtn.classList.add('active'); dryBtn.classList.remove('active'); moBtn.classList.remove('active');
+  });
+  dryBtn.addEventListener('click', e => {
+    piezCond = 'dry';
+    dryBtn.classList.add('active'); wetBtn.classList.remove('active'); moBtn.classList.remove('active');
+  });
+  moBtn.addEventListener('click', e => {
+    piezCond = 'moist';
+    moBtn.classList.add('active'); wetBtn.classList.remove('active'); dryBtn.classList.remove('active');
+  });
+
+  const mapBtn = div.querySelector('.piez-map-btn');
+  if (mapBtn) {
+    mapBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      openLocationModal(p.gps_latitude, p.gps_longitude, p.piezometer_name);
+    });
+  }
+
+  div.querySelector('.piez-hist-btn').addEventListener('click', e => {
+    e.stopPropagation();
+    openHistoryModal('piezometer', p.piezometer_id, p.piezometer_name);
+  });
+
+  div.querySelector('.list-item-header').addEventListener('click', () => {
+    const open = div.classList.toggle('expanded');
+    div.querySelector('.list-item-form').style.display = open ? '' : 'none';
+    if (open) el('piez-time').value = nowHHMM();
+  });
+
+  div.querySelector('.piez-save').addEventListener('click', async e => {
+    e.stopPropagation();
+    const errEl = div.querySelector('.lif-error');
+    errEl.classList.add('hidden');
+    const dtw = div.querySelector('.piez-dtw').value;
+    if (!dtw) { errEl.textContent = 'Depth to water is required'; errEl.classList.remove('hidden'); return; }
+
+    const body = {
+      piezometer_id:  p.piezometer_id,
+      reading_date:   dateInput.value,
+      reading_time:   timeInput.value,
+      dtw_reading:    parseFloat(dtw),
+      operator:       div.querySelector('.piez-op').value || null,
+      plopper_sounder: piezMethod,
+      wet_dry_moist:  piezCond,
+      notes:          div.querySelector('.piez-notes').value || null,
+    };
+    try {
+      const r = await api('POST', '/api/readings/piezometer', body, `Piez — ${p.piezometer_name}`);
+      div.querySelector('.status-dot').className = 'status-dot done';
+      div.querySelector('.status-badge').textContent = r.queued ? 'Offline' : 'Today';
+      div.querySelector('.status-badge').className = 'status-badge done';
+      div.classList.remove('expanded');
+      div.querySelector('.list-item-form').style.display = 'none';
+      if (!r.queued) {
+        const condStr = piezCond.charAt(0).toUpperCase() + piezCond.slice(1);
+        const methStr = piezMethod.charAt(0).toUpperCase() + piezMethod.slice(1);
+        const newPrev = [`${Number(dtw).toFixed(2)} ft`, methStr, condStr].join(' · ');
+        let meta = div.querySelector('.list-item-meta');
+        if (!meta) {
+          meta = document.createElement('div');
+          meta.className = 'list-item-meta';
+          div.querySelector('.list-item-header').after(meta);
+        }
+        meta.innerHTML = `<span>Prev: ${newPrev}</span>`;
+      }
+      showToast(r.queued ? `${p.piezometer_name} queued offline` : `${p.piezometer_name} saved`, r.queued ? 'warn' : 'success');
     } catch (err) {
       errEl.textContent = err.message;
       errEl.classList.remove('hidden');
