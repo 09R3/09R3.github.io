@@ -3260,8 +3260,16 @@ async function initPiezScreen() {
     return;
   }
 
-  // Derive sorted unique pool list
-  piezPools = [...new Set(piezAllItems.map(p => p.pool).filter(Boolean))].sort();
+  // Derive unique pool list: Pool 1-8 numerically first, then everything else alphabetically
+  const rawPools = [...new Set(piezAllItems.map(p => p.pool).filter(Boolean))];
+  const poolNum  = n => { const m = /^Pool\s+(\d+)$/i.exec(n); return m ? parseInt(m[1]) : null; };
+  piezPools = rawPools.sort((a, b) => {
+    const na = poolNum(a), nb = poolNum(b);
+    if (na !== null && nb !== null) return na - nb;          // both numbered: numeric order
+    if (na !== null) return -1;                               // numbered before named
+    if (nb !== null) return 1;
+    return a.localeCompare(b);                                // both named: alpha
+  });
 
   // Build pool tabs
   const tabsEl = el('piez-pool-tabs');
