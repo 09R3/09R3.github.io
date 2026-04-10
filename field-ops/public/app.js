@@ -336,9 +336,10 @@ function openSetMapModal(setName, wells) {
     if (_setLocationMarker) { _setLocationMarker.remove(); _setLocationMarker = null; }
 
     _setLeafletMarkers = validWells.map(w => {
-      const done = w.range_reading_date != null
-        || dwrDoneThisSession.has(w.well_id)
-        || (w.days_since_reading != null && w.days_since_reading <= 30);
+      // KF wells carry range_reading_date (null = not read in range); DWR uses session + recency
+      const done = 'range_reading_date' in w
+        ? w.range_reading_date != null
+        : (dwrDoneThisSession.has(w.well_id) || (w.days_since_reading != null && w.days_since_reading <= 30));
       const color = done ? '#22c55e' : '#ef4444';
       const icon = L.divIcon({
         className: '',
