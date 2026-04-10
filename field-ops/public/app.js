@@ -1723,8 +1723,18 @@ function renderWellIssues() {
             <label>Assigned To</label>
             <input type="text" class="ctrl-input issue-assigned" value="${escHtml(issue.assigned_to || '')}" placeholder="Optional">
           </div>
+          <div class="form-group">
+            <label>Attachments</label>
+            <div class="maint-attach-btns">
+              <button type="button" class="btn btn-secondary btn-sm issue-inv-btn">&#128196; Invoice</button>
+              <button type="button" class="btn btn-secondary btn-sm issue-pic-btn">&#128247; Photo(s)</button>
+              ${Number(issue.attachment_count) > 0 ? `<button type="button" class="btn btn-secondary btn-sm issue-files-btn" data-table="well_issues">&#128206; ${issue.attachment_count} file${issue.attachment_count > 1 ? 's' : ''}</button>` : ''}
+            </div>
+            <div class="maint-attach-queue issue-attach-queue hidden"></div>
+            <div class="maint-hist-attach-area issue-files-area hidden"></div>
+          </div>
           <div class="error-msg hidden issue-update-error"></div>
-          <button class="btn btn-save btn-full issue-save-btn">Save Changes</button>
+          <button class="btn btn-save btn-full issue-save-btn" data-table="well_issues">Save Changes</button>
         </div>
       </div>`;
   }).join('');
@@ -1809,6 +1819,28 @@ el('well-issue-list').addEventListener('click', async e => {
     return;
   }
 
+  if (e.target.classList.contains('issue-inv-btn')) {
+    issueCardActiveId = item.dataset.issueId; issueCardActiveTable = 'well_issues'; issueInvInput.click(); return;
+  }
+  if (e.target.classList.contains('issue-pic-btn')) {
+    issueCardActiveId = item.dataset.issueId; issueCardActiveTable = 'well_issues'; issuePicInput.click(); return;
+  }
+  if (e.target.classList.contains('issue-files-btn')) {
+    const area = item.querySelector('.issue-files-area');
+    if (!area.classList.contains('hidden')) { area.classList.add('hidden'); return; }
+    area.classList.remove('hidden');
+    if (area.dataset.loaded) return;
+    area.innerHTML = '<div style="font-size:0.8rem;color:var(--text-dim)">Loading…</div>';
+    try {
+      const atts = await api('GET', `/api/maintenance/attachments?table_name=well_issues&record_id=${item.dataset.issueId}`);
+      area.dataset.loaded = '1';
+      if (!atts.length) { area.innerHTML = '<div class="maint-att-empty">No files</div>'; return; }
+      area.innerHTML = atts.map(a => { const isPdf = a.mime_type==='application/pdf'||a.original_name.endsWith('.pdf'); const url=`/uploads/${a.rel_path.split('/').map(encodeURIComponent).join('/')}`; return `<div class="maint-att-item" data-url="${url}" data-pdf="${isPdf}" data-name="${a.original_name.replace(/"/g,'&quot;')}"><div class="maint-att-thumb">${isPdf?'<span class="maint-att-pdf-icon">&#128196;</span>':`<img src="${url}" loading="lazy" alt="">`}</div><span class="maint-att-type-badge">${a.file_type==='invoice'?'INV':'PIC'}</span><div class="maint-att-name">${a.original_name}</div></div>`; }).join('');
+      area.querySelectorAll('.maint-att-item').forEach(card => card.addEventListener('click', () => openAttachmentPreview(card.dataset.url, card.dataset.name, card.dataset.pdf==='true')));
+    } catch (err) { area.innerHTML = `<div class="maint-att-empty" style="color:var(--red-light)">${err.message}</div>`; }
+    return;
+  }
+
   if (e.target.classList.contains('issue-save-btn')) {
     const issueId     = item.dataset.issueId;
     const status      = item.querySelector('.issue-status-select').value;
@@ -1823,6 +1855,8 @@ el('well-issue-list').addEventListener('click', async e => {
     e.target.disabled = true;
     try {
       await api('PATCH', `/api/well-issues/${issueId}`, { status, action_taken: actionTaken, resolution_notes: resNotes, po_number: poNumber, cost, assigned_to: assigned });
+      const pending = issueCardFiles.get(issueId);
+      if (pending?.length) { await doUploadIssueAttachments(issueId, 'well_issues', pending); issueCardFiles.delete(issueId); }
       wellIssuesLoaded = false;
       await loadWellIssues();
       showToast('Issue updated', 'success');
@@ -1930,8 +1964,18 @@ function renderBldgIssues() {
             <label>Assigned To</label>
             <input type="text" class="ctrl-input issue-assigned" value="${escHtml(issue.assigned_to || '')}" placeholder="Optional">
           </div>
+          <div class="form-group">
+            <label>Attachments</label>
+            <div class="maint-attach-btns">
+              <button type="button" class="btn btn-secondary btn-sm issue-inv-btn">&#128196; Invoice</button>
+              <button type="button" class="btn btn-secondary btn-sm issue-pic-btn">&#128247; Photo(s)</button>
+              ${Number(issue.attachment_count) > 0 ? `<button type="button" class="btn btn-secondary btn-sm issue-files-btn" data-table="building_issues">&#128206; ${issue.attachment_count} file${issue.attachment_count > 1 ? 's' : ''}</button>` : ''}
+            </div>
+            <div class="maint-attach-queue issue-attach-queue hidden"></div>
+            <div class="maint-hist-attach-area issue-files-area hidden"></div>
+          </div>
           <div class="error-msg hidden issue-update-error"></div>
-          <button class="btn btn-save btn-full issue-save-btn">Save Changes</button>
+          <button class="btn btn-save btn-full issue-save-btn" data-table="building_issues">Save Changes</button>
         </div>
       </div>`;
   }).join('');
@@ -2027,6 +2071,28 @@ el('bldg-issue-list').addEventListener('click', async e => {
     return;
   }
 
+  if (e.target.classList.contains('issue-inv-btn')) {
+    issueCardActiveId = item.dataset.issueId; issueCardActiveTable = 'building_issues'; issueInvInput.click(); return;
+  }
+  if (e.target.classList.contains('issue-pic-btn')) {
+    issueCardActiveId = item.dataset.issueId; issueCardActiveTable = 'building_issues'; issuePicInput.click(); return;
+  }
+  if (e.target.classList.contains('issue-files-btn')) {
+    const area = item.querySelector('.issue-files-area');
+    if (!area.classList.contains('hidden')) { area.classList.add('hidden'); return; }
+    area.classList.remove('hidden');
+    if (area.dataset.loaded) return;
+    area.innerHTML = '<div style="font-size:0.8rem;color:var(--text-dim)">Loading…</div>';
+    try {
+      const atts = await api('GET', `/api/maintenance/attachments?table_name=building_issues&record_id=${item.dataset.issueId}`);
+      area.dataset.loaded = '1';
+      if (!atts.length) { area.innerHTML = '<div class="maint-att-empty">No files</div>'; return; }
+      area.innerHTML = atts.map(a => { const isPdf = a.mime_type==='application/pdf'||a.original_name.endsWith('.pdf'); const url=`/uploads/${a.rel_path.split('/').map(encodeURIComponent).join('/')}`; return `<div class="maint-att-item" data-url="${url}" data-pdf="${isPdf}" data-name="${a.original_name.replace(/"/g,'&quot;')}"><div class="maint-att-thumb">${isPdf?'<span class="maint-att-pdf-icon">&#128196;</span>':`<img src="${url}" loading="lazy" alt="">`}</div><span class="maint-att-type-badge">${a.file_type==='invoice'?'INV':'PIC'}</span><div class="maint-att-name">${a.original_name}</div></div>`; }).join('');
+      area.querySelectorAll('.maint-att-item').forEach(card => card.addEventListener('click', () => openAttachmentPreview(card.dataset.url, card.dataset.name, card.dataset.pdf==='true')));
+    } catch (err) { area.innerHTML = `<div class="maint-att-empty" style="color:var(--red-light)">${err.message}</div>`; }
+    return;
+  }
+
   if (e.target.classList.contains('issue-save-btn')) {
     const issueId     = item.dataset.issueId;
     const status      = item.querySelector('.issue-status-select').value;
@@ -2041,6 +2107,8 @@ el('bldg-issue-list').addEventListener('click', async e => {
     e.target.disabled = true;
     try {
       await api('PATCH', `/api/building-issues/${issueId}`, { status, action_taken: actionTaken, resolution_notes: resNotes, po_number: poNumber, cost, assigned_to: assigned });
+      const pending = issueCardFiles.get(issueId);
+      if (pending?.length) { await doUploadIssueAttachments(issueId, 'building_issues', pending); issueCardFiles.delete(issueId); }
       bldgIssuesLoaded = false;
       await loadBldgIssues();
       showToast('Issue updated', 'success');
@@ -2138,8 +2206,18 @@ function renderEquipIssues() {
             <label>Assigned To</label>
             <input type="text" class="ctrl-input issue-assigned" value="${escHtml(issue.assigned_to || '')}" placeholder="Optional">
           </div>
+          <div class="form-group">
+            <label>Attachments</label>
+            <div class="maint-attach-btns">
+              <button type="button" class="btn btn-secondary btn-sm issue-inv-btn">&#128196; Invoice</button>
+              <button type="button" class="btn btn-secondary btn-sm issue-pic-btn">&#128247; Photo(s)</button>
+              ${Number(issue.attachment_count) > 0 ? `<button type="button" class="btn btn-secondary btn-sm issue-files-btn" data-table="equipment_issues">&#128206; ${issue.attachment_count} file${issue.attachment_count > 1 ? 's' : ''}</button>` : ''}
+            </div>
+            <div class="maint-attach-queue issue-attach-queue hidden"></div>
+            <div class="maint-hist-attach-area issue-files-area hidden"></div>
+          </div>
           <div class="error-msg hidden issue-update-error"></div>
-          <button class="btn btn-save btn-full issue-save-btn">Save Changes</button>
+          <button class="btn btn-save btn-full issue-save-btn" data-table="equipment_issues">Save Changes</button>
         </div>
       </div>`;
   }).join('');
@@ -2255,6 +2333,28 @@ el('equip-issue-list').addEventListener('click', async e => {
     return;
   }
 
+  if (e.target.classList.contains('issue-inv-btn')) {
+    issueCardActiveId = item.dataset.issueId; issueCardActiveTable = 'equipment_issues'; issueInvInput.click(); return;
+  }
+  if (e.target.classList.contains('issue-pic-btn')) {
+    issueCardActiveId = item.dataset.issueId; issueCardActiveTable = 'equipment_issues'; issuePicInput.click(); return;
+  }
+  if (e.target.classList.contains('issue-files-btn')) {
+    const area = item.querySelector('.issue-files-area');
+    if (!area.classList.contains('hidden')) { area.classList.add('hidden'); return; }
+    area.classList.remove('hidden');
+    if (area.dataset.loaded) return;
+    area.innerHTML = '<div style="font-size:0.8rem;color:var(--text-dim)">Loading…</div>';
+    try {
+      const atts = await api('GET', `/api/maintenance/attachments?table_name=equipment_issues&record_id=${item.dataset.issueId}`);
+      area.dataset.loaded = '1';
+      if (!atts.length) { area.innerHTML = '<div class="maint-att-empty">No files</div>'; return; }
+      area.innerHTML = atts.map(a => { const isPdf = a.mime_type==='application/pdf'||a.original_name.endsWith('.pdf'); const url=`/uploads/${a.rel_path.split('/').map(encodeURIComponent).join('/')}`; return `<div class="maint-att-item" data-url="${url}" data-pdf="${isPdf}" data-name="${a.original_name.replace(/"/g,'&quot;')}"><div class="maint-att-thumb">${isPdf?'<span class="maint-att-pdf-icon">&#128196;</span>':`<img src="${url}" loading="lazy" alt="">`}</div><span class="maint-att-type-badge">${a.file_type==='invoice'?'INV':'PIC'}</span><div class="maint-att-name">${a.original_name}</div></div>`; }).join('');
+      area.querySelectorAll('.maint-att-item').forEach(card => card.addEventListener('click', () => openAttachmentPreview(card.dataset.url, card.dataset.name, card.dataset.pdf==='true')));
+    } catch (err) { area.innerHTML = `<div class="maint-att-empty" style="color:var(--red-light)">${err.message}</div>`; }
+    return;
+  }
+
   // Save changes
   if (e.target.classList.contains('issue-save-btn')) {
     const issueId     = item.dataset.issueId;
@@ -2270,6 +2370,8 @@ el('equip-issue-list').addEventListener('click', async e => {
     e.target.disabled = true;
     try {
       await api('PATCH', `/api/equipment-issues/${issueId}`, { status, action_taken: actionTaken, resolution_notes: resNotes, po_number: poNumber, cost, assigned_to: assigned });
+      const pending = issueCardFiles.get(issueId);
+      if (pending?.length) { await doUploadIssueAttachments(issueId, 'equipment_issues', pending); issueCardFiles.delete(issueId); }
       equipIssuesLoaded = false;
       await loadEquipIssues();
       showToast('Issue updated', 'success');
@@ -2305,6 +2407,95 @@ async function loadVehRecords() {
 // Per-card pending files: Map<maintenance_id, [{file, fileType}]>
 const vehCardFiles = new Map();
 let vehCardActiveId = null;
+
+// ── Issue card attachments (equipment / building / well issues) ───────────────
+const issueCardFiles = new Map(); // Map<issueId, [{file, fileType}]>
+let issueCardActiveId    = null;
+let issueCardActiveTable = null;  // 'equipment_issues' | 'building_issues' | 'well_issues'
+
+const issueInvInput = document.createElement('input');
+issueInvInput.type = 'file'; issueInvInput.accept = 'image/*,.pdf'; issueInvInput.style.display = 'none';
+document.body.appendChild(issueInvInput);
+
+const issuePicInput = document.createElement('input');
+issuePicInput.type = 'file'; issuePicInput.accept = 'image/*'; issuePicInput.multiple = true; issuePicInput.style.display = 'none';
+document.body.appendChild(issuePicInput);
+
+issueInvInput.addEventListener('change', async () => {
+  const file = issueInvInput.files[0];
+  issueInvInput.value = '';
+  if (!file || !issueCardActiveId) return;
+  let finalFile = file;
+  if (file.type.startsWith('image/')) {
+    showToast('Converting image to PDF…', 'info');
+    try { finalFile = await imageToPdf(file); } catch { /* keep original */ }
+  }
+  const pending = issueCardFiles.get(issueCardActiveId) || [];
+  pending.push({ file: finalFile, fileType: 'invoice' });
+  issueCardFiles.set(issueCardActiveId, pending);
+  renderIssueAttachQueue(issueCardActiveId);
+});
+
+issuePicInput.addEventListener('change', () => {
+  if (!issueCardActiveId) return;
+  const files = [...issuePicInput.files];
+  issuePicInput.value = '';
+  if (!files.length) return;
+  const pending = issueCardFiles.get(issueCardActiveId) || [];
+  files.forEach(f => pending.push({ file: f, fileType: 'photo' }));
+  issueCardFiles.set(issueCardActiveId, pending);
+  renderIssueAttachQueue(issueCardActiveId);
+});
+
+function renderIssueAttachQueue(issueId) {
+  const pending = issueCardFiles.get(issueId) || [];
+  // Find queue element across all three lists
+  const queueEl = document.querySelector(`.equip-issue-item[data-issue-id="${issueId}"] .issue-attach-queue`);
+  if (!queueEl) return;
+  if (!pending.length) { queueEl.classList.add('hidden'); queueEl.innerHTML = ''; return; }
+  queueEl.classList.remove('hidden');
+  queueEl.innerHTML = pending.map((a, i) => `
+    <div class="maint-aq-item">
+      <span class="maint-aq-badge">${a.fileType === 'invoice' ? 'INV' : 'PIC'}</span>
+      <span style="flex:1;font-size:0.8rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${a.file.name}</span>
+      <button class="maint-aq-remove" data-idx="${i}">×</button>
+    </div>`).join('');
+  queueEl.querySelectorAll('.maint-aq-remove').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const p = issueCardFiles.get(issueId) || [];
+      p.splice(parseInt(btn.dataset.idx), 1);
+      if (p.length) issueCardFiles.set(issueId, p); else issueCardFiles.delete(issueId);
+      renderIssueAttachQueue(issueId);
+    });
+  });
+}
+
+async function doUploadIssueAttachments(issueId, tableName, pending) {
+  const d = new Date();
+  const dateStr = `${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}${d.getFullYear()}`;
+  let invoiceIdx = 0, photoIdx = 0;
+  for (const att of pending) {
+    const origExt = att.file.name.includes('.') ? att.file.name.split('.').pop().toLowerCase() : 'jpg';
+    let newName;
+    if (att.fileType === 'invoice') {
+      invoiceIdx++;
+      newName = `invoice_issue${issueId}_${dateStr}${invoiceIdx > 1 ? `_${invoiceIdx}` : ''}.pdf`;
+    } else {
+      photoIdx++;
+      newName = `issue${issueId}_photo_${dateStr}${photoIdx > 1 ? `_${photoIdx}` : ''}.${origExt}`;
+    }
+    const renamed = new File([att.file], newName, { type: att.file.type });
+    const fd = new FormData();
+    fd.append('file', renamed);
+    try {
+      await fetch(
+        `/api/maintenance/attachment?table_name=${tableName}&record_id=${issueId}&file_type=${att.fileType}&category=general`,
+        { method: 'POST', body: fd }
+      );
+    } catch { /* non-fatal */ }
+  }
+}
 
 // Shared hidden inputs for card file picks
 const vehCardInvInput = Object.assign(document.createElement('input'),
