@@ -1676,8 +1676,9 @@ function renderWellIssues() {
     const statusClass = issue.status.replace('_', '-');
     const title   = issue.well_area ? `${issue.well_name} (${issue.well_area})` : (issue.well_name || 'Unknown Well');
     const snippet = (issue.description || '').slice(0, 80) + (issue.description?.length > 80 ? '…' : '');
+    const entityName = (issue.well_name || 'well').replace(/[^a-zA-Z0-9-]/g,'_').replace(/_+/g,'_').replace(/^_|_$/,'').slice(0,30);
     return `
-      <div class="equip-issue-item" data-issue-id="${issue.issue_id}">
+      <div class="equip-issue-item" data-issue-id="${issue.issue_id}" data-entity-name="${entityName}">
         <div class="equip-issue-header">
           <div class="equip-issue-meta">
             <div class="equip-issue-name">${escHtml(title)}</div>
@@ -1856,7 +1857,7 @@ el('well-issue-list').addEventListener('click', async e => {
     try {
       await api('PATCH', `/api/well-issues/${issueId}`, { status, action_taken: actionTaken, resolution_notes: resNotes, po_number: poNumber, cost, assigned_to: assigned });
       const pending = issueCardFiles.get(issueId);
-      if (pending?.length) { await doUploadIssueAttachments(issueId, 'well_issues', pending); issueCardFiles.delete(issueId); }
+      if (pending?.length) { await doUploadIssueAttachments(issueId, 'well_issues', pending, item.dataset.entityName); issueCardFiles.delete(issueId); }
       wellIssuesLoaded = false;
       await loadWellIssues();
       showToast('Issue updated', 'success');
@@ -1917,8 +1918,9 @@ function renderBldgIssues() {
     const statusClass = issue.status.replace('_', '-');
     const title   = [issue.site_name, issue.building_name].filter(Boolean).join(' — ') || 'Unknown Building';
     const snippet = (issue.description || '').slice(0, 80) + (issue.description?.length > 80 ? '…' : '');
+    const entityName = (issue.building_name || 'building').replace(/[^a-zA-Z0-9-]/g,'_').replace(/_+/g,'_').replace(/^_|_$/,'').slice(0,30);
     return `
-      <div class="equip-issue-item" data-issue-id="${issue.issue_id}">
+      <div class="equip-issue-item" data-issue-id="${issue.issue_id}" data-entity-name="${entityName}">
         <div class="equip-issue-header">
           <div class="equip-issue-meta">
             <div class="equip-issue-name">${escHtml(title)}</div>
@@ -2108,7 +2110,7 @@ el('bldg-issue-list').addEventListener('click', async e => {
     try {
       await api('PATCH', `/api/building-issues/${issueId}`, { status, action_taken: actionTaken, resolution_notes: resNotes, po_number: poNumber, cost, assigned_to: assigned });
       const pending = issueCardFiles.get(issueId);
-      if (pending?.length) { await doUploadIssueAttachments(issueId, 'building_issues', pending); issueCardFiles.delete(issueId); }
+      if (pending?.length) { await doUploadIssueAttachments(issueId, 'building_issues', pending, item.dataset.entityName); issueCardFiles.delete(issueId); }
       bldgIssuesLoaded = false;
       await loadBldgIssues();
       showToast('Issue updated', 'success');
@@ -2159,8 +2161,9 @@ function renderEquipIssues() {
   list.innerHTML = equipIssues.map(issue => {
     const statusClass = issue.status.replace('_', '-');
     const snippet = (issue.description || '').slice(0, 80) + (issue.description?.length > 80 ? '…' : '');
+    const entityName = (issue.equipment_name || issue.equipment_type || 'equip').replace(/[^a-zA-Z0-9-]/g,'_').replace(/_+/g,'_').replace(/^_|_$/,'').slice(0,30);
     return `
-      <div class="equip-issue-item" data-issue-id="${issue.issue_id}">
+      <div class="equip-issue-item" data-issue-id="${issue.issue_id}" data-entity-name="${entityName}">
         <div class="equip-issue-header">
           <div class="equip-issue-meta">
             <div class="equip-issue-name">${escHtml(issue.equipment_name || issue.equipment_type)}</div>
@@ -2371,7 +2374,7 @@ el('equip-issue-list').addEventListener('click', async e => {
     try {
       await api('PATCH', `/api/equipment-issues/${issueId}`, { status, action_taken: actionTaken, resolution_notes: resNotes, po_number: poNumber, cost, assigned_to: assigned });
       const pending = issueCardFiles.get(issueId);
-      if (pending?.length) { await doUploadIssueAttachments(issueId, 'equipment_issues', pending); issueCardFiles.delete(issueId); }
+      if (pending?.length) { await doUploadIssueAttachments(issueId, 'equipment_issues', pending, item.dataset.entityName); issueCardFiles.delete(issueId); }
       equipIssuesLoaded = false;
       await loadEquipIssues();
       showToast('Issue updated', 'success');
@@ -2471,19 +2474,20 @@ function renderIssueAttachQueue(issueId) {
   });
 }
 
-async function doUploadIssueAttachments(issueId, tableName, pending) {
+async function doUploadIssueAttachments(issueId, tableName, pending, entityName) {
   const d = new Date();
   const dateStr = `${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}${d.getFullYear()}`;
+  const label = (entityName || `issue${issueId}`).replace(/[^a-zA-Z0-9-]/g,'_').replace(/_+/g,'_').replace(/^_|_$/,'').slice(0,40);
   let invoiceIdx = 0, photoIdx = 0;
   for (const att of pending) {
     const origExt = att.file.name.includes('.') ? att.file.name.split('.').pop().toLowerCase() : 'jpg';
     let newName;
     if (att.fileType === 'invoice') {
       invoiceIdx++;
-      newName = `invoice_issue${issueId}_${dateStr}${invoiceIdx > 1 ? `_${invoiceIdx}` : ''}.pdf`;
+      newName = `invoice_${label}_${dateStr}${invoiceIdx > 1 ? `_${invoiceIdx}` : ''}.pdf`;
     } else {
       photoIdx++;
-      newName = `issue${issueId}_photo_${dateStr}${photoIdx > 1 ? `_${photoIdx}` : ''}.${origExt}`;
+      newName = `${label}_photo_${dateStr}${photoIdx > 1 ? `_${photoIdx}` : ''}.${origExt}`;
     }
     const renamed = new File([att.file], newName, { type: att.file.type });
     const fd = new FormData();
