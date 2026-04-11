@@ -1777,26 +1777,22 @@ input[type="date"].ctrl-input { min-height: 44px; }
 .panel-nav-bar {
   display: flex;
   align-items: center;
-  gap: 12px;
   margin-bottom: 16px;
 }
-.panel-nav-title {
-  font-size: 1.1rem;
-  font-weight: 700;
-  color: var(--text);
-}
-/* Reset full-width/bordered back buttons when inside nav bar */
-.panel-nav-bar .maint-back-btn,
-.panel-nav-bar .settings-back-btn,
-.panel-nav-bar .pm-back-btn,
-.panel-nav-bar .wr-back-btn {
-  width: auto;
-  margin-bottom: 0;
-  padding: 4px 0;
+.panel-nav-back {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 4px 0 0;
   background: transparent;
   border: none;
-  font-size: 0.88rem;
+  color: var(--accent);
+  font-size: 1.05rem;
+  font-weight: 600;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
 }
+.panel-nav-back:active { opacity: 0.6; }
 
 /* ── Maintenance Dashboard ───────────────────────────────────────────────── */
 .maint-back-btn {
@@ -2202,7 +2198,6 @@ input[type="date"].ctrl-input { min-height: 44px; }
   font-weight: 600;
   color: var(--text);
 }
-.wr-dwr-header > .panel-nav-bar { margin-bottom: 0; }
 .wr-panel-controls {
   display: flex;
   align-items: center;

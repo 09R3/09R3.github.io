@@ -394,22 +394,26 @@ function showScreen(name) {
     currentScreen = name;
   }
   const titles = {
-    dashboard:      'Field Ops',
-    'pumping-plant':'Pumping Plant Readings',
-    wells:          'Well Readings',
-    canal:          'Canal Readings',
-    vehicles:       'Vehicle Monthly',
-    'kf-monthly':   'KF Monthly Readings',
-    maintenance:    'Maintenance Log',
-    'well-runs':    'Well Runs',
-    admin:          'Settings',
+    dashboard:       'Field Ops',
+    'pumping-plant': 'Pumping Plant Readings',
+    wells:           'Well Readings',
+    canal:           'Canal Readings',
+    vehicles:        'Vehicle Monthly',
+    'kf-monthly':    'KF Monthly Readings',
+    maintenance:     'Maintenance Log',
+    pesticides:      'Pesticides',
+    'well-runs':     'Well Runs',
+    reports:         'Reports',
+    admin:           'Settings',
   };
-  el('screen-title').textContent = titles[name] || 'Field Ops';
   closeDrawer();
 
-  // Add ‹ Dashboard nav bar + swipe-back to each non-dashboard screen
-  if (name !== 'dashboard' && SCREEN_TITLES[name]) {
-    setPanelNav(el(`screen-${name}`), 'Dashboard', SCREEN_TITLES[name], () => showScreen('dashboard'));
+  // Add / update ‹ Back nav + swipe-back for non-dashboard screens.
+  // Each sub-panel open/close will call setPanelNav again to update title + back target.
+  if (name !== 'dashboard') {
+    setPanelNav(el(`screen-${name}`), () => showScreen('dashboard'), titles[name] || 'Field Ops');
+  } else {
+    el('screen-title').textContent = 'Field Ops';
   }
 
   // Block supervisor/admin-only screens for operators
@@ -619,36 +623,24 @@ function addSwipeBack(containerEl, backFn) {
   };
 }
 
-/* ── Main-screen panel nav bar (injects ‹ Dashboard nav for reading screens) */
-const SCREEN_TITLES = {
-  'pumping-plant': 'Pumping Plant',
-  wells:           'Well Readings',
-  canal:           'Canal Readings',
-  vehicles:        'Vehicle Monthly',
-  'kf-monthly':    'KF Monthly',
-  maintenance:     'Maintenance',
-  pesticides:      'Pesticides',
-  'well-runs':     'Well Runs',
-  reports:         'Reports',
-  admin:           'Settings',
-};
-function setPanelNav(screenEl, backLabel, currentLabel, backFn) {
+/* ── Panel nav bar ───────────────────────────────────────────────────────────
+   Injects / updates a ‹ Back button at the top of a screen and updates the
+   app header title. Call on every screen or panel transition so the button
+   always goes back exactly one level and the header reflects where you are.  */
+function setPanelNav(screenEl, backFn, headerTitle) {
   if (!screenEl) return;
+  el('screen-title').textContent = headerTitle;
   let nav = screenEl.querySelector(':scope > .panel-nav-bar');
   if (!nav) {
     nav = document.createElement('div');
     nav.className = 'panel-nav-bar';
     const btn = document.createElement('button');
     btn.className = 'panel-nav-back';
-    btn.textContent = `‹ ${backLabel}`;
-    btn.addEventListener('click', backFn);
-    const title = document.createElement('span');
-    title.className = 'panel-nav-title';
-    title.textContent = currentLabel;
+    btn.textContent = '‹ Back';
     nav.appendChild(btn);
-    nav.appendChild(title);
     screenEl.insertBefore(nav, screenEl.firstChild);
   }
+  nav.querySelector('.panel-nav-back').onclick = backFn;
   addSwipeBack(screenEl, backFn);
 }
 
@@ -2777,12 +2769,20 @@ el('veh-record-list').addEventListener('click', async e => {
   }
 });
 
+const MAINT_PANEL_NAMES = {
+  vehicles:  'Vehicle Maintenance',
+  equipment: 'Equipment Issues',
+  buildings: 'Building Issues',
+  wells:     'Well Issues',
+  swaps:     'Equipment Swaps',
+  pms:       'PM Records',
+};
 function openMaintPanel(panelId) {
   el('maint-main').classList.add('hidden');
   document.querySelectorAll('.maint-panel').forEach(p => p.classList.add('hidden'));
-  const panelEl = el('maint-panel-' + panelId);
-  panelEl.classList.remove('hidden');
-  addSwipeBack(panelEl, closeMaintPanel);
+  el('maint-panel-' + panelId).classList.remove('hidden');
+  setPanelNav(el('screen-maintenance'), closeMaintPanel,
+    'Maintenance Log - ' + (MAINT_PANEL_NAMES[panelId] || panelId));
   if (panelId === 'equipment') initMaintEquipmentPanel();
   if (panelId === 'buildings') initMaintBuildingsPanel();
   if (panelId === 'wells')     initMaintWellsPanel();
@@ -2794,6 +2794,7 @@ function openMaintPanel(panelId) {
 function closeMaintPanel() {
   document.querySelectorAll('.maint-panel').forEach(p => p.classList.add('hidden'));
   el('maint-main').classList.remove('hidden');
+  setPanelNav(el('screen-maintenance'), () => showScreen('dashboard'), 'Maintenance Log');
 }
 
 function initMaintenanceScreen() {
@@ -2826,9 +2827,7 @@ document.querySelectorAll('[data-maint-panel]').forEach(btn => {
   });
 });
 
-document.querySelectorAll('.maint-back-btn').forEach(btn => {
-  btn.addEventListener('click', closeMaintPanel);
-});
+// .maint-back-btn buttons removed from HTML — navigation handled by setPanelNav()
 
 async function initMaintVehiclesPanel() {
   maintType = 'vehicle';
@@ -3819,12 +3818,23 @@ document.querySelectorAll('.text-size-btn').forEach(btn => {
 });
 
 // Settings panel navigation
+const SETTINGS_PANEL_NAMES = {
+  account:     'Account',
+  password:    'Change Password',
+  textsize:    'Text Size',
+  readings:    "Today's Readings",
+  'kf-widget': 'KF Widget',
+  appinfo:     'App Info',
+  tools:       'Tools',
+  bugreports:  'Bug Reports',
+  usermgmt:    'User Management',
+};
 function openSettingsPanel(panelId) {
   el('settings-main').classList.add('hidden');
   document.querySelectorAll('.settings-panel').forEach(p => p.classList.add('hidden'));
-  const panelEl = el('settings-panel-' + panelId);
-  panelEl.classList.remove('hidden');
-  addSwipeBack(panelEl, closeSettingsPanel);
+  el('settings-panel-' + panelId).classList.remove('hidden');
+  setPanelNav(el('screen-admin'), closeSettingsPanel,
+    'Settings - ' + (SETTINGS_PANEL_NAMES[panelId] || panelId));
   if (panelId === 'readings')   loadTodayReadings();
   if (panelId === 'bugreports') loadBugReports();
   if (panelId === 'kf-widget')  initKFWidgetPanel();
@@ -3838,15 +3848,14 @@ function openSettingsPanel(panelId) {
 function closeSettingsPanel() {
   document.querySelectorAll('.settings-panel').forEach(p => p.classList.add('hidden'));
   el('settings-main').classList.remove('hidden');
+  setPanelNav(el('screen-admin'), () => showScreen('dashboard'), 'Settings');
 }
 
 document.querySelectorAll('.settings-menu-row').forEach(btn => {
   btn.addEventListener('click', () => openSettingsPanel(btn.dataset.panel));
 });
 
-document.querySelectorAll('.settings-back-btn').forEach(btn => {
-  btn.addEventListener('click', closeSettingsPanel);
-});
+// .settings-back-btn buttons removed from HTML — navigation handled by setPanelNav()
 
 // ── Secret tools menu (tap version number 5 times) ────────────────────────
 (function () {
@@ -4629,20 +4638,19 @@ const pmHistoryCache = {}; // pm_id → record, for view/export without re-fetch
 function openPMType(pmType) {
   el('pm-main').classList.add('hidden');
   document.querySelectorAll('#maint-panel-pms .pm-panel').forEach(p => p.classList.add('hidden'));
-  const panelEl = el(pmPanelId(pmType));
-  panelEl.classList.remove('hidden');
-  addSwipeBack(panelEl, closePMType);
+  el(pmPanelId(pmType)).classList.remove('hidden');
+  setPanelNav(el('screen-maintenance'), closePMType,
+    'Maintenance Log - PM Records - ' + (PM_TYPES[pmType]?.title || pmType));
   initPMTypePanel(pmType);
 }
 
 function closePMType() {
   document.querySelectorAll('#maint-panel-pms .pm-panel').forEach(p => p.classList.add('hidden'));
   el('pm-main').classList.remove('hidden');
+  setPanelNav(el('screen-maintenance'), closeMaintPanel, 'Maintenance Log - PM Records');
 }
 
-el('maint-panel-pms').addEventListener('click', e => {
-  if (e.target.matches('.pm-back-btn') || e.target.closest('.pm-back-btn')) closePMType();
-});
+// .pm-back-btn buttons removed from HTML — navigation handled by setPanelNav()
 
 document.querySelectorAll('[data-pm-type]').forEach(btn => {
   btn.addEventListener('click', () => openPMType(btn.dataset.pmType));
@@ -5329,12 +5337,18 @@ let pestReportMonth   = new Date().getMonth() + 1;
 let pestReportYear    = new Date().getFullYear();
 let pestLocationEditId = null;
 
+const PEST_PANEL_NAMES = {
+  usage:    'Usage Log',
+  location: 'Application Location',
+  reports:  'Monthly Report',
+  products: 'Products',
+};
 function openPestPanel(panelId) {
   el('pest-main').classList.add('hidden');
   document.querySelectorAll('.maint-panel[id^="pest-panel-"]').forEach(p => p.classList.add('hidden'));
-  const panelEl = el(`pest-panel-${panelId}`);
-  panelEl.classList.remove('hidden');
-  addSwipeBack(panelEl, closePestPanel);
+  el(`pest-panel-${panelId}`).classList.remove('hidden');
+  setPanelNav(el('screen-pesticides'), closePestPanel,
+    'Pesticides - ' + (PEST_PANEL_NAMES[panelId] || panelId));
   if (panelId === 'usage')    initPestUsagePanel();
   if (panelId === 'location') initPestLocationPanel();
   if (panelId === 'reports')  initPestReportsPanel();
@@ -5344,6 +5358,7 @@ function openPestPanel(panelId) {
 function closePestPanel() {
   document.querySelectorAll('.maint-panel[id^="pest-panel-"]').forEach(p => p.classList.add('hidden'));
   el('pest-main').classList.remove('hidden');
+  setPanelNav(el('screen-pesticides'), () => showScreen('dashboard'), 'Pesticides');
 }
 
 function initPesticideScreen() {
@@ -5355,10 +5370,7 @@ document.querySelectorAll('[data-pest-panel]').forEach(btn => {
   btn.addEventListener('click', () => openPestPanel(btn.dataset.pestPanel));
 });
 
-// Back buttons inside pest panels
-document.querySelectorAll('#screen-pesticides .maint-back-btn').forEach(btn => {
-  btn.addEventListener('click', closePestPanel);
-});
+// .maint-back-btn buttons inside pest panels removed from HTML — navigation handled by setPanelNav()
 
 // ── Usage Panel ───────────────────────────────────────────────────────────────
 async function initPestUsagePanel() {
@@ -5662,11 +5674,17 @@ function initReportsScreen() {
   ['vehicles','kf','maintenance','pms'].forEach(c => el(`report-panel-${c}`).classList.add('hidden'));
 }
 
+const REPORT_PANEL_NAMES = {
+  vehicles:    'Vehicles',
+  kf:          'KF Monthly',
+  maintenance: 'Maintenance Issues',
+  pms:         'PM Records',
+};
 function openReportPanel(cat) {
   el('report-main').classList.add('hidden');
-  const panelEl = el(`report-panel-${cat}`);
-  panelEl.classList.remove('hidden');
-  addSwipeBack(panelEl, closeReportPanel);
+  el(`report-panel-${cat}`).classList.remove('hidden');
+  setPanelNav(el('screen-reports'), closeReportPanel,
+    'Reports - ' + (REPORT_PANEL_NAMES[cat] || cat));
   if (cat === 'vehicles')    initVehicleReportPanel();
   if (cat === 'kf')          initKFReportPanel();
   if (cat === 'maintenance') initMaintenanceReportPanel();
@@ -5676,16 +5694,14 @@ function openReportPanel(cat) {
 function closeReportPanel() {
   ['vehicles','kf','maintenance','pms'].forEach(c => el(`report-panel-${c}`).classList.add('hidden'));
   el('report-main').classList.remove('hidden');
+  setPanelNav(el('screen-reports'), () => showScreen('dashboard'), 'Reports');
 }
 
 el('screen-reports').addEventListener('click', e => {
   const tile = e.target.closest('[data-report-cat]');
   if (tile) openReportPanel(tile.dataset.reportCat);
 });
-el('report-vehicles-back').addEventListener('click', closeReportPanel);
-el('report-kf-back').addEventListener('click', closeReportPanel);
-el('report-maint-back').addEventListener('click', closeReportPanel);
-el('report-pms-back').addEventListener('click', closeReportPanel);
+// report-*-back buttons removed from HTML — navigation handled by setPanelNav()
 
 // ── Vehicles Panel ────────────────────────────────────────────────────────────
 function updateReportsMonthLabel() {
@@ -6348,8 +6364,8 @@ const DWR_QUEST_MEAS = [
 let dwrWells = [];
 let dwrDoneThisSession = new Set(); // well_ids saved this session
 
+const WR_PANEL_NAMES = { dwr: 'DWR', kcwa: 'KCWA Piezometers' };
 function initWellRunsScreen() {
-  // Sub-dashboard tiles
   document.querySelectorAll('[data-wr-panel]').forEach(tile => {
     tile.addEventListener('click', () => {
       const panel = tile.dataset.wrPanel;
@@ -6357,32 +6373,20 @@ function initWellRunsScreen() {
       const closeWrPanel = () => {
         document.querySelectorAll('#screen-well-runs .maint-panel').forEach(p => p.classList.add('hidden'));
         el('well-runs-main').classList.remove('hidden');
+        setPanelNav(el('screen-well-runs'), () => showScreen('dashboard'), 'Well Runs');
       };
       if (panel === 'dwr') {
         el('wr-panel-dwr').classList.remove('hidden');
-        addSwipeBack(el('wr-panel-dwr'), closeWrPanel);
         initDWRScreen();
       } else if (panel === 'kcwa') {
         el('wr-panel-kcwa').classList.remove('hidden');
-        addSwipeBack(el('wr-panel-kcwa'), closeWrPanel);
         initPiezScreen();
       } else {
         el('wr-panel-soon').classList.remove('hidden');
-        addSwipeBack(el('wr-panel-soon'), closeWrPanel);
       }
+      setPanelNav(el('screen-well-runs'), closeWrPanel,
+        'Well Runs - ' + (WR_PANEL_NAMES[panel] || 'Coming Soon'));
     });
-  });
-  el('wr-dwr-back').addEventListener('click', () => {
-    el('wr-panel-dwr').classList.add('hidden');
-    el('well-runs-main').classList.remove('hidden');
-  });
-  el('wr-kcwa-back').addEventListener('click', () => {
-    el('wr-panel-kcwa').classList.add('hidden');
-    el('well-runs-main').classList.remove('hidden');
-  });
-  el('wr-soon-back').addEventListener('click', () => {
-    el('wr-panel-soon').classList.add('hidden');
-    el('well-runs-main').classList.remove('hidden');
   });
 }
 

@@ -115,40 +115,48 @@ detail text. Specific rules per screen:
 
 ### Navigation & Back Buttons
 
-Every screen and sub-panel must show a **secondary nav bar** directly below
-the fixed app header (inside the screen content area, not inside the header
-itself). The hamburger menu stays in the fixed header unchanged.
+Every non-dashboard screen shows a **single "‹ Back" button** as the first
+element inside the screen content area (injected by JS, not in HTML). The
+hamburger menu stays in the fixed header unchanged.
 
-**Format** (single line):
-```
-‹ [Parent]        [Current Screen]
-```
-- The back link (`‹ [Parent]`) is left-aligned, smaller text, tappable.
-- The current screen name is right of it (or centered), **larger/heading
-  weight** — this is the primary label telling the operator where they are.
-- Both on the same line.
+**Back button rules:**
+- Button text is always just `‹ Back` — no parent label, no current location.
+- Back always goes exactly one level up regardless of navigation depth.
+- Button has `min-height: 44px` so it is comfortably tappable on mobile.
+- For quick jumps to any screen, operators use the hamburger menu.
 
-**Parent label rules:**
-- Main screens (Wells, Vehicles, PP, KF, Maintenance, Well Runs, etc.) →
-  parent is **"Dashboard"**
-- Sub-panels within a screen → parent is the screen name:
-  - Maintenance > Well Issues → `‹ Maintenance   Well Issues`
-  - Maintenance > Building Issues → `‹ Maintenance   Building Issues`
-  - Settings > User Management → `‹ Settings   User Management`
-  - Well Runs > DWR → `‹ Well Runs   DWR`
-  - Well Runs > KCWA Piezometers → `‹ Well Runs   KCWA Piezometers`
-  - PM Records > [type] → `‹ PM Records   [Type Name]`
+**App header title (yellow strip at top):**
+- The header title updates dynamically on every navigation transition via
+  `el('screen-title').textContent`.
+- Main screens: show the screen name (e.g., `"Maintenance Log"`).
+- Sub-panels: show `"Screen - Sub-panel"` (e.g., `"Maintenance Log - Vehicle Maintenance"`).
+- Three-level depth: `"Maintenance Log - PM Records - A Plant Electrical PM"`.
+- Dashboard always shows `"Field Ops"`.
 
 **Swipe to go back:**
-- Implement a left-edge swipe gesture (touch start near left edge, swipe right)
-  on every screen and sub-panel that has a back button.
-- Swipe triggers the same action as tapping the back button — one level up.
-- Applies to all panels including main screens (swipe back → Dashboard).
-- Use `touchstart` / `touchend` on the screen container; only trigger if
-  `touchstart.clientX < 30px` and horizontal delta > 60px.
+- Left-edge swipe gesture on every screen container.
+- Triggers the same action as tapping Back — one level up.
+- Use `touchstart` / `touchend`; only trigger if `touchstart.clientX < 30px`
+  and horizontal delta > 60px.
 
-**Implementation note:** Use a single shared CSS class `.panel-nav-bar` for
-the nav bar element and a shared helper function `setPanelNav(backLabel, currentLabel, backFn)` in `app.js` that renders the bar and wires up the back button + swipe gesture. Do not use per-screen class names like `.wr-back-btn` or `.maint-back-btn` going forward.
+**Implementation — two shared helpers in `app.js`:**
+
+```javascript
+// Call on every screen/panel transition. Updates header title, injects or
+// updates the ‹ Back button at the top of screenEl, wires swipe-back.
+function setPanelNav(screenEl, backFn, headerTitle)
+
+// Attaches a left-edge swipe-back gesture to a container. Cleans up any
+// previous listener on the same element before re-attaching.
+function addSwipeBack(containerEl, backFn)
+```
+
+`setPanelNav` finds or creates a `.panel-nav-bar > .panel-nav-back` inside
+`screenEl` and always updates `btn.onclick = backFn` so subsequent calls
+always point back to the right level.
+
+Do **not** put static `panel-nav-bar` HTML inside sub-panels — the nav bar
+lives only at the screen level and is fully managed by JS.
 
 ---
 

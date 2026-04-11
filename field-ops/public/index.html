@@ -77,7 +77,7 @@
         <div id="login-error" class="error-msg hidden"></div>
         <button type="submit" class="btn btn-primary btn-full">Sign In</button>
       </form>
-      <div class="login-version">v 1.28</div>
+      <div class="login-version">v 1.29</div>
     </div>
   </div>
 </div>
@@ -380,11 +380,6 @@
 
     <!-- Vehicles Panel — fully functional -->
     <div id="maint-panel-vehicles" class="maint-panel hidden">
-      <div class="panel-nav-bar">
-        <button class="maint-back-btn">‹ Maintenance</button>
-        <span class="panel-nav-title">Vehicle Maintenance</span>
-      </div>
-
       <div class="issue-toolbar">
         <button class="btn btn-secondary btn-sm" id="veh-show-resolved-btn">Show Resolved</button>
         <button class="btn btn-save btn-sm" id="veh-new-record-btn">+ New Record</button>
@@ -507,11 +502,6 @@
 
     <!-- Equipment Panel — fully functional -->
     <div id="maint-panel-equipment" class="maint-panel hidden">
-      <div class="panel-nav-bar">
-        <button class="maint-back-btn">‹ Maintenance</button>
-        <span class="panel-nav-title">Equipment Issues</span>
-      </div>
-
       <div class="issue-toolbar">
         <button class="btn btn-secondary btn-sm" id="equip-show-resolved-btn">Show Resolved</button>
         <button class="btn btn-save btn-sm" id="equip-new-issue-btn">+ New Issue</button>
@@ -573,11 +563,6 @@
 
     <!-- Buildings Panel — fully functional -->
     <div id="maint-panel-buildings" class="maint-panel hidden">
-      <div class="panel-nav-bar">
-        <button class="maint-back-btn">‹ Maintenance</button>
-        <span class="panel-nav-title">Building Issues</span>
-      </div>
-
       <div class="issue-toolbar">
         <button class="btn btn-secondary btn-sm" id="bldg-show-resolved-btn">Show Resolved</button>
         <button class="btn btn-save btn-sm" id="bldg-new-issue-btn">+ New Issue</button>
@@ -633,11 +618,6 @@
 
     <!-- Wells Panel — fully functional -->
     <div id="maint-panel-wells" class="maint-panel hidden">
-      <div class="panel-nav-bar">
-        <button class="maint-back-btn">‹ Maintenance</button>
-        <span class="panel-nav-title">Well Issues</span>
-      </div>
-
       <div class="issue-toolbar">
         <button class="btn btn-secondary btn-sm" id="well-show-resolved-btn">Show Resolved</button>
         <button class="btn btn-save btn-sm" id="well-new-issue-btn">+ New Issue</button>
@@ -676,10 +656,6 @@
 
     <!-- Swaps Panel — fully functional -->
     <div id="maint-panel-swaps" class="maint-panel hidden">
-      <div class="panel-nav-bar">
-        <button class="maint-back-btn">‹ Maintenance</button>
-        <span class="panel-nav-title">Equipment Swaps</span>
-      </div>
       <div class="form-card">
         <div class="form-group">
           <label>Category</label>
@@ -726,10 +702,6 @@
 
       <!-- PM sub-dashboard -->
       <div id="pm-main">
-        <div class="panel-nav-bar">
-          <button class="maint-back-btn">‹ Maintenance</button>
-          <span class="panel-nav-title">PM Records</span>
-        </div>
         <div class="dashboard-grid">
           <button class="dash-tile" data-pm-type="a_electrical">
             <span class="dash-icon">&#9889;</span>
@@ -765,12 +737,12 @@
       </div>
 
       <!-- PM type panels (content populated by JS) -->
-      <div id="pm-panel-a-electrical"  class="pm-panel hidden"><div class="panel-nav-bar"><button class="pm-back-btn">‹ PM Records</button><span class="panel-nav-title">A Plant Electrical</span></div><div class="pm-type-content"></div></div>
-      <div id="pm-panel-b-electrical"  class="pm-panel hidden"><div class="panel-nav-bar"><button class="pm-back-btn">‹ PM Records</button><span class="panel-nav-title">B Plant Electrical</span></div><div class="pm-type-content"></div></div>
-      <div id="pm-panel-siphon-breaker" class="pm-panel hidden"><div class="panel-nav-bar"><button class="pm-back-btn">‹ PM Records</button><span class="panel-nav-title">Siphon Breaker</span></div><div class="pm-type-content"></div></div>
-      <div id="pm-panel-air-compressor" class="pm-panel hidden"><div class="panel-nav-bar"><button class="pm-back-btn">‹ PM Records</button><span class="panel-nav-title">Air Compressor</span></div><div class="pm-type-content"></div></div>
-      <div id="pm-panel-wells"         class="pm-panel hidden"><div class="panel-nav-bar"><button class="pm-back-btn">‹ PM Records</button><span class="panel-nav-title">Wells</span></div><div class="pm-type-content"></div></div>
-      <div id="pm-panel-annual-pp"     class="pm-panel hidden"><div class="panel-nav-bar"><button class="pm-back-btn">‹ PM Records</button><span class="panel-nav-title">Annual Pumping Plant</span></div><div class="pm-type-content"></div></div>
+      <div id="pm-panel-a-electrical"  class="pm-panel hidden"><div class="pm-type-content"></div></div>
+      <div id="pm-panel-b-electrical"  class="pm-panel hidden"><div class="pm-type-content"></div></div>
+      <div id="pm-panel-siphon-breaker" class="pm-panel hidden"><div class="pm-type-content"></div></div>
+      <div id="pm-panel-air-compressor" class="pm-panel hidden"><div class="pm-type-content"></div></div>
+      <div id="pm-panel-wells"         class="pm-panel hidden"><div class="pm-type-content"></div></div>
+      <div id="pm-panel-annual-pp"     class="pm-panel hidden"><div class="pm-type-content"></div></div>
 
     </div><!-- /maint-panel-pms -->
 
@@ -803,10 +775,6 @@
 
     <!-- Usage panel -->
     <div id="pest-panel-usage" class="maint-panel hidden">
-      <div class="panel-nav-bar">
-        <button class="maint-back-btn">‹ Pesticides</button>
-        <span class="panel-nav-title">Usage Log</span>
-      </div>
       <div class="issue-toolbar">
         <button class="btn btn-primary btn-sm" id="pest-usage-new-btn">+ Log Usage</button>
       </div>
@@ -834,20 +802,12 @@
 
     <!-- Location panel -->
     <div id="pest-panel-location" class="maint-panel hidden">
-      <div class="panel-nav-bar">
-        <button class="maint-back-btn">‹ Pesticides</button>
-        <span class="panel-nav-title">Application Location</span>
-      </div>
       <p class="placeholder-msg" style="font-style:normal;color:var(--text-dim);margin-bottom:12px">Tap an entry to add where the pesticide was applied.</p>
       <div id="pest-location-list"></div>
     </div>
 
     <!-- Reports panel -->
     <div id="pest-panel-reports" class="maint-panel hidden">
-      <div class="panel-nav-bar">
-        <button class="maint-back-btn">‹ Pesticides</button>
-        <span class="panel-nav-title">Monthly Report</span>
-      </div>
       <div class="report-month-nav" style="margin-bottom:14px">
         <button class="btn btn-secondary btn-sm" id="pest-report-prev">&#8592;</button>
         <span id="pest-report-label" class="report-month-label"></span>
@@ -858,10 +818,6 @@
 
     <!-- Products panel -->
     <div id="pest-panel-products" class="maint-panel hidden">
-      <div class="panel-nav-bar">
-        <button class="maint-back-btn">‹ Pesticides</button>
-        <span class="panel-nav-title">Products</span>
-      </div>
       <div class="issue-toolbar">
         <button class="btn btn-primary btn-sm" id="pest-product-new-btn">+ Add Product</button>
       </div>
@@ -947,20 +903,12 @@
 
     <!-- Coming Soon panel (shared) -->
     <div id="wr-panel-soon" class="maint-panel hidden">
-      <div class="panel-nav-bar">
-        <button class="maint-back-btn" id="wr-soon-back">‹ Well Runs</button>
-        <span class="panel-nav-title">Coming Soon</span>
-      </div>
       <div class="placeholder-msg" style="margin-top:40px">Coming Soon</div>
     </div>
 
     <!-- DWR panel -->
     <div id="wr-panel-dwr" class="maint-panel hidden">
       <div class="wr-dwr-header">
-        <div class="panel-nav-bar">
-          <button class="wr-back-btn" id="wr-dwr-back">‹ Well Runs</button>
-          <span class="panel-nav-title">DWR</span>
-        </div>
         <div class="wr-panel-controls">
           <div class="wr-dwr-datetime">
             <input type="date" id="dwr-date" class="ctrl-input ctrl-input-sm">
@@ -978,10 +926,6 @@
     <!-- KCWA Piezometers panel -->
     <div id="wr-panel-kcwa" class="maint-panel hidden">
       <div class="wr-dwr-header">
-        <div class="panel-nav-bar">
-          <button class="wr-back-btn" id="wr-kcwa-back">‹ Well Runs</button>
-          <span class="panel-nav-title">KCWA Piezometers</span>
-        </div>
         <div class="wr-panel-controls">
           <div class="wr-dwr-datetime">
             <input type="date" id="piez-date" class="ctrl-input ctrl-input-sm">
@@ -1020,10 +964,6 @@
 
     <!-- Vehicles panel -->
     <div id="report-panel-vehicles" class="maint-panel hidden">
-      <div class="panel-nav-bar">
-        <button class="maint-back-btn" id="report-vehicles-back">‹ Reports</button>
-        <span class="panel-nav-title">Vehicles</span>
-      </div>
       <div class="report-toolbar">
         <div class="seg-group" id="vehicle-report-seg">
           <button class="seg-btn active" data-val="mileage">CVC Mileage</button>
@@ -1041,10 +981,6 @@
 
     <!-- KF panel -->
     <div id="report-panel-kf" class="maint-panel hidden">
-      <div class="panel-nav-bar">
-        <button class="maint-back-btn" id="report-kf-back">‹ Reports</button>
-        <span class="panel-nav-title">KF Monthly</span>
-      </div>
       <div class="report-toolbar">
         <div class="report-month-nav">
           <button class="btn btn-secondary btn-sm" id="kf-report-prev-month">&#8592;</button>
@@ -1060,19 +996,11 @@
 
     <!-- Maintenance Issues panel -->
     <div id="report-panel-maintenance" class="maint-panel hidden">
-      <div class="panel-nav-bar">
-        <button class="maint-back-btn" id="report-maint-back">‹ Reports</button>
-        <span class="panel-nav-title">Maintenance Issues</span>
-      </div>
       <div id="report-maint-output"></div>
     </div>
 
     <!-- PM Grid panel -->
     <div id="report-panel-pms" class="maint-panel hidden">
-      <div class="panel-nav-bar">
-        <button class="maint-back-btn" id="report-pms-back">‹ Reports</button>
-        <span class="panel-nav-title">PM Records</span>
-      </div>
       <div class="report-toolbar">
         <div class="report-month-nav">
           <button class="btn btn-secondary btn-sm" id="pms-prev-month">&#8592;</button>
@@ -1126,10 +1054,6 @@
 
     <!-- Account panel -->
     <div id="settings-panel-account" class="settings-panel hidden">
-      <div class="panel-nav-bar">
-        <button class="settings-back-btn">‹ Settings</button>
-        <span class="panel-nav-title">Account</span>
-      </div>
       <div class="settings-section">
         <div class="settings-card">
           <div class="settings-row"><span class="settings-label">Name</span><span id="settings-full-name" class="settings-value"></span></div>
@@ -1141,10 +1065,6 @@
 
     <!-- Change Password panel -->
     <div id="settings-panel-password" class="settings-panel hidden">
-      <div class="panel-nav-bar">
-        <button class="settings-back-btn">‹ Settings</button>
-        <span class="panel-nav-title">Change Password</span>
-      </div>
       <div class="settings-section">
         <div class="settings-card">
           <div class="settings-pad">
@@ -1169,10 +1089,6 @@
 
     <!-- Text Size panel -->
     <div id="settings-panel-textsize" class="settings-panel hidden">
-      <div class="panel-nav-bar">
-        <button class="settings-back-btn">‹ Settings</button>
-        <span class="panel-nav-title">Text Size</span>
-      </div>
       <div class="settings-section">
         <div class="settings-card">
           <div class="settings-pad">
@@ -1192,10 +1108,6 @@
 
     <!-- Today's Readings panel -->
     <div id="settings-panel-readings" class="settings-panel hidden">
-      <div class="panel-nav-bar">
-        <button class="settings-back-btn">‹ Settings</button>
-        <span class="panel-nav-title">Today's Readings</span>
-      </div>
       <div class="settings-section">
         <div id="today-readings-list" class="settings-card">
           <div class="placeholder-msg">Loading…</div>
@@ -1205,10 +1117,6 @@
 
     <!-- KF Widget panel -->
     <div id="settings-panel-kf-widget" class="settings-panel hidden">
-      <div class="panel-nav-bar">
-        <button class="settings-back-btn">‹ Settings</button>
-        <span class="panel-nav-title">KF Widget</span>
-      </div>
       <div class="settings-section">
         <p style="font-size:0.85rem;color:var(--text-dim);margin:0 0 12px">
           Set the date range the KF dashboard widgets use to calculate completed and remaining counts.
@@ -1231,13 +1139,9 @@
 
     <!-- App Info panel -->
     <div id="settings-panel-appinfo" class="settings-panel hidden">
-      <div class="panel-nav-bar">
-        <button class="settings-back-btn">‹ Settings</button>
-        <span class="panel-nav-title">App Info</span>
-      </div>
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 1.28</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 1.29</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>
@@ -1246,10 +1150,6 @@
 
     <!-- Tools panel (secret) -->
     <div id="settings-panel-tools" class="settings-panel hidden">
-      <div class="panel-nav-bar">
-        <button class="settings-back-btn">‹ Settings</button>
-        <span class="panel-nav-title">Tools</span>
-      </div>
       <div class="settings-section">
         <div class="settings-card">
           <button class="settings-menu-row" data-tool="exif">
@@ -1381,19 +1281,11 @@
 
     <!-- Bug Reports panel -->
     <div id="settings-panel-bugreports" class="settings-panel hidden">
-      <div class="panel-nav-bar">
-        <button class="settings-back-btn">‹ Settings</button>
-        <span class="panel-nav-title">Bug Reports</span>
-      </div>
       <div id="bug-reports-list"></div>
     </div>
 
     <!-- User Management panel -->
     <div id="settings-panel-usermgmt" class="settings-panel hidden">
-      <div class="panel-nav-bar">
-        <button class="settings-back-btn">‹ Settings</button>
-        <span class="panel-nav-title">User Management</span>
-      </div>
       <div class="admin-actions">
         <button class="btn btn-primary" id="admin-add-user-btn">+ Add User</button>
       </div>
