@@ -582,11 +582,10 @@ input[type="date"].ctrl-input { min-height: 44px; }
   min-width: 50px;
   display: flex;
   gap: 4px;
-  align-items: center;
+  align-items: flex-start;
 }
 .rr-notes-input {
   flex: 1;
-  height: 34px;
   background: var(--surface2);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -595,6 +594,8 @@ input[type="date"].ctrl-input { min-height: 44px; }
   font-size: 0.82rem;
   outline: none;
   min-height: 34px;
+  resize: none;
+  line-height: 1.4;
   transition: border-color var(--transition);
 }
 .rr-notes-input:focus { border-color: var(--accent); }
@@ -1772,6 +1773,31 @@ input[type="date"].ctrl-input { min-height: 44px; }
   width: 100%;
 }
 
+/* ── Shared Panel Navigation Bar ────────────────────────────────────────── */
+.panel-nav-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.panel-nav-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text);
+}
+/* Reset full-width/bordered back buttons when inside nav bar */
+.panel-nav-bar .maint-back-btn,
+.panel-nav-bar .settings-back-btn,
+.panel-nav-bar .pm-back-btn,
+.panel-nav-bar .wr-back-btn {
+  width: auto;
+  margin-bottom: 0;
+  padding: 4px 0;
+  background: transparent;
+  border: none;
+  font-size: 0.88rem;
+}
+
 /* ── Maintenance Dashboard ───────────────────────────────────────────────── */
 .maint-back-btn {
   display: flex;
@@ -2176,6 +2202,7 @@ input[type="date"].ctrl-input { min-height: 44px; }
   font-weight: 600;
   color: var(--text);
 }
+.wr-dwr-header > .panel-nav-bar { margin-bottom: 0; }
 .wr-panel-controls {
   display: flex;
   align-items: center;

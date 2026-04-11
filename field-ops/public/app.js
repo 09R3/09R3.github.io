@@ -11,8 +11,6 @@ const pp = {
 };
 let ppLoaded = false;
 
-// Notes modal state
-let notesTarget = null; // { rowEl, notesInput }
 
 // Admin edit state
 let editingUserId = null;
@@ -409,6 +407,11 @@ function showScreen(name) {
   el('screen-title').textContent = titles[name] || 'Field Ops';
   closeDrawer();
 
+  // Add ‹ Dashboard nav bar + swipe-back to each non-dashboard screen
+  if (name !== 'dashboard' && SCREEN_TITLES[name]) {
+    setPanelNav(el(`screen-${name}`), 'Dashboard', SCREEN_TITLES[name], () => showScreen('dashboard'));
+  }
+
   // Block supervisor/admin-only screens for operators
   if (name === 'reports') {
     if (!currentUser || (currentUser.role !== 'admin' && currentUser.role !== 'supervisor')) {
@@ -600,27 +603,53 @@ async function checkAuth() {
   }
 }
 
-/* ── Notes Modal ─────────────────────────────────────────────────────────── */
-el('notes-modal-close').addEventListener('click', closeNotesModal);
-el('notes-modal-cancel').addEventListener('click', closeNotesModal);
-el('notes-modal-ok').addEventListener('click', () => {
-  if (notesTarget) {
-    notesTarget.notesInput.value = el('notes-modal-text').value;
-    notesTarget = null;
-  }
-  closeNotesModal();
-});
-
-function openNotesModal(label, notesInput) {
-  notesTarget = { notesInput };
-  el('notes-modal-title').textContent = `Notes — ${label}`;
-  el('notes-modal-text').value = notesInput.value;
-  el('notes-modal').classList.remove('hidden');
-  setTimeout(() => el('notes-modal-text').focus(), 50);
+/* ── Swipe-back gesture ──────────────────────────────────────────────────── */
+// Attach a left-edge swipe gesture to a panel or screen container.
+// Only triggers if touchstart begins within 30px of left edge and swipes > 60px right.
+function addSwipeBack(containerEl, backFn) {
+  if (containerEl._swipeCleanup) containerEl._swipeCleanup();
+  let startX = null;
+  const onStart = e => { startX = e.touches[0].clientX < 30 ? e.touches[0].clientX : null; };
+  const onEnd   = e => { if (startX !== null && e.changedTouches[0].clientX - startX > 60) backFn(); startX = null; };
+  containerEl.addEventListener('touchstart', onStart, { passive: true });
+  containerEl.addEventListener('touchend',   onEnd,   { passive: true });
+  containerEl._swipeCleanup = () => {
+    containerEl.removeEventListener('touchstart', onStart);
+    containerEl.removeEventListener('touchend', onEnd);
+  };
 }
-function closeNotesModal() {
-  el('notes-modal').classList.add('hidden');
-  notesTarget = null;
+
+/* ── Main-screen panel nav bar (injects ‹ Dashboard nav for reading screens) */
+const SCREEN_TITLES = {
+  'pumping-plant': 'Pumping Plant',
+  wells:           'Well Readings',
+  canal:           'Canal Readings',
+  vehicles:        'Vehicle Monthly',
+  'kf-monthly':    'KF Monthly',
+  maintenance:     'Maintenance',
+  pesticides:      'Pesticides',
+  'well-runs':     'Well Runs',
+  reports:         'Reports',
+  admin:           'Settings',
+};
+function setPanelNav(screenEl, backLabel, currentLabel, backFn) {
+  if (!screenEl) return;
+  let nav = screenEl.querySelector(':scope > .panel-nav-bar');
+  if (!nav) {
+    nav = document.createElement('div');
+    nav.className = 'panel-nav-bar';
+    const btn = document.createElement('button');
+    btn.className = 'panel-nav-back';
+    btn.textContent = `‹ ${backLabel}`;
+    btn.addEventListener('click', backFn);
+    const title = document.createElement('span');
+    title.className = 'panel-nav-title';
+    title.textContent = currentLabel;
+    nav.appendChild(btn);
+    nav.appendChild(title);
+    screenEl.insertBefore(nav, screenEl.firstChild);
+  }
+  addSwipeBack(screenEl, backFn);
 }
 
 /* ── History Modal ───────────────────────────────────────────────────────── */
@@ -934,8 +963,7 @@ function createReadingRow({ type, id, label, prev, prevDate, prevNotes, unit, de
       <input type="text" class="rr-input prev rr-prev" readonly value="${prevDisp}">
     </div>
     <div class="rr-notes-wrap">
-      <input type="text" class="rr-notes-input rr-notes" placeholder="Notes…">
-      <button class="notes-plus-btn" title="Expand notes">+</button>
+      <textarea class="rr-notes-input rr-notes" rows="2" placeholder="Notes…"></textarea>
       <button class="hist-btn" title="View history">&#128200;</button>
     </div>
   `;
@@ -956,12 +984,9 @@ function createReadingRow({ type, id, label, prev, prevDate, prevNotes, unit, de
     }
   });
 
-  // Notes + button
+  // Notes textarea
   const notesInput = row.querySelector('.rr-notes');
   if (prevNotes) notesInput.value = prevNotes;
-  row.querySelector('.notes-plus-btn').addEventListener('click', () => {
-    openNotesModal(label, notesInput);
-  });
   row.querySelector('.hist-btn').addEventListener('click', () => {
     openHistoryModal(type, id, label);
   });
@@ -1506,7 +1531,7 @@ function createVehicleItem(v, dateInput, timeInput) {
 
   const days  = daysSinceDate(v.last_reading_date);
   const sc    = days == null ? 'due' : days <= 7 ? 'done' : days <= 25 ? 'due' : 'overdue';
-  const badge = days == null ? 'Not read' : days === 0 ? 'Today' : `${days}d ago`;
+  const badge = days == null ? 'Not read' : localDateStr(v.last_reading_date, { month: 'short', day: 'numeric' });
 
   const rt = v.reading_type;
   const showOdo = !rt || rt === 'odometer' || rt === 'both';
@@ -1657,7 +1682,7 @@ async function loadWellIssues() {
     renderWellIssues();
     updateWellBadge();
   } catch {
-    el('well-issue-list').innerHTML = `<div class="issue-empty">Failed to load issues</div>`;
+    el('well-issue-list').innerHTML = `<div class="placeholder-msg">Failed to load issues</div>`;
   }
 }
 
@@ -1669,7 +1694,7 @@ function updateWellBadge() {
 function renderWellIssues() {
   const list = el('well-issue-list');
   if (!wellIssues.length) {
-    list.innerHTML = `<div class="issue-empty">No ${wellShowResolved ? '' : 'open '}issues</div>`;
+    list.innerHTML = `<div class="placeholder-msg">No ${wellShowResolved ? '' : 'open '}issues</div>`;
     return;
   }
   list.innerHTML = wellIssues.map(issue => {
@@ -1899,7 +1924,7 @@ async function loadBldgIssues() {
     renderBldgIssues();
     updateBldgBadge();
   } catch {
-    el('bldg-issue-list').innerHTML = `<div class="issue-empty">Failed to load issues</div>`;
+    el('bldg-issue-list').innerHTML = `<div class="placeholder-msg">Failed to load issues</div>`;
   }
 }
 
@@ -1911,7 +1936,7 @@ function updateBldgBadge() {
 function renderBldgIssues() {
   const list = el('bldg-issue-list');
   if (!bldgIssues.length) {
-    list.innerHTML = `<div class="issue-empty">No ${bldgShowResolved ? '' : 'open '}issues</div>`;
+    list.innerHTML = `<div class="placeholder-msg">No ${bldgShowResolved ? '' : 'open '}issues</div>`;
     return;
   }
   list.innerHTML = bldgIssues.map(issue => {
@@ -2143,7 +2168,7 @@ async function loadEquipIssues() {
     renderEquipIssues();
     updateEquipBadge();
   } catch (err) {
-    el('equip-issue-list').innerHTML = `<div class="issue-empty">Failed to load issues</div>`;
+    el('equip-issue-list').innerHTML = `<div class="placeholder-msg">Failed to load issues</div>`;
   }
 }
 
@@ -2155,7 +2180,7 @@ function updateEquipBadge() {
 function renderEquipIssues() {
   const list = el('equip-issue-list');
   if (!equipIssues.length) {
-    list.innerHTML = `<div class="issue-empty">No ${equipShowResolved ? '' : 'open '}issues</div>`;
+    list.innerHTML = `<div class="placeholder-msg">No ${equipShowResolved ? '' : 'open '}issues</div>`;
     return;
   }
   list.innerHTML = equipIssues.map(issue => {
@@ -2403,7 +2428,7 @@ async function loadVehRecords() {
     renderVehRecords();
     setBadge('maint-badge-vehicles', vehRecords.filter(r => r.status === 'open' || r.status === 'in-progress').length);
   } catch {
-    el('veh-record-list').innerHTML = '<div class="issue-empty">Failed to load records</div>';
+    el('veh-record-list').innerHTML = '<div class="placeholder-msg">Failed to load records</div>';
   }
 }
 
@@ -2567,7 +2592,7 @@ function renderVehCardQueue(id) {
 function renderVehRecords() {
   const list = el('veh-record-list');
   if (!vehRecords.length) {
-    list.innerHTML = `<div class="issue-empty">No ${vehShowResolved ? '' : 'open '}records</div>`;
+    list.innerHTML = `<div class="placeholder-msg">No ${vehShowResolved ? '' : 'open '}records</div>`;
     return;
   }
   const statusLabel = { open: 'Open', 'in-progress': 'In Progress', resolved: 'Resolved' };
@@ -2653,6 +2678,7 @@ el('veh-new-record-btn').addEventListener('click', () => {
   el('veh-new-record-form').classList.remove('hidden');
   el('veh-new-record-btn').classList.add('hidden');
   el('maint-date').value = todayISO();
+  if (!el('maint-performed-by').value) el('maint-performed-by').value = currentUser?.full_name || '';
 });
 
 el('veh-cancel-btn').addEventListener('click', () => {
@@ -2754,7 +2780,9 @@ el('veh-record-list').addEventListener('click', async e => {
 function openMaintPanel(panelId) {
   el('maint-main').classList.add('hidden');
   document.querySelectorAll('.maint-panel').forEach(p => p.classList.add('hidden'));
-  el('maint-panel-' + panelId).classList.remove('hidden');
+  const panelEl = el('maint-panel-' + panelId);
+  panelEl.classList.remove('hidden');
+  addSwipeBack(panelEl, closeMaintPanel);
   if (panelId === 'equipment') initMaintEquipmentPanel();
   if (panelId === 'buildings') initMaintBuildingsPanel();
   if (panelId === 'wells')     initMaintWellsPanel();
@@ -2913,6 +2941,7 @@ function initMaintSwapsPanel() {
   if (swapPanelLoaded) return;
   swapPanelLoaded = true;
   el('swap-date').value = todayISO();
+  if (!el('swap-performed-by').value) el('swap-performed-by').value = currentUser?.full_name || '';
   loadSwapUnits(swapCategory);
 }
 
@@ -3430,14 +3459,16 @@ function createKFItem(w, dateInput, timeInput) {
     e.stopPropagation();
     const errEl = div.querySelector('.lif-error');
     errEl.classList.add('hidden');
-    const dtw = div.querySelector('.kf-dtw').value;
-    if (!dtw) { errEl.textContent = 'Depth to water is required'; errEl.classList.remove('hidden'); return; }
+    const dtw   = div.querySelector('.kf-dtw').value;
+    const notes = div.querySelector('.kf-notes').value.trim();
+    // DTW is optional, but if omitted the notes field is required
+    if (!dtw && !notes) { errEl.textContent = 'Enter a DTW reading, or add a note explaining why no reading was taken'; errEl.classList.remove('hidden'); return; }
 
     const body = {
       well_id:         w.well_id,
       reading_date:    dateInput.value,
       reading_time:    timeInput.value,
-      dtw_reading:     parseFloat(dtw),
+      dtw_reading:     dtw ? parseFloat(dtw) : null,
       well_on_off:     kfOnOff,
       plopper_sounder: div.querySelector('.kf-method').value || null,
       operator:        div.querySelector('.kf-op').value || null,
@@ -3446,7 +3477,7 @@ function createKFItem(w, dateInput, timeInput) {
     try {
       const r = await api('POST', '/api/readings/kf-monthly', body, `KF — ${w.common_name}`);
       div.querySelector('.status-dot').className = 'status-dot done';
-      div.querySelector('.status-badge').textContent = r.queued ? 'Offline' : 'Today';
+      div.querySelector('.status-badge').textContent = r.queued ? 'Offline' : localDateStr(dateInput.value, { month: 'short', day: 'numeric' });
       div.querySelector('.status-badge').className = 'status-badge done';
       div.classList.remove('expanded');
       div.querySelector('.list-item-form').style.display = 'none';
@@ -3791,7 +3822,9 @@ document.querySelectorAll('.text-size-btn').forEach(btn => {
 function openSettingsPanel(panelId) {
   el('settings-main').classList.add('hidden');
   document.querySelectorAll('.settings-panel').forEach(p => p.classList.add('hidden'));
-  el('settings-panel-' + panelId).classList.remove('hidden');
+  const panelEl = el('settings-panel-' + panelId);
+  panelEl.classList.remove('hidden');
+  addSwipeBack(panelEl, closeSettingsPanel);
   if (panelId === 'readings')   loadTodayReadings();
   if (panelId === 'bugreports') loadBugReports();
   if (panelId === 'kf-widget')  initKFWidgetPanel();
@@ -4596,7 +4629,9 @@ const pmHistoryCache = {}; // pm_id → record, for view/export without re-fetch
 function openPMType(pmType) {
   el('pm-main').classList.add('hidden');
   document.querySelectorAll('#maint-panel-pms .pm-panel').forEach(p => p.classList.add('hidden'));
-  el(pmPanelId(pmType)).classList.remove('hidden');
+  const panelEl = el(pmPanelId(pmType));
+  panelEl.classList.remove('hidden');
+  addSwipeBack(panelEl, closePMType);
   initPMTypePanel(pmType);
 }
 
@@ -4820,7 +4855,7 @@ async function buildSiphonBreakerPM(pmType, def, contentEl) {
     positions = allPositions.filter(p => String(p.site_id) === String(siteId));
     listEl.innerHTML = positions.length
       ? renderSiphonBreakerChecklist(positions)
-      : '<div class="issue-empty">No pump positions at this plant.</div>';
+      : '<div class="placeholder-msg">No pump positions at this plant.</div>';
   });
 
   cancelBtn.addEventListener('click', () => {
@@ -5103,7 +5138,7 @@ async function loadPMHistory(pmType, contentEl) {
   try {
     const rows = await api('GET', `/api/pm-records?type=${pmType}`);
     rows.forEach(r => { pmHistoryCache[r.pm_id] = r; });
-    if (!rows.length) { histEl.innerHTML = '<div class="issue-empty">No PM records yet.</div>'; return; }
+    if (!rows.length) { histEl.innerHTML = '<div class="placeholder-msg">No PM records yet.</div>'; return; }
     const def = PM_TYPES[pmType];
     histEl.innerHTML = rows.map(r => {
       const d  = localDateStr(r.completed_date, { month: 'short', day: 'numeric', year: 'numeric' });
@@ -5142,7 +5177,7 @@ async function loadPMHistory(pmType, contentEl) {
       btn.addEventListener('click', () => showPMRecord(pmHistoryCache[parseInt(btn.dataset.pmView)], PM_TYPES[pmType]));
     });
   } catch (err) {
-    histEl.innerHTML = `<div class="issue-empty" style="color:var(--red-light)">${err.message}</div>`;
+    histEl.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
   }
 }
 
@@ -5154,7 +5189,7 @@ el('pm-view-modal').addEventListener('click', e => {
 
 function renderSBRecordView(record) {
   const entries = Object.entries(record.checklist);
-  if (!entries.length) return '<div class="issue-empty">No checklist data.</div>';
+  if (!entries.length) return '<div class="placeholder-msg">No checklist data.</div>';
   return entries.map(([, val]) => {
     const sym = val.checked ? '✓' : '✗';
     const cls = val.checked ? 'pass' : 'fail';
@@ -5297,7 +5332,9 @@ let pestLocationEditId = null;
 function openPestPanel(panelId) {
   el('pest-main').classList.add('hidden');
   document.querySelectorAll('.maint-panel[id^="pest-panel-"]').forEach(p => p.classList.add('hidden'));
-  el(`pest-panel-${panelId}`).classList.remove('hidden');
+  const panelEl = el(`pest-panel-${panelId}`);
+  panelEl.classList.remove('hidden');
+  addSwipeBack(panelEl, closePestPanel);
   if (panelId === 'usage')    initPestUsagePanel();
   if (panelId === 'location') initPestLocationPanel();
   if (panelId === 'reports')  initPestReportsPanel();
@@ -5382,7 +5419,7 @@ async function loadPestUsageList() {
   list.innerHTML = '<div class="placeholder-msg">Loading…</div>';
   try {
     const rows = await api('GET', '/api/pesticide-usage');
-    if (!rows.length) { list.innerHTML = '<div class="issue-empty">No usage entries yet.</div>'; return; }
+    if (!rows.length) { list.innerHTML = '<div class="placeholder-msg">No usage entries yet.</div>'; return; }
     list.innerHTML = rows.map(r => {
       const d = localDateStr(r.used_date);
       const t = r.used_time ? r.used_time.slice(0, 5) : '';
@@ -5395,7 +5432,7 @@ async function loadPestUsageList() {
       </div>`;
     }).join('');
   } catch (err) {
-    list.innerHTML = `<div class="issue-empty" style="color:var(--red-light)">${err.message}</div>`;
+    list.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
   }
 }
 
@@ -5411,7 +5448,7 @@ async function loadPestLocationList() {
   list.innerHTML = '<div class="placeholder-msg">Loading…</div>';
   try {
     const rows = await api('GET', '/api/pesticide-usage');
-    if (!rows.length) { list.innerHTML = '<div class="issue-empty">No usage entries yet.</div>'; return; }
+    if (!rows.length) { list.innerHTML = '<div class="placeholder-msg">No usage entries yet.</div>'; return; }
     list.innerHTML = rows.map(r => {
       const d = localDateStr(r.used_date);
       const hasLoc = !!r.location_description;
@@ -5430,7 +5467,7 @@ async function loadPestLocationList() {
       item.addEventListener('click', () => openPestLocationModal(item.dataset.id, rows.find(r => r.usage_id == item.dataset.id)));
     });
   } catch (err) {
-    list.innerHTML = `<div class="issue-empty" style="color:var(--red-light)">${err.message}</div>`;
+    list.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
   }
 }
 
@@ -5500,7 +5537,7 @@ async function loadPestReport() {
   try {
     const rows = await api('GET', `/api/pesticide-usage/monthly?year=${pestReportYear}&month=${pestReportMonth}`);
     if (!rows.length) {
-      out.innerHTML = '<div class="issue-empty">No usage recorded for this month.</div>';
+      out.innerHTML = '<div class="placeholder-msg">No usage recorded for this month.</div>';
       return;
     }
     const tbody = rows.map(r =>
@@ -5521,7 +5558,7 @@ async function loadPestReport() {
       <tbody>${tbody}</tbody>
     </table>`;
   } catch (err) {
-    out.innerHTML = `<div class="issue-empty" style="color:var(--red-light)">${err.message}</div>`;
+    out.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
   }
 }
 
@@ -5569,7 +5606,7 @@ async function loadPestProductList() {
   list.innerHTML = '<div class="placeholder-msg">Loading…</div>';
   try {
     const products = await api('GET', '/api/pesticides');
-    if (!products.length) { list.innerHTML = '<div class="issue-empty">No products added yet.</div>'; return; }
+    if (!products.length) { list.innerHTML = '<div class="placeholder-msg">No products added yet.</div>'; return; }
     const isSupervisor = currentUser && (currentUser.role === 'supervisor' || currentUser.role === 'admin');
     list.innerHTML = products.map(p => `
       <div class="pest-product-item ${p.active ? '' : 'pest-product-inactive'}">
@@ -5604,7 +5641,7 @@ async function loadPestProductList() {
       });
     }
   } catch (err) {
-    list.innerHTML = `<div class="issue-empty" style="color:var(--red-light)">${err.message}</div>`;
+    list.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
   }
 }
 
@@ -5627,7 +5664,9 @@ function initReportsScreen() {
 
 function openReportPanel(cat) {
   el('report-main').classList.add('hidden');
-  el(`report-panel-${cat}`).classList.remove('hidden');
+  const panelEl = el(`report-panel-${cat}`);
+  panelEl.classList.remove('hidden');
+  addSwipeBack(panelEl, closeReportPanel);
   if (cat === 'vehicles')    initVehicleReportPanel();
   if (cat === 'kf')          initKFReportPanel();
   if (cat === 'maintenance') initMaintenanceReportPanel();
@@ -6127,7 +6166,7 @@ async function openPMGridHistory(pmType, building, label) {
     const rows = await api('GET', `/api/pm-records?type=${pmType}&building=${encodeURIComponent(building)}`);
     rows.forEach(r => { pmHistoryCache[r.pm_id] = r; });
     if (!rows.length) {
-      body.innerHTML = '<div class="issue-empty">No records for this plant yet.</div>';
+      body.innerHTML = '<div class="placeholder-msg">No records for this plant yet.</div>';
       return;
     }
     body.innerHTML = rows.map(r => {
@@ -6158,7 +6197,7 @@ async function openPMGridHistory(pmType, building, label) {
       btn.addEventListener('click', () => showPMRecord(pmHistoryCache[parseInt(btn.dataset.pmView)], def));
     });
   } catch (err) {
-    body.innerHTML = `<div class="issue-empty" style="color:var(--red-light)">${err.message}</div>`;
+    body.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
   }
 }
 
@@ -6315,14 +6354,21 @@ function initWellRunsScreen() {
     tile.addEventListener('click', () => {
       const panel = tile.dataset.wrPanel;
       el('well-runs-main').classList.add('hidden');
+      const closeWrPanel = () => {
+        document.querySelectorAll('#screen-well-runs .maint-panel').forEach(p => p.classList.add('hidden'));
+        el('well-runs-main').classList.remove('hidden');
+      };
       if (panel === 'dwr') {
         el('wr-panel-dwr').classList.remove('hidden');
+        addSwipeBack(el('wr-panel-dwr'), closeWrPanel);
         initDWRScreen();
       } else if (panel === 'kcwa') {
         el('wr-panel-kcwa').classList.remove('hidden');
+        addSwipeBack(el('wr-panel-kcwa'), closeWrPanel);
         initPiezScreen();
       } else {
         el('wr-panel-soon').classList.remove('hidden');
+        addSwipeBack(el('wr-panel-soon'), closeWrPanel);
       }
     });
   });

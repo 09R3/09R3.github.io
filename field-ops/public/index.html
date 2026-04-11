@@ -77,7 +77,7 @@
         <div id="login-error" class="error-msg hidden"></div>
         <button type="submit" class="btn btn-primary btn-full">Sign In</button>
       </form>
-      <div class="login-version">v 1.27</div>
+      <div class="login-version">v 1.28</div>
     </div>
   </div>
 </div>
@@ -215,7 +215,7 @@
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" id="bug-modal-cancel">Cancel</button>
-        <button class="btn btn-primary" id="bug-modal-submit">Submit Report</button>
+        <button class="btn btn-save" id="bug-modal-submit">Submit Report</button>
       </div>
     </div>
   </div>
@@ -282,9 +282,9 @@
   <div id="screen-pumping-plant" class="screen-content">
     <div class="date-bar">
       <span class="ctrl-label">Date</span>
-      <input type="date" id="pp-date" class="ctrl-input ctrl-date">
+      <input type="date" id="pp-date" class="ctrl-input ctrl-input-sm ctrl-date">
       <span class="ctrl-label">Time</span>
-      <input type="time" id="pp-time" class="ctrl-input ctrl-time">
+      <input type="time" id="pp-time" class="ctrl-input ctrl-input-sm ctrl-time">
     </div>
     <div id="pp-site-tabs" class="set-tabs pp-tabs-inline"></div>
     <div id="pp-save-bar" class="pp-save-row hidden">
@@ -300,9 +300,9 @@
   <div id="screen-wells" class="screen-content">
     <div class="date-bar">
       <span class="ctrl-label">Date</span>
-      <input type="date" id="well-date" class="ctrl-input ctrl-date">
+      <input type="date" id="well-date" class="ctrl-input ctrl-input-sm ctrl-date">
       <span class="ctrl-label">Time</span>
-      <input type="time" id="well-time" class="ctrl-input ctrl-time">
+      <input type="time" id="well-time" class="ctrl-input ctrl-input-sm ctrl-time">
     </div>
     <div id="well-list-body"><div class="placeholder-msg">Loading wells…</div></div>
   </div>
@@ -311,9 +311,9 @@
   <div id="screen-canal" class="screen-content">
     <div class="date-bar">
       <span class="ctrl-label">Date</span>
-      <input type="date" id="canal-date" class="ctrl-input ctrl-date">
+      <input type="date" id="canal-date" class="ctrl-input ctrl-input-sm ctrl-date">
       <span class="ctrl-label">Time</span>
-      <input type="time" id="canal-time" class="ctrl-input ctrl-time">
+      <input type="time" id="canal-time" class="ctrl-input ctrl-input-sm ctrl-time">
     </div>
     <div id="canal-list-body"><div class="placeholder-msg">Loading structures…</div></div>
   </div>
@@ -322,9 +322,9 @@
   <div id="screen-vehicles" class="screen-content">
     <div class="date-bar">
       <span class="ctrl-label">Date</span>
-      <input type="date" id="vehicle-date" class="ctrl-input ctrl-date">
+      <input type="date" id="vehicle-date" class="ctrl-input ctrl-input-sm ctrl-date">
       <span class="ctrl-label">Time</span>
-      <input type="time" id="vehicle-time" class="ctrl-input ctrl-time">
+      <input type="time" id="vehicle-time" class="ctrl-input ctrl-input-sm ctrl-time">
     </div>
     <div id="vehicle-list-body"><div class="placeholder-msg">Loading vehicles…</div></div>
   </div>
@@ -333,9 +333,9 @@
   <div id="screen-kf-monthly" class="screen-content">
     <div class="date-bar">
       <span class="ctrl-label">Date</span>
-      <input type="date" id="kf-date" class="ctrl-input ctrl-date">
+      <input type="date" id="kf-date" class="ctrl-input ctrl-input-sm ctrl-date">
       <span class="ctrl-label">Time</span>
-      <input type="time" id="kf-time" class="ctrl-input ctrl-time">
+      <input type="time" id="kf-time" class="ctrl-input ctrl-input-sm ctrl-time">
       <div id="kf-set-tabs" class="set-tabs kf-tabs-inline"></div>
     </div>
     <div id="kf-list-body"><div class="placeholder-msg">Loading KF wells…</div></div>
@@ -380,7 +380,10 @@
 
     <!-- Vehicles Panel — fully functional -->
     <div id="maint-panel-vehicles" class="maint-panel hidden">
-      <button class="maint-back-btn">&#8249; Maintenance</button>
+      <div class="panel-nav-bar">
+        <button class="maint-back-btn">‹ Maintenance</button>
+        <span class="panel-nav-title">Vehicle Maintenance</span>
+      </div>
 
       <div class="issue-toolbar">
         <button class="btn btn-secondary btn-sm" id="veh-show-resolved-btn">Show Resolved</button>
@@ -422,7 +425,7 @@
         <div class="two-col">
           <div class="form-group">
             <label>Work Date</label>
-            <input type="date" id="maint-date" class="ctrl-input">
+            <input type="date" id="maint-date" class="ctrl-input ctrl-input-sm">
           </div>
           <div class="form-group">
             <label>Work Type</label>
@@ -476,7 +479,7 @@
         </div>
         <div class="form-group">
           <label>Next Service Date</label>
-          <input type="date" id="maint-next-service" class="ctrl-input">
+          <input type="date" id="maint-next-service" class="ctrl-input ctrl-input-sm">
         </div>
         <div class="form-group">
           <label>Notes</label>
@@ -504,7 +507,10 @@
 
     <!-- Equipment Panel — fully functional -->
     <div id="maint-panel-equipment" class="maint-panel hidden">
-      <button class="maint-back-btn">&#8249; Maintenance</button>
+      <div class="panel-nav-bar">
+        <button class="maint-back-btn">‹ Maintenance</button>
+        <span class="panel-nav-title">Equipment Issues</span>
+      </div>
 
       <div class="issue-toolbar">
         <button class="btn btn-secondary btn-sm" id="equip-show-resolved-btn">Show Resolved</button>
@@ -539,7 +545,7 @@
         </div>
         <div class="form-group">
           <label>Reported Date</label>
-          <input type="date" id="equip-issue-date" class="ctrl-input">
+          <input type="date" id="equip-issue-date" class="ctrl-input ctrl-input-sm">
         </div>
         <div class="form-group">
           <label>Assigned To</label>
@@ -567,7 +573,10 @@
 
     <!-- Buildings Panel — fully functional -->
     <div id="maint-panel-buildings" class="maint-panel hidden">
-      <button class="maint-back-btn">&#8249; Maintenance</button>
+      <div class="panel-nav-bar">
+        <button class="maint-back-btn">‹ Maintenance</button>
+        <span class="panel-nav-title">Building Issues</span>
+      </div>
 
       <div class="issue-toolbar">
         <button class="btn btn-secondary btn-sm" id="bldg-show-resolved-btn">Show Resolved</button>
@@ -594,7 +603,7 @@
         </div>
         <div class="form-group">
           <label>Reported Date</label>
-          <input type="date" id="bldg-issue-date" class="ctrl-input">
+          <input type="date" id="bldg-issue-date" class="ctrl-input ctrl-input-sm">
         </div>
         <div class="form-group">
           <label>Assigned To</label>
@@ -624,7 +633,10 @@
 
     <!-- Wells Panel — fully functional -->
     <div id="maint-panel-wells" class="maint-panel hidden">
-      <button class="maint-back-btn">&#8249; Maintenance</button>
+      <div class="panel-nav-bar">
+        <button class="maint-back-btn">‹ Maintenance</button>
+        <span class="panel-nav-title">Well Issues</span>
+      </div>
 
       <div class="issue-toolbar">
         <button class="btn btn-secondary btn-sm" id="well-show-resolved-btn">Show Resolved</button>
@@ -645,7 +657,7 @@
         </div>
         <div class="form-group">
           <label>Reported Date</label>
-          <input type="date" id="well-issue-date" class="ctrl-input">
+          <input type="date" id="well-issue-date" class="ctrl-input ctrl-input-sm">
         </div>
         <div class="form-group">
           <label>Assigned To</label>
@@ -664,7 +676,10 @@
 
     <!-- Swaps Panel — fully functional -->
     <div id="maint-panel-swaps" class="maint-panel hidden">
-      <button class="maint-back-btn">&#8249; Maintenance</button>
+      <div class="panel-nav-bar">
+        <button class="maint-back-btn">‹ Maintenance</button>
+        <span class="panel-nav-title">Equipment Swaps</span>
+      </div>
       <div class="form-card">
         <div class="form-group">
           <label>Category</label>
@@ -691,7 +706,7 @@
         </div>
         <div class="form-group">
           <label>Swap Date</label>
-          <input type="date" id="swap-date" class="ctrl-input">
+          <input type="date" id="swap-date" class="ctrl-input ctrl-input-sm">
         </div>
         <div class="form-group">
           <label>Performed By</label>
@@ -711,7 +726,10 @@
 
       <!-- PM sub-dashboard -->
       <div id="pm-main">
-        <button class="maint-back-btn">&#8249; Maintenance</button>
+        <div class="panel-nav-bar">
+          <button class="maint-back-btn">‹ Maintenance</button>
+          <span class="panel-nav-title">PM Records</span>
+        </div>
         <div class="dashboard-grid">
           <button class="dash-tile" data-pm-type="a_electrical">
             <span class="dash-icon">&#9889;</span>
@@ -747,12 +765,12 @@
       </div>
 
       <!-- PM type panels (content populated by JS) -->
-      <div id="pm-panel-a-electrical"  class="pm-panel hidden"><button class="pm-back-btn">&#8249; PMs</button><div class="pm-type-content"></div></div>
-      <div id="pm-panel-b-electrical"  class="pm-panel hidden"><button class="pm-back-btn">&#8249; PMs</button><div class="pm-type-content"></div></div>
-      <div id="pm-panel-siphon-breaker" class="pm-panel hidden"><button class="pm-back-btn">&#8249; PMs</button><div class="pm-type-content"></div></div>
-      <div id="pm-panel-air-compressor" class="pm-panel hidden"><button class="pm-back-btn">&#8249; PMs</button><div class="pm-type-content"></div></div>
-      <div id="pm-panel-wells"         class="pm-panel hidden"><button class="pm-back-btn">&#8249; PMs</button><div class="pm-type-content"></div></div>
-      <div id="pm-panel-annual-pp"     class="pm-panel hidden"><button class="pm-back-btn">&#8249; PMs</button><div class="pm-type-content"></div></div>
+      <div id="pm-panel-a-electrical"  class="pm-panel hidden"><div class="panel-nav-bar"><button class="pm-back-btn">‹ PM Records</button><span class="panel-nav-title">A Plant Electrical</span></div><div class="pm-type-content"></div></div>
+      <div id="pm-panel-b-electrical"  class="pm-panel hidden"><div class="panel-nav-bar"><button class="pm-back-btn">‹ PM Records</button><span class="panel-nav-title">B Plant Electrical</span></div><div class="pm-type-content"></div></div>
+      <div id="pm-panel-siphon-breaker" class="pm-panel hidden"><div class="panel-nav-bar"><button class="pm-back-btn">‹ PM Records</button><span class="panel-nav-title">Siphon Breaker</span></div><div class="pm-type-content"></div></div>
+      <div id="pm-panel-air-compressor" class="pm-panel hidden"><div class="panel-nav-bar"><button class="pm-back-btn">‹ PM Records</button><span class="panel-nav-title">Air Compressor</span></div><div class="pm-type-content"></div></div>
+      <div id="pm-panel-wells"         class="pm-panel hidden"><div class="panel-nav-bar"><button class="pm-back-btn">‹ PM Records</button><span class="panel-nav-title">Wells</span></div><div class="pm-type-content"></div></div>
+      <div id="pm-panel-annual-pp"     class="pm-panel hidden"><div class="panel-nav-bar"><button class="pm-back-btn">‹ PM Records</button><span class="panel-nav-title">Annual Pumping Plant</span></div><div class="pm-type-content"></div></div>
 
     </div><!-- /maint-panel-pms -->
 
@@ -785,8 +803,10 @@
 
     <!-- Usage panel -->
     <div id="pest-panel-usage" class="maint-panel hidden">
-      <button class="maint-back-btn">&#8249; Pesticides</button>
-      <h2 class="panel-heading">Usage Log</h2>
+      <div class="panel-nav-bar">
+        <button class="maint-back-btn">‹ Pesticides</button>
+        <span class="panel-nav-title">Usage Log</span>
+      </div>
       <div class="issue-toolbar">
         <button class="btn btn-primary btn-sm" id="pest-usage-new-btn">+ Log Usage</button>
       </div>
@@ -803,7 +823,7 @@
             <input type="number" id="pest-usage-qty" class="ctrl-input" step="0.01" min="0" placeholder="0.00">
           </div>
           <div class="form-row">
-            <button class="btn btn-primary" id="pest-usage-save-btn">Save</button>
+            <button class="btn btn-save" id="pest-usage-save-btn">Save</button>
             <button class="btn btn-secondary" id="pest-usage-cancel-btn">Cancel</button>
           </div>
         </div>
@@ -814,16 +834,20 @@
 
     <!-- Location panel -->
     <div id="pest-panel-location" class="maint-panel hidden">
-      <button class="maint-back-btn">&#8249; Pesticides</button>
-      <h2 class="panel-heading">Application Location</h2>
+      <div class="panel-nav-bar">
+        <button class="maint-back-btn">‹ Pesticides</button>
+        <span class="panel-nav-title">Application Location</span>
+      </div>
       <p class="placeholder-msg" style="font-style:normal;color:var(--text-dim);margin-bottom:12px">Tap an entry to add where the pesticide was applied.</p>
       <div id="pest-location-list"></div>
     </div>
 
     <!-- Reports panel -->
     <div id="pest-panel-reports" class="maint-panel hidden">
-      <button class="maint-back-btn">&#8249; Pesticides</button>
-      <h2 class="panel-heading">Monthly Report</h2>
+      <div class="panel-nav-bar">
+        <button class="maint-back-btn">‹ Pesticides</button>
+        <span class="panel-nav-title">Monthly Report</span>
+      </div>
       <div class="report-month-nav" style="margin-bottom:14px">
         <button class="btn btn-secondary btn-sm" id="pest-report-prev">&#8592;</button>
         <span id="pest-report-label" class="report-month-label"></span>
@@ -834,8 +858,10 @@
 
     <!-- Products panel -->
     <div id="pest-panel-products" class="maint-panel hidden">
-      <button class="maint-back-btn">&#8249; Pesticides</button>
-      <h2 class="panel-heading">Products</h2>
+      <div class="panel-nav-bar">
+        <button class="maint-back-btn">‹ Pesticides</button>
+        <span class="panel-nav-title">Products</span>
+      </div>
       <div class="issue-toolbar">
         <button class="btn btn-primary btn-sm" id="pest-product-new-btn">+ Add Product</button>
       </div>
@@ -856,7 +882,7 @@
             <input type="text" id="pest-product-uom" class="ctrl-input" placeholder="e.g. fl oz, lbs, gal">
           </div>
           <div class="form-row">
-            <button class="btn btn-primary" id="pest-product-save-btn">Save</button>
+            <button class="btn btn-save" id="pest-product-save-btn">Save</button>
             <button class="btn btn-secondary" id="pest-product-cancel-btn">Cancel</button>
           </div>
         </div>
@@ -883,7 +909,7 @@
             <textarea id="pest-location-notes" class="ctrl-input" rows="2" placeholder="Any additional notes…"></textarea>
           </div>
           <div class="form-row">
-            <button class="btn btn-primary" id="pest-location-save-btn">Save</button>
+            <button class="btn btn-save" id="pest-location-save-btn">Save</button>
             <button class="btn btn-secondary" id="pest-location-cancel-btn">Cancel</button>
           </div>
         </div>
@@ -921,16 +947,19 @@
 
     <!-- Coming Soon panel (shared) -->
     <div id="wr-panel-soon" class="maint-panel hidden">
-      <button class="maint-back-btn" id="wr-soon-back">&#8249; Well Runs</button>
+      <div class="panel-nav-bar">
+        <button class="maint-back-btn" id="wr-soon-back">‹ Well Runs</button>
+        <span class="panel-nav-title">Coming Soon</span>
+      </div>
       <div class="placeholder-msg" style="margin-top:40px">Coming Soon</div>
     </div>
 
     <!-- DWR panel -->
     <div id="wr-panel-dwr" class="maint-panel hidden">
       <div class="wr-dwr-header">
-        <div class="wr-panel-nav">
-          <button class="wr-back-btn" id="wr-dwr-back">&#8249; Well Runs</button>
-          <span class="wr-panel-title">DWR</span>
+        <div class="panel-nav-bar">
+          <button class="wr-back-btn" id="wr-dwr-back">‹ Well Runs</button>
+          <span class="panel-nav-title">DWR</span>
         </div>
         <div class="wr-panel-controls">
           <div class="wr-dwr-datetime">
@@ -949,9 +978,9 @@
     <!-- KCWA Piezometers panel -->
     <div id="wr-panel-kcwa" class="maint-panel hidden">
       <div class="wr-dwr-header">
-        <div class="wr-panel-nav">
-          <button class="wr-back-btn" id="wr-kcwa-back">&#8249; Well Runs</button>
-          <span class="wr-panel-title">KCWA Piezometers</span>
+        <div class="panel-nav-bar">
+          <button class="wr-back-btn" id="wr-kcwa-back">‹ Well Runs</button>
+          <span class="panel-nav-title">KCWA Piezometers</span>
         </div>
         <div class="wr-panel-controls">
           <div class="wr-dwr-datetime">
@@ -991,7 +1020,10 @@
 
     <!-- Vehicles panel -->
     <div id="report-panel-vehicles" class="maint-panel hidden">
-      <button class="maint-back-btn" id="report-vehicles-back">&#8249; Reports</button>
+      <div class="panel-nav-bar">
+        <button class="maint-back-btn" id="report-vehicles-back">‹ Reports</button>
+        <span class="panel-nav-title">Vehicles</span>
+      </div>
       <div class="report-toolbar">
         <div class="seg-group" id="vehicle-report-seg">
           <button class="seg-btn active" data-val="mileage">CVC Mileage</button>
@@ -1009,7 +1041,10 @@
 
     <!-- KF panel -->
     <div id="report-panel-kf" class="maint-panel hidden">
-      <button class="maint-back-btn" id="report-kf-back">&#8249; Reports</button>
+      <div class="panel-nav-bar">
+        <button class="maint-back-btn" id="report-kf-back">‹ Reports</button>
+        <span class="panel-nav-title">KF Monthly</span>
+      </div>
       <div class="report-toolbar">
         <div class="report-month-nav">
           <button class="btn btn-secondary btn-sm" id="kf-report-prev-month">&#8592;</button>
@@ -1025,13 +1060,19 @@
 
     <!-- Maintenance Issues panel -->
     <div id="report-panel-maintenance" class="maint-panel hidden">
-      <button class="maint-back-btn" id="report-maint-back">&#8249; Reports</button>
+      <div class="panel-nav-bar">
+        <button class="maint-back-btn" id="report-maint-back">‹ Reports</button>
+        <span class="panel-nav-title">Maintenance Issues</span>
+      </div>
       <div id="report-maint-output"></div>
     </div>
 
     <!-- PM Grid panel -->
     <div id="report-panel-pms" class="maint-panel hidden">
-      <button class="maint-back-btn" id="report-pms-back">&#8249; Reports</button>
+      <div class="panel-nav-bar">
+        <button class="maint-back-btn" id="report-pms-back">‹ Reports</button>
+        <span class="panel-nav-title">PM Records</span>
+      </div>
       <div class="report-toolbar">
         <div class="report-month-nav">
           <button class="btn btn-secondary btn-sm" id="pms-prev-month">&#8592;</button>
@@ -1085,7 +1126,10 @@
 
     <!-- Account panel -->
     <div id="settings-panel-account" class="settings-panel hidden">
-      <button class="settings-back-btn">‹ Settings</button>
+      <div class="panel-nav-bar">
+        <button class="settings-back-btn">‹ Settings</button>
+        <span class="panel-nav-title">Account</span>
+      </div>
       <div class="settings-section">
         <div class="settings-card">
           <div class="settings-row"><span class="settings-label">Name</span><span id="settings-full-name" class="settings-value"></span></div>
@@ -1097,7 +1141,10 @@
 
     <!-- Change Password panel -->
     <div id="settings-panel-password" class="settings-panel hidden">
-      <button class="settings-back-btn">‹ Settings</button>
+      <div class="panel-nav-bar">
+        <button class="settings-back-btn">‹ Settings</button>
+        <span class="panel-nav-title">Change Password</span>
+      </div>
       <div class="settings-section">
         <div class="settings-card">
           <div class="settings-pad">
@@ -1114,7 +1161,7 @@
               <input type="password" id="pw-confirm" class="ctrl-input" autocomplete="new-password">
             </div>
             <div id="pw-error" class="error-msg hidden"></div>
-            <button class="btn btn-primary" id="pw-save-btn">Update Password</button>
+            <button class="btn btn-save" id="pw-save-btn">Update Password</button>
           </div>
         </div>
       </div>
@@ -1122,7 +1169,10 @@
 
     <!-- Text Size panel -->
     <div id="settings-panel-textsize" class="settings-panel hidden">
-      <button class="settings-back-btn">‹ Settings</button>
+      <div class="panel-nav-bar">
+        <button class="settings-back-btn">‹ Settings</button>
+        <span class="panel-nav-title">Text Size</span>
+      </div>
       <div class="settings-section">
         <div class="settings-card">
           <div class="settings-pad">
@@ -1142,7 +1192,10 @@
 
     <!-- Today's Readings panel -->
     <div id="settings-panel-readings" class="settings-panel hidden">
-      <button class="settings-back-btn">‹ Settings</button>
+      <div class="panel-nav-bar">
+        <button class="settings-back-btn">‹ Settings</button>
+        <span class="panel-nav-title">Today's Readings</span>
+      </div>
       <div class="settings-section">
         <div id="today-readings-list" class="settings-card">
           <div class="placeholder-msg">Loading…</div>
@@ -1152,7 +1205,10 @@
 
     <!-- KF Widget panel -->
     <div id="settings-panel-kf-widget" class="settings-panel hidden">
-      <button class="settings-back-btn">‹ Settings</button>
+      <div class="panel-nav-bar">
+        <button class="settings-back-btn">‹ Settings</button>
+        <span class="panel-nav-title">KF Widget</span>
+      </div>
       <div class="settings-section">
         <p style="font-size:0.85rem;color:var(--text-dim);margin:0 0 12px">
           Set the date range the KF dashboard widgets use to calculate completed and remaining counts.
@@ -1161,13 +1217,13 @@
           <div class="settings-pad">
             <div class="form-group">
               <label>Start Date</label>
-              <input type="date" id="kf-widget-start" class="ctrl-input">
+              <input type="date" id="kf-widget-start" class="ctrl-input ctrl-input-sm">
             </div>
             <div class="form-group">
               <label>End Date</label>
-              <input type="date" id="kf-widget-end" class="ctrl-input">
+              <input type="date" id="kf-widget-end" class="ctrl-input ctrl-input-sm">
             </div>
-            <button class="btn btn-primary" id="kf-widget-save-btn">Save</button>
+            <button class="btn btn-save" id="kf-widget-save-btn">Save</button>
           </div>
         </div>
       </div>
@@ -1175,10 +1231,13 @@
 
     <!-- App Info panel -->
     <div id="settings-panel-appinfo" class="settings-panel hidden">
-      <button class="settings-back-btn">‹ Settings</button>
+      <div class="panel-nav-bar">
+        <button class="settings-back-btn">‹ Settings</button>
+        <span class="panel-nav-title">App Info</span>
+      </div>
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 1.27</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 1.28</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>
@@ -1187,7 +1246,10 @@
 
     <!-- Tools panel (secret) -->
     <div id="settings-panel-tools" class="settings-panel hidden">
-      <button class="settings-back-btn">‹ Settings</button>
+      <div class="panel-nav-bar">
+        <button class="settings-back-btn">‹ Settings</button>
+        <span class="panel-nav-title">Tools</span>
+      </div>
       <div class="settings-section">
         <div class="settings-card">
           <button class="settings-menu-row" data-tool="exif">
@@ -1319,13 +1381,19 @@
 
     <!-- Bug Reports panel -->
     <div id="settings-panel-bugreports" class="settings-panel hidden">
-      <button class="settings-back-btn">‹ Settings</button>
+      <div class="panel-nav-bar">
+        <button class="settings-back-btn">‹ Settings</button>
+        <span class="panel-nav-title">Bug Reports</span>
+      </div>
       <div id="bug-reports-list"></div>
     </div>
 
     <!-- User Management panel -->
     <div id="settings-panel-usermgmt" class="settings-panel hidden">
-      <button class="settings-back-btn">‹ Settings</button>
+      <div class="panel-nav-bar">
+        <button class="settings-back-btn">‹ Settings</button>
+        <span class="panel-nav-title">User Management</span>
+      </div>
       <div class="admin-actions">
         <button class="btn btn-primary" id="admin-add-user-btn">+ Add User</button>
       </div>
@@ -1374,7 +1442,7 @@
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" id="user-modal-cancel">Cancel</button>
-          <button class="btn btn-primary" id="user-modal-save">Save</button>
+          <button class="btn btn-save" id="user-modal-save">Save</button>
         </div>
       </div>
     </div>
@@ -1382,22 +1450,6 @@
 
 </div><!-- /app-shell -->
 
-<!-- Notes Popup Modal -->
-<div id="notes-modal" class="modal-overlay hidden">
-  <div class="modal-card">
-    <div class="modal-header">
-      <h2 id="notes-modal-title">Notes</h2>
-      <button class="modal-close" id="notes-modal-close">&times;</button>
-    </div>
-    <div class="modal-body">
-      <textarea id="notes-modal-text" class="ctrl-textarea notes-ta" rows="5" placeholder="Enter notes…"></textarea>
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-secondary" id="notes-modal-cancel">Cancel</button>
-      <button class="btn btn-primary" id="notes-modal-ok">OK</button>
-    </div>
-  </div>
-</div>
 
 <!-- Attachment Preview Modal -->
 <div id="att-preview-modal" class="modal-overlay hidden">
