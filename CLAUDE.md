@@ -46,6 +46,16 @@ Use semantic versioning — patch for fixes/small changes, minor for new feature
 The version is displayed in the app UI (sidebar footer) and read from
 `package.json` via the `/api/version` endpoint — no other files need updating.
 
+**Whenever changes are made to files inside `field-ops/`**, bump the version in
+both `field-ops/public/index.html` (two places: login footer and settings row)
+and `field-ops/public/sw.js` (cache name) before committing.
+
+Use simple incrementing minor versions — bump for any change:
+- Any fix or feature → `v 1.26` → `v 1.27`
+
+Both files must match. The cache name in `sw.js` controls service worker
+invalidation, so it must always be updated alongside `index.html`.
+
 ## Database Schema
 
 Column notation: `col(PK)` = primary key, `col(→table)` = foreign key
