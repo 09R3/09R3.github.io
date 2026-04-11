@@ -56,6 +56,163 @@ Use simple incrementing minor versions — bump for any change:
 Both files must match. The cache name in `sw.js` controls service worker
 invalidation, so it must always be updated alongside `index.html`.
 
+## Field Ops UI/UX Standards
+
+These standards apply to all current and future work on `field-ops/`. When
+adding new screens or features, match the patterns below. When fixing bugs,
+bring the affected area into compliance if it isn't already.
+
+---
+
+### Save Buttons
+
+- All save/submit actions use `.btn-save` (green background).
+- Never use `.btn-primary` (blue) for a save or submit action — blue is for
+  non-destructive navigation or secondary actions only.
+- **Pumping Plant** is the only screen that uses a single batch-save button
+  for all readings at once. This is intentional — all PP readings are taken at
+  the same location at the same time. All other reading screens save each item
+  individually from within its expanded row.
+
+---
+
+### Status Indicators
+
+Each reading type has its own status logic. The pattern is always: a colored
+dot (`.status-dot`) for at-a-glance status + a badge (`.status-badge`) for
+detail text. Specific rules per screen:
+
+- **Wells** (daily readings): dot + badge. Green dot = read within 8 hours,
+  yellow = not yet read today, no red needed. Badge shows time ago in hours
+  (e.g., "2h ago") or "Not read".
+- **Vehicles / KF Monthly** (monthly readings): dot + badge. Green = read
+  within the expected cycle, yellow = not yet read this cycle. Badge shows the
+  **date** of the last reading (e.g., "Apr 10"), not days-ago text.
+- **Canal Structures**: badge only (no dot). Badge shows the last recorded
+  flow value. Badge turns green if read the same day, orange otherwise. Do not
+  add a dot — the flow value itself is the useful indicator.
+- **Pumping Plant**: no dot or badge. Instead, the row label text (e.g.,
+  "Pump Hours A") turns green if that reading was saved within the last
+  10 hours. No red or orange state — PP readings are only entered when the
+  pump has run, so missing readings are normal and should not be flagged.
+- **Well Runs (DWR / KCWA Piezometers)**: no dot. Show the previous reading
+  date as plain text. Text turns green if read within the last 30 days.
+
+---
+
+### Notes Fields
+
+- All screens use an **inline multi-line textarea** for notes. No modal, no
+  "+" expand button.
+- The textarea is always visible within the expanded item form (not hidden
+  behind a button).
+- If a note is long and gets clipped, operators can tap the History button to
+  see the full note in the history modal.
+- The Pumping Plant notes modal (`#notes-modal`) and its "+" trigger button are
+  removed — PP notes are inline like everything else.
+
+---
+
+### Navigation & Back Buttons
+
+Every screen and sub-panel must show a **secondary nav bar** directly below
+the fixed app header (inside the screen content area, not inside the header
+itself). The hamburger menu stays in the fixed header unchanged.
+
+**Format** (single line):
+```
+‹ [Parent]        [Current Screen]
+```
+- The back link (`‹ [Parent]`) is left-aligned, smaller text, tappable.
+- The current screen name is right of it (or centered), **larger/heading
+  weight** — this is the primary label telling the operator where they are.
+- Both on the same line.
+
+**Parent label rules:**
+- Main screens (Wells, Vehicles, PP, KF, Maintenance, Well Runs, etc.) →
+  parent is **"Dashboard"**
+- Sub-panels within a screen → parent is the screen name:
+  - Maintenance > Well Issues → `‹ Maintenance   Well Issues`
+  - Maintenance > Building Issues → `‹ Maintenance   Building Issues`
+  - Settings > User Management → `‹ Settings   User Management`
+  - Well Runs > DWR → `‹ Well Runs   DWR`
+  - Well Runs > KCWA Piezometers → `‹ Well Runs   KCWA Piezometers`
+  - PM Records > [type] → `‹ PM Records   [Type Name]`
+
+**Swipe to go back:**
+- Implement a left-edge swipe gesture (touch start near left edge, swipe right)
+  on every screen and sub-panel that has a back button.
+- Swipe triggers the same action as tapping the back button — one level up.
+- Applies to all panels including main screens (swipe back → Dashboard).
+- Use `touchstart` / `touchend` on the screen container; only trigger if
+  `touchstart.clientX < 30px` and horizontal delta > 60px.
+
+**Implementation note:** Use a single shared CSS class `.panel-nav-bar` for
+the nav bar element and a shared helper function `setPanelNav(backLabel, currentLabel, backFn)` in `app.js` that renders the bar and wires up the back button + swipe gesture. Do not use per-screen class names like `.wr-back-btn` or `.maint-back-btn` going forward.
+
+---
+
+### Date/Time Inputs
+
+- All date and time inputs use the **small variant** (`.ctrl-input-sm` class).
+- This applies everywhere: reading screens, sub-panels, maintenance forms.
+- Do not use full-size inputs for date/time.
+
+---
+
+### Operator / Performed By Auto-fill
+
+- Any field labeled **"Operator"** auto-fills with `currentUser.initials` on
+  item expand (if the field is empty).
+- Any field labeled **"Performed By"** in maintenance forms auto-fills with
+  `currentUser.full_name` on form open (if the field is empty).
+- Auto-fill only sets a default — the operator can always change it.
+
+---
+
+### Form Validation
+
+- Required fields should be kept minimal. Each screen only enforces what is
+  truly necessary for the record to be useful.
+- **KF Monthly**: DTW is not required. However, if DTW is left blank, the
+  **notes field becomes required** (operator must explain why no reading was
+  taken). Show an inline error if both are empty on save.
+- Other reading screens: no required fields beyond what the data model demands.
+- Each screen is allowed to have its own specific validation rules as needed —
+  just document them in a comment near the save function.
+
+---
+
+### Empty / Loading / Error States
+
+Always use the `.placeholder-msg` CSS class. Never use screen-specific classes
+like `.issue-empty` for this purpose. Text conventions:
+
+| State   | Text                                 |
+|---------|--------------------------------------|
+| Loading | `"Loading…"`                         |
+| Empty   | `"No [items] found."`                |
+| Error   | `"Failed to load."`                  |
+
+Example: `<div class="placeholder-msg">Loading…</div>`
+
+---
+
+### Attachments (Invoice / Photo)
+
+- Attachments (invoice PDF + photos) are supported on: Vehicle Maintenance,
+  Equipment Issues, Building Issues, Well Issues.
+- Well Readings and PM Records do **not** have attachments — issues are logged
+  in the appropriate maintenance section instead.
+- **Layout order within a card**: Add Invoice button → Add Photo button →
+  pending upload queue → already-uploaded files list. Uploaded files always
+  appear **below** the add buttons, not above or mixed in.
+- Filename convention: use the entity name (equipment name, building name,
+  well name) in the filename, not `issue{id}`. Sanitize to alphanumeric +
+  hyphens, max 40 chars.
+
+---
+
 ## Database Schema
 
 Column notation: `col(PK)` = primary key, `col(→table)` = foreign key
