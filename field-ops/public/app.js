@@ -630,6 +630,8 @@ function addSwipeBack(containerEl, backFn) {
 function setPanelNav(screenEl, backFn, headerTitle) {
   if (!screenEl) return;
   el('screen-title').textContent = headerTitle;
+  // Store current back target so the swipe listener can always read the latest value
+  screenEl._navBackFn = backFn;
   let nav = screenEl.querySelector(':scope > .panel-nav-bar');
   if (!nav) {
     nav = document.createElement('div');
@@ -639,9 +641,11 @@ function setPanelNav(screenEl, backFn, headerTitle) {
     btn.textContent = '‹ Back';
     nav.appendChild(btn);
     screenEl.insertBefore(nav, screenEl.firstChild);
+    // Swipe listener added once per screen; reads _navBackFn at call time
+    // so it always reflects the current back target without needing re-registration.
+    addSwipeBack(screenEl, () => screenEl._navBackFn && screenEl._navBackFn());
   }
   nav.querySelector('.panel-nav-back').onclick = backFn;
-  addSwipeBack(screenEl, backFn);
 }
 
 /* ── History Modal ───────────────────────────────────────────────────────── */
@@ -4181,9 +4185,42 @@ el('bug-report-btn').addEventListener('click', () => {
   document.querySelectorAll('#bug-repeatable-seg .seg-btn').forEach(b => b.classList.toggle('active', b.dataset.val === 'false'));
   el('bug-report-modal').classList.remove('hidden');
 });
-el('bug-modal-close').addEventListener('click',  () => el('bug-report-modal').classList.add('hidden'));
-el('bug-modal-cancel').addEventListener('click', () => el('bug-report-modal').classList.add('hidden'));
-el('bug-report-modal').addEventListener('click', e => { if (e.target === el('bug-report-modal')) el('bug-report-modal').classList.add('hidden'); });
+let bugPendingPhotos = [];
+
+function renderBugPhotoQueue() {
+  const qEl = el('bug-photo-queue');
+  if (!bugPendingPhotos.length) { qEl.classList.add('hidden'); qEl.innerHTML = ''; return; }
+  qEl.classList.remove('hidden');
+  qEl.innerHTML = bugPendingPhotos.map((f, i) =>
+    `<div class="maint-aq-item">
+      <img src="${URL.createObjectURL(f)}" alt="">
+      <button class="maint-aq-remove" data-bug-photo="${i}">&times;</button>
+    </div>`
+  ).join('');
+}
+
+function closeBugModal() {
+  el('bug-report-modal').classList.add('hidden');
+  bugPendingPhotos = [];
+  renderBugPhotoQueue();
+}
+
+el('bug-modal-close').addEventListener('click', closeBugModal);
+el('bug-modal-cancel').addEventListener('click', closeBugModal);
+el('bug-report-modal').addEventListener('click', e => { if (e.target === el('bug-report-modal')) closeBugModal(); });
+
+el('bug-add-photo-btn').addEventListener('click', () => el('bug-photo-input').click());
+el('bug-photo-input').addEventListener('change', () => {
+  [...el('bug-photo-input').files].forEach(f => bugPendingPhotos.push(f));
+  el('bug-photo-input').value = '';
+  renderBugPhotoQueue();
+});
+el('bug-photo-queue').addEventListener('click', e => {
+  const btn = e.target.closest('[data-bug-photo]');
+  if (!btn) return;
+  bugPendingPhotos.splice(parseInt(btn.dataset.bugPhoto), 1);
+  renderBugPhotoQueue();
+});
 
 el('bug-modal-submit').addEventListener('click', async () => {
   const description = el('bug-description').value.trim();
@@ -4193,14 +4230,33 @@ el('bug-modal-submit').addEventListener('click', async () => {
   const is_repeatable = document.querySelector('#bug-repeatable-seg .seg-btn.active')?.dataset.val === 'true';
   el('bug-modal-submit').disabled = true;
   try {
-    await api('POST', '/api/bug-reports', {
+    const result = await api('POST', '/api/bug-reports', {
       screen_area: el('bug-screen').value || null,
       severity: el('bug-severity').value,
       is_repeatable,
       description,
       app_version: BUG_VERSION,
     });
-    el('bug-report-modal').classList.add('hidden');
+    // Upload any pending screenshots
+    if (bugPendingPhotos.length && result.report_id) {
+      const d = new Date();
+      const dateStr = `${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}${d.getFullYear()}`;
+      let idx = 0;
+      for (const photo of bugPendingPhotos) {
+        idx++;
+        const ext = photo.name.includes('.') ? photo.name.split('.').pop().toLowerCase() : 'jpg';
+        const newName = `bug_screenshot_${dateStr}${idx > 1 ? `_${idx}` : ''}.${ext}`;
+        const fd = new FormData();
+        fd.append('file', new File([photo], newName, { type: photo.type }));
+        try {
+          await fetch(
+            `/api/maintenance/attachment?table_name=bug_reports&record_id=${result.report_id}&file_type=photo&category=general`,
+            { method: 'POST', body: fd }
+          );
+        } catch { /* non-fatal — report is saved, screenshot upload failing is OK */ }
+      }
+    }
+    closeBugModal();
     showToast('Bug report submitted — thank you!', 'success');
   } catch (err) {
     errEl.textContent = err.message;
