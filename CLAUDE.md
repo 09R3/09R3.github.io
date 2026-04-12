@@ -109,7 +109,7 @@ detail text. Specific rules per screen:
 - If a note is long and gets clipped, operators can tap the History button to
   see the full note in the history modal.
 - The Pumping Plant notes modal (`#notes-modal`) and its "+" trigger button are
-  removed — PP notes are inline like everything else.
+  removed — PP notes are inline like everything else, except this section notes are only one line. 
 
 ---
 
