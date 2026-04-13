@@ -582,11 +582,10 @@ input[type="date"].ctrl-input { min-height: 44px; }
   min-width: 50px;
   display: flex;
   gap: 4px;
-  align-items: center;
+  align-items: flex-start;
 }
 .rr-notes-input {
   flex: 1;
-  height: 34px;
   background: var(--surface2);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -595,6 +594,8 @@ input[type="date"].ctrl-input { min-height: 44px; }
   font-size: 0.82rem;
   outline: none;
   min-height: 34px;
+  resize: none;
+  line-height: 1.4;
   transition: border-color var(--transition);
 }
 .rr-notes-input:focus { border-color: var(--accent); }
@@ -1772,6 +1773,27 @@ input[type="date"].ctrl-input { min-height: 44px; }
   width: 100%;
 }
 
+/* ── Shared Panel Navigation Bar ────────────────────────────────────────── */
+.panel-nav-bar {
+  display: flex;
+  align-items: center;
+  margin-bottom: 16px;
+}
+.panel-nav-back {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 4px 0 0;
+  background: transparent;
+  border: none;
+  color: var(--accent);
+  font-size: 1.05rem;
+  font-weight: 600;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.panel-nav-back:active { opacity: 0.6; }
+
 /* ── Maintenance Dashboard ───────────────────────────────────────────────── */
 .maint-back-btn {
   display: flex;
@@ -2401,12 +2423,39 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
   text-align: center;
 }
 .uptool-empty { text-align: center; color: var(--text-dim); padding: 40px 16px; }
-/* Preview modal */
+/* Preview modal (upload tool) */
 .uptool-preview-card { max-width: 600px; width: 96vw; }
 .uptool-preview-name { font-size: 0.9rem; word-break: break-all; }
 .uptool-preview-body { display: flex; justify-content: center; align-items: center; min-height: 200px; }
 .uptool-preview-body img { max-width: 100%; max-height: 60vh; border-radius: 6px; }
 .uptool-pdf-msg { text-align: center; color: var(--text-dim); }
+
+/* ── Attachment full-screen image preview ────────────────────────────────── */
+#att-preview-modal { padding: 0 !important; align-items: stretch; justify-content: stretch; }
+#att-preview-modal .modal-card {
+  max-width: none; max-height: none;
+  width: 100vw; height: 100dvh;
+  border-radius: 0;
+}
+#att-preview-modal .modal-header { padding: 10px 16px; }
+#att-preview-modal .modal-header h2 { font-size: 0.85rem; font-weight: 500; }
+#att-preview-modal .modal-body {
+  padding: 0;
+  overflow: hidden;
+  background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#att-preview-modal .modal-body img {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: 0;
+}
+#att-preview-modal .modal-footer { padding: 10px 16px; }
 
 /* ── Piezometer permanent notes hint ─────────────────────────────────────── */
 .piez-perm-notes {

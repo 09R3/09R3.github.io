@@ -11,8 +11,6 @@ const pp = {
 };
 let ppLoaded = false;
 
-// Notes modal state
-let notesTarget = null; // { rowEl, notesInput }
 
 // Admin edit state
 let editingUserId = null;
@@ -396,18 +394,27 @@ function showScreen(name) {
     currentScreen = name;
   }
   const titles = {
-    dashboard:      'Field Ops',
-    'pumping-plant':'Pumping Plant Readings',
-    wells:          'Well Readings',
-    canal:          'Canal Readings',
-    vehicles:       'Vehicle Monthly',
-    'kf-monthly':   'KF Monthly Readings',
-    maintenance:    'Maintenance Log',
-    'well-runs':    'Well Runs',
-    admin:          'Settings',
+    dashboard:       'Field Ops',
+    'pumping-plant': 'Pumping Plant Readings',
+    wells:           'Well Readings',
+    canal:           'Canal Readings',
+    vehicles:        'Vehicle Monthly',
+    'kf-monthly':    'KF Monthly Readings',
+    maintenance:     'Maintenance Log',
+    pesticides:      'Pesticides',
+    'well-runs':     'Well Runs',
+    reports:         'Reports',
+    admin:           'Settings',
   };
-  el('screen-title').textContent = titles[name] || 'Field Ops';
   closeDrawer();
+
+  // Add / update ‹ Back nav + swipe-back for non-dashboard screens.
+  // Each sub-panel open/close will call setPanelNav again to update title + back target.
+  if (name !== 'dashboard') {
+    setPanelNav(el(`screen-${name}`), () => showScreen('dashboard'), titles[name] || 'Field Ops');
+  } else {
+    el('screen-title').textContent = 'Field Ops';
+  }
 
   // Block supervisor/admin-only screens for operators
   if (name === 'reports') {
@@ -600,27 +607,45 @@ async function checkAuth() {
   }
 }
 
-/* ── Notes Modal ─────────────────────────────────────────────────────────── */
-el('notes-modal-close').addEventListener('click', closeNotesModal);
-el('notes-modal-cancel').addEventListener('click', closeNotesModal);
-el('notes-modal-ok').addEventListener('click', () => {
-  if (notesTarget) {
-    notesTarget.notesInput.value = el('notes-modal-text').value;
-    notesTarget = null;
-  }
-  closeNotesModal();
-});
-
-function openNotesModal(label, notesInput) {
-  notesTarget = { notesInput };
-  el('notes-modal-title').textContent = `Notes — ${label}`;
-  el('notes-modal-text').value = notesInput.value;
-  el('notes-modal').classList.remove('hidden');
-  setTimeout(() => el('notes-modal-text').focus(), 50);
+/* ── Swipe-back gesture ──────────────────────────────────────────────────── */
+// Attach a left-edge swipe gesture to a panel or screen container.
+// Only triggers if touchstart begins within 30px of left edge and swipes > 60px right.
+function addSwipeBack(containerEl, backFn) {
+  if (containerEl._swipeCleanup) containerEl._swipeCleanup();
+  let startX = null;
+  const onStart = e => { startX = e.touches[0].clientX < 30 ? e.touches[0].clientX : null; };
+  const onEnd   = e => { if (startX !== null && e.changedTouches[0].clientX - startX > 60) backFn(); startX = null; };
+  containerEl.addEventListener('touchstart', onStart, { passive: true });
+  containerEl.addEventListener('touchend',   onEnd,   { passive: true });
+  containerEl._swipeCleanup = () => {
+    containerEl.removeEventListener('touchstart', onStart);
+    containerEl.removeEventListener('touchend', onEnd);
+  };
 }
-function closeNotesModal() {
-  el('notes-modal').classList.add('hidden');
-  notesTarget = null;
+
+/* ── Panel nav bar ───────────────────────────────────────────────────────────
+   Injects / updates a ‹ Back button at the top of a screen and updates the
+   app header title. Call on every screen or panel transition so the button
+   always goes back exactly one level and the header reflects where you are.  */
+function setPanelNav(screenEl, backFn, headerTitle) {
+  if (!screenEl) return;
+  el('screen-title').textContent = headerTitle;
+  // Store current back target so the swipe listener can always read the latest value
+  screenEl._navBackFn = backFn;
+  let nav = screenEl.querySelector(':scope > .panel-nav-bar');
+  if (!nav) {
+    nav = document.createElement('div');
+    nav.className = 'panel-nav-bar';
+    const btn = document.createElement('button');
+    btn.className = 'panel-nav-back';
+    btn.textContent = '‹ Back';
+    nav.appendChild(btn);
+    screenEl.insertBefore(nav, screenEl.firstChild);
+    // Swipe listener added once per screen; reads _navBackFn at call time
+    // so it always reflects the current back target without needing re-registration.
+    addSwipeBack(screenEl, () => screenEl._navBackFn && screenEl._navBackFn());
+  }
+  nav.querySelector('.panel-nav-back').onclick = backFn;
 }
 
 /* ── History Modal ───────────────────────────────────────────────────────── */
@@ -934,8 +959,7 @@ function createReadingRow({ type, id, label, prev, prevDate, prevNotes, unit, de
       <input type="text" class="rr-input prev rr-prev" readonly value="${prevDisp}">
     </div>
     <div class="rr-notes-wrap">
-      <input type="text" class="rr-notes-input rr-notes" placeholder="Notes…">
-      <button class="notes-plus-btn" title="Expand notes">+</button>
+      <textarea class="rr-notes-input rr-notes" rows="2" placeholder="Notes…"></textarea>
       <button class="hist-btn" title="View history">&#128200;</button>
     </div>
   `;
@@ -956,12 +980,9 @@ function createReadingRow({ type, id, label, prev, prevDate, prevNotes, unit, de
     }
   });
 
-  // Notes + button
+  // Notes textarea
   const notesInput = row.querySelector('.rr-notes');
   if (prevNotes) notesInput.value = prevNotes;
-  row.querySelector('.notes-plus-btn').addEventListener('click', () => {
-    openNotesModal(label, notesInput);
-  });
   row.querySelector('.hist-btn').addEventListener('click', () => {
     openHistoryModal(type, id, label);
   });
@@ -1506,7 +1527,7 @@ function createVehicleItem(v, dateInput, timeInput) {
 
   const days  = daysSinceDate(v.last_reading_date);
   const sc    = days == null ? 'due' : days <= 7 ? 'done' : days <= 25 ? 'due' : 'overdue';
-  const badge = days == null ? 'Not read' : days === 0 ? 'Today' : `${days}d ago`;
+  const badge = days == null ? 'Not read' : localDateStr(v.last_reading_date, { month: 'short', day: 'numeric' });
 
   const rt = v.reading_type;
   const showOdo = !rt || rt === 'odometer' || rt === 'both';
@@ -1657,7 +1678,7 @@ async function loadWellIssues() {
     renderWellIssues();
     updateWellBadge();
   } catch {
-    el('well-issue-list').innerHTML = `<div class="issue-empty">Failed to load issues</div>`;
+    el('well-issue-list').innerHTML = `<div class="placeholder-msg">Failed to load issues</div>`;
   }
 }
 
@@ -1669,15 +1690,16 @@ function updateWellBadge() {
 function renderWellIssues() {
   const list = el('well-issue-list');
   if (!wellIssues.length) {
-    list.innerHTML = `<div class="issue-empty">No ${wellShowResolved ? '' : 'open '}issues</div>`;
+    list.innerHTML = `<div class="placeholder-msg">No ${wellShowResolved ? '' : 'open '}issues</div>`;
     return;
   }
   list.innerHTML = wellIssues.map(issue => {
     const statusClass = issue.status.replace('_', '-');
     const title   = issue.well_area ? `${issue.well_name} (${issue.well_area})` : (issue.well_name || 'Unknown Well');
     const snippet = (issue.description || '').slice(0, 80) + (issue.description?.length > 80 ? '…' : '');
+    const entityName = (issue.well_name || 'well').replace(/[^a-zA-Z0-9-]/g,'_').replace(/_+/g,'_').replace(/^_|_$/,'').slice(0,30);
     return `
-      <div class="equip-issue-item" data-issue-id="${issue.issue_id}">
+      <div class="equip-issue-item" data-issue-id="${issue.issue_id}" data-entity-name="${entityName}">
         <div class="equip-issue-header">
           <div class="equip-issue-meta">
             <div class="equip-issue-name">${escHtml(title)}</div>
@@ -1856,7 +1878,7 @@ el('well-issue-list').addEventListener('click', async e => {
     try {
       await api('PATCH', `/api/well-issues/${issueId}`, { status, action_taken: actionTaken, resolution_notes: resNotes, po_number: poNumber, cost, assigned_to: assigned });
       const pending = issueCardFiles.get(issueId);
-      if (pending?.length) { await doUploadIssueAttachments(issueId, 'well_issues', pending); issueCardFiles.delete(issueId); }
+      if (pending?.length) { await doUploadIssueAttachments(issueId, 'well_issues', pending, item.dataset.entityName); issueCardFiles.delete(issueId); }
       wellIssuesLoaded = false;
       await loadWellIssues();
       showToast('Issue updated', 'success');
@@ -1898,7 +1920,7 @@ async function loadBldgIssues() {
     renderBldgIssues();
     updateBldgBadge();
   } catch {
-    el('bldg-issue-list').innerHTML = `<div class="issue-empty">Failed to load issues</div>`;
+    el('bldg-issue-list').innerHTML = `<div class="placeholder-msg">Failed to load issues</div>`;
   }
 }
 
@@ -1910,15 +1932,16 @@ function updateBldgBadge() {
 function renderBldgIssues() {
   const list = el('bldg-issue-list');
   if (!bldgIssues.length) {
-    list.innerHTML = `<div class="issue-empty">No ${bldgShowResolved ? '' : 'open '}issues</div>`;
+    list.innerHTML = `<div class="placeholder-msg">No ${bldgShowResolved ? '' : 'open '}issues</div>`;
     return;
   }
   list.innerHTML = bldgIssues.map(issue => {
     const statusClass = issue.status.replace('_', '-');
     const title   = [issue.site_name, issue.building_name].filter(Boolean).join(' — ') || 'Unknown Building';
     const snippet = (issue.description || '').slice(0, 80) + (issue.description?.length > 80 ? '…' : '');
+    const entityName = (issue.building_name || 'building').replace(/[^a-zA-Z0-9-]/g,'_').replace(/_+/g,'_').replace(/^_|_$/,'').slice(0,30);
     return `
-      <div class="equip-issue-item" data-issue-id="${issue.issue_id}">
+      <div class="equip-issue-item" data-issue-id="${issue.issue_id}" data-entity-name="${entityName}">
         <div class="equip-issue-header">
           <div class="equip-issue-meta">
             <div class="equip-issue-name">${escHtml(title)}</div>
@@ -2108,7 +2131,7 @@ el('bldg-issue-list').addEventListener('click', async e => {
     try {
       await api('PATCH', `/api/building-issues/${issueId}`, { status, action_taken: actionTaken, resolution_notes: resNotes, po_number: poNumber, cost, assigned_to: assigned });
       const pending = issueCardFiles.get(issueId);
-      if (pending?.length) { await doUploadIssueAttachments(issueId, 'building_issues', pending); issueCardFiles.delete(issueId); }
+      if (pending?.length) { await doUploadIssueAttachments(issueId, 'building_issues', pending, item.dataset.entityName); issueCardFiles.delete(issueId); }
       bldgIssuesLoaded = false;
       await loadBldgIssues();
       showToast('Issue updated', 'success');
@@ -2141,7 +2164,7 @@ async function loadEquipIssues() {
     renderEquipIssues();
     updateEquipBadge();
   } catch (err) {
-    el('equip-issue-list').innerHTML = `<div class="issue-empty">Failed to load issues</div>`;
+    el('equip-issue-list').innerHTML = `<div class="placeholder-msg">Failed to load issues</div>`;
   }
 }
 
@@ -2153,14 +2176,15 @@ function updateEquipBadge() {
 function renderEquipIssues() {
   const list = el('equip-issue-list');
   if (!equipIssues.length) {
-    list.innerHTML = `<div class="issue-empty">No ${equipShowResolved ? '' : 'open '}issues</div>`;
+    list.innerHTML = `<div class="placeholder-msg">No ${equipShowResolved ? '' : 'open '}issues</div>`;
     return;
   }
   list.innerHTML = equipIssues.map(issue => {
     const statusClass = issue.status.replace('_', '-');
     const snippet = (issue.description || '').slice(0, 80) + (issue.description?.length > 80 ? '…' : '');
+    const entityName = (issue.equipment_name || issue.equipment_type || 'equip').replace(/[^a-zA-Z0-9-]/g,'_').replace(/_+/g,'_').replace(/^_|_$/,'').slice(0,30);
     return `
-      <div class="equip-issue-item" data-issue-id="${issue.issue_id}">
+      <div class="equip-issue-item" data-issue-id="${issue.issue_id}" data-entity-name="${entityName}">
         <div class="equip-issue-header">
           <div class="equip-issue-meta">
             <div class="equip-issue-name">${escHtml(issue.equipment_name || issue.equipment_type)}</div>
@@ -2371,7 +2395,7 @@ el('equip-issue-list').addEventListener('click', async e => {
     try {
       await api('PATCH', `/api/equipment-issues/${issueId}`, { status, action_taken: actionTaken, resolution_notes: resNotes, po_number: poNumber, cost, assigned_to: assigned });
       const pending = issueCardFiles.get(issueId);
-      if (pending?.length) { await doUploadIssueAttachments(issueId, 'equipment_issues', pending); issueCardFiles.delete(issueId); }
+      if (pending?.length) { await doUploadIssueAttachments(issueId, 'equipment_issues', pending, item.dataset.entityName); issueCardFiles.delete(issueId); }
       equipIssuesLoaded = false;
       await loadEquipIssues();
       showToast('Issue updated', 'success');
@@ -2400,7 +2424,7 @@ async function loadVehRecords() {
     renderVehRecords();
     setBadge('maint-badge-vehicles', vehRecords.filter(r => r.status === 'open' || r.status === 'in-progress').length);
   } catch {
-    el('veh-record-list').innerHTML = '<div class="issue-empty">Failed to load records</div>';
+    el('veh-record-list').innerHTML = '<div class="placeholder-msg">Failed to load records</div>';
   }
 }
 
@@ -2471,19 +2495,20 @@ function renderIssueAttachQueue(issueId) {
   });
 }
 
-async function doUploadIssueAttachments(issueId, tableName, pending) {
+async function doUploadIssueAttachments(issueId, tableName, pending, entityName) {
   const d = new Date();
   const dateStr = `${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}${d.getFullYear()}`;
+  const label = (entityName || `issue${issueId}`).replace(/[^a-zA-Z0-9-]/g,'_').replace(/_+/g,'_').replace(/^_|_$/,'').slice(0,40);
   let invoiceIdx = 0, photoIdx = 0;
   for (const att of pending) {
     const origExt = att.file.name.includes('.') ? att.file.name.split('.').pop().toLowerCase() : 'jpg';
     let newName;
     if (att.fileType === 'invoice') {
       invoiceIdx++;
-      newName = `invoice_issue${issueId}_${dateStr}${invoiceIdx > 1 ? `_${invoiceIdx}` : ''}.pdf`;
+      newName = `invoice_${label}_${dateStr}${invoiceIdx > 1 ? `_${invoiceIdx}` : ''}.pdf`;
     } else {
       photoIdx++;
-      newName = `issue${issueId}_photo_${dateStr}${photoIdx > 1 ? `_${photoIdx}` : ''}.${origExt}`;
+      newName = `${label}_photo_${dateStr}${photoIdx > 1 ? `_${photoIdx}` : ''}.${origExt}`;
     }
     const renamed = new File([att.file], newName, { type: att.file.type });
     const fd = new FormData();
@@ -2563,7 +2588,7 @@ function renderVehCardQueue(id) {
 function renderVehRecords() {
   const list = el('veh-record-list');
   if (!vehRecords.length) {
-    list.innerHTML = `<div class="issue-empty">No ${vehShowResolved ? '' : 'open '}records</div>`;
+    list.innerHTML = `<div class="placeholder-msg">No ${vehShowResolved ? '' : 'open '}records</div>`;
     return;
   }
   const statusLabel = { open: 'Open', 'in-progress': 'In Progress', resolved: 'Resolved' };
@@ -2649,6 +2674,7 @@ el('veh-new-record-btn').addEventListener('click', () => {
   el('veh-new-record-form').classList.remove('hidden');
   el('veh-new-record-btn').classList.add('hidden');
   el('maint-date').value = todayISO();
+  if (!el('maint-performed-by').value) el('maint-performed-by').value = currentUser?.full_name || '';
 });
 
 el('veh-cancel-btn').addEventListener('click', () => {
@@ -2747,10 +2773,20 @@ el('veh-record-list').addEventListener('click', async e => {
   }
 });
 
+const MAINT_PANEL_NAMES = {
+  vehicles:  'Vehicle Maintenance',
+  equipment: 'Equipment Issues',
+  buildings: 'Building Issues',
+  wells:     'Well Issues',
+  swaps:     'Equipment Swaps',
+  pms:       'PM Records',
+};
 function openMaintPanel(panelId) {
   el('maint-main').classList.add('hidden');
   document.querySelectorAll('.maint-panel').forEach(p => p.classList.add('hidden'));
   el('maint-panel-' + panelId).classList.remove('hidden');
+  setPanelNav(el('screen-maintenance'), closeMaintPanel,
+    'Maintenance Log - ' + (MAINT_PANEL_NAMES[panelId] || panelId));
   if (panelId === 'equipment') initMaintEquipmentPanel();
   if (panelId === 'buildings') initMaintBuildingsPanel();
   if (panelId === 'wells')     initMaintWellsPanel();
@@ -2762,6 +2798,7 @@ function openMaintPanel(panelId) {
 function closeMaintPanel() {
   document.querySelectorAll('.maint-panel').forEach(p => p.classList.add('hidden'));
   el('maint-main').classList.remove('hidden');
+  setPanelNav(el('screen-maintenance'), () => showScreen('dashboard'), 'Maintenance Log');
 }
 
 function initMaintenanceScreen() {
@@ -2794,9 +2831,7 @@ document.querySelectorAll('[data-maint-panel]').forEach(btn => {
   });
 });
 
-document.querySelectorAll('.maint-back-btn').forEach(btn => {
-  btn.addEventListener('click', closeMaintPanel);
-});
+// .maint-back-btn buttons removed from HTML — navigation handled by setPanelNav()
 
 async function initMaintVehiclesPanel() {
   maintType = 'vehicle';
@@ -2909,6 +2944,7 @@ function initMaintSwapsPanel() {
   if (swapPanelLoaded) return;
   swapPanelLoaded = true;
   el('swap-date').value = todayISO();
+  if (!el('swap-performed-by').value) el('swap-performed-by').value = currentUser?.full_name || '';
   loadSwapUnits(swapCategory);
 }
 
@@ -3426,14 +3462,16 @@ function createKFItem(w, dateInput, timeInput) {
     e.stopPropagation();
     const errEl = div.querySelector('.lif-error');
     errEl.classList.add('hidden');
-    const dtw = div.querySelector('.kf-dtw').value;
-    if (!dtw) { errEl.textContent = 'Depth to water is required'; errEl.classList.remove('hidden'); return; }
+    const dtw   = div.querySelector('.kf-dtw').value;
+    const notes = div.querySelector('.kf-notes').value.trim();
+    // DTW is optional, but if omitted the notes field is required
+    if (!dtw && !notes) { errEl.textContent = 'Enter a DTW reading, or add a note explaining why no reading was taken'; errEl.classList.remove('hidden'); return; }
 
     const body = {
       well_id:         w.well_id,
       reading_date:    dateInput.value,
       reading_time:    timeInput.value,
-      dtw_reading:     parseFloat(dtw),
+      dtw_reading:     dtw ? parseFloat(dtw) : null,
       well_on_off:     kfOnOff,
       plopper_sounder: div.querySelector('.kf-method').value || null,
       operator:        div.querySelector('.kf-op').value || null,
@@ -3442,7 +3480,7 @@ function createKFItem(w, dateInput, timeInput) {
     try {
       const r = await api('POST', '/api/readings/kf-monthly', body, `KF — ${w.common_name}`);
       div.querySelector('.status-dot').className = 'status-dot done';
-      div.querySelector('.status-badge').textContent = r.queued ? 'Offline' : 'Today';
+      div.querySelector('.status-badge').textContent = r.queued ? 'Offline' : localDateStr(dateInput.value, { month: 'short', day: 'numeric' });
       div.querySelector('.status-badge').className = 'status-badge done';
       div.classList.remove('expanded');
       div.querySelector('.list-item-form').style.display = 'none';
@@ -3784,10 +3822,23 @@ document.querySelectorAll('.text-size-btn').forEach(btn => {
 });
 
 // Settings panel navigation
+const SETTINGS_PANEL_NAMES = {
+  account:     'Account',
+  password:    'Change Password',
+  textsize:    'Text Size',
+  readings:    "Today's Readings",
+  'kf-widget': 'KF Widget',
+  appinfo:     'App Info',
+  tools:       'Tools',
+  bugreports:  'Bug Reports',
+  usermgmt:    'User Management',
+};
 function openSettingsPanel(panelId) {
   el('settings-main').classList.add('hidden');
   document.querySelectorAll('.settings-panel').forEach(p => p.classList.add('hidden'));
   el('settings-panel-' + panelId).classList.remove('hidden');
+  setPanelNav(el('screen-admin'), closeSettingsPanel,
+    'Settings - ' + (SETTINGS_PANEL_NAMES[panelId] || panelId));
   if (panelId === 'readings')   loadTodayReadings();
   if (panelId === 'bugreports') loadBugReports();
   if (panelId === 'kf-widget')  initKFWidgetPanel();
@@ -3801,15 +3852,14 @@ function openSettingsPanel(panelId) {
 function closeSettingsPanel() {
   document.querySelectorAll('.settings-panel').forEach(p => p.classList.add('hidden'));
   el('settings-main').classList.remove('hidden');
+  setPanelNav(el('screen-admin'), () => showScreen('dashboard'), 'Settings');
 }
 
 document.querySelectorAll('.settings-menu-row').forEach(btn => {
   btn.addEventListener('click', () => openSettingsPanel(btn.dataset.panel));
 });
 
-document.querySelectorAll('.settings-back-btn').forEach(btn => {
-  btn.addEventListener('click', closeSettingsPanel);
-});
+// .settings-back-btn buttons removed from HTML — navigation handled by setPanelNav()
 
 // ── Secret tools menu (tap version number 5 times) ────────────────────────
 (function () {
@@ -4135,9 +4185,42 @@ el('bug-report-btn').addEventListener('click', () => {
   document.querySelectorAll('#bug-repeatable-seg .seg-btn').forEach(b => b.classList.toggle('active', b.dataset.val === 'false'));
   el('bug-report-modal').classList.remove('hidden');
 });
-el('bug-modal-close').addEventListener('click',  () => el('bug-report-modal').classList.add('hidden'));
-el('bug-modal-cancel').addEventListener('click', () => el('bug-report-modal').classList.add('hidden'));
-el('bug-report-modal').addEventListener('click', e => { if (e.target === el('bug-report-modal')) el('bug-report-modal').classList.add('hidden'); });
+let bugPendingPhotos = [];
+
+function renderBugPhotoQueue() {
+  const qEl = el('bug-photo-queue');
+  if (!bugPendingPhotos.length) { qEl.classList.add('hidden'); qEl.innerHTML = ''; return; }
+  qEl.classList.remove('hidden');
+  qEl.innerHTML = bugPendingPhotos.map((f, i) =>
+    `<div class="maint-aq-item">
+      <img src="${URL.createObjectURL(f)}" alt="">
+      <button class="maint-aq-remove" data-bug-photo="${i}">&times;</button>
+    </div>`
+  ).join('');
+}
+
+function closeBugModal() {
+  el('bug-report-modal').classList.add('hidden');
+  bugPendingPhotos = [];
+  renderBugPhotoQueue();
+}
+
+el('bug-modal-close').addEventListener('click', closeBugModal);
+el('bug-modal-cancel').addEventListener('click', closeBugModal);
+el('bug-report-modal').addEventListener('click', e => { if (e.target === el('bug-report-modal')) closeBugModal(); });
+
+el('bug-add-photo-btn').addEventListener('click', () => el('bug-photo-input').click());
+el('bug-photo-input').addEventListener('change', () => {
+  [...el('bug-photo-input').files].forEach(f => bugPendingPhotos.push(f));
+  el('bug-photo-input').value = '';
+  renderBugPhotoQueue();
+});
+el('bug-photo-queue').addEventListener('click', e => {
+  const btn = e.target.closest('[data-bug-photo]');
+  if (!btn) return;
+  bugPendingPhotos.splice(parseInt(btn.dataset.bugPhoto), 1);
+  renderBugPhotoQueue();
+});
 
 el('bug-modal-submit').addEventListener('click', async () => {
   const description = el('bug-description').value.trim();
@@ -4147,14 +4230,33 @@ el('bug-modal-submit').addEventListener('click', async () => {
   const is_repeatable = document.querySelector('#bug-repeatable-seg .seg-btn.active')?.dataset.val === 'true';
   el('bug-modal-submit').disabled = true;
   try {
-    await api('POST', '/api/bug-reports', {
+    const result = await api('POST', '/api/bug-reports', {
       screen_area: el('bug-screen').value || null,
       severity: el('bug-severity').value,
       is_repeatable,
       description,
       app_version: BUG_VERSION,
     });
-    el('bug-report-modal').classList.add('hidden');
+    // Upload any pending screenshots
+    if (bugPendingPhotos.length && result.report_id) {
+      const d = new Date();
+      const dateStr = `${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}${d.getFullYear()}`;
+      let idx = 0;
+      for (const photo of bugPendingPhotos) {
+        idx++;
+        const ext = photo.name.includes('.') ? photo.name.split('.').pop().toLowerCase() : 'jpg';
+        const newName = `bug_screenshot_${dateStr}${idx > 1 ? `_${idx}` : ''}.${ext}`;
+        const fd = new FormData();
+        fd.append('file', new File([photo], newName, { type: photo.type }));
+        try {
+          await fetch(
+            `/api/maintenance/attachment?table_name=bug_reports&record_id=${result.report_id}&file_type=photo&category=general`,
+            { method: 'POST', body: fd }
+          );
+        } catch { /* non-fatal — report is saved, screenshot upload failing is OK */ }
+      }
+    }
+    closeBugModal();
     showToast('Bug report submitted — thank you!', 'success');
   } catch (err) {
     errEl.textContent = err.message;
@@ -4593,17 +4695,18 @@ function openPMType(pmType) {
   el('pm-main').classList.add('hidden');
   document.querySelectorAll('#maint-panel-pms .pm-panel').forEach(p => p.classList.add('hidden'));
   el(pmPanelId(pmType)).classList.remove('hidden');
+  setPanelNav(el('screen-maintenance'), closePMType,
+    'Maintenance Log - PM Records - ' + (PM_TYPES[pmType]?.title || pmType));
   initPMTypePanel(pmType);
 }
 
 function closePMType() {
   document.querySelectorAll('#maint-panel-pms .pm-panel').forEach(p => p.classList.add('hidden'));
   el('pm-main').classList.remove('hidden');
+  setPanelNav(el('screen-maintenance'), closeMaintPanel, 'Maintenance Log - PM Records');
 }
 
-el('maint-panel-pms').addEventListener('click', e => {
-  if (e.target.matches('.pm-back-btn') || e.target.closest('.pm-back-btn')) closePMType();
-});
+// .pm-back-btn buttons removed from HTML — navigation handled by setPanelNav()
 
 document.querySelectorAll('[data-pm-type]').forEach(btn => {
   btn.addEventListener('click', () => openPMType(btn.dataset.pmType));
@@ -4816,7 +4919,7 @@ async function buildSiphonBreakerPM(pmType, def, contentEl) {
     positions = allPositions.filter(p => String(p.site_id) === String(siteId));
     listEl.innerHTML = positions.length
       ? renderSiphonBreakerChecklist(positions)
-      : '<div class="issue-empty">No pump positions at this plant.</div>';
+      : '<div class="placeholder-msg">No pump positions at this plant.</div>';
   });
 
   cancelBtn.addEventListener('click', () => {
@@ -5099,7 +5202,7 @@ async function loadPMHistory(pmType, contentEl) {
   try {
     const rows = await api('GET', `/api/pm-records?type=${pmType}`);
     rows.forEach(r => { pmHistoryCache[r.pm_id] = r; });
-    if (!rows.length) { histEl.innerHTML = '<div class="issue-empty">No PM records yet.</div>'; return; }
+    if (!rows.length) { histEl.innerHTML = '<div class="placeholder-msg">No PM records yet.</div>'; return; }
     const def = PM_TYPES[pmType];
     histEl.innerHTML = rows.map(r => {
       const d  = localDateStr(r.completed_date, { month: 'short', day: 'numeric', year: 'numeric' });
@@ -5138,7 +5241,7 @@ async function loadPMHistory(pmType, contentEl) {
       btn.addEventListener('click', () => showPMRecord(pmHistoryCache[parseInt(btn.dataset.pmView)], PM_TYPES[pmType]));
     });
   } catch (err) {
-    histEl.innerHTML = `<div class="issue-empty" style="color:var(--red-light)">${err.message}</div>`;
+    histEl.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
   }
 }
 
@@ -5150,7 +5253,7 @@ el('pm-view-modal').addEventListener('click', e => {
 
 function renderSBRecordView(record) {
   const entries = Object.entries(record.checklist);
-  if (!entries.length) return '<div class="issue-empty">No checklist data.</div>';
+  if (!entries.length) return '<div class="placeholder-msg">No checklist data.</div>';
   return entries.map(([, val]) => {
     const sym = val.checked ? '✓' : '✗';
     const cls = val.checked ? 'pass' : 'fail';
@@ -5290,10 +5393,18 @@ let pestReportMonth   = new Date().getMonth() + 1;
 let pestReportYear    = new Date().getFullYear();
 let pestLocationEditId = null;
 
+const PEST_PANEL_NAMES = {
+  usage:    'Usage Log',
+  location: 'Application Location',
+  reports:  'Monthly Report',
+  products: 'Products',
+};
 function openPestPanel(panelId) {
   el('pest-main').classList.add('hidden');
   document.querySelectorAll('.maint-panel[id^="pest-panel-"]').forEach(p => p.classList.add('hidden'));
   el(`pest-panel-${panelId}`).classList.remove('hidden');
+  setPanelNav(el('screen-pesticides'), closePestPanel,
+    'Pesticides - ' + (PEST_PANEL_NAMES[panelId] || panelId));
   if (panelId === 'usage')    initPestUsagePanel();
   if (panelId === 'location') initPestLocationPanel();
   if (panelId === 'reports')  initPestReportsPanel();
@@ -5303,6 +5414,7 @@ function openPestPanel(panelId) {
 function closePestPanel() {
   document.querySelectorAll('.maint-panel[id^="pest-panel-"]').forEach(p => p.classList.add('hidden'));
   el('pest-main').classList.remove('hidden');
+  setPanelNav(el('screen-pesticides'), () => showScreen('dashboard'), 'Pesticides');
 }
 
 function initPesticideScreen() {
@@ -5314,10 +5426,7 @@ document.querySelectorAll('[data-pest-panel]').forEach(btn => {
   btn.addEventListener('click', () => openPestPanel(btn.dataset.pestPanel));
 });
 
-// Back buttons inside pest panels
-document.querySelectorAll('#screen-pesticides .maint-back-btn').forEach(btn => {
-  btn.addEventListener('click', closePestPanel);
-});
+// .maint-back-btn buttons inside pest panels removed from HTML — navigation handled by setPanelNav()
 
 // ── Usage Panel ───────────────────────────────────────────────────────────────
 async function initPestUsagePanel() {
@@ -5378,7 +5487,7 @@ async function loadPestUsageList() {
   list.innerHTML = '<div class="placeholder-msg">Loading…</div>';
   try {
     const rows = await api('GET', '/api/pesticide-usage');
-    if (!rows.length) { list.innerHTML = '<div class="issue-empty">No usage entries yet.</div>'; return; }
+    if (!rows.length) { list.innerHTML = '<div class="placeholder-msg">No usage entries yet.</div>'; return; }
     list.innerHTML = rows.map(r => {
       const d = localDateStr(r.used_date);
       const t = r.used_time ? r.used_time.slice(0, 5) : '';
@@ -5391,7 +5500,7 @@ async function loadPestUsageList() {
       </div>`;
     }).join('');
   } catch (err) {
-    list.innerHTML = `<div class="issue-empty" style="color:var(--red-light)">${err.message}</div>`;
+    list.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
   }
 }
 
@@ -5407,7 +5516,7 @@ async function loadPestLocationList() {
   list.innerHTML = '<div class="placeholder-msg">Loading…</div>';
   try {
     const rows = await api('GET', '/api/pesticide-usage');
-    if (!rows.length) { list.innerHTML = '<div class="issue-empty">No usage entries yet.</div>'; return; }
+    if (!rows.length) { list.innerHTML = '<div class="placeholder-msg">No usage entries yet.</div>'; return; }
     list.innerHTML = rows.map(r => {
       const d = localDateStr(r.used_date);
       const hasLoc = !!r.location_description;
@@ -5426,7 +5535,7 @@ async function loadPestLocationList() {
       item.addEventListener('click', () => openPestLocationModal(item.dataset.id, rows.find(r => r.usage_id == item.dataset.id)));
     });
   } catch (err) {
-    list.innerHTML = `<div class="issue-empty" style="color:var(--red-light)">${err.message}</div>`;
+    list.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
   }
 }
 
@@ -5496,7 +5605,7 @@ async function loadPestReport() {
   try {
     const rows = await api('GET', `/api/pesticide-usage/monthly?year=${pestReportYear}&month=${pestReportMonth}`);
     if (!rows.length) {
-      out.innerHTML = '<div class="issue-empty">No usage recorded for this month.</div>';
+      out.innerHTML = '<div class="placeholder-msg">No usage recorded for this month.</div>';
       return;
     }
     const tbody = rows.map(r =>
@@ -5517,7 +5626,7 @@ async function loadPestReport() {
       <tbody>${tbody}</tbody>
     </table>`;
   } catch (err) {
-    out.innerHTML = `<div class="issue-empty" style="color:var(--red-light)">${err.message}</div>`;
+    out.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
   }
 }
 
@@ -5565,7 +5674,7 @@ async function loadPestProductList() {
   list.innerHTML = '<div class="placeholder-msg">Loading…</div>';
   try {
     const products = await api('GET', '/api/pesticides');
-    if (!products.length) { list.innerHTML = '<div class="issue-empty">No products added yet.</div>'; return; }
+    if (!products.length) { list.innerHTML = '<div class="placeholder-msg">No products added yet.</div>'; return; }
     const isSupervisor = currentUser && (currentUser.role === 'supervisor' || currentUser.role === 'admin');
     list.innerHTML = products.map(p => `
       <div class="pest-product-item ${p.active ? '' : 'pest-product-inactive'}">
@@ -5600,7 +5709,7 @@ async function loadPestProductList() {
       });
     }
   } catch (err) {
-    list.innerHTML = `<div class="issue-empty" style="color:var(--red-light)">${err.message}</div>`;
+    list.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
   }
 }
 
@@ -5621,9 +5730,17 @@ function initReportsScreen() {
   ['vehicles','kf','maintenance','pms'].forEach(c => el(`report-panel-${c}`).classList.add('hidden'));
 }
 
+const REPORT_PANEL_NAMES = {
+  vehicles:    'Vehicles',
+  kf:          'KF Monthly',
+  maintenance: 'Maintenance Issues',
+  pms:         'PM Records',
+};
 function openReportPanel(cat) {
   el('report-main').classList.add('hidden');
   el(`report-panel-${cat}`).classList.remove('hidden');
+  setPanelNav(el('screen-reports'), closeReportPanel,
+    'Reports - ' + (REPORT_PANEL_NAMES[cat] || cat));
   if (cat === 'vehicles')    initVehicleReportPanel();
   if (cat === 'kf')          initKFReportPanel();
   if (cat === 'maintenance') initMaintenanceReportPanel();
@@ -5633,16 +5750,14 @@ function openReportPanel(cat) {
 function closeReportPanel() {
   ['vehicles','kf','maintenance','pms'].forEach(c => el(`report-panel-${c}`).classList.add('hidden'));
   el('report-main').classList.remove('hidden');
+  setPanelNav(el('screen-reports'), () => showScreen('dashboard'), 'Reports');
 }
 
 el('screen-reports').addEventListener('click', e => {
   const tile = e.target.closest('[data-report-cat]');
   if (tile) openReportPanel(tile.dataset.reportCat);
 });
-el('report-vehicles-back').addEventListener('click', closeReportPanel);
-el('report-kf-back').addEventListener('click', closeReportPanel);
-el('report-maint-back').addEventListener('click', closeReportPanel);
-el('report-pms-back').addEventListener('click', closeReportPanel);
+// report-*-back buttons removed from HTML — navigation handled by setPanelNav()
 
 // ── Vehicles Panel ────────────────────────────────────────────────────────────
 function updateReportsMonthLabel() {
@@ -6123,7 +6238,7 @@ async function openPMGridHistory(pmType, building, label) {
     const rows = await api('GET', `/api/pm-records?type=${pmType}&building=${encodeURIComponent(building)}`);
     rows.forEach(r => { pmHistoryCache[r.pm_id] = r; });
     if (!rows.length) {
-      body.innerHTML = '<div class="issue-empty">No records for this plant yet.</div>';
+      body.innerHTML = '<div class="placeholder-msg">No records for this plant yet.</div>';
       return;
     }
     body.innerHTML = rows.map(r => {
@@ -6154,7 +6269,7 @@ async function openPMGridHistory(pmType, building, label) {
       btn.addEventListener('click', () => showPMRecord(pmHistoryCache[parseInt(btn.dataset.pmView)], def));
     });
   } catch (err) {
-    body.innerHTML = `<div class="issue-empty" style="color:var(--red-light)">${err.message}</div>`;
+    body.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
   }
 }
 
@@ -6305,12 +6420,17 @@ const DWR_QUEST_MEAS = [
 let dwrWells = [];
 let dwrDoneThisSession = new Set(); // well_ids saved this session
 
+const WR_PANEL_NAMES = { dwr: 'DWR', kcwa: 'KCWA Piezometers' };
 function initWellRunsScreen() {
-  // Sub-dashboard tiles
   document.querySelectorAll('[data-wr-panel]').forEach(tile => {
     tile.addEventListener('click', () => {
       const panel = tile.dataset.wrPanel;
       el('well-runs-main').classList.add('hidden');
+      const closeWrPanel = () => {
+        document.querySelectorAll('#screen-well-runs .maint-panel').forEach(p => p.classList.add('hidden'));
+        el('well-runs-main').classList.remove('hidden');
+        setPanelNav(el('screen-well-runs'), () => showScreen('dashboard'), 'Well Runs');
+      };
       if (panel === 'dwr') {
         el('wr-panel-dwr').classList.remove('hidden');
         initDWRScreen();
@@ -6320,19 +6440,9 @@ function initWellRunsScreen() {
       } else {
         el('wr-panel-soon').classList.remove('hidden');
       }
+      setPanelNav(el('screen-well-runs'), closeWrPanel,
+        'Well Runs - ' + (WR_PANEL_NAMES[panel] || 'Coming Soon'));
     });
-  });
-  el('wr-dwr-back').addEventListener('click', () => {
-    el('wr-panel-dwr').classList.add('hidden');
-    el('well-runs-main').classList.remove('hidden');
-  });
-  el('wr-kcwa-back').addEventListener('click', () => {
-    el('wr-panel-kcwa').classList.add('hidden');
-    el('well-runs-main').classList.remove('hidden');
-  });
-  el('wr-soon-back').addEventListener('click', () => {
-    el('wr-panel-soon').classList.add('hidden');
-    el('well-runs-main').classList.remove('hidden');
   });
 }
 
