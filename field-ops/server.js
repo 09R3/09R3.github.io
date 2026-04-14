@@ -355,12 +355,14 @@ app.get('/api/pump-positions', requireAuth, async (req, res) => {
     const { rows } = await pool.query(`
       SELECT
         pp.position_id, pp.pump_letter, pp.status,
+        pu.status AS pump_unit_status,
         r.reading_id    AS last_reading_id,
         r.hour_reading  AS last_reading,
         r.reading_date  AS last_reading_date,
         r.entered_by    AS last_entered_by,
         r.notes         AS last_notes
       FROM pump_positions pp
+      LEFT JOIN pump_units pu ON pu.pump_unit_id = pp.current_pump_unit_id
       LEFT JOIN LATERAL (
         SELECT reading_id, hour_reading, reading_date, entered_by, notes
         FROM readings_pump_hours

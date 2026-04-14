@@ -894,7 +894,7 @@ async function renderPPBody() {
 function buildBuildingRows(building) {
   const rows = [];
   building.pumps.forEach(pump => {
-    if (/spare/i.test(pump.status)) return; // spare pumps don't need hour readings
+    if (/spare/i.test(pump.status) || /spare/i.test(pump.pump_unit_status)) return; // spare pumps don't need hour readings
     rows.push(createReadingRow({
       type: 'pump', id: pump.position_id,
       label: `${pump.pump_letter} Pump Hours`,
@@ -956,7 +956,7 @@ function createReadingRow({ type, id, label, prev, prevDate, prevNotes, unit, de
       <input type="text" class="rr-input prev rr-prev" readonly value="${prevDisp}">
     </div>
     <div class="rr-notes-wrap">
-      <textarea class="rr-notes-input rr-notes" rows="2" placeholder="Notes…"></textarea>
+      <textarea class="rr-notes-input rr-notes" rows="1" placeholder="Notes…"></textarea>
       <button class="hist-btn" title="View history">&#128200;</button>
     </div>
   `;
