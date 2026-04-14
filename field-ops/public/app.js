@@ -641,9 +641,6 @@ function setPanelNav(screenEl, backFn, headerTitle) {
     btn.textContent = '‹ Back';
     nav.appendChild(btn);
     screenEl.insertBefore(nav, screenEl.firstChild);
-    // Swipe listener added once per screen; reads _navBackFn at call time
-    // so it always reflects the current back target without needing re-registration.
-    addSwipeBack(screenEl, () => screenEl._navBackFn && screenEl._navBackFn());
   }
   nav.querySelector('.panel-nav-back').onclick = backFn;
 }
@@ -6385,7 +6382,8 @@ el('export-pdf-btn').addEventListener('click', () => {
       return showScreen('dashboard');
     }
     if (activeScreen && id !== 'screen-dashboard') {
-      showScreen('dashboard');
+      if (activeScreen._navBackFn) activeScreen._navBackFn();
+      else showScreen('dashboard');
     }
   }
 })();
@@ -6421,7 +6419,10 @@ let dwrWells = [];
 let dwrDoneThisSession = new Set(); // well_ids saved this session
 
 const WR_PANEL_NAMES = { dwr: 'DWR', kcwa: 'KCWA Piezometers' };
+let wellRunsInited = false;
 function initWellRunsScreen() {
+  if (wellRunsInited) return;
+  wellRunsInited = true;
   document.querySelectorAll('[data-wr-panel]').forEach(tile => {
     tile.addEventListener('click', () => {
       const panel = tile.dataset.wrPanel;
