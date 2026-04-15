@@ -9,7 +9,8 @@ field-ops/public/icons/
 
 ### File Format
 SVG — scales perfectly at all resolutions (important for mobile/retina),
-small file size, no pixelation. Draw each icon on a **24×24 viewBox**.
+small file size, no pixelation. Draw each icon on a **24×24 viewBox**. for the 
+stroke size lets use 1.
 
 ### Color
 Use `fill="currentColor"` in the SVG source. This lets CSS control the icon
