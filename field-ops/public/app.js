@@ -641,9 +641,6 @@ function setPanelNav(screenEl, backFn, headerTitle) {
     btn.textContent = '‹ Back';
     nav.appendChild(btn);
     screenEl.insertBefore(nav, screenEl.firstChild);
-    // Swipe listener added once per screen; reads _navBackFn at call time
-    // so it always reflects the current back target without needing re-registration.
-    addSwipeBack(screenEl, () => screenEl._navBackFn && screenEl._navBackFn());
   }
   nav.querySelector('.panel-nav-back').onclick = backFn;
 }
@@ -897,7 +894,7 @@ async function renderPPBody() {
 function buildBuildingRows(building) {
   const rows = [];
   building.pumps.forEach(pump => {
-    if (/spare/i.test(pump.status)) return; // spare pumps don't need hour readings
+    if (/spare/i.test(pump.status) || /spare/i.test(pump.pump_unit_status)) return; // spare pumps don't need hour readings
     rows.push(createReadingRow({
       type: 'pump', id: pump.position_id,
       label: `${pump.pump_letter} Pump Hours`,
@@ -959,7 +956,7 @@ function createReadingRow({ type, id, label, prev, prevDate, prevNotes, unit, de
       <input type="text" class="rr-input prev rr-prev" readonly value="${prevDisp}">
     </div>
     <div class="rr-notes-wrap">
-      <textarea class="rr-notes-input rr-notes" rows="2" placeholder="Notes…"></textarea>
+      <textarea class="rr-notes-input rr-notes" rows="1" placeholder="Notes…"></textarea>
       <button class="hist-btn" title="View history">&#128200;</button>
     </div>
   `;
@@ -6385,7 +6382,8 @@ el('export-pdf-btn').addEventListener('click', () => {
       return showScreen('dashboard');
     }
     if (activeScreen && id !== 'screen-dashboard') {
-      showScreen('dashboard');
+      if (activeScreen._navBackFn) activeScreen._navBackFn();
+      else showScreen('dashboard');
     }
   }
 })();
@@ -6421,7 +6419,10 @@ let dwrWells = [];
 let dwrDoneThisSession = new Set(); // well_ids saved this session
 
 const WR_PANEL_NAMES = { dwr: 'DWR', kcwa: 'KCWA Piezometers' };
+let wellRunsInited = false;
 function initWellRunsScreen() {
+  if (wellRunsInited) return;
+  wellRunsInited = true;
   document.querySelectorAll('[data-wr-panel]').forEach(tile => {
     tile.addEventListener('click', () => {
       const panel = tile.dataset.wrPanel;
