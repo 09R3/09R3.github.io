@@ -121,14 +121,14 @@ All colors are CSS custom properties defined in `:root`.
 
 ## Icon System
 
-### CDN URL
-Icons live in a separate repo and are served via jsDelivr CDN:
-```
-https://cdn.jsdelivr.net/gh/09R3/Marv-s-site@main/icons/icon-{name}.svg
-```
-Updating an icon: push the new SVG to `09R3/Marv-s-site` main branch, then purge
-the old URL at **jsdelivr.com/tools/purge** for immediate propagation. Without
-purging, CDN edge cache expires within a few hours automatically.
+### Icon Source — Git Submodule
+Icons live in `09R3/Marv-s-site` and are included here as a git submodule at
+`field-ops/public/marv-site/`. They are served locally at `/marv-site/icons/icon-{name}.svg`.
+
+**To update icons:**
+1. Push new/changed SVGs to `09R3/Marv-s-site` main branch
+2. In this repo: `git submodule update --remote field-ops/public/marv-site`
+3. Commit the submodule pointer update and redeploy — icons update instantly with no CDN cache lag
 
 ### Rendering — CSS Mask Approach
 Icons are rendered as `<span>` elements with CSS `mask-image`, NOT `<img>` tags.
@@ -153,7 +153,7 @@ To color an icon: set `color` on any ancestor. The icon inherits it automaticall
 
 ### JavaScript Helper
 ```javascript
-const ICON_CDN = 'https://cdn.jsdelivr.net/gh/09R3/Marv-s-site@main/icons';
+const ICON_CDN = '/marv-site/icons';
 function icon(name, sz = 16) {
   const u = `${ICON_CDN}/icon-${name}.svg`;
   return `<span class="app-icon" style="width:${sz}px;height:${sz}px;-webkit-mask-image:url(${u});mask-image:url(${u})" aria-hidden="true"></span>`;
@@ -164,8 +164,8 @@ function icon(name, sz = 16) {
 ```html
 <span class="app-icon"
   style="width:28px;height:28px;
-         -webkit-mask-image:url(https://cdn.jsdelivr.net/gh/09R3/Marv-s-site@main/icons/icon-dashboard.svg);
-         mask-image:url(https://cdn.jsdelivr.net/gh/09R3/Marv-s-site@main/icons/icon-dashboard.svg)">
+         -webkit-mask-image:url(/marv-site/icons/icon-dashboard.svg);
+         mask-image:url(/marv-site/icons/icon-dashboard.svg)">
 </span>
 ```
 
