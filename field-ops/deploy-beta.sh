@@ -97,8 +97,13 @@ git clone \
 
 cd "$SOURCE_DIR"
 git sparse-checkout set field-ops
-cd "$APPDATA_DIR"
 
+echo "      Fetching latest icons (Marv-s-site)..."
+git clone --depth 1 --quiet https://github.com/09R3/Marv-s-site.git \
+    "$SOURCE_DIR/field-ops/public/marv-site" \
+    || echo "      Warning: could not fetch icons — Marv-s-site clone failed."
+
+cd "$APPDATA_DIR"
 echo "      Done."
 
 # ── 5. Build Docker image ─────────────────────────────────────────────────────
