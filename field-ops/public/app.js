@@ -1,3 +1,9 @@
+/* ── Icon helper ─────────────────────────────────────────────────────────── */
+const ICON_CDN = 'https://cdn.jsdelivr.net/gh/09R3/Marv-s-site@main/icons';
+function icon(name, sz = 16) {
+  return `<img src="${ICON_CDN}/icon-${name}.svg" width="${sz}" height="${sz}" class="app-icon" alt="" aria-hidden="true">`;
+}
+
 /* ── State ───────────────────────────────────────────────────────────────── */
 let currentUser   = null;
 let currentScreen = null;
@@ -548,12 +554,14 @@ async function loadDashboardStats() {
     const rangeLabel = (s.kf_widget_start && s.kf_widget_end)
       ? `${fmtDate(s.kf_widget_start)} – ${fmtDate(s.kf_widget_end)}`
       : 'This Month';
+    const pct = s.kf_total > 0 ? Math.round((s.kf_done / s.kf_total) * 100) : 0;
     const grid = el('dashboard-stats');
     grid.innerHTML = `
-      <div class="stat-card">
-        <div class="stat-value">${s.kf_done} / ${s.kf_total}</div>
+      <div class="stat-card stat-accent">
+        <div class="stat-value">${s.kf_done}<span style="font-size:1rem;color:var(--text-dim)">/${s.kf_total}</span></div>
         <div class="stat-label">KF Complete</div>
         <div class="stat-sublabel">${rangeLabel}</div>
+        <div class="stat-bar"><div class="stat-bar-fill" style="width:${pct}%"></div></div>
       </div>
       <div class="stat-card">
         <div class="stat-value">${s.kf_total - s.kf_done}</div>
@@ -561,7 +569,7 @@ async function loadDashboardStats() {
         <div class="stat-sublabel">${rangeLabel}</div>
       </div>
       <div class="stat-card">
-        <div class="stat-value">${s.wells_read_today} / ${s.wells_total}</div>
+        <div class="stat-value">${s.wells_read_today}<span style="font-size:1rem;color:var(--text-dim)">/${s.wells_total}</span></div>
         <div class="stat-label">Wells Read Today</div>
       </div>
     `;
@@ -681,7 +689,7 @@ function openAttachmentPreview(url, name, isPdf) {
   const body = el('att-preview-body');
   if (isPdf) {
     body.innerHTML = `<div class="uptool-pdf-msg">
-      <p style="font-size:2rem">&#128196;</p>
+      <p style="font-size:2rem">${icon('invoice', 32)}</p>
       <p style="margin-top:8px">${name}</p>
       <p style="margin-top:8px;font-size:0.85rem;color:var(--text-dim)">Click "Save / Download" to open the PDF.</p>
     </div>`;
@@ -753,7 +761,7 @@ async function openHistoryModal(type, id, label) {
         <td>${d}${t ? `<div class="hist-time">${t}</div>` : ''}</td>
         ${valCells}
         <td class="hist-notes">${r.notes || ''}</td>
-        <td>${showDel ? `<button class="hist-del-btn" data-id="${r.id}">🗑</button>` : ''}</td>`;
+        <td>${showDel ? `<button class="hist-del-btn" data-id="${r.id}">${icon('delete')}</button>` : ''}</td>`;
       tbody.appendChild(tr);
 
       if (showDel) {
@@ -957,7 +965,7 @@ function createReadingRow({ type, id, label, prev, prevDate, prevNotes, unit, de
     </div>
     <div class="rr-notes-wrap">
       <textarea class="rr-notes-input rr-notes" rows="1" placeholder="Notes…"></textarea>
-      <button class="hist-btn" title="View history">&#128200;</button>
+      <button class="hist-btn" title="View history">${icon('history')}</button>
     </div>
   `;
 
@@ -1193,7 +1201,7 @@ function createWellItem(w, dateInput, timeInput) {
       </div>
       <div class="lif-error error-msg hidden"></div>
       <div class="lif-footer">
-        <button class="btn btn-secondary btn-sm w-hist-btn">&#128200; History</button>
+        <button class="btn btn-secondary btn-sm w-hist-btn">${icon('history')} History</button>
         <button class="btn btn-save w-save-btn">Save Well Reading</button>
       </div>
     </div>`;
@@ -1371,7 +1379,7 @@ function createCanalItem(s, dateInput, timeInput) {
         <textarea class="ctrl-textarea c-notes" rows="2" placeholder="Optional notes…"></textarea></div>
       <div class="lif-error error-msg hidden"></div>
       <div class="lif-footer">
-        <button class="btn btn-secondary btn-sm c-hist-btn">&#128200; History</button>
+        <button class="btn btn-secondary btn-sm c-hist-btn">${icon('history')} History</button>
         <button class="btn btn-save c-save-btn">Save Reading</button>
       </div>
     </div>`;
@@ -1563,7 +1571,7 @@ function createVehicleItem(v, dateInput, timeInput) {
       </div>
       <div class="lif-error error-msg hidden"></div>
       <div class="lif-footer">
-        <button class="btn btn-secondary btn-sm v-hist-btn">&#128200; History</button>
+        <button class="btn btn-secondary btn-sm v-hist-btn">${icon('history')} History</button>
         <button class="btn btn-save v-save-btn">Save Reading</button>
       </div>
     </div>`;
@@ -1745,9 +1753,9 @@ function renderWellIssues() {
           <div class="form-group">
             <label>Attachments</label>
             <div class="maint-attach-btns">
-              <button type="button" class="btn btn-secondary btn-sm issue-inv-btn">&#128196; Invoice</button>
-              <button type="button" class="btn btn-secondary btn-sm issue-pic-btn">&#128247; Photo(s)</button>
-              ${Number(issue.attachment_count) > 0 ? `<button type="button" class="btn btn-secondary btn-sm issue-files-btn" data-table="well_issues">&#128206; ${issue.attachment_count} file${issue.attachment_count > 1 ? 's' : ''}</button>` : ''}
+              <button type="button" class="btn btn-secondary btn-sm issue-inv-btn">${icon('invoice')} Invoice</button>
+              <button type="button" class="btn btn-secondary btn-sm issue-pic-btn">${icon('photo')} Photo(s)</button>
+              ${Number(issue.attachment_count) > 0 ? `<button type="button" class="btn btn-secondary btn-sm issue-files-btn" data-table="well_issues">${icon('attachments')} ${issue.attachment_count} file${issue.attachment_count > 1 ? 's' : ''}</button>` : ''}
             </div>
             <div class="maint-attach-queue issue-attach-queue hidden"></div>
             <div class="maint-hist-attach-area issue-files-area hidden"></div>
@@ -1854,7 +1862,7 @@ el('well-issue-list').addEventListener('click', async e => {
       const atts = await api('GET', `/api/maintenance/attachments?table_name=well_issues&record_id=${item.dataset.issueId}`);
       area.dataset.loaded = '1';
       if (!atts.length) { area.innerHTML = '<div class="maint-att-empty">No files</div>'; return; }
-      area.innerHTML = atts.map(a => { const isPdf = a.mime_type==='application/pdf'||a.original_name.endsWith('.pdf'); const url=`/uploads/${a.rel_path.split('/').map(encodeURIComponent).join('/')}`; return `<div class="maint-att-item" data-url="${url}" data-pdf="${isPdf}" data-name="${a.original_name.replace(/"/g,'&quot;')}"><div class="maint-att-thumb">${isPdf?'<span class="maint-att-pdf-icon">&#128196;</span>':`<img src="${url}" loading="lazy" alt="">`}</div><span class="maint-att-type-badge">${a.file_type==='invoice'?'INV':'PIC'}</span><div class="maint-att-name">${a.original_name}</div></div>`; }).join('');
+      area.innerHTML = atts.map(a => { const isPdf = a.mime_type==='application/pdf'||a.original_name.endsWith('.pdf'); const url=`/uploads/${a.rel_path.split('/').map(encodeURIComponent).join('/')}`; return `<div class="maint-att-item" data-url="${url}" data-pdf="${isPdf}" data-name="${a.original_name.replace(/"/g,'&quot;')}"><div class="maint-att-thumb">${isPdf?`<span class="maint-att-pdf-icon">${icon('invoice', 28)}</span>`:`<img src="${url}" loading="lazy" alt="">`}</div><span class="maint-att-type-badge">${a.file_type==='invoice'?'INV':'PIC'}</span><div class="maint-att-name">${a.original_name}</div></div>`; }).join('');
       area.querySelectorAll('.maint-att-item').forEach(card => card.addEventListener('click', () => openAttachmentPreview(card.dataset.url, card.dataset.name, card.dataset.pdf==='true')));
     } catch (err) { area.innerHTML = `<div class="maint-att-empty" style="color:var(--red-light)">${err.message}</div>`; }
     return;
@@ -1987,9 +1995,9 @@ function renderBldgIssues() {
           <div class="form-group">
             <label>Attachments</label>
             <div class="maint-attach-btns">
-              <button type="button" class="btn btn-secondary btn-sm issue-inv-btn">&#128196; Invoice</button>
-              <button type="button" class="btn btn-secondary btn-sm issue-pic-btn">&#128247; Photo(s)</button>
-              ${Number(issue.attachment_count) > 0 ? `<button type="button" class="btn btn-secondary btn-sm issue-files-btn" data-table="building_issues">&#128206; ${issue.attachment_count} file${issue.attachment_count > 1 ? 's' : ''}</button>` : ''}
+              <button type="button" class="btn btn-secondary btn-sm issue-inv-btn">${icon('invoice')} Invoice</button>
+              <button type="button" class="btn btn-secondary btn-sm issue-pic-btn">${icon('photo')} Photo(s)</button>
+              ${Number(issue.attachment_count) > 0 ? `<button type="button" class="btn btn-secondary btn-sm issue-files-btn" data-table="building_issues">${icon('attachments')} ${issue.attachment_count} file${issue.attachment_count > 1 ? 's' : ''}</button>` : ''}
             </div>
             <div class="maint-attach-queue issue-attach-queue hidden"></div>
             <div class="maint-hist-attach-area issue-files-area hidden"></div>
@@ -2107,7 +2115,7 @@ el('bldg-issue-list').addEventListener('click', async e => {
       const atts = await api('GET', `/api/maintenance/attachments?table_name=building_issues&record_id=${item.dataset.issueId}`);
       area.dataset.loaded = '1';
       if (!atts.length) { area.innerHTML = '<div class="maint-att-empty">No files</div>'; return; }
-      area.innerHTML = atts.map(a => { const isPdf = a.mime_type==='application/pdf'||a.original_name.endsWith('.pdf'); const url=`/uploads/${a.rel_path.split('/').map(encodeURIComponent).join('/')}`; return `<div class="maint-att-item" data-url="${url}" data-pdf="${isPdf}" data-name="${a.original_name.replace(/"/g,'&quot;')}"><div class="maint-att-thumb">${isPdf?'<span class="maint-att-pdf-icon">&#128196;</span>':`<img src="${url}" loading="lazy" alt="">`}</div><span class="maint-att-type-badge">${a.file_type==='invoice'?'INV':'PIC'}</span><div class="maint-att-name">${a.original_name}</div></div>`; }).join('');
+      area.innerHTML = atts.map(a => { const isPdf = a.mime_type==='application/pdf'||a.original_name.endsWith('.pdf'); const url=`/uploads/${a.rel_path.split('/').map(encodeURIComponent).join('/')}`; return `<div class="maint-att-item" data-url="${url}" data-pdf="${isPdf}" data-name="${a.original_name.replace(/"/g,'&quot;')}"><div class="maint-att-thumb">${isPdf?`<span class="maint-att-pdf-icon">${icon('invoice', 28)}</span>`:`<img src="${url}" loading="lazy" alt="">`}</div><span class="maint-att-type-badge">${a.file_type==='invoice'?'INV':'PIC'}</span><div class="maint-att-name">${a.original_name}</div></div>`; }).join('');
       area.querySelectorAll('.maint-att-item').forEach(card => card.addEventListener('click', () => openAttachmentPreview(card.dataset.url, card.dataset.name, card.dataset.pdf==='true')));
     } catch (err) { area.innerHTML = `<div class="maint-att-empty" style="color:var(--red-light)">${err.message}</div>`; }
     return;
@@ -2230,9 +2238,9 @@ function renderEquipIssues() {
           <div class="form-group">
             <label>Attachments</label>
             <div class="maint-attach-btns">
-              <button type="button" class="btn btn-secondary btn-sm issue-inv-btn">&#128196; Invoice</button>
-              <button type="button" class="btn btn-secondary btn-sm issue-pic-btn">&#128247; Photo(s)</button>
-              ${Number(issue.attachment_count) > 0 ? `<button type="button" class="btn btn-secondary btn-sm issue-files-btn" data-table="equipment_issues">&#128206; ${issue.attachment_count} file${issue.attachment_count > 1 ? 's' : ''}</button>` : ''}
+              <button type="button" class="btn btn-secondary btn-sm issue-inv-btn">${icon('invoice')} Invoice</button>
+              <button type="button" class="btn btn-secondary btn-sm issue-pic-btn">${icon('photo')} Photo(s)</button>
+              ${Number(issue.attachment_count) > 0 ? `<button type="button" class="btn btn-secondary btn-sm issue-files-btn" data-table="equipment_issues">${icon('attachments')} ${issue.attachment_count} file${issue.attachment_count > 1 ? 's' : ''}</button>` : ''}
             </div>
             <div class="maint-attach-queue issue-attach-queue hidden"></div>
             <div class="maint-hist-attach-area issue-files-area hidden"></div>
@@ -2370,7 +2378,7 @@ el('equip-issue-list').addEventListener('click', async e => {
       const atts = await api('GET', `/api/maintenance/attachments?table_name=equipment_issues&record_id=${item.dataset.issueId}`);
       area.dataset.loaded = '1';
       if (!atts.length) { area.innerHTML = '<div class="maint-att-empty">No files</div>'; return; }
-      area.innerHTML = atts.map(a => { const isPdf = a.mime_type==='application/pdf'||a.original_name.endsWith('.pdf'); const url=`/uploads/${a.rel_path.split('/').map(encodeURIComponent).join('/')}`; return `<div class="maint-att-item" data-url="${url}" data-pdf="${isPdf}" data-name="${a.original_name.replace(/"/g,'&quot;')}"><div class="maint-att-thumb">${isPdf?'<span class="maint-att-pdf-icon">&#128196;</span>':`<img src="${url}" loading="lazy" alt="">`}</div><span class="maint-att-type-badge">${a.file_type==='invoice'?'INV':'PIC'}</span><div class="maint-att-name">${a.original_name}</div></div>`; }).join('');
+      area.innerHTML = atts.map(a => { const isPdf = a.mime_type==='application/pdf'||a.original_name.endsWith('.pdf'); const url=`/uploads/${a.rel_path.split('/').map(encodeURIComponent).join('/')}`; return `<div class="maint-att-item" data-url="${url}" data-pdf="${isPdf}" data-name="${a.original_name.replace(/"/g,'&quot;')}"><div class="maint-att-thumb">${isPdf?`<span class="maint-att-pdf-icon">${icon('invoice', 28)}</span>`:`<img src="${url}" loading="lazy" alt="">`}</div><span class="maint-att-type-badge">${a.file_type==='invoice'?'INV':'PIC'}</span><div class="maint-att-name">${a.original_name}</div></div>`; }).join('');
       area.querySelectorAll('.maint-att-item').forEach(card => card.addEventListener('click', () => openAttachmentPreview(card.dataset.url, card.dataset.name, card.dataset.pdf==='true')));
     } catch (err) { area.innerHTML = `<div class="maint-att-empty" style="color:var(--red-light)">${err.message}</div>`; }
     return;
@@ -2566,7 +2574,7 @@ function renderVehCardQueue(id) {
   el2.innerHTML = queue.map((a, i) => {
     const isPdf = a.file.type === 'application/pdf' || a.file.name.endsWith('.pdf');
     return `<div class="maint-aq-item">
-      ${isPdf ? '<span class="maint-aq-icon">&#128196;</span>' : `<img src="${URL.createObjectURL(a.file)}" alt="">`}
+      ${isPdf ? `<span class="maint-aq-icon">${icon('invoice', 28)}</span>` : `<img src="${URL.createObjectURL(a.file)}" alt="">`}
       <span class="maint-aq-badge">${a.fileType === 'invoice' ? 'INV' : 'PIC'}</span>
       <button class="maint-aq-remove" data-cardid="${id}" data-idx="${i}">&times;</button>
       <div class="maint-aq-name">${a.file.name}</div>
@@ -2596,7 +2604,7 @@ function renderVehRecords() {
     const existingFiles = Number(r.attachment_count) > 0
       ? `<div class="form-group">
            <label>Existing Files</label>
-           <button class="btn btn-secondary btn-xs maint-hist-attach-btn" data-id="${id}">&#128206; ${r.attachment_count} file${r.attachment_count > 1 ? 's' : ''} — tap to view</button>
+           <button class="btn btn-secondary btn-xs maint-hist-attach-btn" data-id="${id}">${icon('attachments')} ${r.attachment_count} file${r.attachment_count > 1 ? 's' : ''} — tap to view</button>
            <div class="maint-hist-attach-area hidden" data-id="${id}"></div>
          </div>` : '';
     return `
@@ -2645,8 +2653,8 @@ function renderVehRecords() {
           <div class="form-group">
             <label>Add Attachments</label>
             <div class="maint-attach-btns">
-              <button type="button" class="btn btn-secondary btn-sm veh-card-inv-btn" data-id="${id}">&#128196; Invoice</button>
-              <button type="button" class="btn btn-secondary btn-sm veh-card-pic-btn" data-id="${id}">&#128247; Photo(s)</button>
+              <button type="button" class="btn btn-secondary btn-sm veh-card-inv-btn" data-id="${id}">${icon('invoice')} Invoice</button>
+              <button type="button" class="btn btn-secondary btn-sm veh-card-pic-btn" data-id="${id}">${icon('photo')} Photo(s)</button>
             </div>
             <div class="maint-attach-queue veh-card-queue hidden" id="veh-card-queue-${id}"></div>
           </div>
@@ -2718,7 +2726,7 @@ el('veh-record-list').addEventListener('click', async e => {
         const isPdf = a.mime_type === 'application/pdf' || a.original_name.endsWith('.pdf');
         const url = `/uploads/${a.rel_path.split('/').map(encodeURIComponent).join('/')}`;
         return `<div class="maint-att-item" data-url="${url}" data-pdf="${isPdf}" data-name="${a.original_name.replace(/"/g,'&quot;')}">
-          <div class="maint-att-thumb">${isPdf ? '<span class="maint-att-pdf-icon">&#128196;</span>' : `<img src="${url}" loading="lazy" alt="">`}</div>
+          <div class="maint-att-thumb">${isPdf ? `<span class="maint-att-pdf-icon">${icon('invoice', 28)}</span>` : `<img src="${url}" loading="lazy" alt="">`}</div>
           <span class="maint-att-type-badge">${a.file_type === 'invoice' ? 'INV' : 'PIC'}</span>
           <div class="maint-att-name">${escHtml(a.original_name)}</div>
         </div>`;
@@ -3048,7 +3056,7 @@ function renderMaintAttachQueue() {
     const isPdf = a.file.type === 'application/pdf' || a.file.name.endsWith('.pdf');
     const badge = a.fileType === 'invoice' ? 'INV' : 'PIC';
     const thumb = isPdf
-      ? `<span class="maint-aq-icon">&#128196;</span>`
+      ? `<span class="maint-aq-icon">${icon('invoice', 28)}</span>`
       : `<img src="${URL.createObjectURL(a.file)}" alt="">`;
     return `<div class="maint-aq-item">
       ${thumb}
@@ -3345,7 +3353,7 @@ function renderKFList() {
         <span class="kf-set-title-name">${setLabel}</span>
         <span class="kf-set-title-count">${doneCount} / ${totalCount} complete</span>
       </div>
-      <button class="btn btn-secondary btn-sm kf-set-map-card-btn">&#128506; Map</button>`;
+      <button class="btn btn-secondary btn-sm kf-set-map-card-btn">${icon('map')} Map</button>`;
     card.querySelector('.kf-set-map-card-btn').addEventListener('click', () => {
       openSetMapModal(setLabel, filtered);
     });
@@ -3412,8 +3420,8 @@ function createKFItem(w, dateInput, timeInput) {
       </div>
       <div class="lif-error error-msg hidden"></div>
       <div class="lif-footer">
-        ${hasGPS ? `<button class="btn btn-secondary btn-sm kf-map-btn">&#128205; Map</button>` : ''}
-        <button class="btn btn-secondary btn-sm kf-hist-btn">&#128200; History</button>
+        ${hasGPS ? `<button class="btn btn-secondary btn-sm kf-map-btn">${icon('map-pin')} Map</button>` : ''}
+        <button class="btn btn-secondary btn-sm kf-hist-btn">${icon('history')} History</button>
         <button class="btn btn-save kf-save">Save Reading</button>
       </div>
     </div>`;
@@ -3595,7 +3603,7 @@ function renderPiezList() {
       <span class="kf-set-title-name">Pool: ${piezActivePool || 'All'}</span>
       <span class="kf-set-title-count">${doneCount} / ${totalCount} have readings</span>
     </div>
-    <button class="btn btn-secondary btn-sm piez-pool-map-btn">&#128506; Map</button>`;
+    <button class="btn btn-secondary btn-sm piez-pool-map-btn">${icon('map')} Map</button>`;
   titleCard.querySelector('.piez-pool-map-btn').addEventListener('click', () => {
     openSetMapModal(`Pool: ${piezActivePool}`, filtered.map(p => ({
       common_name:   p.piezometer_name,
@@ -3665,8 +3673,8 @@ function createPiezItem(p, dateInput, timeInput) {
       </div>
       <div class="lif-error error-msg hidden"></div>
       <div class="lif-footer">
-        ${hasGPS ? `<button class="btn btn-secondary btn-sm piez-map-btn">&#128205; Map</button>` : ''}
-        <button class="btn btn-secondary btn-sm piez-hist-btn">&#128200; History</button>
+        ${hasGPS ? `<button class="btn btn-secondary btn-sm piez-map-btn">${icon('map-pin')} Map</button>` : ''}
+        <button class="btn btn-secondary btn-sm piez-hist-btn">${icon('history')} History</button>
         <button class="btn btn-save piez-save">Save Reading</button>
       </div>
     </div>`;
@@ -4525,7 +4533,7 @@ async function openMaintHistoryModal(type, id, label, equip_type) {
       const statusBadge = r.status
         ? `<span class="maint-status-badge maint-status-${r.status}">${statusLabel[r.status] || r.status}</span>` : '';
       const attachBtn = Number(r.attachment_count) > 0
-        ? `<button class="btn btn-secondary btn-xs maint-hist-attach-btn" data-id="${r.maintenance_id}">&#128206; ${r.attachment_count} file${r.attachment_count > 1 ? 's' : ''}</button>` : '';
+        ? `<button class="btn btn-secondary btn-xs maint-hist-attach-btn" data-id="${r.maintenance_id}">${icon('attachments')} ${r.attachment_count} file${r.attachment_count > 1 ? 's' : ''}</button>` : '';
       return `
         <div class="maint-hist-row">
           <div class="maint-hist-header">
@@ -4562,7 +4570,7 @@ async function openMaintHistoryModal(type, id, label, equip_type) {
             const isPdf = a.mime_type === 'application/pdf' || a.original_name.endsWith('.pdf');
             const url = `/uploads/${a.rel_path.split('/').map(encodeURIComponent).join('/')}`;
             const thumb = isPdf
-              ? `<span class="maint-att-pdf-icon">&#128196;</span>`
+              ? `<span class="maint-att-pdf-icon">${icon('invoice', 28)}</span>`
               : `<img src="${url}" alt="" loading="lazy">`;
             const typeLabel = a.file_type === 'invoice' ? 'INV' : 'PIC';
             return `<div class="maint-att-item" data-url="${url}" data-pdf="${isPdf}" data-name="${a.original_name.replace(/"/g,'&quot;')}" data-id="${a.attachment_id}">
@@ -6139,7 +6147,7 @@ async function renderPMGridReport() {
       const sbRec = sbRecords[plant.name];
       const recDate = sbRec ? localDateStr(sbRec.completed_date, {month:'short',day:'numeric'}) : '—';
       sbRows += `<td class="pmgrid-date-col">${recDate}</td>`;
-      sbRows += `<td><button class="pmgrid-hist-btn" data-pm-type="siphon_breaker" data-pm-building="${escHtml(plant.name)}" data-pm-label="PP ${escHtml(plant.num)} Siphon Breakers" title="View history">&#128203;</button></td></tr>`;
+      sbRows += `<td><button class="pmgrid-hist-btn" data-pm-type="siphon_breaker" data-pm-building="${escHtml(plant.name)}" data-pm-label="PP ${escHtml(plant.num)} Siphon Breakers" title="View history">${icon('pm-records')}</button></td></tr>`;
     });
 
     const sbHtml = `<div class="pmgrid-section-title">Siphon Breakers</div>
@@ -6177,7 +6185,7 @@ async function renderPMGridReport() {
     // History row
     acRows += `<tr><td class="pmgrid-check-label" style="font-style:italic;color:var(--text-dim)">History</td>`;
     plants.forEach(plant => {
-      acRows += `<td><button class="pmgrid-hist-btn" data-pm-type="air_compressor" data-pm-building="${escHtml(plant.name)}" data-pm-label="PP ${escHtml(plant.num)} Air Compressors" title="View history">&#128203;</button></td>`;
+      acRows += `<td><button class="pmgrid-hist-btn" data-pm-type="air_compressor" data-pm-building="${escHtml(plant.name)}" data-pm-label="PP ${escHtml(plant.num)} Air Compressors" title="View history">${icon('pm-records')}</button></td>`;
     });
     acRows += '</tr>';
 
@@ -6602,8 +6610,8 @@ function createDWRItem(w, dateInput, timeInput) {
       </div>
       <div class="lif-error error-msg hidden"></div>
       <div class="lif-footer">
-        ${hasGPS ? `<button class="btn btn-secondary btn-sm dwr-map-item-btn">&#128205; Map</button>` : ''}
-        <button class="btn btn-secondary btn-sm dwr-hist-btn">&#128200; History</button>
+        ${hasGPS ? `<button class="btn btn-secondary btn-sm dwr-map-item-btn">${icon('map-pin')} Map</button>` : ''}
+        <button class="btn btn-secondary btn-sm dwr-hist-btn">${icon('history')} History</button>
         <button class="btn btn-save dwr-save-btn">Save Reading</button>
       </div>
     </div>`;
@@ -6796,7 +6804,7 @@ function createDWRItem(w, dateInput, timeInput) {
     queue.innerHTML = pendingFiles.map((f, i) => {
       const isPdf = f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf');
       const thumb = isPdf
-        ? `<span class="uptool-qi-pdf">&#128196;</span>`
+        ? `<span class="uptool-qi-pdf">${icon('invoice', 28)}</span>`
         : `<img src="${URL.createObjectURL(f)}" alt="">`;
       return `<div class="uptool-queue-item">${thumb}<div class="uptool-qi-name">${f.name}</div></div>`;
     }).join('');
@@ -6877,7 +6885,7 @@ function createDWRItem(w, dateInput, timeInput) {
     grid.innerHTML = files.map(f => {
       const isPdf = f.name.toLowerCase().endsWith('.pdf');
       const thumb = isPdf
-        ? `<div class="uptool-fc-thumb"><span class="uptool-pdf-icon">&#128196;</span></div>`
+        ? `<div class="uptool-fc-thumb"><span class="uptool-pdf-icon">${icon('invoice', 28)}</span></div>`
         : `<div class="uptool-fc-thumb"><img src="/uploads/${encodePathSegments(f.relPath)}" loading="lazy" alt=""></div>`;
       return `<div class="uptool-file-card" data-rel="${escapeAttr(f.relPath)}" data-name="${escapeAttr(f.name)}" data-pdf="${isPdf}">
         ${thumb}
@@ -6907,7 +6915,7 @@ function createDWRItem(w, dateInput, timeInput) {
     const url = `/uploads/${encodePathSegments(relPath)}`;
     if (isPdf) {
       body.innerHTML = `<div class="uptool-pdf-msg">
-        <p>&#128196; ${escapeHtml(name)}</p>
+        <p>${icon('invoice', 32)} ${escapeHtml(name)}</p>
         <p style="margin-top:8px;font-size:0.85rem;color:var(--text-dim)">Click "Save / Download" to open the PDF.</p>
       </div>`;
     } else {
