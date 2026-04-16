@@ -48,14 +48,15 @@ All colors are CSS custom properties defined in `:root`.
 - Full-column layout via CSS grid (2 cols default, 3 cols at 900px+)
 - `flex-direction: column; align-items: flex-start; gap: 14px`
 - Min height: `130px`, padding `18px`, radius `var(--radius-lg)`
-- Contains: `.dash-icon-wrap` (44×44px rounded container) + `.dash-label`
-- Hover: background → `var(--surface2)`, border → accent, icon-wrap bg → `rgba(33,150,243,0.18)`, label → `var(--accent)`
+- Contains: `.dash-icon-wrap` (48×48px rounded container) + `.dash-label`
+- Hover: background → `var(--surface2)`, border → accent, icon-wrap bg → `rgba(33,150,243,0.18)`, icon color → accent, label → accent
 - Badge positioning: `.maint-badge` is `position: absolute; top: 8px; right: 8px`
 
 ### Icon Containers (`.dash-icon-wrap`)
-- `44×44px; background: var(--icon-bg); border-radius: 10px`
-- Transition: background on hover
-- Icon inside: 24×24px SVG img
+- `48×48px; background: var(--icon-bg); border-radius: 10px; color: var(--text-dim)`
+- Color transitions on hover: bg → `rgba(33,150,243,0.18)`, color → `var(--accent)`
+- Icon inside: `28×28px` span with CSS mask-image
+- Icon color inherits from `.dash-icon-wrap` via `currentColor`
 
 ### Stats Cards (`.stat-card`)
 - 3-column grid on dashboard
@@ -77,7 +78,8 @@ All colors are CSS custom properties defined in `:root`.
 
 ### Nav Drawer (`.nav-btn`)
 - `display: flex; align-items: center; gap: 12px; padding: 12px 20px`
-- Icon wrapped in `.nav-btn-icon` (20×20px flex container)
+- Icon wrapped in `.nav-btn-icon` (22×22px flex container)
+- Icon color inherits from `.nav-btn`'s `color: var(--text-dim)` → hover `var(--text)`
 - Section headers: `.drawer-section-hdr` — uppercase, muted, `0.62rem`
 
 ### App Header Buttons
@@ -120,38 +122,76 @@ All colors are CSS custom properties defined in `:root`.
 ## Icon System
 
 ### CDN URL
+Icons live in a separate repo and are served via jsDelivr CDN:
 ```
 https://cdn.jsdelivr.net/gh/09R3/Marv-s-site@main/icons/icon-{name}.svg
 ```
+Updating an icon: push the new SVG to `09R3/Marv-s-site` main branch, then purge
+the old URL at **jsdelivr.com/tools/purge** for immediate propagation. Without
+purging, CDN edge cache expires within a few hours automatically.
+
+### Rendering — CSS Mask Approach
+Icons are rendered as `<span>` elements with CSS `mask-image`, NOT `<img>` tags.
+This means the icon color is controlled entirely by the CSS `color` property on the
+icon's ancestor — no filter math, no SVG edits needed. Black or white SVGs both work.
+
+```css
+.app-icon {
+  display: inline-block;
+  background-color: currentColor;   /* ← this is the icon "color" */
+  -webkit-mask-image: var(--icon-url);
+  mask-image: var(--icon-url);
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  -webkit-mask-mode: alpha;
+  mask-mode: alpha;
+  /* width + height set inline per instance */
+}
+```
+
+To color an icon: set `color` on any ancestor. The icon inherits it automatically.
 
 ### JavaScript Helper
 ```javascript
 const ICON_CDN = 'https://cdn.jsdelivr.net/gh/09R3/Marv-s-site@main/icons';
 function icon(name, sz = 16) {
-  return `<img src="${ICON_CDN}/icon-${name}.svg" width="${sz}" height="${sz}" class="app-icon" alt="" aria-hidden="true">`;
+  const u = `${ICON_CDN}/icon-${name}.svg`;
+  return `<span class="app-icon" style="width:${sz}px;height:${sz}px;-webkit-mask-image:url(${u});mask-image:url(${u})" aria-hidden="true"></span>`;
 }
 ```
 
-### `.app-icon` CSS Class
-```css
-.app-icon { display: inline-block; vertical-align: middle; }
+### Static HTML
+```html
+<span class="app-icon"
+  style="width:28px;height:28px;
+         -webkit-mask-image:url(https://cdn.jsdelivr.net/gh/09R3/Marv-s-site@main/icons/icon-dashboard.svg);
+         mask-image:url(https://cdn.jsdelivr.net/gh/09R3/Marv-s-site@main/icons/icon-dashboard.svg)">
+</span>
 ```
+
+### SVG File Requirements
+- `viewBox="0 0 24 24"`, stroke-width `1` (per icon plan)
+- Fill color in SVG doesn't matter — only opacity/alpha is used for masking
+- Black (`#000`) SVGs work fine. `fill="currentColor"` also works.
+- Avoid gradients, filters, or masks inside the SVG itself
 
 ### Available Icon Names
 `dashboard`, `pumping-plant`, `wells`, `canal`, `vehicles`, `kf-monthly`, `well-runs`, `maintenance`, `pesticides`, `reports`, `settings`, `bug-report`, `equipment`, `buildings`, `swaps`, `pm-records`, `electrical`, `siphon-breaker`, `air-compressor`, `annual-pm`, `usage`, `location`, `products`, `dwr`, `piezometers`, `history`, `map-pin`, `map`, `invoice`, `photo`, `attachments`, `print`, `download`, `sync`, `delete`, `refresh`, `menu`, `IWV`, `wells-2`, `wells-3`
 
 ### Icon Size Guidelines
-- Dashboard tiles: `24×24`
-- Nav drawer items: `18×18`
-- Header buttons: `20×20` (menu), `18×18` (refresh)
-- Button icons: `16×16`
-- PDF placeholders: `28×28` or `32×32`
-- Small buttons: `14×14`
+| Context | Size |
+|---------|------|
+| Dashboard / sub-dashboard tiles | `28×28` |
+| Nav drawer items | `22×22` |
+| Header buttons (menu, refresh) | `22×22` |
+| Inline action buttons (History, Map…) | `16×16` |
+| Small utility buttons | `14×14` |
+| Drop-zone / PDF placeholders | `32–36×32–36` |
 
 ## Hover / Interactive States
 
-- **Tiles**: bg → `surface2`, border → accent, icon-wrap bg → `rgba(33,150,243,0.18)`, label → accent
-- **Nav buttons**: bg → `surface2`, text → `--text`
+- **Tiles**: bg → `surface2`, border → accent, icon-wrap bg → `rgba(33,150,243,0.18)`, icon color → accent, label → accent
+- **Nav buttons**: bg → `surface2`, text color → `--text` (icon follows automatically)
 - **Header buttons**: bg → `surface3`, border → accent
 - **List items**: border-color → accent (`.expanded` state)
 - **Buttons**: `.btn-save` → green-light, `.btn-primary` → accent-dark, `.btn-secondary` → border color

@@ -1,7 +1,10 @@
 /* ── Icon helper ─────────────────────────────────────────────────────────── */
+// Icons are rendered as CSS-masked spans so `color` on any ancestor controls
+// the icon tint — no filter math needed, works with black or white SVGs.
 const ICON_CDN = 'https://cdn.jsdelivr.net/gh/09R3/Marv-s-site@main/icons';
 function icon(name, sz = 16) {
-  return `<img src="${ICON_CDN}/icon-${name}.svg" width="${sz}" height="${sz}" class="app-icon" alt="" aria-hidden="true">`;
+  const u = `${ICON_CDN}/icon-${name}.svg`;
+  return `<span class="app-icon" style="width:${sz}px;height:${sz}px;-webkit-mask-image:url(${u});mask-image:url(${u})" aria-hidden="true"></span>`;
 }
 
 /* ── State ───────────────────────────────────────────────────────────────── */
