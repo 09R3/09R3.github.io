@@ -812,7 +812,7 @@ input[type="date"].ctrl-input { min-height: 44px; }
   display: flex;
   align-items: flex-end;
   justify-content: center;
-  padding: 0;
+  padding: 0 12px 12px;
 }
 @media (min-width: 480px) {
   .modal-overlay { align-items: center; padding: 20px; }
@@ -820,16 +820,13 @@ input[type="date"].ctrl-input { min-height: 44px; }
 .modal-card {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius) var(--radius) 0 0;
+  border-radius: var(--radius);
   width: 100%;
   max-width: 520px;
   max-height: 90vh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-}
-@media (min-width: 480px) {
-  .modal-card { border-radius: var(--radius); }
 }
 .modal-header {
   display: flex;
@@ -855,6 +852,7 @@ input[type="date"].ctrl-input { min-height: 44px; }
   flex: 1;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
   padding: 20px;
 }
 .modal-footer {
