@@ -6338,7 +6338,6 @@ el('export-xlsx-btn').addEventListener('click', async () => {
 });
 
 el('export-pdf-btn').addEventListener('click', () => {
-  // Clone report into a dedicated print area
   let printArea = document.getElementById('print-area');
   if (!printArea) {
     printArea = document.createElement('div');
@@ -6347,8 +6346,22 @@ el('export-pdf-btn').addEventListener('click', () => {
   }
   printArea.innerHTML = buildMileageHTML(lastReportRows, reportsYear, reportsMonth);
   el('export-modal').classList.add('hidden');
-  setTimeout(() => window.print(), 100);
+  setTimeout(() => {
+    window.print();
+    window.addEventListener('afterprint', () => { printArea.innerHTML = ''; }, { once: true });
+  }, 100);
 });
+
+/* ── Lock body scroll when any modal is open (prevents background scroll on iOS) ── */
+(function () {
+  const observer = new MutationObserver(() => {
+    const anyOpen = document.querySelector('.modal-overlay:not(.hidden)');
+    document.body.style.overflow = anyOpen ? 'hidden' : '';
+  });
+  document.querySelectorAll('.modal-overlay').forEach(m => {
+    observer.observe(m, { attributes: true, attributeFilter: ['class'] });
+  });
+})();
 
 /* ── Left-edge swipe to go back (system-wide) ────────────────────────────── */
 (function () {
