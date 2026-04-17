@@ -840,11 +840,87 @@ const rphRunBtn     = $('rph-run-btn');
 const rphExportBtn  = $('rph-export-btn');
 const rphGrid       = $('rph-grid');
 const rphStatus     = $('rph-status');
+const rphChipsRow   = $('rph-chips-row');
+const rphChips      = $('rph-chips');
 
 let activeReport = null;
 let rphData = [];
+let rphSelectedLetters = new Set(); // empty = All
+
+// ── Column-select utility (shared by all report grids) ─────────────────────
+function initColSelect(gridEl, copyBarEl, labelEl, copyBtnEl, clearBtnEl) {
+  const table = gridEl.querySelector('.data-table');
+  if (!table) return () => {};
+
+  const headers = [...table.querySelectorAll('thead th')];
+  const selectedCols = new Set();
+
+  function updateHighlight() {
+    table.querySelectorAll('.col-sel').forEach(el => el.classList.remove('col-sel'));
+    if (selectedCols.size === 0) {
+      copyBarEl.classList.add('hidden');
+      return;
+    }
+    selectedCols.forEach(idx => {
+      if (headers[idx]) headers[idx].classList.add('col-sel');
+      table.querySelectorAll('tbody tr').forEach(tr => {
+        if (tr.cells[idx]) tr.cells[idx].classList.add('col-sel');
+      });
+    });
+    labelEl.textContent = `${selectedCols.size} column${selectedCols.size > 1 ? 's' : ''} selected — Ctrl+C or`;
+    copyBarEl.classList.remove('hidden');
+  }
+
+  function copyColumns() {
+    const cols = [...selectedCols].sort((a, b) => a - b);
+    const lines = [];
+    lines.push(cols.map(i => headers[i]?.textContent.trim() ?? '').join('\t'));
+    table.querySelectorAll('tbody tr').forEach(tr => {
+      lines.push(cols.map(i => tr.cells[i]?.textContent.trim() ?? '').join('\t'));
+    });
+    const text = lines.join('\n');
+    navigator.clipboard.writeText(text).catch(() => {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+    });
+    const orig = copyBtnEl.textContent;
+    copyBtnEl.textContent = '✓ Copied!';
+    setTimeout(() => { copyBtnEl.textContent = orig; }, 1500);
+  }
+
+  headers.forEach((th, idx) => {
+    th.classList.add('col-selectable');
+    th.addEventListener('click', () => {
+      selectedCols.has(idx) ? selectedCols.delete(idx) : selectedCols.add(idx);
+      updateHighlight();
+    });
+  });
+
+  copyBtnEl.addEventListener('click', copyColumns);
+  clearBtnEl.addEventListener('click', () => { selectedCols.clear(); updateHighlight(); });
+
+  // Return a cleanup/copy fn so the report-level Ctrl+C can call it
+  return copyColumns;
+}
+
+// Ctrl+C handler for active report columns
+let activeColCopy = null;
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'c' && activeColCopy && !reportPanel.classList.contains('hidden')) {
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed) {
+      e.preventDefault();
+      activeColCopy();
+    }
+  }
+});
 
 function showReport(name) {
+  activeColCopy = null;
   // Deactivate table view
   gridContainer.innerHTML = emptyState('Select a table from the sidebar\nor open the SQL Editor');
   filterBar.classList.add('hidden');
@@ -866,6 +942,52 @@ function hideReport() {
   reportPanel.classList.add('hidden');
 }
 
+async function rphLoadPumps(siteId) {
+  rphChipsRow.classList.add('hidden');
+  rphSelectedLetters.clear();
+  if (!siteId) return;
+  try {
+    const letters = await get(`/api/reports/pump-hours/pumps?site_id=${encodeURIComponent(siteId)}`);
+    if (!letters.length) return;
+    rphChips.innerHTML =
+      `<button class="pump-chip active" data-letter="ALL">All</button>` +
+      letters.map(l => `<button class="pump-chip" data-letter="${esc(l)}">${esc(l)}</button>`).join('');
+    rphChipsRow.classList.remove('hidden');
+  } catch { /* ignore — pump filter just won't show */ }
+}
+
+rphChips.addEventListener('click', e => {
+  const chip = e.target.closest('.pump-chip');
+  if (!chip) return;
+  const letter = chip.dataset.letter;
+
+  if (letter === 'ALL') {
+    rphSelectedLetters.clear();
+    rphChips.querySelectorAll('.pump-chip').forEach(c => c.classList.toggle('active', c.dataset.letter === 'ALL'));
+    return;
+  }
+
+  // Toggle individual letter
+  if (rphSelectedLetters.has(letter)) {
+    rphSelectedLetters.delete(letter);
+  } else {
+    rphSelectedLetters.add(letter);
+  }
+  // If nothing selected → fall back to All
+  if (!rphSelectedLetters.size) {
+    rphChips.querySelectorAll('.pump-chip').forEach(c => c.classList.toggle('active', c.dataset.letter === 'ALL'));
+    return;
+  }
+  // Deactivate All chip, update individual chips
+  rphChips.querySelectorAll('.pump-chip').forEach(c => {
+    if (c.dataset.letter === 'ALL') {
+      c.classList.remove('active');
+    } else {
+      c.classList.toggle('active', rphSelectedLetters.has(c.dataset.letter));
+    }
+  });
+});
+
 // Open Pump Hours report
 $('report-pump-hours').addEventListener('click', async () => {
   showReport('pump-hours');
@@ -874,16 +996,20 @@ $('report-pump-hours').addEventListener('click', async () => {
   rphStatus.textContent = 'Loading pumping plants…';
   rphGrid.innerHTML = emptyState('Select a pumping plant and date range,\nthen click Run Report');
   rphExportBtn.classList.add('hidden');
+  rphChipsRow.classList.add('hidden');
   try {
     const sites = await get('/api/reports/pump-hours/plants');
     rphPlant.innerHTML = sites.map(s =>
       `<option value="${esc(s)}">Pumping Plant ${esc(s)}</option>`
     ).join('');
     rphStatus.textContent = `${sites.length} pumping plant(s) found.`;
+    if (sites.length) rphLoadPumps(sites[0]);
   } catch (err) {
     rphStatus.textContent = `Error loading plants: ${err.message}`;
   }
 });
+
+rphPlant.addEventListener('change', () => rphLoadPumps(rphPlant.value));
 
 // Run the report
 rphRunBtn.addEventListener('click', async () => {
@@ -898,20 +1024,22 @@ rphRunBtn.addEventListener('click', async () => {
   rphStatus.textContent = 'Running…';
   rphGrid.innerHTML = loadingGrid();
   rphExportBtn.classList.add('hidden');
+  $('rph-col-copy-bar').classList.add('hidden');
   rphData = [];
 
   try {
     const params = new URLSearchParams({ site_id: siteId, start, end });
+    if (rphSelectedLetters.size) params.set('pump_letters', [...rphSelectedLetters].join(','));
     rphData = await get(`/api/reports/pump-hours?${params}`);
 
     if (!rphData.length) {
-      rphGrid.innerHTML = emptyState('No readings found for this plant and date range.');
+      rphGrid.innerHTML = emptyState('No readings found for this selection.');
       rphStatus.textContent = 'No results.';
       return;
     }
 
-    const cols = ['position_id', 'reading_date', 'hour_reading'];
-    const headers = ['Position ID', 'Reading Date', 'Hour Reading'];
+    const cols = ['pump_letter', 'reading_date', 'hour_reading'];
+    const headers = ['Pump', 'Reading Date', 'Hour Reading'];
 
     let html = `<table class="data-table"><thead><tr>
       ${headers.map(h => `<th>${h}</th>`).join('')}
@@ -923,6 +1051,9 @@ rphRunBtn.addEventListener('click', async () => {
     rphGrid.innerHTML = html;
     rphStatus.textContent = `${rphData.length} reading${rphData.length !== 1 ? 's' : ''} found.`;
     rphExportBtn.classList.remove('hidden');
+    activeColCopy = initColSelect(
+      rphGrid, $('rph-col-copy-bar'), $('rph-col-copy-label'), $('rph-col-copy-btn'), $('rph-col-copy-clear')
+    );
   } catch (err) {
     rphGrid.innerHTML = errorState(err.message);
     rphStatus.textContent = 'Error running report.';
@@ -935,8 +1066,8 @@ rphExportBtn.addEventListener('click', () => {
   const plantLabel = rphPlant.options[rphPlant.selectedIndex]?.text || rphPlant.value;
   const start = rphStart.value;
   const end   = rphEnd.value;
-  const cols  = ['position_id', 'reading_date', 'hour_reading'];
-  const hdrs  = ['Position ID', 'Reading Date', 'Hour Reading'];
+  const cols  = ['pump_letter', 'reading_date', 'hour_reading'];
+  const hdrs  = ['Pump', 'Reading Date', 'Hour Reading'];
   showExportPreview(`Pump Hours — ${plantLabel} (${start} to ${end})`, hdrs, cols, rphData);
 });
 
@@ -984,6 +1115,7 @@ rwrRunBtn.addEventListener('click', async () => {
   rwrStatus.textContent = 'Running…';
   rwrGrid.innerHTML = loadingGrid();
   rwrExportBtn.classList.add('hidden');
+  $('rwr-col-copy-bar').classList.add('hidden');
   rwrData = [];
 
   try {
@@ -1006,6 +1138,9 @@ rwrRunBtn.addEventListener('click', async () => {
     rwrGrid.innerHTML = html;
     rwrStatus.textContent = `${rwrData.length} reading${rwrData.length !== 1 ? 's' : ''} found.`;
     rwrExportBtn.classList.remove('hidden');
+    activeColCopy = initColSelect(
+      rwrGrid, $('rwr-col-copy-bar'), $('rwr-col-copy-label'), $('rwr-col-copy-btn'), $('rwr-col-copy-clear')
+    );
   } catch (err) {
     rwrGrid.innerHTML = errorState(err.message);
     rwrStatus.textContent = 'Error running report.';

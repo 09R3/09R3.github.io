@@ -273,6 +273,42 @@ select { cursor: pointer; }
   min-height: 28px; border-bottom: 1px solid var(--border);
 }
 
+/* ── Pump letter chips ── */
+.pump-chips-row {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 8px 16px; border-bottom: 1px solid var(--border);
+  background: var(--bg2);
+}
+.pump-chips-label {
+  font-size: 11px; font-weight: 700; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: 0.05em; white-space: nowrap;
+}
+.pump-chip {
+  padding: 3px 11px; border-radius: 20px;
+  border: 1px solid var(--border); background: var(--bg3);
+  color: var(--text-muted); font-size: 12px; font-weight: 600;
+  cursor: pointer; transition: all 0.15s; line-height: 1.6;
+}
+.pump-chip:hover { border-color: var(--accent); color: var(--text); }
+.pump-chip.active { border-color: var(--accent); background: rgba(102,126,234,0.15); color: var(--accent); }
+
+/* ── Column select (Excel-style) ── */
+.col-copy-bar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 12px; background: rgba(102,126,234,0.12);
+  border-bottom: 1px solid var(--accent); font-size: 12px;
+}
+.col-copy-bar.hidden { display: none; }
+.col-copy-label { color: var(--text-muted); flex: 1; }
+.col-copy-btn { padding: 3px 10px; font-size: 12px; }
+.col-copy-clear { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 14px; padding: 2px 4px; line-height: 1; }
+.col-copy-clear:hover { color: var(--error); }
+
+.data-table th.col-selectable { cursor: pointer; }
+.data-table th.col-selectable:hover { background: rgba(102,126,234,0.12); }
+.data-table th.col-sel { background: rgba(102,126,234,0.25) !important; color: var(--accent); }
+.data-table td.col-sel { background: rgba(102,126,234,0.07) !important; }
+
 .report-grid-wrap {
   flex: 1; overflow: auto;
 }

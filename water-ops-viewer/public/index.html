@@ -155,7 +155,16 @@
           <button class="btn btn-primary btn-sm" id="rph-run-btn">▶ Run Report</button>
           <button class="btn btn-ghost btn-sm hidden" id="rph-export-btn">↓ Export</button>
         </div>
+        <div class="pump-chips-row hidden" id="rph-chips-row">
+          <span class="pump-chips-label">Pumps</span>
+          <div id="rph-chips"></div>
+        </div>
         <div class="report-status" id="rph-status"></div>
+        <div class="col-copy-bar hidden" id="rph-col-copy-bar">
+          <span class="col-copy-label" id="rph-col-copy-label"></span>
+          <button class="btn btn-ghost btn-sm col-copy-btn" id="rph-col-copy-btn">📋 Copy</button>
+          <button class="col-copy-clear" id="rph-col-copy-clear">✕</button>
+        </div>
         <div class="report-grid-wrap" id="rph-grid">
           <div class="empty-state">
             <div class="empty-icon">⊟</div>
@@ -185,6 +194,11 @@
           <button class="btn btn-ghost btn-sm hidden" id="rwr-export-btn">↓ Export</button>
         </div>
         <div class="report-status" id="rwr-status"></div>
+        <div class="col-copy-bar hidden" id="rwr-col-copy-bar">
+          <span class="col-copy-label" id="rwr-col-copy-label"></span>
+          <button class="btn btn-ghost btn-sm col-copy-btn" id="rwr-col-copy-btn">📋 Copy</button>
+          <button class="col-copy-clear" id="rwr-col-copy-clear">✕</button>
+        </div>
         <div class="report-grid-wrap" id="rwr-grid">
           <div class="empty-state">
             <div class="empty-icon">💧</div>

@@ -825,22 +825,46 @@ app.get('/api/reports/pump-hours/plants', requireDB, async (req, res) => {
   }
 });
 
+// GET /api/reports/pump-hours/pumps?site_id=X — distinct pump letters for a site
+app.get('/api/reports/pump-hours/pumps', requireDB, async (req, res) => {
+  const { site_id } = req.query;
+  if (!site_id) return res.status(400).json({ error: 'site_id required.' });
+  try {
+    const result = await pool.query(
+      `SELECT DISTINCT pump_letter FROM pump_positions
+       WHERE site_id = $1 AND pump_letter IS NOT NULL
+       ORDER BY pump_letter`,
+      [site_id]
+    );
+    res.json(result.rows.map(r => r.pump_letter));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/reports/pump-hours — readings joined to pump_positions, filtered by site_id and date range
 app.get('/api/reports/pump-hours', requireDB, async (req, res) => {
-  const { site_id, start, end } = req.query;
+  const { site_id, start, end, pump_letters } = req.query;
   if (!site_id || !start || !end) {
     return res.status(400).json({ error: 'site_id, start, and end are required.' });
   }
+  const letters = pump_letters ? pump_letters.split(',').filter(Boolean) : [];
   try {
+    const params = [site_id, start, end];
+    let letterClause = '';
+    if (letters.length) {
+      params.push(letters);
+      letterClause = ` AND p.pump_letter = ANY($4)`;
+    }
     const result = await pool.query(
-      `SELECT r.position_id, r.reading_date, r.hour_reading
+      `SELECT p.pump_letter, r.reading_date, r.hour_reading
        FROM readings_pump_hours r
        JOIN pump_positions p ON p.position_id = r.position_id
        WHERE p.site_id = $1
          AND r.reading_date >= $2
-         AND r.reading_date <= $3
-       ORDER BY r.reading_date ASC, r.position_id ASC`,
-      [site_id, start, end]
+         AND r.reading_date <= $3${letterClause}
+       ORDER BY r.reading_date ASC, p.pump_letter ASC`,
+      params
     );
     res.json(result.rows);
   } catch (err) {
