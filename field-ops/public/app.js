@@ -6341,10 +6341,38 @@ el('export-xlsx-btn').addEventListener('click', async () => {
 });
 
 // ── Piezometers Report Panel ───────────────────────────────────────────────────
+let piezRepType  = 'status';
 let piezRepYear  = new Date().getFullYear();
 let piezRepMonth = new Date().getMonth() + 1;
 let piezRepStart = '';
 let piezRepEnd   = '';
+
+// Compare ranges default: previous month vs current month
+(function () {
+  const now   = new Date();
+  const cy    = now.getFullYear(), cm = now.getMonth() + 1;
+  let   py    = cy, pm = cm - 1;
+  if (pm < 1) { pm = 12; py--; }
+  const pad   = n => String(n).padStart(2, '0');
+  const lastP = new Date(py, pm, 0).getDate();
+  const lastC = new Date(cy, cm, 0).getDate();
+  el('piez-cmp-start1').value = `${py}-${pad(pm)}-01`;
+  el('piez-cmp-end1').value   = `${py}-${pad(pm)}-${pad(lastP)}`;
+  el('piez-cmp-start2').value = `${cy}-${pad(cm)}-01`;
+  el('piez-cmp-end2').value   = `${cy}-${pad(cm)}-${pad(lastC)}`;
+})();
+
+// Numeric pool sort: Pool 1, 2, 3… first; Central Pioneer and other named last
+function sortPools(poolKeys) {
+  const num = n => { const m = /^Pool\s+(\d+)$/i.exec(n); return m ? parseInt(m[1]) : null; };
+  return [...poolKeys].sort((a, b) => {
+    const na = num(a), nb = num(b);
+    if (na !== null && nb !== null) return na - nb;
+    if (na !== null) return -1;
+    if (nb !== null) return 1;
+    return a.localeCompare(b);
+  });
+}
 
 function piezRepMonthBounds() {
   const pad = n => String(n).padStart(2, '0');
@@ -6363,8 +6391,24 @@ function updatePiezRepLabel() {
 function initPiezReportPanel() {
   if (!piezRepStart) piezRepMonthBounds();
   updatePiezRepLabel();
-  renderPiezReport();
+  runPiezReport();
 }
+
+function runPiezReport() {
+  if (piezRepType === 'status') renderPiezReport();
+  else                          renderPiezCompareReport();
+}
+
+document.querySelectorAll('#piez-report-seg .seg-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#piez-report-seg .seg-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    piezRepType = btn.dataset.val;
+    el('piez-status-toolbar').style.display  = piezRepType === 'status'  ? '' : 'none';
+    el('piez-compare-toolbar').style.display = piezRepType === 'compare' ? '' : 'none';
+    runPiezReport();
+  });
+});
 
 el('piez-report-prev-month').addEventListener('click', () => {
   piezRepMonth--;
@@ -6380,14 +6424,21 @@ el('piez-report-next-month').addEventListener('click', () => {
   updatePiezRepLabel();
   renderPiezReport();
 });
-el('piez-report-start-date').addEventListener('change', () => {
-  piezRepStart = el('piez-report-start-date').value;
-  renderPiezReport();
+el('piez-report-start-date').addEventListener('change', () => { piezRepStart = el('piez-report-start-date').value; renderPiezReport(); });
+el('piez-report-end-date').addEventListener('change',   () => { piezRepEnd   = el('piez-report-end-date').value;   renderPiezReport(); });
+['piez-cmp-start1','piez-cmp-end1','piez-cmp-start2','piez-cmp-end2'].forEach(id => {
+  el(id).addEventListener('change', renderPiezCompareReport);
 });
-el('piez-report-end-date').addEventListener('change', () => {
-  piezRepEnd = el('piez-report-end-date').value;
-  renderPiezReport();
-});
+
+function groupByPool(rows) {
+  const pools = {};
+  rows.forEach(r => {
+    const pool = r.pool || 'No Pool';
+    if (!pools[pool]) pools[pool] = [];
+    pools[pool].push(r);
+  });
+  return pools;
+}
 
 async function renderPiezReport() {
   const out = el('report-piez-output');
@@ -6395,14 +6446,7 @@ async function renderPiezReport() {
   try {
     const rows = await api('GET', `/api/reports/piezometers?start_date=${piezRepStart}&end_date=${piezRepEnd}`);
     const fmtDate = s => s ? localDateStr(s, { month: 'short', day: 'numeric' }) : '—';
-
-    // Group by pool
-    const pools = {};
-    rows.forEach(r => {
-      const pool = r.pool || 'No Pool';
-      if (!pools[pool]) pools[pool] = [];
-      pools[pool].push(r);
-    });
+    const pools = groupByPool(rows);
 
     const totalPiezs = rows.length;
     const readCount  = rows.filter(r => r.reading_date).length;
@@ -6417,9 +6461,9 @@ async function renderPiezReport() {
         <span class="kf-complete-pct">${pct}%</span>
       </div>`;
 
-    Object.keys(pools).sort().forEach(pool => {
+    sortPools(Object.keys(pools)).forEach(pool => {
       const piezs = pools[pool];
-      html += `<div class="report-section-title">Pool ${pool}</div>
+      html += `<div class="report-section-title">${pool}</div>
         <table class="report-table">
           <thead><tr><th>Name</th><th class="report-num">DTW (ft)</th><th>Method</th><th>Operator</th><th class="report-num">Date</th></tr></thead>
           <tbody>`;
@@ -6436,6 +6480,68 @@ async function renderPiezReport() {
           <td>${method}</td>
           <td>${escHtml(p.operator || '—')}</td>
           <td class="report-num">${dateCell}</td>
+        </tr>`;
+      });
+      html += '</tbody></table>';
+    });
+
+    html += '</div>';
+    out.innerHTML = html;
+  } catch (err) {
+    out.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
+  }
+}
+
+async function renderPiezCompareReport() {
+  const s1 = el('piez-cmp-start1').value, e1 = el('piez-cmp-end1').value;
+  const s2 = el('piez-cmp-start2').value, e2 = el('piez-cmp-end2').value;
+  if (!s1 || !e1 || !s2 || !e2) return;
+
+  const out = el('report-piez-output');
+  out.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const [rows1, rows2] = await Promise.all([
+      api('GET', `/api/reports/piezometers?start_date=${s1}&end_date=${e1}`),
+      api('GET', `/api/reports/piezometers?start_date=${s2}&end_date=${e2}`),
+    ]);
+
+    const fmtDate = s => s ? localDateStr(s, { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
+    const map2 = new Map(rows2.map(r => [r.piezometer_id, r]));
+    const pools = groupByPool(rows1);
+
+    let html = `<div class="report-card">
+      <div class="report-title">Piezometer Comparison</div>
+      <div class="report-subtitle">${fmtDate(s1)}–${fmtDate(e1)} vs ${fmtDate(s2)}–${fmtDate(e2)}</div>`;
+
+    sortPools(Object.keys(pools)).forEach(pool => {
+      const piezs = pools[pool];
+      html += `<div class="report-section-title">${pool}</div>
+        <table class="report-table">
+          <thead><tr><th>Name</th><th class="report-num">DTW 1</th><th class="report-num">DTW 2</th><th class="report-num">Difference</th></tr></thead>
+          <tbody>`;
+      piezs.forEach(p => {
+        const r2   = map2.get(p.piezometer_id);
+        const dtw1 = p.dtw_reading    != null ? Number(p.dtw_reading)    : null;
+        const dtw2 = r2?.dtw_reading  != null ? Number(r2.dtw_reading)   : null;
+        const d1   = dtw1 != null ? dtw1.toFixed(2) : '—';
+        const d2   = dtw2 != null ? dtw2.toFixed(2) : '—';
+        let diffCell = '—';
+        if (dtw1 != null && dtw2 != null) {
+          const diff = dtw2 - dtw1;
+          const abs  = Math.abs(diff).toFixed(2);
+          if (Math.abs(diff) < 0.005) {
+            diffCell = abs;
+          } else if (diff < 0) {
+            diffCell = `<span style="color:var(--green)">↓ ${abs}</span>`;
+          } else {
+            diffCell = `<span style="color:var(--yellow)">↑ ${abs}</span>`;
+          }
+        }
+        html += `<tr>
+          <td>${escHtml(p.piezometer_name)}</td>
+          <td class="report-num">${d1}</td>
+          <td class="report-num">${d2}</td>
+          <td class="report-num">${diffCell}</td>
         </tr>`;
       });
       html += '</tbody></table>';

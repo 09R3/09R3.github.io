@@ -77,7 +77,7 @@
         <div id="login-error" class="error-msg hidden"></div>
         <button type="submit" class="btn btn-primary btn-full">Sign In</button>
       </form>
-      <div class="login-version">v 1.38</div>
+      <div class="login-version">v 1.39</div>
     </div>
   </div>
 </div>
@@ -1156,6 +1156,12 @@
     <!-- Piezometers panel -->
     <div id="report-panel-piezometers" class="maint-panel hidden">
       <div class="report-toolbar">
+        <div class="seg-group" id="piez-report-seg">
+          <button class="seg-btn active" data-val="status">Status</button>
+          <button class="seg-btn" data-val="compare">Compare</button>
+        </div>
+      </div>
+      <div id="piez-status-toolbar" class="report-toolbar">
         <div class="report-month-nav">
           <button class="btn btn-secondary btn-sm" id="piez-report-prev-month">&#8592;</button>
           <span id="piez-report-month-label" class="report-month-label"></span>
@@ -1164,6 +1170,15 @@
         <input type="date" id="piez-report-start-date" class="ctrl-input ctrl-input-sm">
         <span class="report-date-sep">&#8211;</span>
         <input type="date" id="piez-report-end-date" class="ctrl-input ctrl-input-sm">
+      </div>
+      <div id="piez-compare-toolbar" class="report-toolbar" style="display:none">
+        <input type="date" id="piez-cmp-start1" class="ctrl-input ctrl-input-sm">
+        <span class="report-date-sep">&#8211;</span>
+        <input type="date" id="piez-cmp-end1" class="ctrl-input ctrl-input-sm">
+        <span style="padding:0 6px;color:var(--text-dim);font-size:0.85rem">vs</span>
+        <input type="date" id="piez-cmp-start2" class="ctrl-input ctrl-input-sm">
+        <span class="report-date-sep">&#8211;</span>
+        <input type="date" id="piez-cmp-end2" class="ctrl-input ctrl-input-sm">
       </div>
       <div id="report-piez-output"></div>
     </div>
@@ -1297,7 +1312,7 @@
     <div id="settings-panel-appinfo" class="settings-panel hidden">
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 1.38</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 1.39</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>

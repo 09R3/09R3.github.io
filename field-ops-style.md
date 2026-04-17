@@ -110,9 +110,11 @@ All colors are CSS custom properties defined in `:root`.
 - Loading: `"Loading…"`, Empty: `"No [items] found."`, Error: `"Failed to load."`
 
 ### Modals
-- `.modal-overlay` + `.modal-card` — bottom sheet on mobile, centered on 480px+
+- `.modal-overlay` + `.modal-card` — bottom sheet on mobile (6px side margin), centered on 480px+
 - `.modal-header` / `.modal-body` / `.modal-footer`
 - Close: × button + tap-outside
+- **Scroll lock**: A `MutationObserver` in `app.js` sets `body { overflow: hidden }` whenever any `.modal-overlay` is visible. This prevents background scroll on iOS Safari where `overscroll-behavior: contain` alone is insufficient. The observer is set up once at startup and watches all `.modal-overlay` elements — no per-modal code needed.
+- **Width**: `.modal-card` uses `max-width: 680px`. Specific overrides: `.export-modal-card` (`max-width: 300px`), `.pm-view-modal-card` (`max-width: 680px`).
 
 ### Attachments
 - Supported on: Vehicle Maintenance, Equipment Issues, Building Issues, Well Issues
