@@ -6285,11 +6285,27 @@ async function openPMGridHistory(pmType, building, label) {
 }
 
 /* ── Export Modal ────────────────────────────────────────────────────────── */
+let exportContext = 'vehicles'; // 'vehicles' | 'piezometers-status' | 'piezometers-compare'
+
 el('report-export-btn').addEventListener('click', () => {
   if (!lastReportRows.length) return showToast('No report data to export', 'error');
+  exportContext = 'vehicles';
   const d = new Date(reportsYear, reportsMonth - 1, 1);
-  const label = d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-  el('export-modal-subtitle').textContent = `CVC Mileage — ${label}`;
+  el('export-modal-subtitle').textContent = `CVC Mileage — ${d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}`;
+  el('export-modal').classList.remove('hidden');
+});
+
+el('piez-export-btn').addEventListener('click', () => {
+  if (piezRepType === 'status') {
+    if (!lastPiezStatusRows.length) return showToast('No report data to export', 'error');
+    exportContext = 'piezometers-status';
+    const fmtDate = s => s ? localDateStr(s, { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+    el('export-modal-subtitle').textContent = `Piezometers — ${fmtDate(piezRepStart)} to ${fmtDate(piezRepEnd)}`;
+  } else {
+    if (!lastPiezCompareRows1.length) return showToast('No report data to export', 'error');
+    exportContext = 'piezometers-compare';
+    el('export-modal-subtitle').textContent = `Piezometer Comparison`;
+  }
   el('export-modal').classList.remove('hidden');
 });
 
@@ -6310,38 +6326,83 @@ function triggerBlobDownload(blob, filename) {
 
 el('export-csv-btn').addEventListener('click', () => {
   el('export-modal').classList.add('hidden');
-  // CSV generated entirely client-side — no server call, no session issues
+
+  if (exportContext === 'piezometers-status') {
+    const csvEsc = v => (v == null || v === '') ? '' : /[,"\n]/.test(String(v)) ? `"${String(v).replace(/"/g,'""')}"` : String(v);
+    const lines = [`Piezometer Readings,${piezRepStart} to ${piezRepEnd}`, '', 'Pool,Name,DTW (ft),Method,Operator,Date'];
+    lastPiezStatusRows.forEach(p => {
+      const method = [p.plopper_sounder, p.wet_dry_moist].filter(Boolean).join(' / ');
+      lines.push([p.pool||'', p.piezometer_name, p.dtw_reading??'', method, p.operator||'', p.reading_date?.slice(0,10)||''].map(csvEsc).join(','));
+    });
+    triggerBlobDownload(new Blob([lines.join('\r\n')], { type: 'text/csv' }), `Piezometers_${piezRepStart}_${piezRepEnd}.csv`);
+    return;
+  }
+
+  if (exportContext === 'piezometers-compare') {
+    const s1 = el('piez-cmp-start1').value, e1 = el('piez-cmp-end1').value;
+    const s2 = el('piez-cmp-start2').value, e2 = el('piez-cmp-end2').value;
+    const map2 = new Map(lastPiezCompareRows2.map(r => [r.piezometer_id, r]));
+    const lines = [`Piezometer Comparison,${s1}–${e1} vs ${s2}–${e2}`, '', `Pool,Name,DTW 1,DTW 2,Difference`];
+    lastPiezCompareRows1.forEach(p => {
+      const r2 = map2.get(p.piezometer_id);
+      const d1 = p.dtw_reading != null ? Number(p.dtw_reading) : '';
+      const d2 = r2?.dtw_reading != null ? Number(r2.dtw_reading) : '';
+      const diff = d1 !== '' && d2 !== '' ? (d2 - d1).toFixed(2) : '';
+      lines.push([p.pool||'', p.piezometer_name, d1, d2, diff].join(','));
+    });
+    triggerBlobDownload(new Blob([lines.join('\r\n')], { type: 'text/csv' }), `Piezometers_Compare_${s1}_${s2}.csv`);
+    return;
+  }
+
+  // vehicles (default)
   const ac = v => (v.assigned_user && v.assigned_user.trim().toLowerCase() !== 'ops & maint') ? v.assigned_user : '';
   const trucks = lastReportRows.filter(r => !r.reading_type || r.reading_type === 'odometer');
   const heavy  = lastReportRows.filter(r => r.reading_type === 'hours' || r.reading_type === 'both');
   const d = new Date(reportsYear, reportsMonth - 1, 1);
-  const label = d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-  const lines = [`CVC Mileage — ${label}`, '', 'TRUCKS', 'Unit #,Make,Model,Operator,Odometer'];
+  const lines = [`CVC Mileage — ${d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}`, '', 'TRUCKS', 'Unit #,Make,Model,Operator,Odometer'];
   trucks.forEach(v => lines.push([v.vehicle_number, v.make, v.model, ac(v), v.odometer_miles ?? ''].join(',')));
   lines.push('', 'HEAVY EQUIPMENT', 'Unit #,Make,Model,Operator,Odometer,Engine Hours');
   heavy.forEach(v => lines.push([v.vehicle_number, v.make, v.model, ac(v), v.odometer_miles ?? '', v.engine_hours ?? ''].join(',')));
-  const blob = new Blob([lines.join('\r\n')], { type: 'text/csv' });
-  triggerBlobDownload(blob, `CVC_Mileage_${reportsYear}_${reportsMonth}.csv`);
+  triggerBlobDownload(new Blob([lines.join('\r\n')], { type: 'text/csv' }), `CVC_Mileage_${reportsYear}_${reportsMonth}.csv`);
 });
 
 el('export-xlsx-btn').addEventListener('click', async () => {
   el('export-modal').classList.add('hidden');
   try {
-    // Get a one-time token so fetch works without relying on session cookie
-    const { token } = await api('POST', '/api/reports/download-token',
-      { year: reportsYear, month: reportsMonth });
+    if (exportContext === 'piezometers-status') {
+      const { token } = await api('POST', '/api/reports/download-token', {});
+      const url = `/api/reports/piezometers/export?start_date=${piezRepStart}&end_date=${piezRepEnd}&token=${token}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('Export failed');
+      triggerBlobDownload(await res.blob(), `Piezometers_${piezRepStart}_${piezRepEnd}.xlsx`);
+      return;
+    }
+    if (exportContext === 'piezometers-compare') {
+      const s1 = el('piez-cmp-start1').value, e1 = el('piez-cmp-end1').value;
+      const s2 = el('piez-cmp-start2').value, e2 = el('piez-cmp-end2').value;
+      const { token } = await api('POST', '/api/reports/download-token', {});
+      const url = `/api/reports/piezometers/compare/export?s1=${s1}&e1=${e1}&s2=${s2}&e2=${e2}&token=${token}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('Export failed');
+      triggerBlobDownload(await res.blob(), `Piezometers_Compare_${s1}_${s2}.xlsx`);
+      return;
+    }
+    // vehicles
+    const { token } = await api('POST', '/api/reports/download-token', { year: reportsYear, month: reportsMonth });
     const url = `/api/reports/mileage/export?format=xlsx&year=${reportsYear}&month=${reportsMonth}&token=${token}`;
     const res = await fetch(url);
     if (!res.ok) throw new Error('Export failed');
-    const blob = await res.blob();
-    triggerBlobDownload(blob, `CVC_Mileage_${reportsYear}_${reportsMonth}.xlsx`);
+    triggerBlobDownload(await res.blob(), `CVC_Mileage_${reportsYear}_${reportsMonth}.xlsx`);
   } catch (err) {
     showToast('Export failed: ' + err.message, 'error');
   }
 });
 
 // ── Piezometers Report Panel ───────────────────────────────────────────────────
-let piezRepType  = 'status';
+let piezRepType        = 'status';
+let lastPiezStatusRows = [];
+let lastPiezCompareRows1 = [];
+let lastPiezCompareRows2 = [];
 let piezRepYear  = new Date().getFullYear();
 let piezRepMonth = new Date().getMonth() + 1;
 let piezRepStart = '';
@@ -6444,7 +6505,8 @@ async function renderPiezReport() {
   const out = el('report-piez-output');
   out.innerHTML = '<div class="placeholder-msg">Loading…</div>';
   try {
-    const rows = await api('GET', `/api/reports/piezometers?start_date=${piezRepStart}&end_date=${piezRepEnd}`);
+    lastPiezStatusRows = await api('GET', `/api/reports/piezometers?start_date=${piezRepStart}&end_date=${piezRepEnd}`);
+    const rows = lastPiezStatusRows;
     const fmtDate = s => s ? localDateStr(s, { month: 'short', day: 'numeric' }) : '—';
     const pools = groupByPool(rows);
 
@@ -6500,10 +6562,11 @@ async function renderPiezCompareReport() {
   const out = el('report-piez-output');
   out.innerHTML = '<div class="placeholder-msg">Loading…</div>';
   try {
-    const [rows1, rows2] = await Promise.all([
+    [lastPiezCompareRows1, lastPiezCompareRows2] = await Promise.all([
       api('GET', `/api/reports/piezometers?start_date=${s1}&end_date=${e1}`),
       api('GET', `/api/reports/piezometers?start_date=${s2}&end_date=${e2}`),
     ]);
+    const [rows1, rows2] = [lastPiezCompareRows1, lastPiezCompareRows2];
 
     const fmtDate = s => s ? localDateStr(s, { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
     const map2 = new Map(rows2.map(r => [r.piezometer_id, r]));
@@ -6561,7 +6624,15 @@ el('export-pdf-btn').addEventListener('click', () => {
     printArea.id = 'print-area';
     document.body.appendChild(printArea);
   }
-  printArea.innerHTML = buildMileageHTML(lastReportRows, reportsYear, reportsMonth);
+
+  if (exportContext === 'piezometers-status' || exportContext === 'piezometers-compare') {
+    // Re-use the already-rendered report card HTML from the output div
+    const rendered = el('report-piez-output').querySelector('.report-card');
+    printArea.innerHTML = rendered ? rendered.outerHTML : '';
+  } else {
+    printArea.innerHTML = buildMileageHTML(lastReportRows, reportsYear, reportsMonth);
+  }
+
   el('export-modal').classList.add('hidden');
   setTimeout(() => {
     window.print();

@@ -2194,6 +2194,112 @@ app.get('/api/reports/piezometers', requireAuth, requireRole('supervisor', 'admi
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// Piezometer status/compare XLSX export (token-authenticated)
+app.get('/api/reports/piezometers/export', async (req, res) => {
+  const { start_date, end_date, token } = req.query;
+  if (!start_date || !end_date) return res.status(400).json({ error: 'start_date and end_date required' });
+  if (token) {
+    const t = downloadTokens.get(token);
+    if (!t || Date.now() > t.expires) return res.status(401).json({ error: 'Invalid or expired token' });
+    downloadTokens.delete(token);
+  } else {
+    if (!req.cookies?.session_id) return res.status(401).json({ error: 'Unauthorized' });
+    const session = sessions.get(req.cookies.session_id);
+    if (!session || Date.now() > session.expires) return res.status(401).json({ error: 'Unauthorized' });
+    if (session.user.role !== 'admin' && session.user.role !== 'supervisor')
+      return res.status(403).json({ error: 'Forbidden' });
+  }
+  try {
+    const { rows } = await pool.query(`
+      SELECT p.piezometer_name, p.pool, p.sort_order,
+             r.reading_date, r.dtw_reading, r.operator, r.plopper_sounder, r.wet_dry_moist
+      FROM piezometers p
+      LEFT JOIN LATERAL (
+        SELECT reading_date, dtw_reading, operator, plopper_sounder, wet_dry_moist
+        FROM readings_piezometers
+        WHERE piezometer_id = p.piezometer_id
+          AND reading_date BETWEEN $1 AND $2
+        ORDER BY reading_date DESC, reading_time DESC LIMIT 1
+      ) r ON true
+      WHERE LOWER(p.status) != 'inactive'
+      ORDER BY p.pool NULLS LAST, p.sort_order, p.piezometer_name
+    `, [start_date, end_date]);
+
+    const wb = XLSX.utils.book_new();
+    const data = [
+      ['Piezometer Readings', `${start_date} to ${end_date}`],
+      [],
+      ['Pool', 'Name', 'DTW (ft)', 'Method', 'Operator', 'Date'],
+      ...rows.map(r => [
+        r.pool || '', r.piezometer_name,
+        r.dtw_reading != null ? Number(r.dtw_reading) : '',
+        [r.plopper_sounder, r.wet_dry_moist].filter(Boolean).join(' / ') || '',
+        r.operator || '',
+        r.reading_date ? r.reading_date.toISOString().slice(0, 10) : '',
+      ]),
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    ws['!cols'] = [{ wch: 18 }, { wch: 22 }, { wch: 10 }, { wch: 16 }, { wch: 14 }, { wch: 12 }];
+    XLSX.utils.book_append_sheet(wb, ws, 'Piezometers');
+    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="Piezometers_${start_date}_${end_date}.xlsx"`);
+    return res.send(buf);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/reports/piezometers/compare/export', async (req, res) => {
+  const { s1, e1, s2, e2, token } = req.query;
+  if (!s1 || !e1 || !s2 || !e2) return res.status(400).json({ error: 'Four date params required' });
+  if (token) {
+    const t = downloadTokens.get(token);
+    if (!t || Date.now() > t.expires) return res.status(401).json({ error: 'Invalid or expired token' });
+    downloadTokens.delete(token);
+  } else {
+    if (!req.cookies?.session_id) return res.status(401).json({ error: 'Unauthorized' });
+    const session = sessions.get(req.cookies.session_id);
+    if (!session || Date.now() > session.expires) return res.status(401).json({ error: 'Unauthorized' });
+    if (session.user.role !== 'admin' && session.user.role !== 'supervisor')
+      return res.status(403).json({ error: 'Forbidden' });
+  }
+  try {
+    const latestReading = (piezId, start, end) => pool.query(`
+      SELECT dtw_reading FROM readings_piezometers
+      WHERE piezometer_id = $1 AND reading_date BETWEEN $2 AND $3
+      ORDER BY reading_date DESC, reading_time DESC LIMIT 1
+    `, [piezId, start, end]);
+
+    const { rows: piez } = await pool.query(`
+      SELECT piezometer_id, piezometer_name, pool, sort_order
+      FROM piezometers WHERE LOWER(status) != 'inactive'
+      ORDER BY pool NULLS LAST, sort_order, piezometer_name
+    `);
+
+    const rows = await Promise.all(piez.map(async p => {
+      const [r1, r2] = await Promise.all([latestReading(p.piezometer_id, s1, e1), latestReading(p.piezometer_id, s2, e2)]);
+      const d1 = r1.rows[0]?.dtw_reading != null ? Number(r1.rows[0].dtw_reading) : null;
+      const d2 = r2.rows[0]?.dtw_reading != null ? Number(r2.rows[0].dtw_reading) : null;
+      const diff = d1 != null && d2 != null ? d2 - d1 : null;
+      return [p.pool || '', p.piezometer_name, d1 ?? '', d2 ?? '', diff != null ? Number(diff.toFixed(2)) : ''];
+    }));
+
+    const wb = XLSX.utils.book_new();
+    const data = [
+      ['Piezometer Comparison', `${s1}–${e1}  vs  ${s2}–${e2}`],
+      [],
+      ['Pool', 'Name', `DTW 1 (${s1}–${e1})`, `DTW 2 (${s2}–${e2})`, 'Difference'],
+      ...rows,
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    ws['!cols'] = [{ wch: 18 }, { wch: 22 }, { wch: 16 }, { wch: 16 }, { wch: 12 }];
+    XLSX.utils.book_append_sheet(wb, ws, 'Comparison');
+    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="Piezometers_Compare_${s1}_${s2}.xlsx"`);
+    return res.send(buf);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // KF set-by-set breakdown
 app.get('/api/reports/kf-sets', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
   const { start_date, end_date } = req.query;
