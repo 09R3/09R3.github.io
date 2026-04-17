@@ -77,7 +77,7 @@
         <div id="login-error" class="error-msg hidden"></div>
         <button type="submit" class="btn btn-primary btn-full">Sign In</button>
       </form>
-      <div class="login-version">v 1.37</div>
+      <div class="login-version">v 1.38</div>
     </div>
   </div>
 </div>
@@ -1016,7 +1016,7 @@
       </div>
       <div class="dash-tile wr-soon" data-wr-panel="iwv">
         <div class="dash-icon-wrap">
-          <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-well-runs.svg);mask-image:url(/marv-site/icons/icon-well-runs.svg)"></span>
+          <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-IWV.svg);mask-image:url(/marv-site/icons/icon-IWV.svg)"></span>
         </div>
         <div class="dash-label">IWV</div>
       </div>
@@ -1095,6 +1095,12 @@
         </div>
         <div class="dash-label">Siphon &amp; AC PMs</div>
       </div>
+      <div class="dash-tile" data-report-cat="piezometers">
+        <div class="dash-icon-wrap">
+          <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-piezometers.svg);mask-image:url(/marv-site/icons/icon-piezometers.svg)"></span>
+        </div>
+        <div class="dash-label">Piezometers</div>
+      </div>
     </div>
 
     <!-- Vehicles panel -->
@@ -1145,6 +1151,21 @@
         <button class="btn btn-secondary btn-sm" id="pms-all-time">All Time</button>
       </div>
       <div id="report-pms-output"></div>
+    </div>
+
+    <!-- Piezometers panel -->
+    <div id="report-panel-piezometers" class="maint-panel hidden">
+      <div class="report-toolbar">
+        <div class="report-month-nav">
+          <button class="btn btn-secondary btn-sm" id="piez-report-prev-month">&#8592;</button>
+          <span id="piez-report-month-label" class="report-month-label"></span>
+          <button class="btn btn-secondary btn-sm" id="piez-report-next-month">&#8594;</button>
+        </div>
+        <input type="date" id="piez-report-start-date" class="ctrl-input ctrl-input-sm">
+        <span class="report-date-sep">&#8211;</span>
+        <input type="date" id="piez-report-end-date" class="ctrl-input ctrl-input-sm">
+      </div>
+      <div id="report-piez-output"></div>
     </div>
 
   </div><!-- /screen-reports -->
@@ -1276,7 +1297,7 @@
     <div id="settings-panel-appinfo" class="settings-panel hidden">
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 1.37</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 1.38</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>

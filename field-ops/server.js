@@ -2167,6 +2167,33 @@ app.get('/api/reports/vehicle-service', requireAuth, requireRole('supervisor', '
   }
 });
 
+// Piezometer readings report — latest reading per piezometer within date range
+app.get('/api/reports/piezometers', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+  const { start_date, end_date } = req.query;
+  if (!start_date || !end_date) return res.status(400).json({ error: 'start_date and end_date required' });
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        p.piezometer_id, p.piezometer_name, p.pool, p.sort_order,
+        r.reading_date, r.reading_time, r.dtw_reading,
+        r.operator, r.plopper_sounder, r.wet_dry_moist, r.notes
+      FROM piezometers p
+      LEFT JOIN LATERAL (
+        SELECT reading_date, reading_time, dtw_reading, operator,
+               plopper_sounder, wet_dry_moist, notes
+        FROM readings_piezometers
+        WHERE piezometer_id = p.piezometer_id
+          AND reading_date BETWEEN $1 AND $2
+        ORDER BY reading_date DESC, reading_time DESC
+        LIMIT 1
+      ) r ON true
+      WHERE LOWER(p.status) != 'inactive'
+      ORDER BY p.pool NULLS LAST, p.sort_order, p.piezometer_name
+    `, [start_date, end_date]);
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // KF set-by-set breakdown
 app.get('/api/reports/kf-sets', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
   const { start_date, end_date } = req.query;

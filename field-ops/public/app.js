@@ -5732,17 +5732,19 @@ let vehicleReportType = 'mileage';
 let lastReportRows  = [];
 
 // ── Navigation ────────────────────────────────────────────────────────────────
+const ALL_REPORT_PANELS = ['vehicles','kf','maintenance','pms','piezometers'];
+
 function initReportsScreen() {
-  // Just ensure main tile grid is visible and panels are closed
   el('report-main').classList.remove('hidden');
-  ['vehicles','kf','maintenance','pms'].forEach(c => el(`report-panel-${c}`).classList.add('hidden'));
+  ALL_REPORT_PANELS.forEach(c => el(`report-panel-${c}`).classList.add('hidden'));
 }
 
 const REPORT_PANEL_NAMES = {
-  vehicles:    'Vehicles',
-  kf:          'KF Monthly',
-  maintenance: 'Maintenance Issues',
-  pms:         'PM Records',
+  vehicles:     'Vehicles',
+  kf:           'KF Monthly',
+  maintenance:  'Maintenance Issues',
+  pms:          'PM Records',
+  piezometers:  'Piezometers',
 };
 function openReportPanel(cat) {
   el('report-main').classList.add('hidden');
@@ -5753,10 +5755,11 @@ function openReportPanel(cat) {
   if (cat === 'kf')          initKFReportPanel();
   if (cat === 'maintenance') initMaintenanceReportPanel();
   if (cat === 'pms')         initPMReportPanel();
+  if (cat === 'piezometers') initPiezReportPanel();
 }
 
 function closeReportPanel() {
-  ['vehicles','kf','maintenance','pms'].forEach(c => el(`report-panel-${c}`).classList.add('hidden'));
+  ALL_REPORT_PANELS.forEach(c => el(`report-panel-${c}`).classList.add('hidden'));
   el('report-main').classList.remove('hidden');
   setPanelNav(el('screen-reports'), () => showScreen('dashboard'), 'Reports');
 }
@@ -6336,6 +6339,114 @@ el('export-xlsx-btn').addEventListener('click', async () => {
     showToast('Export failed: ' + err.message, 'error');
   }
 });
+
+// ── Piezometers Report Panel ───────────────────────────────────────────────────
+let piezRepYear  = new Date().getFullYear();
+let piezRepMonth = new Date().getMonth() + 1;
+let piezRepStart = '';
+let piezRepEnd   = '';
+
+function piezRepMonthBounds() {
+  const pad = n => String(n).padStart(2, '0');
+  const lastDay = new Date(piezRepYear, piezRepMonth, 0).getDate();
+  piezRepStart = `${piezRepYear}-${pad(piezRepMonth)}-01`;
+  piezRepEnd   = `${piezRepYear}-${pad(piezRepMonth)}-${pad(lastDay)}`;
+  el('piez-report-start-date').value = piezRepStart;
+  el('piez-report-end-date').value   = piezRepEnd;
+}
+
+function updatePiezRepLabel() {
+  const d = new Date(piezRepYear, piezRepMonth - 1, 1);
+  el('piez-report-month-label').textContent = d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+}
+
+function initPiezReportPanel() {
+  if (!piezRepStart) piezRepMonthBounds();
+  updatePiezRepLabel();
+  renderPiezReport();
+}
+
+el('piez-report-prev-month').addEventListener('click', () => {
+  piezRepMonth--;
+  if (piezRepMonth < 1) { piezRepMonth = 12; piezRepYear--; }
+  piezRepMonthBounds();
+  updatePiezRepLabel();
+  renderPiezReport();
+});
+el('piez-report-next-month').addEventListener('click', () => {
+  piezRepMonth++;
+  if (piezRepMonth > 12) { piezRepMonth = 1; piezRepYear++; }
+  piezRepMonthBounds();
+  updatePiezRepLabel();
+  renderPiezReport();
+});
+el('piez-report-start-date').addEventListener('change', () => {
+  piezRepStart = el('piez-report-start-date').value;
+  renderPiezReport();
+});
+el('piez-report-end-date').addEventListener('change', () => {
+  piezRepEnd = el('piez-report-end-date').value;
+  renderPiezReport();
+});
+
+async function renderPiezReport() {
+  const out = el('report-piez-output');
+  out.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const rows = await api('GET', `/api/reports/piezometers?start_date=${piezRepStart}&end_date=${piezRepEnd}`);
+    const fmtDate = s => s ? localDateStr(s, { month: 'short', day: 'numeric' }) : '—';
+
+    // Group by pool
+    const pools = {};
+    rows.forEach(r => {
+      const pool = r.pool || 'No Pool';
+      if (!pools[pool]) pools[pool] = [];
+      pools[pool].push(r);
+    });
+
+    const totalPiezs = rows.length;
+    const readCount  = rows.filter(r => r.reading_date).length;
+    const pct = totalPiezs > 0 ? (readCount / totalPiezs * 100).toFixed(0) : 0;
+
+    let html = `<div class="report-card">
+      <div class="report-title">Piezometer Readings</div>
+      <div class="report-subtitle">${fmtDate(piezRepStart)} – ${fmtDate(piezRepEnd)}</div>
+      <div class="kf-complete-banner">
+        <span class="kf-complete-fraction">${readCount} / ${totalPiezs}</span>
+        <span class="kf-complete-label">piezometers read</span>
+        <span class="kf-complete-pct">${pct}%</span>
+      </div>`;
+
+    Object.keys(pools).sort().forEach(pool => {
+      const piezs = pools[pool];
+      html += `<div class="report-section-title">Pool ${pool}</div>
+        <table class="report-table">
+          <thead><tr><th>Name</th><th class="report-num">DTW (ft)</th><th>Method</th><th>Operator</th><th class="report-num">Date</th></tr></thead>
+          <tbody>`;
+      piezs.forEach(p => {
+        const read = !!p.reading_date;
+        const dtw  = p.dtw_reading != null ? Number(p.dtw_reading).toFixed(2) : '—';
+        const method = [p.plopper_sounder, p.wet_dry_moist].filter(Boolean).join(' / ') || '—';
+        const dateCell = read
+          ? `<span style="color:var(--green)">${fmtDate(p.reading_date)}</span>`
+          : `<span style="color:var(--red-light)">Not read</span>`;
+        html += `<tr${read ? '' : ' style="opacity:0.6"'}>
+          <td>${escHtml(p.piezometer_name)}</td>
+          <td class="report-num">${dtw}</td>
+          <td>${method}</td>
+          <td>${escHtml(p.operator || '—')}</td>
+          <td class="report-num">${dateCell}</td>
+        </tr>`;
+      });
+      html += '</tbody></table>';
+    });
+
+    html += '</div>';
+    out.innerHTML = html;
+  } catch (err) {
+    out.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
+  }
+}
 
 el('export-pdf-btn').addEventListener('click', () => {
   let printArea = document.getElementById('print-area');
