@@ -38,12 +38,14 @@
     }
     .field { margin-bottom: 14px; }
     label { display: block; font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
-    input {
+    input, select {
       width: 100%; background: var(--bg3); border: 1px solid var(--border);
       color: var(--text); border-radius: var(--radius); padding: 10px 14px;
       font-size: 14px; outline: none; transition: border-color 0.2s;
+      appearance: none;
     }
-    input:focus { border-color: var(--accent); }
+    input:focus, select:focus { border-color: var(--accent); }
+    select { cursor: pointer; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%238892a4' d='M6 8L1 3h10z'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; padding-right: 32px; }
     .row { display: flex; gap: 10px; }
     .row .field { flex: 1; }
     .row .field.shrink { flex: 0 0 100px; }
@@ -142,8 +144,10 @@
       <div class="error-box" id="login-error"></div>
       <form id="login-form">
         <div class="field">
-          <label>Username</label>
-          <input type="text" id="username" name="username" autofocus required />
+          <label>User</label>
+          <select id="username" name="username" required>
+            <option value="">Loading users…</option>
+          </select>
         </div>
         <div class="field">
           <label>Password</label>
@@ -192,7 +196,7 @@
       setTimeout(() => $('db-host').focus(), 50);
     }
 
-    function showLoginStep(dbName) {
+    async function showLoginStep(dbName) {
       $('subtitle').textContent = 'Sign in to access the database viewer';
       $('db-section').classList.add('hidden');
       $('login-section').classList.remove('hidden');
@@ -200,7 +204,21 @@
         $('badge-db').textContent = dbName;
         $('db-badge').classList.remove('hidden');
       }
-      setTimeout(() => $('username').focus(), 50);
+      const sel = $('username');
+      sel.innerHTML = '<option value="">Loading users…</option>';
+      try {
+        const res = await fetch('/api/users/active');
+        const users = await res.json();
+        if (users.length) {
+          sel.innerHTML = '<option value="">— Select user —</option>' +
+            users.map(u => `<option value="${u.username}">${u.full_name || u.username}</option>`).join('');
+        } else {
+          sel.innerHTML = '<option value="">No active users found</option>';
+        }
+      } catch {
+        sel.innerHTML = '<option value="">Error loading users</option>';
+      }
+      setTimeout(() => sel.focus(), 50);
     }
 
     // DB connect form
@@ -254,7 +272,7 @@
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            username: $('username').value,
+            username: $('username').value.trim(),
             password: $('password').value,
           }),
         });

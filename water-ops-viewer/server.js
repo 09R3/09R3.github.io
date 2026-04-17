@@ -113,6 +113,19 @@ app.post('/api/connect', async (req, res) => {
   }
 });
 
+// Active users list — public so login page can populate the dropdown
+app.get('/api/users/active', async (req, res) => {
+  if (!pool) return res.status(503).json({ error: 'No database connected.' });
+  try {
+    const { rows } = await pool.query(
+      `SELECT username, full_name FROM users WHERE is_active = true ORDER BY full_name ASC`
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Login — authenticate against users table in the connected DB
 app.post('/auth/login', async (req, res) => {
   const { username, password } = req.body || {};
