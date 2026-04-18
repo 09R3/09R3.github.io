@@ -830,6 +830,57 @@ function initSidebarSections() {
 }
 initSidebarSections();
 
+// ── Date range helpers ─────────────────────────────────────────────────────
+function todayStr() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function daysAgoStr(n) {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  return d.toISOString().slice(0, 10);
+}
+
+function setDefaultDates(startEl, endEl) {
+  startEl.value = daysAgoStr(30);
+  endEl.value   = todayStr();
+}
+
+function buildMonthOptions() {
+  const today = new Date();
+  const opts = ['<option value="">Quick select month…</option>', '<option value="last30">Last 30 days</option>'];
+  for (let i = 0; i < 24; i++) {
+    const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
+    const y = d.getFullYear();
+    const m = d.getMonth() + 1;
+    const label = d.toLocaleString('default', { month: 'long', year: 'numeric' });
+    opts.push(`<option value="${y}-${String(m).padStart(2,'0')}">${label}</option>`);
+  }
+  return opts.join('');
+}
+
+function wireMonthSelect(selectId, startEl, endEl) {
+  const sel = $(selectId);
+  if (!sel) return;
+  sel.innerHTML = buildMonthOptions();
+  sel.addEventListener('change', () => {
+    const val = sel.value;
+    if (!val) return;
+    if (val === 'last30') {
+      startEl.value = daysAgoStr(30);
+      endEl.value   = todayStr();
+    } else {
+      const [y, m] = val.split('-').map(Number);
+      const first = new Date(y, m - 1, 1);
+      const last  = new Date(y, m, 0);
+      const now   = new Date();
+      startEl.value = first.toISOString().slice(0, 10);
+      endEl.value   = last > now ? todayStr() : last.toISOString().slice(0, 10);
+    }
+    sel.value = '';
+  });
+}
+
 // ── Reports ────────────────────────────────────────────────────────────────
 const reportPanel   = $('report-panel');
 const rphPlant      = $('rph-plant');
@@ -854,6 +905,7 @@ const colSel = { copy: null, clear: null };
 for (const pfx of ['rph', 'rwr', 'rcn', 'rch', 'rkf', 'rpge', 'rpwr', 'rdwr', 'rvm']) {
   $(`${pfx}-col-copy-btn`).addEventListener('click', () => colSel.copy?.());
   $(`${pfx}-col-copy-clear`).addEventListener('click', () => colSel.clear?.());
+  wireMonthSelect(`${pfx}-month`, $(`${pfx}-start`), $(`${pfx}-end`));
 }
 
 document.addEventListener('keydown', e => {
@@ -1000,6 +1052,7 @@ rphChips.addEventListener('click', e => {
 $('report-pump-hours').addEventListener('click', async () => {
   showReport('pump-hours', 'Pump Hours Report');
   showSubPanel('report-pump-hours-panel');
+  setDefaultDates(rphStart, rphEnd);
   rphStatus.textContent = 'Loading pumping plants…';
   rphGrid.innerHTML = emptyState('Select a pumping plant and date range,\nthen click Run Report');
   rphExportBtn.classList.add('hidden');
@@ -1096,6 +1149,7 @@ const RWR_HDRS = ['Date', 'Time', 'State Well #', 'Common Name', 'Hour Reading',
 $('report-well-readings').addEventListener('click', async () => {
   showReport('well-readings', 'Well Readings Report');
   showSubPanel('report-well-readings-panel');
+  setDefaultDates(rwrStart, rwrEnd);
   rwrStatus.textContent = 'Loading areas…';
   rwrGrid.innerHTML = emptyState('Select an area and date range,\nthen click Run Report');
   rwrExportBtn.classList.add('hidden');
@@ -1182,6 +1236,7 @@ function makeReport({ sidebarId, panelId, title, prefix, optionsUrl, reportUrl, 
   $(sidebarId).addEventListener('click', async () => {
     showReport(sidebarId.replace('report-', ''), title);
     showSubPanel(panelId);
+    setDefaultDates(startEl, endEl);
     status.textContent = 'Loading options…';
     expBtn.classList.add('hidden');
     copyBar.classList.add('hidden');

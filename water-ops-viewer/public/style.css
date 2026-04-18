@@ -267,6 +267,7 @@ select { cursor: pointer; }
 }
 .report-select:focus, .report-date:focus { border-color: var(--accent); }
 .report-select { min-width: 180px; }
+.report-month-select { min-width: 160px; }
 
 .report-status {
   padding: 6px 16px; font-size: 12px; color: var(--text-muted);
