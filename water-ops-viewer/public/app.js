@@ -388,10 +388,9 @@ async function showExportPreview(title, exportBody, cachedResult = null) {
     let rows, columns, total;
 
     if (cachedResult) {
-      // SQL result already in memory
-      rows = cachedResult.rows;
-      columns = cachedResult.fields.map(f => f.name);
-      total = cachedResult.rowCount;
+      rows    = cachedResult.rows;
+      columns = cachedResult.fields ? cachedResult.fields.map(f => f.name) : (cachedResult.columns || []);
+      total   = cachedResult.rowCount ?? rows.length;
     } else {
       // Table browse — fetch preview respecting current search/sort
       const params = new URLSearchParams({
@@ -848,48 +847,69 @@ let rphData = [];
 let rphSelectedLetters = new Set(); // empty = All
 
 // ── Column-select utility (shared by all report grids) ─────────────────────
-function initColSelect(gridEl, copyBarEl, labelEl, copyBtnEl, clearBtnEl) {
+// Shared state — only one report grid is visible at a time
+const colSel = { copy: null, clear: null };
+
+// One-time button setup — avoids stacking listeners on re-runs
+for (const pfx of ['rph', 'rwr']) {
+  $(`${pfx}-col-copy-btn`).addEventListener('click', () => colSel.copy?.());
+  $(`${pfx}-col-copy-clear`).addEventListener('click', () => colSel.clear?.());
+}
+
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'c' && colSel.copy && !reportPanel.classList.contains('hidden')) {
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed) { e.preventDefault(); colSel.copy(); }
+  }
+});
+
+function writeToClipboard(text) {
+  // Check secure context synchronously so the fallback runs inside the user gesture
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).catch(() => {});
+  } else {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0.01;pointer-events:none';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    try { document.execCommand('copy'); } catch {}
+    document.body.removeChild(ta);
+  }
+}
+
+function initColSelect(gridEl, copyBarEl, labelEl) {
+  copyBarEl.classList.add('hidden');
   const table = gridEl.querySelector('.data-table');
-  if (!table) return () => {};
+  if (!table) { colSel.copy = null; colSel.clear = null; return; }
 
   const headers = [...table.querySelectorAll('thead th')];
   const selectedCols = new Set();
 
   function updateHighlight() {
     table.querySelectorAll('.col-sel').forEach(el => el.classList.remove('col-sel'));
-    if (selectedCols.size === 0) {
-      copyBarEl.classList.add('hidden');
-      return;
-    }
+    if (!selectedCols.size) { copyBarEl.classList.add('hidden'); return; }
     selectedCols.forEach(idx => {
-      if (headers[idx]) headers[idx].classList.add('col-sel');
-      table.querySelectorAll('tbody tr').forEach(tr => {
-        if (tr.cells[idx]) tr.cells[idx].classList.add('col-sel');
-      });
+      headers[idx]?.classList.add('col-sel');
+      table.querySelectorAll('tbody tr').forEach(tr => { tr.cells[idx]?.classList.add('col-sel'); });
     });
     labelEl.textContent = `${selectedCols.size} column${selectedCols.size > 1 ? 's' : ''} selected — Ctrl+C or`;
     copyBarEl.classList.remove('hidden');
   }
 
   function copyColumns() {
+    if (!selectedCols.size) return;
     const cols = [...selectedCols].sort((a, b) => a - b);
-    const lines = [];
-    lines.push(cols.map(i => headers[i]?.textContent.trim() ?? '').join('\t'));
+    const lines = [cols.map(i => headers[i]?.textContent.trim() ?? '').join('\t')];
     table.querySelectorAll('tbody tr').forEach(tr => {
       lines.push(cols.map(i => tr.cells[i]?.textContent.trim() ?? '').join('\t'));
     });
-    const text = lines.join('\n');
-    navigator.clipboard.writeText(text).catch(() => {
-      const ta = document.createElement('textarea');
-      ta.value = text;
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand('copy');
-      document.body.removeChild(ta);
-    });
-    const orig = copyBtnEl.textContent;
-    copyBtnEl.textContent = '✓ Copied!';
-    setTimeout(() => { copyBtnEl.textContent = orig; }, 1500);
+    writeToClipboard(lines.join('\n'));
+    const btn = $(`${copyBarEl.id.replace('-col-copy-bar','-col-copy-btn')}`);
+    const orig = btn.textContent;
+    btn.textContent = '✓ Copied!';
+    setTimeout(() => { btn.textContent = orig; }, 1500);
   }
 
   headers.forEach((th, idx) => {
@@ -900,27 +920,12 @@ function initColSelect(gridEl, copyBarEl, labelEl, copyBtnEl, clearBtnEl) {
     });
   });
 
-  copyBtnEl.addEventListener('click', copyColumns);
-  clearBtnEl.addEventListener('click', () => { selectedCols.clear(); updateHighlight(); });
-
-  // Return a cleanup/copy fn so the report-level Ctrl+C can call it
-  return copyColumns;
+  colSel.copy = copyColumns;
+  colSel.clear = () => { selectedCols.clear(); updateHighlight(); };
 }
 
-// Ctrl+C handler for active report columns
-let activeColCopy = null;
-document.addEventListener('keydown', e => {
-  if ((e.ctrlKey || e.metaKey) && e.key === 'c' && activeColCopy && !reportPanel.classList.contains('hidden')) {
-    const sel = window.getSelection();
-    if (!sel || sel.isCollapsed) {
-      e.preventDefault();
-      activeColCopy();
-    }
-  }
-});
-
 function showReport(name) {
-  activeColCopy = null;
+  colSel.copy = null; colSel.clear = null;
   // Deactivate table view
   gridContainer.innerHTML = emptyState('Select a table from the sidebar\nor open the SQL Editor');
   filterBar.classList.add('hidden');
@@ -1051,9 +1056,7 @@ rphRunBtn.addEventListener('click', async () => {
     rphGrid.innerHTML = html;
     rphStatus.textContent = `${rphData.length} reading${rphData.length !== 1 ? 's' : ''} found.`;
     rphExportBtn.classList.remove('hidden');
-    activeColCopy = initColSelect(
-      rphGrid, $('rph-col-copy-bar'), $('rph-col-copy-label'), $('rph-col-copy-btn'), $('rph-col-copy-clear')
-    );
+    initColSelect(rphGrid, $('rph-col-copy-bar'), $('rph-col-copy-label'));
   } catch (err) {
     rphGrid.innerHTML = errorState(err.message);
     rphStatus.textContent = 'Error running report.';
@@ -1066,9 +1069,13 @@ rphExportBtn.addEventListener('click', () => {
   const plantLabel = rphPlant.options[rphPlant.selectedIndex]?.text || rphPlant.value;
   const start = rphStart.value;
   const end   = rphEnd.value;
-  const cols  = ['pump_letter', 'reading_date', 'hour_reading'];
-  const hdrs  = ['Pump', 'Reading Date', 'Hour Reading'];
-  showExportPreview(`Pump Hours — ${plantLabel} (${start} to ${end})`, hdrs, cols, rphData);
+  const map   = [['pump_letter','Pump'],['reading_date','Reading Date'],['hour_reading','Hour Reading']];
+  const hdrs  = map.map(([,h]) => h);
+  const title = `Pump_Hours_${plantLabel}_${start}_to_${end}`;
+  const exportRows = rphData.map(r => Object.fromEntries(map.map(([k,h]) => [h, r[k]])));
+  const body  = { rows: exportRows, columns: hdrs, title };
+  showExportPreview(`Pump Hours — ${plantLabel} (${start} to ${end})`, body,
+    { rows: exportRows, columns: hdrs, rowCount: exportRows.length });
 });
 
 // ── Well Readings Report ───────────────────────────────────────────────────
@@ -1138,9 +1145,7 @@ rwrRunBtn.addEventListener('click', async () => {
     rwrGrid.innerHTML = html;
     rwrStatus.textContent = `${rwrData.length} reading${rwrData.length !== 1 ? 's' : ''} found.`;
     rwrExportBtn.classList.remove('hidden');
-    activeColCopy = initColSelect(
-      rwrGrid, $('rwr-col-copy-bar'), $('rwr-col-copy-label'), $('rwr-col-copy-btn'), $('rwr-col-copy-clear')
-    );
+    initColSelect(rwrGrid, $('rwr-col-copy-bar'), $('rwr-col-copy-label'));
   } catch (err) {
     rwrGrid.innerHTML = errorState(err.message);
     rwrStatus.textContent = 'Error running report.';
@@ -1152,7 +1157,13 @@ rwrExportBtn.addEventListener('click', () => {
   const area  = rwrArea.value;
   const start = rwrStart.value;
   const end   = rwrEnd.value;
-  showExportPreview(`Well Readings — ${area} (${start} to ${end})`, RWR_HDRS, RWR_COLS, rwrData);
+  const map   = RWR_COLS.map((k, i) => [k, RWR_HDRS[i]]);
+  const hdrs  = RWR_HDRS;
+  const title = `Well_Readings_${area}_${start}_to_${end}`;
+  const exportRows = rwrData.map(r => Object.fromEntries(map.map(([k,h]) => [h, r[k]])));
+  const body  = { rows: exportRows, columns: hdrs, title };
+  showExportPreview(`Well Readings — ${area} (${start} to ${end})`, body,
+    { rows: exportRows, columns: hdrs, rowCount: exportRows.length });
 });
 
 // ── Version ────────────────────────────────────────────────────────────────

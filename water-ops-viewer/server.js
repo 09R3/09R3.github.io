@@ -349,7 +349,10 @@ app.get('/api/table/:schema/:table', requireDB, async (req, res) => {
 // ─── Export Routes ────────────────────────────────────────────────────────────
 
 async function fetchExportData(req) {
-  const { sql, schema, table } = req.body;
+  const { sql, schema, table, rows, columns, title } = req.body;
+  if (rows && columns) {
+    return { rows, columns, title: title || 'Export' };
+  }
   if (sql) {
     const result = await pool.query(sql);
     return {
