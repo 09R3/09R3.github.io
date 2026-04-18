@@ -860,7 +860,7 @@ app.get('/api/reports/pump-hours', requireDB, async (req, res) => {
       letterClause = ` AND p.pump_letter = ANY($4)`;
     }
     const result = await pool.query(
-      `SELECT p.pump_letter, r.reading_date, r.hour_reading
+      `SELECT p.pump_letter, r.reading_date, r.reading_time, r.hour_reading
        FROM readings_pump_hours r
        JOIN pump_positions p ON p.position_id = r.position_id
        WHERE p.site_id = $1

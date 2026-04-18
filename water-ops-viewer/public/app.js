@@ -1043,8 +1043,8 @@ rphRunBtn.addEventListener('click', async () => {
       return;
     }
 
-    const cols = ['pump_letter', 'reading_date', 'hour_reading'];
-    const headers = ['Pump', 'Reading Date', 'Hour Reading'];
+    const cols = ['pump_letter', 'reading_date', 'reading_time', 'hour_reading'];
+    const headers = ['Pump', 'Reading Date', 'Reading Time', 'Hour Reading'];
 
     let html = `<table class="data-table"><thead><tr>
       ${headers.map(h => `<th>${h}</th>`).join('')}
@@ -1069,7 +1069,7 @@ rphExportBtn.addEventListener('click', () => {
   const plantLabel = rphPlant.options[rphPlant.selectedIndex]?.text || rphPlant.value;
   const start = rphStart.value;
   const end   = rphEnd.value;
-  const map   = [['pump_letter','Pump'],['reading_date','Reading Date'],['hour_reading','Hour Reading']];
+  const map   = [['pump_letter','Pump'],['reading_date','Reading Date'],['reading_time','Reading Time'],['hour_reading','Hour Reading']];
   const hdrs  = map.map(([,h]) => h);
   const title = `Pump_Hours_${plantLabel}_${start}_to_${end}`;
   const exportRows = rphData.map(r => Object.fromEntries(map.map(([k,h]) => [h, r[k]])));
