@@ -926,6 +926,239 @@ app.get('/api/reports/well-readings', requireDB, async (req, res) => {
   }
 });
 
+// ─── Additional Reading Reports ───────────────────────────────────────────────
+
+// Helper: build optional integer filter clause
+function optIntFilter(val, col, nextParam) {
+  if (!val) return { clause: '', param: null };
+  return { clause: ` AND ${col} = $${nextParam}`, param: parseInt(val) };
+}
+function optTextFilter(val, col, nextParam) {
+  if (!val) return { clause: '', param: null };
+  return { clause: ` AND ${col} = $${nextParam}`, param: val };
+}
+
+// ── Canal Readings ──────────────────────────────────────────────────────────
+app.get('/api/reports/canal-readings/options', requireDB, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT cs.structure_id::text AS value, cs.structure_name AS label
+       FROM canal_structures cs
+       WHERE cs.structure_id IN (SELECT DISTINCT structure_id FROM readings_canal WHERE structure_id IS NOT NULL)
+       ORDER BY cs.structure_name`
+    );
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+app.get('/api/reports/canal-readings', requireDB, async (req, res) => {
+  const { structure_id, start, end } = req.query;
+  if (!start || !end) return res.status(400).json({ error: 'start and end required.' });
+  try {
+    const { clause, param } = optIntFilter(structure_id, 'r.structure_id', 3);
+    const params = [start, end, ...(param != null ? [param] : [])];
+    const { rows } = await pool.query(
+      `SELECT cs.structure_name, r.reading_date, r.reading_time,
+              r.instantaneous_flow_cfs, r.totalizer_reading_af,
+              r.gate_setting, r.head_reading_ft, r.derived_flow_cfs
+       FROM readings_canal r
+       JOIN canal_structures cs ON cs.structure_id = r.structure_id
+       WHERE r.reading_date >= $1 AND r.reading_date <= $2${clause}
+       ORDER BY r.reading_date, r.reading_time, cs.structure_name`, params
+    );
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Compressor Hours ────────────────────────────────────────────────────────
+app.get('/api/reports/compressor-hours/options', requireDB, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT b.building_id::text AS value, b.building_name AS label
+       FROM buildings b
+       WHERE b.building_id IN (
+         SELECT DISTINCT ac.building_id FROM air_compressors ac
+         WHERE ac.compressor_id IN (SELECT DISTINCT compressor_id FROM readings_compressor_hours WHERE compressor_id IS NOT NULL)
+           AND ac.building_id IS NOT NULL
+       ) ORDER BY b.building_name`
+    );
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+app.get('/api/reports/compressor-hours', requireDB, async (req, res) => {
+  const { building_id, start, end } = req.query;
+  if (!start || !end) return res.status(400).json({ error: 'start and end required.' });
+  try {
+    const { clause, param } = optIntFilter(building_id, 'ac.building_id', 3);
+    const params = [start, end, ...(param != null ? [param] : [])];
+    const { rows } = await pool.query(
+      `SELECT b.building_name, ac.serial_number, r.reading_date, r.reading_time, r.hour_reading
+       FROM readings_compressor_hours r
+       JOIN air_compressors ac ON ac.compressor_id = r.compressor_id
+       JOIN buildings b ON b.building_id = ac.building_id
+       WHERE r.reading_date >= $1 AND r.reading_date <= $2${clause}
+       ORDER BY r.reading_date, r.reading_time, b.building_name`, params
+    );
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── KF Monthly ──────────────────────────────────────────────────────────────
+app.get('/api/reports/kf-monthly/options', requireDB, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT DISTINCT w.area AS value, w.area AS label
+       FROM readings_kf_monthly r
+       JOIN wells w ON w.well_id = r.well_id
+       WHERE w.area IS NOT NULL ORDER BY w.area`
+    );
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+app.get('/api/reports/kf-monthly', requireDB, async (req, res) => {
+  const { area, start, end } = req.query;
+  if (!start || !end) return res.status(400).json({ error: 'start and end required.' });
+  try {
+    const { clause, param } = optTextFilter(area, 'w.area', 3);
+    const params = [start, end, ...(param != null ? [param] : [])];
+    const { rows } = await pool.query(
+      `SELECT r.common_name, r.reading_date, r.reading_time,
+              r.dtw_reading, r.operator, r.plopper_sounder, r.well_on_off
+       FROM readings_kf_monthly r
+       JOIN wells w ON w.well_id = r.well_id
+       WHERE r.reading_date >= $1 AND r.reading_date <= $2${clause}
+       ORDER BY r.reading_date, r.reading_time, r.common_name`, params
+    );
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── PGE Meters ──────────────────────────────────────────────────────────────
+app.get('/api/reports/pge-meters/options', requireDB, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT b.building_id::text AS value, b.building_name AS label
+       FROM buildings b
+       WHERE b.building_id IN (
+         SELECT DISTINCT pm.building_id FROM pge_meters pm
+         WHERE pm.pge_meter_id IN (SELECT DISTINCT pge_meter_id FROM readings_pge_meters WHERE pge_meter_id IS NOT NULL)
+           AND pm.building_id IS NOT NULL
+       ) ORDER BY b.building_name`
+    );
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+app.get('/api/reports/pge-meters', requireDB, async (req, res) => {
+  const { building_id, start, end } = req.query;
+  if (!start || !end) return res.status(400).json({ error: 'start and end required.' });
+  try {
+    const { clause, param } = optIntFilter(building_id, 'pm.building_id', 3);
+    const params = [start, end, ...(param != null ? [param] : [])];
+    const { rows } = await pool.query(
+      `SELECT b.building_name, pm.meter_name, r.reading_date, r.reading_time, r.kwh_reading
+       FROM readings_pge_meters r
+       JOIN pge_meters pm ON pm.pge_meter_id = r.pge_meter_id
+       JOIN buildings b ON b.building_id = pm.building_id
+       WHERE r.reading_date >= $1 AND r.reading_date <= $2${clause}
+       ORDER BY r.reading_date, r.reading_time, b.building_name, pm.meter_name`, params
+    );
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Power Monitors ──────────────────────────────────────────────────────────
+app.get('/api/reports/power-monitors/options', requireDB, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT b.building_id::text AS value, b.building_name AS label
+       FROM buildings b
+       WHERE b.building_id IN (
+         SELECT DISTINCT pw.building_id FROM power_monitors pw
+         WHERE pw.monitor_id IN (SELECT DISTINCT monitor_id FROM readings_power_monitors WHERE monitor_id IS NOT NULL)
+           AND pw.building_id IS NOT NULL
+       ) ORDER BY b.building_name`
+    );
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+app.get('/api/reports/power-monitors', requireDB, async (req, res) => {
+  const { building_id, start, end } = req.query;
+  if (!start || !end) return res.status(400).json({ error: 'start and end required.' });
+  try {
+    const { clause, param } = optIntFilter(building_id, 'pw.building_id', 3);
+    const params = [start, end, ...(param != null ? [param] : [])];
+    const { rows } = await pool.query(
+      `SELECT b.building_name, pw.monitor_number, r.reading_date, r.reading_time, r.kwh_reading
+       FROM readings_power_monitors r
+       JOIN power_monitors pw ON pw.monitor_id = r.monitor_id
+       JOIN buildings b ON b.building_id = pw.building_id
+       WHERE r.reading_date >= $1 AND r.reading_date <= $2${clause}
+       ORDER BY r.reading_date, r.reading_time, b.building_name, pw.monitor_number`, params
+    );
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Run DWR ─────────────────────────────────────────────────────────────────
+app.get('/api/reports/run-dwr/options', requireDB, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT DISTINCT w.area AS value, w.area AS label
+       FROM readings_run_dwr r
+       JOIN wells w ON w.well_id = r.well_id
+       WHERE w.area IS NOT NULL ORDER BY w.area`
+    );
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+app.get('/api/reports/run-dwr', requireDB, async (req, res) => {
+  const { area, start, end } = req.query;
+  if (!start || !end) return res.status(400).json({ error: 'start and end required.' });
+  try {
+    const { clause, param } = optTextFilter(area, 'w.area', 3);
+    const params = [start, end, ...(param != null ? [param] : [])];
+    const { rows } = await pool.query(
+      `SELECT w.common_name, w.state_well_number, r.reading_date, r.reading_time,
+              r.depth_to_water, r.method, r.operator
+       FROM readings_run_dwr r
+       JOIN wells w ON w.well_id = r.well_id
+       WHERE r.reading_date >= $1 AND r.reading_date <= $2${clause}
+       ORDER BY r.reading_date, r.reading_time, w.common_name`, params
+    );
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Vehicle Monthly ─────────────────────────────────────────────────────────
+app.get('/api/reports/vehicle-monthly/options', requireDB, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT v.vehicle_id::text AS value,
+              v.vehicle_number || COALESCE(' — ' || v.year || ' ' || v.make || ' ' || v.model, '') AS label
+       FROM vehicles v
+       WHERE v.vehicle_id IN (SELECT DISTINCT vehicle_id FROM readings_vehicle_monthly WHERE vehicle_id IS NOT NULL)
+       ORDER BY v.vehicle_number`
+    );
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+app.get('/api/reports/vehicle-monthly', requireDB, async (req, res) => {
+  const { vehicle_id, start, end } = req.query;
+  if (!start || !end) return res.status(400).json({ error: 'start and end required.' });
+  try {
+    const { clause, param } = optIntFilter(vehicle_id, 'r.vehicle_id', 3);
+    const params = [start, end, ...(param != null ? [param] : [])];
+    const { rows } = await pool.query(
+      `SELECT v.vehicle_number, v.make, v.model, r.reading_date, r.reading_time,
+              r.odometer_miles, r.engine_hours
+       FROM readings_vehicle_monthly r
+       JOIN vehicles v ON v.vehicle_id = r.vehicle_id
+       WHERE r.reading_date >= $1 AND r.reading_date <= $2${clause}
+       ORDER BY r.reading_date, r.reading_time`, params
+    );
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ─── Start Server ─────────────────────────────────────────────────────────────
 
 const PORT = process.env.PORT || 3000;

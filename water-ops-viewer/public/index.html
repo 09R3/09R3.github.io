@@ -92,6 +92,13 @@
         <div class="sidebar-section-body" id="reports-section-body">
           <button class="report-item" id="report-pump-hours">⏱ Pump Hours</button>
           <button class="report-item" id="report-well-readings">💧 Well Readings</button>
+          <button class="report-item" id="report-canal">🌊 Canal Readings</button>
+          <button class="report-item" id="report-compressor-hours">⚙️ Compressor Hours</button>
+          <button class="report-item" id="report-kf-monthly">📏 KF Monthly</button>
+          <button class="report-item" id="report-pge-meters">⚡ PGE Meters</button>
+          <button class="report-item" id="report-power-monitors">📊 Power Monitors</button>
+          <button class="report-item" id="report-run-dwr">🗒️ Run DWR</button>
+          <button class="report-item" id="report-vehicle-monthly">🚗 Vehicle Monthly</button>
         </div>
       </div>
 
@@ -205,6 +212,125 @@
             <p>Select an area and date range,<br>then click Run Report</p>
           </div>
         </div>
+      </div>
+
+      <!-- Canal Readings Report -->
+      <div id="report-canal-panel" class="hidden">
+        <div class="report-controls">
+          <div class="report-control-group">
+            <label class="report-label">Structure</label>
+            <select id="rcn-select" class="report-select"><option value="">Loading…</option></select>
+          </div>
+          <div class="report-control-group"><label class="report-label">From</label><input type="date" id="rcn-start" class="report-date" /></div>
+          <div class="report-control-group"><label class="report-label">To</label><input type="date" id="rcn-end" class="report-date" /></div>
+          <button class="btn btn-primary btn-sm" id="rcn-run-btn">▶ Run Report</button>
+          <button class="btn btn-ghost btn-sm hidden" id="rcn-export-btn">↓ Export</button>
+        </div>
+        <div class="report-status" id="rcn-status"></div>
+        <div class="col-copy-bar hidden" id="rcn-col-copy-bar"><span class="col-copy-label" id="rcn-col-copy-label"></span><button class="btn btn-ghost btn-sm col-copy-btn" id="rcn-col-copy-btn">📋 Copy</button><button class="col-copy-clear" id="rcn-col-copy-clear">✕</button></div>
+        <div class="report-grid-wrap" id="rcn-grid"><div class="empty-state"><div class="empty-icon">🌊</div><p>Select a structure and date range,<br>then click Run Report</p></div></div>
+      </div>
+
+      <!-- Compressor Hours Report -->
+      <div id="report-compressor-hours-panel" class="hidden">
+        <div class="report-controls">
+          <div class="report-control-group">
+            <label class="report-label">Building</label>
+            <select id="rch-select" class="report-select"><option value="">Loading…</option></select>
+          </div>
+          <div class="report-control-group"><label class="report-label">From</label><input type="date" id="rch-start" class="report-date" /></div>
+          <div class="report-control-group"><label class="report-label">To</label><input type="date" id="rch-end" class="report-date" /></div>
+          <button class="btn btn-primary btn-sm" id="rch-run-btn">▶ Run Report</button>
+          <button class="btn btn-ghost btn-sm hidden" id="rch-export-btn">↓ Export</button>
+        </div>
+        <div class="report-status" id="rch-status"></div>
+        <div class="col-copy-bar hidden" id="rch-col-copy-bar"><span class="col-copy-label" id="rch-col-copy-label"></span><button class="btn btn-ghost btn-sm col-copy-btn" id="rch-col-copy-btn">📋 Copy</button><button class="col-copy-clear" id="rch-col-copy-clear">✕</button></div>
+        <div class="report-grid-wrap" id="rch-grid"><div class="empty-state"><div class="empty-icon">⚙️</div><p>Select a building and date range,<br>then click Run Report</p></div></div>
+      </div>
+
+      <!-- KF Monthly Report -->
+      <div id="report-kf-monthly-panel" class="hidden">
+        <div class="report-controls">
+          <div class="report-control-group">
+            <label class="report-label">Area</label>
+            <select id="rkf-select" class="report-select"><option value="">Loading…</option></select>
+          </div>
+          <div class="report-control-group"><label class="report-label">From</label><input type="date" id="rkf-start" class="report-date" /></div>
+          <div class="report-control-group"><label class="report-label">To</label><input type="date" id="rkf-end" class="report-date" /></div>
+          <button class="btn btn-primary btn-sm" id="rkf-run-btn">▶ Run Report</button>
+          <button class="btn btn-ghost btn-sm hidden" id="rkf-export-btn">↓ Export</button>
+        </div>
+        <div class="report-status" id="rkf-status"></div>
+        <div class="col-copy-bar hidden" id="rkf-col-copy-bar"><span class="col-copy-label" id="rkf-col-copy-label"></span><button class="btn btn-ghost btn-sm col-copy-btn" id="rkf-col-copy-btn">📋 Copy</button><button class="col-copy-clear" id="rkf-col-copy-clear">✕</button></div>
+        <div class="report-grid-wrap" id="rkf-grid"><div class="empty-state"><div class="empty-icon">📏</div><p>Select an area and date range,<br>then click Run Report</p></div></div>
+      </div>
+
+      <!-- PGE Meters Report -->
+      <div id="report-pge-meters-panel" class="hidden">
+        <div class="report-controls">
+          <div class="report-control-group">
+            <label class="report-label">Building</label>
+            <select id="rpge-select" class="report-select"><option value="">Loading…</option></select>
+          </div>
+          <div class="report-control-group"><label class="report-label">From</label><input type="date" id="rpge-start" class="report-date" /></div>
+          <div class="report-control-group"><label class="report-label">To</label><input type="date" id="rpge-end" class="report-date" /></div>
+          <button class="btn btn-primary btn-sm" id="rpge-run-btn">▶ Run Report</button>
+          <button class="btn btn-ghost btn-sm hidden" id="rpge-export-btn">↓ Export</button>
+        </div>
+        <div class="report-status" id="rpge-status"></div>
+        <div class="col-copy-bar hidden" id="rpge-col-copy-bar"><span class="col-copy-label" id="rpge-col-copy-label"></span><button class="btn btn-ghost btn-sm col-copy-btn" id="rpge-col-copy-btn">📋 Copy</button><button class="col-copy-clear" id="rpge-col-copy-clear">✕</button></div>
+        <div class="report-grid-wrap" id="rpge-grid"><div class="empty-state"><div class="empty-icon">⚡</div><p>Select a building and date range,<br>then click Run Report</p></div></div>
+      </div>
+
+      <!-- Power Monitors Report -->
+      <div id="report-power-monitors-panel" class="hidden">
+        <div class="report-controls">
+          <div class="report-control-group">
+            <label class="report-label">Building</label>
+            <select id="rpwr-select" class="report-select"><option value="">Loading…</option></select>
+          </div>
+          <div class="report-control-group"><label class="report-label">From</label><input type="date" id="rpwr-start" class="report-date" /></div>
+          <div class="report-control-group"><label class="report-label">To</label><input type="date" id="rpwr-end" class="report-date" /></div>
+          <button class="btn btn-primary btn-sm" id="rpwr-run-btn">▶ Run Report</button>
+          <button class="btn btn-ghost btn-sm hidden" id="rpwr-export-btn">↓ Export</button>
+        </div>
+        <div class="report-status" id="rpwr-status"></div>
+        <div class="col-copy-bar hidden" id="rpwr-col-copy-bar"><span class="col-copy-label" id="rpwr-col-copy-label"></span><button class="btn btn-ghost btn-sm col-copy-btn" id="rpwr-col-copy-btn">📋 Copy</button><button class="col-copy-clear" id="rpwr-col-copy-clear">✕</button></div>
+        <div class="report-grid-wrap" id="rpwr-grid"><div class="empty-state"><div class="empty-icon">📊</div><p>Select a building and date range,<br>then click Run Report</p></div></div>
+      </div>
+
+      <!-- Run DWR Report -->
+      <div id="report-run-dwr-panel" class="hidden">
+        <div class="report-controls">
+          <div class="report-control-group">
+            <label class="report-label">Area</label>
+            <select id="rdwr-select" class="report-select"><option value="">Loading…</option></select>
+          </div>
+          <div class="report-control-group"><label class="report-label">From</label><input type="date" id="rdwr-start" class="report-date" /></div>
+          <div class="report-control-group"><label class="report-label">To</label><input type="date" id="rdwr-end" class="report-date" /></div>
+          <button class="btn btn-primary btn-sm" id="rdwr-run-btn">▶ Run Report</button>
+          <button class="btn btn-ghost btn-sm hidden" id="rdwr-export-btn">↓ Export</button>
+        </div>
+        <div class="report-status" id="rdwr-status"></div>
+        <div class="col-copy-bar hidden" id="rdwr-col-copy-bar"><span class="col-copy-label" id="rdwr-col-copy-label"></span><button class="btn btn-ghost btn-sm col-copy-btn" id="rdwr-col-copy-btn">📋 Copy</button><button class="col-copy-clear" id="rdwr-col-copy-clear">✕</button></div>
+        <div class="report-grid-wrap" id="rdwr-grid"><div class="empty-state"><div class="empty-icon">🗒️</div><p>Select an area and date range,<br>then click Run Report</p></div></div>
+      </div>
+
+      <!-- Vehicle Monthly Report -->
+      <div id="report-vehicle-monthly-panel" class="hidden">
+        <div class="report-controls">
+          <div class="report-control-group">
+            <label class="report-label">Vehicle</label>
+            <select id="rvm-select" class="report-select"><option value="">Loading…</option></select>
+          </div>
+          <div class="report-control-group"><label class="report-label">From</label><input type="date" id="rvm-start" class="report-date" /></div>
+          <div class="report-control-group"><label class="report-label">To</label><input type="date" id="rvm-end" class="report-date" /></div>
+          <button class="btn btn-primary btn-sm" id="rvm-run-btn">▶ Run Report</button>
+          <button class="btn btn-ghost btn-sm hidden" id="rvm-export-btn">↓ Export</button>
+        </div>
+        <div class="report-status" id="rvm-status"></div>
+        <div class="col-copy-bar hidden" id="rvm-col-copy-bar"><span class="col-copy-label" id="rvm-col-copy-label"></span><button class="btn btn-ghost btn-sm col-copy-btn" id="rvm-col-copy-btn">📋 Copy</button><button class="col-copy-clear" id="rvm-col-copy-clear">✕</button></div>
+        <div class="report-grid-wrap" id="rvm-grid"><div class="empty-state"><div class="empty-icon">🚗</div><p>Select a vehicle and date range,<br>then click Run Report</p></div></div>
       </div>
 
     </div>

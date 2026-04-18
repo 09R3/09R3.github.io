@@ -851,7 +851,7 @@ let rphSelectedLetters = new Set(); // empty = All
 const colSel = { copy: null, clear: null };
 
 // One-time button setup — avoids stacking listeners on re-runs
-for (const pfx of ['rph', 'rwr']) {
+for (const pfx of ['rph', 'rwr', 'rcn', 'rch', 'rkf', 'rpge', 'rpwr', 'rdwr', 'rvm']) {
   $(`${pfx}-col-copy-btn`).addEventListener('click', () => colSel.copy?.());
   $(`${pfx}-col-copy-clear`).addEventListener('click', () => colSel.clear?.());
 }
@@ -924,9 +924,13 @@ function initColSelect(gridEl, copyBarEl, labelEl) {
   colSel.clear = () => { selectedCols.clear(); updateHighlight(); };
 }
 
-function showReport(name) {
+function showSubPanel(id) {
+  document.querySelectorAll('#report-panel > div').forEach(el => el.classList.add('hidden'));
+  $(id).classList.remove('hidden');
+}
+
+function showReport(name, title) {
   colSel.copy = null; colSel.clear = null;
-  // Deactivate table view
   gridContainer.innerHTML = emptyState('Select a table from the sidebar\nor open the SQL Editor');
   filterBar.classList.add('hidden');
   pagination.classList.add('hidden');
@@ -934,11 +938,10 @@ function showReport(name) {
   state.currentSchema = null;
   document.querySelectorAll('.table-item').forEach(el => el.classList.remove('active'));
   document.querySelectorAll('.report-item').forEach(el => el.classList.remove('active'));
-
   activeReport = name;
   reportPanel.classList.remove('hidden');
-  $(`report-pump-hours`).classList.toggle('active', name === 'pump-hours');
-  viewTitle.textContent = name === 'pump-hours' ? 'Pump Hours Report' : 'Report';
+  $(`report-${name}`)?.classList.add('active');
+  viewTitle.textContent = title || 'Report';
   rowCount.textContent = '';
 }
 
@@ -995,9 +998,8 @@ rphChips.addEventListener('click', e => {
 
 // Open Pump Hours report
 $('report-pump-hours').addEventListener('click', async () => {
-  showReport('pump-hours');
-  $('report-pump-hours-panel').classList.remove('hidden');
-  $('report-well-readings-panel').classList.add('hidden');
+  showReport('pump-hours', 'Pump Hours Report');
+  showSubPanel('report-pump-hours-panel');
   rphStatus.textContent = 'Loading pumping plants…';
   rphGrid.innerHTML = emptyState('Select a pumping plant and date range,\nthen click Run Report');
   rphExportBtn.classList.add('hidden');
@@ -1092,10 +1094,8 @@ const RWR_COLS = ['reading_date', 'reading_time', 'state_well_number', 'common_n
 const RWR_HDRS = ['Date', 'Time', 'State Well #', 'Common Name', 'Hour Reading', 'Flow (cfs)', 'Totalizer', 'PG&E kWh'];
 
 $('report-well-readings').addEventListener('click', async () => {
-  showReport('well-readings');
-  // Show the right sub-panel
-  $('report-pump-hours-panel').classList.add('hidden');
-  $('report-well-readings-panel').classList.remove('hidden');
+  showReport('well-readings', 'Well Readings Report');
+  showSubPanel('report-well-readings-panel');
   rwrStatus.textContent = 'Loading areas…';
   rwrGrid.innerHTML = emptyState('Select an area and date range,\nthen click Run Report');
   rwrExportBtn.classList.add('hidden');
@@ -1164,6 +1164,160 @@ rwrExportBtn.addEventListener('click', () => {
   const body  = { rows: exportRows, columns: hdrs, title };
   showExportPreview(`Well Readings — ${area} (${start} to ${end})`, body,
     { rows: exportRows, columns: hdrs, rowCount: exportRows.length });
+});
+
+// ── Generic Report Factory ─────────────────────────────────────────────────
+function makeReport({ sidebarId, panelId, title, prefix, optionsUrl, reportUrl, filterParam, cols, hdrs }) {
+  const sel     = $(prefix + '-select');
+  const startEl = $(prefix + '-start');
+  const endEl   = $(prefix + '-end');
+  const runBtn  = $(prefix + '-run-btn');
+  const expBtn  = $(prefix + '-export-btn');
+  const grid    = $(prefix + '-grid');
+  const status  = $(prefix + '-status');
+  const copyBar = $(prefix + '-col-copy-bar');
+  const copyLbl = $(prefix + '-col-copy-label');
+  let data = [];
+
+  $(sidebarId).addEventListener('click', async () => {
+    showReport(sidebarId.replace('report-', ''), title);
+    showSubPanel(panelId);
+    status.textContent = 'Loading options…';
+    expBtn.classList.add('hidden');
+    copyBar.classList.add('hidden');
+    data = [];
+    try {
+      const opts = await get(optionsUrl);
+      sel.innerHTML = '<option value="">— All —</option>' +
+        opts.map(o => typeof o === 'string'
+          ? `<option value="${esc(o)}">${esc(o)}</option>`
+          : `<option value="${esc(o.value)}">${esc(o.label)}</option>`
+        ).join('');
+      status.textContent = `${opts.length} option(s) loaded.`;
+    } catch (err) {
+      status.textContent = `Error loading options: ${err.message}`;
+    }
+  });
+
+  runBtn.addEventListener('click', async () => {
+    const filter = sel.value;
+    const start  = startEl.value;
+    const end    = endEl.value;
+    if (!start) { status.textContent = 'Select a start date.'; return; }
+    if (!end)   { status.textContent = 'Select an end date.'; return; }
+    if (start > end) { status.textContent = 'Start must be before end.'; return; }
+    status.textContent = 'Running…';
+    grid.innerHTML = loadingGrid();
+    expBtn.classList.add('hidden');
+    copyBar.classList.add('hidden');
+    data = [];
+    try {
+      const params = new URLSearchParams({ start, end });
+      if (filter) params.set(filterParam, filter);
+      data = await get(`${reportUrl}?${params}`);
+      if (!data.length) {
+        grid.innerHTML = emptyState('No readings found for this selection.');
+        status.textContent = 'No results.';
+        return;
+      }
+      let html = `<table class="data-table"><thead><tr>${hdrs.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>`;
+      for (const row of data) {
+        html += `<tr>${cols.map(c => `<td>${formatCell(row[c])}</td>`).join('')}</tr>`;
+      }
+      html += '</tbody></table>';
+      grid.innerHTML = html;
+      status.textContent = `${data.length} reading${data.length !== 1 ? 's' : ''} found.`;
+      expBtn.classList.remove('hidden');
+      initColSelect(grid, copyBar, copyLbl);
+    } catch (err) {
+      grid.innerHTML = errorState(err.message);
+      status.textContent = 'Error running report.';
+    }
+  });
+
+  expBtn.addEventListener('click', () => {
+    if (!data.length) return;
+    const filterText = sel.options[sel.selectedIndex]?.text || 'All';
+    const start = startEl.value;
+    const end   = endEl.value;
+    const map   = cols.map((k, i) => [k, hdrs[i]]);
+    const exportTitle = `${title.replace(/ /g,'_')}_${filterText.replace(/ /g,'_')}_${start}_to_${end}`;
+    const exportRows  = data.map(r => Object.fromEntries(map.map(([k, h]) => [h, r[k]])));
+    const body = { rows: exportRows, columns: hdrs, title: exportTitle };
+    showExportPreview(`${title} — ${filterText} (${start} to ${end})`, body,
+      { rows: exportRows, columns: hdrs, rowCount: exportRows.length });
+  });
+}
+
+// ── Report Definitions ─────────────────────────────────────────────────────
+makeReport({
+  sidebarId: 'report-canal', panelId: 'report-canal-panel',
+  title: 'Canal Readings Report', prefix: 'rcn',
+  optionsUrl: '/api/reports/canal-readings/options',
+  reportUrl:  '/api/reports/canal-readings',
+  filterParam: 'structure_id',
+  cols: ['structure_name','reading_date','reading_time','instantaneous_flow_cfs','totalizer_reading_af','gate_setting','head_reading_ft','derived_flow_cfs'],
+  hdrs: ['Structure','Date','Time','Flow (cfs)','Totalizer (af)','Gate Setting','Head (ft)','Derived Flow (cfs)'],
+});
+
+makeReport({
+  sidebarId: 'report-compressor-hours', panelId: 'report-compressor-hours-panel',
+  title: 'Compressor Hours Report', prefix: 'rch',
+  optionsUrl: '/api/reports/compressor-hours/options',
+  reportUrl:  '/api/reports/compressor-hours',
+  filterParam: 'building_id',
+  cols: ['building_name','serial_number','reading_date','reading_time','hour_reading'],
+  hdrs: ['Building','Serial #','Date','Time','Hour Reading'],
+});
+
+makeReport({
+  sidebarId: 'report-kf-monthly', panelId: 'report-kf-monthly-panel',
+  title: 'KF Monthly Report', prefix: 'rkf',
+  optionsUrl: '/api/reports/kf-monthly/options',
+  reportUrl:  '/api/reports/kf-monthly',
+  filterParam: 'area',
+  cols: ['common_name','reading_date','reading_time','dtw_reading','operator','plopper_sounder','well_on_off'],
+  hdrs: ['Well','Date','Time','DTW Reading','Operator','Plopper/Sounder','On/Off'],
+});
+
+makeReport({
+  sidebarId: 'report-pge-meters', panelId: 'report-pge-meters-panel',
+  title: 'PGE Meters Report', prefix: 'rpge',
+  optionsUrl: '/api/reports/pge-meters/options',
+  reportUrl:  '/api/reports/pge-meters',
+  filterParam: 'building_id',
+  cols: ['building_name','meter_name','reading_date','reading_time','kwh_reading'],
+  hdrs: ['Building','Meter','Date','Time','kWh Reading'],
+});
+
+makeReport({
+  sidebarId: 'report-power-monitors', panelId: 'report-power-monitors-panel',
+  title: 'Power Monitors Report', prefix: 'rpwr',
+  optionsUrl: '/api/reports/power-monitors/options',
+  reportUrl:  '/api/reports/power-monitors',
+  filterParam: 'building_id',
+  cols: ['building_name','monitor_number','reading_date','reading_time','kwh_reading'],
+  hdrs: ['Building','Monitor #','Date','Time','kWh Reading'],
+});
+
+makeReport({
+  sidebarId: 'report-run-dwr', panelId: 'report-run-dwr-panel',
+  title: 'Run DWR Report', prefix: 'rdwr',
+  optionsUrl: '/api/reports/run-dwr/options',
+  reportUrl:  '/api/reports/run-dwr',
+  filterParam: 'area',
+  cols: ['common_name','state_well_number','reading_date','reading_time','depth_to_water','method','operator'],
+  hdrs: ['Well','State Well #','Date','Time','Depth to Water','Method','Operator'],
+});
+
+makeReport({
+  sidebarId: 'report-vehicle-monthly', panelId: 'report-vehicle-monthly-panel',
+  title: 'Vehicle Monthly Report', prefix: 'rvm',
+  optionsUrl: '/api/reports/vehicle-monthly/options',
+  reportUrl:  '/api/reports/vehicle-monthly',
+  filterParam: 'vehicle_id',
+  cols: ['vehicle_number','make','model','reading_date','reading_time','odometer_miles','engine_hours'],
+  hdrs: ['Vehicle #','Make','Model','Date','Time','Odometer (mi)','Engine Hours'],
 });
 
 // ── Version ────────────────────────────────────────────────────────────────
