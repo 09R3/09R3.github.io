@@ -348,6 +348,26 @@ app.get('/api/table/:schema/:table', requireDB, async (req, res) => {
 
 // ─── Export Routes ────────────────────────────────────────────────────────────
 
+function formatExportVal(val) {
+  if (val === null || val === undefined) return '';
+  // pg Date object (direct DB query)
+  if (val instanceof Date) {
+    return `${val.getUTCMonth() + 1}-${val.getUTCDate()}-${val.getUTCFullYear()}`;
+  }
+  // ISO datetime string from JSON serialization ("2026-03-30T00:00:00.000Z")
+  if (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(val)) {
+    const d = new Date(val);
+    return `${d.getUTCMonth() + 1}-${d.getUTCDate()}-${d.getUTCFullYear()}`;
+  }
+  // Plain date-only string ("2026-03-30")
+  if (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(val)) {
+    const [y, m, d] = val.split('-');
+    return `${parseInt(m)}-${parseInt(d)}-${y}`;
+  }
+  if (typeof val === 'object') return JSON.stringify(val);
+  return val;
+}
+
 async function fetchExportData(req) {
   const { sql, schema, table, rows, columns, title } = req.body;
   if (rows && columns) {
@@ -388,9 +408,7 @@ app.post('/api/export/csv', requireDB, async (req, res) => {
 
     for (const row of rows) {
       const line = columns.map(col => {
-        const val = row[col];
-        if (val === null || val === undefined) return '';
-        const str = String(val).replace(/"/g, '""');
+        const str = String(formatExportVal(row[col])).replace(/"/g, '""');
         return `"${str}"`;
       }).join(',');
       res.write(line + '\n');
@@ -432,13 +450,7 @@ app.post('/api/export/xlsx', requireDB, async (req, res) => {
 
     // Data rows
     for (const row of rows) {
-      sheet.addRow(columns.map(col => {
-        const v = row[col];
-        if (v === null || v === undefined) return '';
-        if (v instanceof Date) return v;
-        if (typeof v === 'object') return JSON.stringify(v);
-        return v;
-      }));
+      sheet.addRow(columns.map(col => formatExportVal(row[col])));
     }
 
     // Add table filter
@@ -507,10 +519,7 @@ app.post('/api/export/pdf', requireDB, async (req, res) => {
       }
       doc.fillColor('#333333').fontSize(7).font('Helvetica');
       columns.forEach((col, i) => {
-        let val = row[col];
-        if (val === null || val === undefined) val = '';
-        else if (typeof val === 'object') val = JSON.stringify(val);
-        else val = String(val);
+        let val = String(formatExportVal(row[col]));
         const x = margin + i * effectiveColWidth + 3;
         const w = effectiveColWidth - 6;
         // lineBreak: false is critical — prevents PDFKit auto-adding pages mid-row
