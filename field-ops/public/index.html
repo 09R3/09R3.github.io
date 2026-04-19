@@ -50,6 +50,10 @@
       #print-area table.heavy colgroup col:nth-child(6) { width:13%; }
       #print-area .report-num { text-align: right; }
       #print-area .report-empty { font-style: italic; color: #555; }
+      /* Vehicle report: scale down to fit one page */
+      #print-area[data-print-type="vehicle"] {
+        zoom: 0.78;
+      }
     }
   </style>
 </head>
@@ -80,7 +84,7 @@
         <div id="login-error" class="error-msg hidden"></div>
         <button type="submit" class="btn btn-primary btn-full">Sign In</button>
       </form>
-      <div class="login-version">v 1.41</div>
+      <div class="login-version">v 1.42</div>
     </div>
   </div>
 </div>
@@ -1316,7 +1320,7 @@
     <div id="settings-panel-appinfo" class="settings-panel hidden">
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 1.41</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 1.42</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>

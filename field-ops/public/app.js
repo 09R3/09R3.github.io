@@ -6626,14 +6626,16 @@ el('export-pdf-btn').addEventListener('click', () => {
   }
 
   if (exportContext === 'piezometers-status' || exportContext === 'piezometers-compare') {
-    // Re-use the already-rendered report card HTML from the output div
+    delete printArea.dataset.printType;
     const rendered = el('report-piez-output').querySelector('.report-card');
     printArea.innerHTML = rendered ? rendered.outerHTML : '';
   } else {
+    printArea.dataset.printType = 'vehicle';
     printArea.innerHTML = buildMileageHTML(lastReportRows, reportsYear, reportsMonth);
   }
 
   el('export-modal').classList.add('hidden');
+  document.body.style.overflow = ''; // ensure scroll-lock is released before print dialog
   setTimeout(() => {
     window.print();
     window.addEventListener('afterprint', () => { printArea.innerHTML = ''; }, { once: true });
