@@ -1066,7 +1066,7 @@ function showSubPanel(id) {
 
 function showReport(name, title) {
   colSel.copy = null; colSel.clear = null;
-  gridContainer.innerHTML = emptyState('Select a table from the sidebar\nor open the SQL Editor');
+  gridContainer.classList.add('hidden');
   filterBar.classList.add('hidden');
   pagination.classList.add('hidden');
   state.currentTable = null;
@@ -1083,6 +1083,10 @@ function showReport(name, title) {
 function hideReport() {
   activeReport = null;
   reportPanel.classList.add('hidden');
+  gridContainer.classList.remove('hidden');
+  if (!state.currentTable) {
+    gridContainer.innerHTML = emptyState('Select a table from the sidebar\nor open the SQL Editor');
+  }
 }
 
 async function rphLoadPumps(siteId) {
