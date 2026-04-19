@@ -818,13 +818,13 @@ function esc(str) {
 }
 
 function emptyState(msg) {
-  return `<div class="empty-state"><div class="empty-icon">⬡</div><p>${msg}</p></div>`;
+  return `<div class="empty-state"><div class="empty-icon">💧</div><p>${msg}</p></div>`;
 }
 function errorState(msg) {
   return `<div class="empty-state"><div class="empty-icon" style="color:var(--error)">✕</div><p style="color:var(--error)">${esc(msg)}</p></div>`;
 }
 function loadingGrid() {
-  return '<div class="empty-state"><div class="empty-icon loading-row">⬡</div><p>Loading…</p></div>';
+  return '<div class="empty-state"><div class="empty-icon loading-row">💧</div><p>Loading…</p></div>';
 }
 
 // ── Sidebar Sections ───────────────────────────────────────────────────────
@@ -1036,19 +1036,19 @@ function computeDeltaRows(data, valueKey, groupKey) {
   });
 }
 
-function renderReportTable(gridEl, data, colKeys, colHdrs, copyBar, copyLbl, deltaLabel = null) {
+function renderReportTable(gridEl, data, colKeys, colHdrs, copyBar, copyLbl, deltaLabel = null, colFormatters = {}) {
   const allKeys = deltaLabel ? [...colKeys, '_delta'] : colKeys;
   const allHdrs = deltaLabel ? [...colHdrs, deltaLabel] : colHdrs;
   let html = `<table class="data-table"><thead><tr>${allHdrs.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>`;
   for (const row of data) {
-    html += `<tr>${allKeys.map(k => `<td>${k === '_delta' ? formatDelta(row._delta) : formatCell(row[k])}</td>`).join('')}</tr>`;
+    html += `<tr>${allKeys.map(k => `<td>${k === '_delta' ? formatDelta(row._delta) : (colFormatters[k] || formatCell)(row[k])}</td>`).join('')}</tr>`;
   }
   html += '</tbody></table>';
   gridEl.innerHTML = html;
   if (copyBar) initColSelect(gridEl, copyBar, copyLbl);
 }
 
-function setupDeltaBar(pfx, gridEl, getData, colKeys, colHdrs, copyBar, copyLbl, onDeltaChange) {
+function setupDeltaBar(pfx, gridEl, getData, colKeys, colHdrs, copyBar, copyLbl, onDeltaChange, colFormatters = {}) {
   const old = document.getElementById(pfx + '-delta-bar');
   if (old) old.remove();
 
@@ -1082,13 +1082,13 @@ function setupDeltaBar(pfx, gridEl, getData, colKeys, colHdrs, copyBar, copyLbl,
     const groupKey = document.getElementById(pfx + '-dgrp').value;
     const label    = document.getElementById(pfx + '-dlbl').value.trim() || 'Change';
     const delta = computeDeltaRows(getData(), valueKey, groupKey);
-    renderReportTable(gridEl, delta, colKeys, colHdrs, copyBar, copyLbl, label);
+    renderReportTable(gridEl, delta, colKeys, colHdrs, copyBar, copyLbl, label, colFormatters);
     document.getElementById(pfx + '-dremove').style.display = '';
     if (onDeltaChange) onDeltaChange({ active: true, valueKey, groupKey, label });
   });
 
   document.getElementById(pfx + '-dremove').addEventListener('click', () => {
-    renderReportTable(gridEl, getData(), colKeys, colHdrs, copyBar, copyLbl);
+    renderReportTable(gridEl, getData(), colKeys, colHdrs, copyBar, copyLbl, null, colFormatters);
     document.getElementById(pfx + '-dremove').style.display = 'none';
     if (onDeltaChange) onDeltaChange({ active: false });
   });
@@ -1399,10 +1399,10 @@ function makeReport({ sidebarId, panelId, title, prefix, optionsUrl, reportUrl, 
         return;
       }
       deltaParams = { active: false };
-      renderReportTable(grid, data, cols, hdrs, copyBar, copyLbl);
+      renderReportTable(grid, data, cols, hdrs, copyBar, copyLbl, null, colFormatters);
       status.textContent = `${data.length} reading${data.length !== 1 ? 's' : ''} found.`;
       expBtn.classList.remove('hidden');
-      setupDeltaBar(prefix, grid, () => data, cols, hdrs, copyBar, copyLbl, p => { deltaParams = p; });
+      setupDeltaBar(prefix, grid, () => data, cols, hdrs, copyBar, copyLbl, p => { deltaParams = p; }, colFormatters);
     } catch (err) {
       grid.innerHTML = errorState(err.message);
       status.textContent = 'Error running report.';
@@ -1436,8 +1436,13 @@ makeReport({
   optionsUrl: '/api/reports/canal-readings/options',
   reportUrl:  '/api/reports/canal-readings',
   filterParam: 'structure_id',
-  cols: ['structure_name','reading_date','reading_time','instantaneous_flow_cfs','totalizer_reading_af','gate_setting','head_reading_ft','derived_flow_cfs'],
-  hdrs: ['Structure','Date','Time','Flow (cfs)','Totalizer (af)','Gate Setting','Head (ft)','Derived Flow (cfs)'],
+  cols: ['structure_name','reading_date','reading_time','instantaneous_flow_cfs','totalizer_reading_af','totalizer_calc','gate_setting','head_reading_ft','derived_flow_cfs'],
+  hdrs: ['Structure','Date','Time','Flow (cfs)','Totalizer (af)','Totalizer Calc','Gate Setting','Head (ft)','Derived Flow (cfs)'],
+  colFormatters: {
+    totalizer_calc: val => val === null || val === undefined
+      ? '<span class="null-val">N/A</span>'
+      : `<span class="num-val">${Number(val).toLocaleString(undefined, { maximumFractionDigits: 4 })}</span>`,
+  },
 });
 
 makeReport({

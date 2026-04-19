@@ -95,7 +95,7 @@
 <body>
   <div class="card">
     <div class="header">
-      <div class="logo">⬡</div>
+      <div class="logo">💧</div>
       <h1>FieldView</h1>
       <p class="subtitle" id="subtitle">Checking connection…</p>
     </div>
@@ -291,6 +291,13 @@
     });
 
     init();
+
+    fetch('/api/version').then(r => r.json()).then(d => {
+      const el = document.createElement('div');
+      el.style.cssText = 'text-align:center;font-size:11px;color:var(--text-muted);margin-top:18px';
+      el.textContent = `v${d.version}`;
+      document.querySelector('.card').appendChild(el);
+    }).catch(() => {});
   </script>
 </body>
 </html>
