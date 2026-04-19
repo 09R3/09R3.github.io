@@ -84,7 +84,7 @@
         <div id="login-error" class="error-msg hidden"></div>
         <button type="submit" class="btn btn-primary btn-full">Sign In</button>
       </form>
-      <div class="login-version">v 1.42</div>
+      <div class="login-version">v 1.43</div>
     </div>
   </div>
 </div>
@@ -1108,6 +1108,12 @@
         </div>
         <div class="dash-label">Piezometers</div>
       </div>
+      <div class="dash-tile" data-report-cat="canal">
+        <div class="dash-icon-wrap">
+          <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-canal.svg);mask-image:url(/marv-site/icons/icon-canal.svg)"></span>
+        </div>
+        <div class="dash-label">Canal Readings</div>
+      </div>
     </div>
 
     <!-- Vehicles panel -->
@@ -1189,6 +1195,16 @@
         <input type="date" id="piez-cmp-end2" class="ctrl-input ctrl-input-sm">
       </div>
       <div id="report-piez-output"></div>
+    </div>
+
+    <!-- Canal Readings panel -->
+    <div id="report-panel-canal" class="maint-panel hidden">
+      <div class="report-toolbar">
+        <input type="date" id="canal-report-start-date" class="ctrl-input ctrl-input-sm">
+        <span class="report-date-sep">&#8211;</span>
+        <input type="date" id="canal-report-end-date" class="ctrl-input ctrl-input-sm">
+      </div>
+      <div id="report-canal-output"></div>
     </div>
 
   </div><!-- /screen-reports -->
@@ -1320,7 +1336,7 @@
     <div id="settings-panel-appinfo" class="settings-panel hidden">
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 1.42</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 1.43</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>

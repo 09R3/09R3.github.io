@@ -2194,6 +2194,27 @@ app.get('/api/reports/piezometers', requireAuth, requireRole('supervisor', 'admi
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// Canal readings report — all readings for a date range
+app.get('/api/reports/canal', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+  const { start_date, end_date } = req.query;
+  if (!start_date || !end_date) return res.status(400).json({ error: 'start_date and end_date required' });
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        cs.structure_name, cs.structure_type,
+        r.reading_date, r.reading_time,
+        r.instantaneous_flow_cfs, r.totalizer_reading_af,
+        r.gate_setting, r.head_reading_ft, r.derived_flow_cfs,
+        r.entered_by, r.notes
+      FROM readings_canal r
+      JOIN canal_structures cs ON cs.structure_id = r.structure_id
+      WHERE r.reading_date BETWEEN $1 AND $2
+      ORDER BY r.reading_date, r.reading_time, cs.structure_name
+    `, [start_date, end_date]);
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // Piezometer status/compare XLSX export (token-authenticated)
 app.get('/api/reports/piezometers/export', async (req, res) => {
   const { start_date, end_date, token } = req.query;

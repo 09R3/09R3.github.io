@@ -5732,7 +5732,7 @@ let vehicleReportType = 'mileage';
 let lastReportRows  = [];
 
 // ── Navigation ────────────────────────────────────────────────────────────────
-const ALL_REPORT_PANELS = ['vehicles','kf','maintenance','pms','piezometers'];
+const ALL_REPORT_PANELS = ['vehicles','kf','maintenance','pms','piezometers','canal'];
 
 function initReportsScreen() {
   el('report-main').classList.remove('hidden');
@@ -5745,6 +5745,7 @@ const REPORT_PANEL_NAMES = {
   maintenance:  'Maintenance Issues',
   pms:          'PM Records',
   piezometers:  'Piezometers',
+  canal:        'Canal Readings',
 };
 function openReportPanel(cat) {
   el('report-main').classList.add('hidden');
@@ -5756,6 +5757,7 @@ function openReportPanel(cat) {
   if (cat === 'maintenance') initMaintenanceReportPanel();
   if (cat === 'pms')         initPMReportPanel();
   if (cat === 'piezometers') initPiezReportPanel();
+  if (cat === 'canal')       initCanalReportPanel();
 }
 
 function closeReportPanel() {
@@ -6281,6 +6283,80 @@ async function openPMGridHistory(pmType, building, label) {
     });
   } catch (err) {
     body.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
+  }
+}
+
+// ── Canal Readings Report Panel ────────────────────────────────────────────────
+function initCanalReportPanel() {
+  if (!el('canal-report-start-date').value) {
+    el('canal-report-start-date').value = todayISO();
+    el('canal-report-end-date').value   = todayISO();
+  }
+  renderCanalReport();
+}
+
+el('canal-report-start-date').addEventListener('change', renderCanalReport);
+el('canal-report-end-date').addEventListener('change',   renderCanalReport);
+
+async function renderCanalReport() {
+  const start = el('canal-report-start-date').value;
+  const end   = el('canal-report-end-date').value;
+  if (!start || !end) return;
+  const out = el('report-canal-output');
+  out.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const rows = await api('GET', `/api/reports/canal?start_date=${start}&end_date=${end}`);
+    if (!rows.length) {
+      out.innerHTML = '<div class="placeholder-msg">No canal readings found.</div>';
+      return;
+    }
+
+    const fmtDate = s => s ? localDateStr(s, { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
+    const fmtNum  = (v, dec = 2) => v != null ? Number(v).toFixed(dec) : '—';
+
+    // Group by date
+    const byDate = {};
+    rows.forEach(r => {
+      const d = r.reading_date?.slice(0, 10) || 'Unknown';
+      if (!byDate[d]) byDate[d] = [];
+      byDate[d].push(r);
+    });
+
+    let html = `<div class="report-card">
+      <div class="report-title">Canal Readings</div>
+      <div class="report-subtitle">${fmtDate(start)}${start !== end ? ' – ' + fmtDate(end) : ''}</div>`;
+
+    Object.keys(byDate).sort().forEach(date => {
+      const readings = byDate[date];
+      html += `<div class="report-section-title">${fmtDate(date)}</div>
+        <table class="report-table">
+          <thead><tr>
+            <th>Structure</th>
+            <th class="report-num">Flow (cfs)</th>
+            <th class="report-num">Totalizer (af)</th>
+            <th class="report-num">Gate</th>
+            <th class="report-num">Head (ft)</th>
+            <th>By</th>
+          </tr></thead>
+          <tbody>`;
+      readings.forEach(r => {
+        html += `<tr>
+          <td>${escHtml(r.structure_name)}</td>
+          <td class="report-num">${fmtNum(r.instantaneous_flow_cfs)}</td>
+          <td class="report-num">${fmtNum(r.totalizer_reading_af)}</td>
+          <td class="report-num">${fmtNum(r.gate_setting)}</td>
+          <td class="report-num">${fmtNum(r.head_reading_ft)}</td>
+          <td>${escHtml(r.entered_by || '—')}</td>
+        </tr>`;
+        if (r.notes) html += `<tr><td colspan="6" style="color:var(--text-dim);font-size:0.82rem;padding:2px 4px 6px">↳ ${escHtml(r.notes)}</td></tr>`;
+      });
+      html += '</tbody></table>';
+    });
+
+    html += '</div>';
+    out.innerHTML = html;
+  } catch (err) {
+    out.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
   }
 }
 
