@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Water Ops Viewer</title>
+  <title>FieldView</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -13,7 +13,7 @@
   <div class="modal glass">
     <div class="modal-header">
       <div class="logo-icon">⬡</div>
-      <h2>Water Ops Viewer</h2>
+      <h2>FieldView</h2>
       <p>Connect to a PostgreSQL database</p>
     </div>
     <form id="connect-form" autocomplete="on">
@@ -59,10 +59,9 @@
     <div class="sidebar-header">
       <span class="logo-icon">⬡</span>
       <div class="sidebar-title">
-        <span class="app-name">Water Ops Viewer</span>
-        <span id="db-label" class="db-label">—</span>
+        <span class="app-name">FieldView</span>
       </div>
-      <button class="icon-btn" id="disconnect-btn" title="Disconnect">✕</button>
+      <button class="icon-btn" id="sidebar-toggle-btn" title="Collapse sidebar">‹</button>
     </div>
 
     <div class="sidebar-nav">
@@ -106,6 +105,7 @@
     </div>
 
     <div class="sidebar-footer">
+      <button class="btn btn-ghost btn-sm sidebar-settings-btn" id="settings-btn">⚙ Settings</button>
       <span class="app-version" id="app-version"></span>
     </div>
 
@@ -484,6 +484,47 @@
     <div class="preview-footer">
       <button class="btn btn-ghost" id="import-cancel-btn">Cancel</button>
       <button class="btn btn-primary hidden" id="import-confirm-btn">↑ Import</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Settings Modal ── -->
+<div class="preview-backdrop hidden" id="settings-backdrop">
+  <div class="preview-modal glass settings-modal">
+    <div class="preview-header">
+      <h3>Settings</h3>
+      <button class="icon-btn" id="settings-close">✕</button>
+    </div>
+    <div class="settings-body">
+      <div class="settings-section">
+        <div class="settings-section-title">App Info</div>
+        <div class="settings-row">
+          <span class="settings-key">App</span>
+          <span class="settings-val">FieldView</span>
+        </div>
+        <div class="settings-row">
+          <span class="settings-key">Version</span>
+          <span class="settings-val" id="settings-version">—</span>
+        </div>
+      </div>
+      <div class="settings-section">
+        <div class="settings-section-title">Database</div>
+        <div class="settings-row">
+          <span class="settings-key">Host</span>
+          <span class="settings-val" id="settings-db-host">—</span>
+        </div>
+        <div class="settings-row">
+          <span class="settings-key">Database</span>
+          <span class="settings-val" id="settings-db-name">—</span>
+        </div>
+        <div class="settings-row">
+          <span class="settings-key">User</span>
+          <span class="settings-val" id="settings-db-user">—</span>
+        </div>
+        <div class="settings-row settings-row-action">
+          <button class="btn btn-ghost btn-sm" id="settings-disconnect-btn">⏻ Disconnect from database</button>
+        </div>
+      </div>
     </div>
   </div>
 </div>

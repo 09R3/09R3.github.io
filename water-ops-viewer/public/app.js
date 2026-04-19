@@ -5,7 +5,7 @@ const API = '';  // same origin
 // ── State ──────────────────────────────────────────────────────────────────
 let state = {
   connected: false,
-  dbLabel: '',
+  dbHost: '', dbPort: '', dbName: '', dbUser: '',
   tables: [],
   currentSchema: null,
   currentTable: null,
@@ -35,7 +35,6 @@ const filterBar = $('filter-bar');
 const pagination = $('pagination');
 const dataSearch = $('data-search');
 const pageSize = $('page-size');
-const dbLabel = $('db-label');
 const sqlPanel = $('sql-panel');
 const sqlEditor = $('sql-editor');
 const sqlResult = $('sql-result');
@@ -63,8 +62,10 @@ connectForm.addEventListener('submit', async e => {
       password: $('db-pass').value,
     });
     state.connected = true;
-    state.dbLabel = `${res.user}@${res.database}`;
-    dbLabel.textContent = state.dbLabel;
+    state.dbHost = $('db-host').value.trim();
+    state.dbPort = $('db-port').value.trim();
+    state.dbName = $('db-name').value.trim();
+    state.dbUser = $('db-user').value.trim();
     connectOverlay.classList.remove('active');
     connectOverlay.classList.add('hidden');
     appEl.classList.remove('hidden');
@@ -76,8 +77,17 @@ connectForm.addEventListener('submit', async e => {
   }
 });
 
-$('disconnect-btn').addEventListener('click', () => {
-  state = { ...state, connected: false, currentSchema: null, currentTable: null };
+$('sidebar-toggle-btn').addEventListener('click', () => {
+  const collapsed = appEl.classList.toggle('sidebar-collapsed');
+  $('sidebar-toggle-btn').textContent = collapsed ? '›' : '‹';
+  $('sidebar-toggle-btn').title = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
+});
+
+function disconnectDB() {
+  state = { ...state, connected: false, currentSchema: null, currentTable: null,
+            dbHost: '', dbPort: '', dbName: '', dbUser: '' };
+  appEl.classList.remove('sidebar-collapsed');
+  $('sidebar-toggle-btn').textContent = '‹';
   connectOverlay.classList.remove('hidden');
   connectOverlay.classList.add('active');
   appEl.classList.add('hidden');
@@ -87,7 +97,7 @@ $('disconnect-btn').addEventListener('click', () => {
   viewTitle.textContent = 'Select a table';
   rowCount.textContent = '';
   tableList.innerHTML = '<div class="loading-tables">Loading tables…</div>';
-});
+}
 
 // Sign-out button (logs out of the app entirely)
 $('sign-out-btn').addEventListener('click', async () => {
@@ -827,8 +837,33 @@ function initSidebarSections() {
       toggle.classList.toggle('collapsed', collapsed);
     });
   });
+  // Default: tables collapsed, reports open
+  $('tables-section-body').classList.add('collapsed');
+  $('tables-section-toggle').classList.add('collapsed');
 }
 initSidebarSections();
+
+// ── Settings Modal ─────────────────────────────────────────────────────────
+const settingsBackdrop = $('settings-backdrop');
+
+$('settings-btn').addEventListener('click', () => {
+  $('settings-version').textContent = $('app-version').textContent || '—';
+  $('settings-db-host').textContent = state.dbHost
+    ? `${state.dbHost}:${state.dbPort || 5432}` : '—';
+  $('settings-db-name').textContent = state.dbName || '—';
+  $('settings-db-user').textContent = state.dbUser || '—';
+  settingsBackdrop.classList.remove('hidden');
+});
+
+$('settings-close').addEventListener('click', () => settingsBackdrop.classList.add('hidden'));
+settingsBackdrop.addEventListener('click', e => {
+  if (e.target === settingsBackdrop) settingsBackdrop.classList.add('hidden');
+});
+
+$('settings-disconnect-btn').addEventListener('click', () => {
+  settingsBackdrop.classList.add('hidden');
+  disconnectDB();
+});
 
 // ── Date range helpers ─────────────────────────────────────────────────────
 function todayStr() {
@@ -1495,8 +1530,8 @@ makeReport({
       const data = await res.json();
       if (data.connected) {
         state.connected = true;
-        state.dbLabel = `${data.user}@${data.database}`;
-        dbLabel.textContent = state.dbLabel;
+        state.dbUser = data.user;
+        state.dbName = data.database;
         connectOverlay.classList.remove('active');
         connectOverlay.classList.add('hidden');
         appEl.classList.remove('hidden');

@@ -135,7 +135,16 @@ select { cursor: pointer; }
 .sidebar-header .logo-icon { font-size: 20px; color: var(--accent); flex-shrink: 0; }
 .sidebar-title { flex: 1; min-width: 0; }
 .app-name { font-weight: 700; font-size: 14px; display: block; }
-.db-label { font-size: 11px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }
+
+/* ── Sidebar collapse ── */
+.sidebar { transition: width 0.2s ease; }
+#app.sidebar-collapsed .sidebar { width: 48px; overflow: hidden; }
+#app.sidebar-collapsed .sidebar-header { justify-content: center; padding: 14px 0; }
+#app.sidebar-collapsed .logo-icon,
+#app.sidebar-collapsed .sidebar-title,
+#app.sidebar-collapsed .sidebar-nav,
+#app.sidebar-collapsed .sidebar-footer { display: none; }
+#sidebar-toggle-btn { font-size: 16px; line-height: 1; padding: 4px 6px; }
 
 .sidebar-nav {
   flex: 1; overflow-y: auto; display: flex; flex-direction: column;
@@ -178,6 +187,27 @@ select { cursor: pointer; }
 }
 .report-item:hover { background: var(--bg3); color: var(--text); }
 .report-item.active { background: rgba(102,126,234,0.15); color: var(--accent); font-weight: 600; }
+
+.sidebar-settings-btn {
+  width: 100%; margin-bottom: 6px; justify-content: flex-start;
+}
+
+/* ── Settings Modal ── */
+.settings-modal { width: 420px; max-width: 95vw; }
+.settings-body { padding: 8px 0; }
+.settings-section { padding: 16px 24px; }
+.settings-section + .settings-section { border-top: 1px solid var(--border); }
+.settings-section-title {
+  font-size: 11px; font-weight: 700; color: var(--accent);
+  text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 12px;
+}
+.settings-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 5px 0; font-size: 13px;
+}
+.settings-row-action { padding-top: 10px; }
+.settings-key { color: var(--text-muted); width: 80px; flex-shrink: 0; }
+.settings-val { color: var(--text); font-family: var(--mono); font-size: 12px; }
 
 .sidebar-footer {
   padding: 8px 16px;
