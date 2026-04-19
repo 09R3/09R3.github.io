@@ -896,6 +896,8 @@ const rphChips      = $('rph-chips');
 let activeReport = null;
 let rphData = [];
 let rphSelectedLetters = new Set(); // empty = All
+let rphDelta = { active: false };
+let rwrDelta = { active: false };
 
 // ── Column-select utility (shared by all report grids) ─────────────────────
 // Shared state — only one report grid is visible at a time
@@ -974,6 +976,87 @@ function initColSelect(gridEl, copyBarEl, labelEl) {
 
   colSel.copy = copyColumns;
   colSel.clear = () => { selectedCols.clear(); updateHighlight(); };
+}
+
+// ── Delta Column ───────────────────────────────────────────────────────────
+function formatDelta(val) {
+  if (val === null || val === undefined) return '<span class="null-val">—</span>';
+  const n = parseFloat(val);
+  if (isNaN(n)) return '<span class="null-val">—</span>';
+  const cls = n > 0 ? 'delta-pos' : n < 0 ? 'delta-neg' : 'delta-zero';
+  const sign = n > 0 ? '+' : '';
+  return `<span class="${cls}">${sign}${n.toLocaleString(undefined, { maximumFractionDigits: 4 })}</span>`;
+}
+
+function computeDeltaRows(data, valueKey, groupKey) {
+  const prev = {};
+  return data.map(row => {
+    const grp = groupKey ? String(row[groupKey] ?? '') : '__all__';
+    const cur = parseFloat(row[valueKey]);
+    const p = prev[grp];
+    let delta = null;
+    if (p !== undefined && !isNaN(cur) && !isNaN(p)) delta = cur - p;
+    if (!isNaN(cur)) prev[grp] = cur;
+    return { ...row, _delta: delta };
+  });
+}
+
+function renderReportTable(gridEl, data, colKeys, colHdrs, copyBar, copyLbl, deltaLabel = null) {
+  const allKeys = deltaLabel ? [...colKeys, '_delta'] : colKeys;
+  const allHdrs = deltaLabel ? [...colHdrs, deltaLabel] : colHdrs;
+  let html = `<table class="data-table"><thead><tr>${allHdrs.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>`;
+  for (const row of data) {
+    html += `<tr>${allKeys.map(k => `<td>${k === '_delta' ? formatDelta(row._delta) : formatCell(row[k])}</td>`).join('')}</tr>`;
+  }
+  html += '</tbody></table>';
+  gridEl.innerHTML = html;
+  if (copyBar) initColSelect(gridEl, copyBar, copyLbl);
+}
+
+function setupDeltaBar(pfx, gridEl, getData, colKeys, colHdrs, copyBar, copyLbl, onDeltaChange) {
+  const old = document.getElementById(pfx + '-delta-bar');
+  if (old) old.remove();
+
+  const bar = document.createElement('div');
+  bar.id = pfx + '-delta-bar';
+  bar.className = 'delta-bar';
+
+  const colOpts = colKeys.map((k, i) => `<option value="${k}">${esc(colHdrs[i])}</option>`).join('');
+  bar.innerHTML = `
+    <button class="btn btn-ghost btn-sm" id="${pfx}-dtoggle">∑ Delta Column</button>
+    <div class="delta-config hidden" id="${pfx}-dcfg">
+      <span class="delta-config-label">Value</span>
+      <select class="report-select delta-sel" id="${pfx}-dval">${colOpts}</select>
+      <span class="delta-config-label">Group by</span>
+      <select class="report-select delta-sel" id="${pfx}-dgrp">
+        <option value="">— none —</option>${colOpts}
+      </select>
+      <input type="text" class="report-date" id="${pfx}-dlbl" value="Change" placeholder="Label" style="width:90px" />
+      <button class="btn btn-primary btn-sm" id="${pfx}-dapply">Apply</button>
+      <button class="btn btn-ghost btn-sm" id="${pfx}-dremove" style="display:none">✕ Remove</button>
+    </div>`;
+
+  gridEl.parentElement.insertBefore(bar, gridEl);
+
+  document.getElementById(pfx + '-dtoggle').addEventListener('click', () => {
+    document.getElementById(pfx + '-dcfg').classList.toggle('hidden');
+  });
+
+  document.getElementById(pfx + '-dapply').addEventListener('click', () => {
+    const valueKey = document.getElementById(pfx + '-dval').value;
+    const groupKey = document.getElementById(pfx + '-dgrp').value;
+    const label    = document.getElementById(pfx + '-dlbl').value.trim() || 'Change';
+    const delta = computeDeltaRows(getData(), valueKey, groupKey);
+    renderReportTable(gridEl, delta, colKeys, colHdrs, copyBar, copyLbl, label);
+    document.getElementById(pfx + '-dremove').style.display = '';
+    if (onDeltaChange) onDeltaChange({ active: true, valueKey, groupKey, label });
+  });
+
+  document.getElementById(pfx + '-dremove').addEventListener('click', () => {
+    renderReportTable(gridEl, getData(), colKeys, colHdrs, copyBar, copyLbl);
+    document.getElementById(pfx + '-dremove').style.display = 'none';
+    if (onDeltaChange) onDeltaChange({ active: false });
+  });
 }
 
 function showSubPanel(id) {
@@ -1098,20 +1181,15 @@ rphRunBtn.addEventListener('click', async () => {
       return;
     }
 
-    const cols = ['pump_letter', 'reading_date', 'reading_time', 'hour_reading'];
+    const cols    = ['pump_letter', 'reading_date', 'reading_time', 'hour_reading'];
     const headers = ['Pump', 'Reading Date', 'Reading Time', 'Hour Reading'];
 
-    let html = `<table class="data-table"><thead><tr>
-      ${headers.map(h => `<th>${h}</th>`).join('')}
-    </tr></thead><tbody>`;
-    for (const row of rphData) {
-      html += `<tr>${cols.map(c => `<td>${formatCell(row[c])}</td>`).join('')}</tr>`;
-    }
-    html += '</tbody></table>';
-    rphGrid.innerHTML = html;
+    rphDelta = { active: false };
+    renderReportTable(rphGrid, rphData, cols, headers, $('rph-col-copy-bar'), $('rph-col-copy-label'));
     rphStatus.textContent = `${rphData.length} reading${rphData.length !== 1 ? 's' : ''} found.`;
     rphExportBtn.classList.remove('hidden');
-    initColSelect(rphGrid, $('rph-col-copy-bar'), $('rph-col-copy-label'));
+    setupDeltaBar('rph', rphGrid, () => rphData, cols, headers,
+      $('rph-col-copy-bar'), $('rph-col-copy-label'), p => { rphDelta = p; });
   } catch (err) {
     rphGrid.innerHTML = errorState(err.message);
     rphStatus.textContent = 'Error running report.';
@@ -1124,10 +1202,15 @@ rphExportBtn.addEventListener('click', () => {
   const plantLabel = rphPlant.options[rphPlant.selectedIndex]?.text || rphPlant.value;
   const start = rphStart.value;
   const end   = rphEnd.value;
-  const map   = [['pump_letter','Pump'],['reading_date','Reading Date'],['reading_time','Reading Time'],['hour_reading','Hour Reading']];
-  const hdrs  = map.map(([,h]) => h);
+  const colMap = [['pump_letter','Pump'],['reading_date','Reading Date'],['reading_time','Reading Time'],['hour_reading','Hour Reading']];
+  let exportData = rphData;
+  if (rphDelta.active) {
+    exportData = computeDeltaRows(rphData, rphDelta.valueKey, rphDelta.groupKey);
+    colMap.push(['_delta', rphDelta.label]);
+  }
+  const hdrs = colMap.map(([,h]) => h);
   const title = `Pump_Hours_${plantLabel}_${start}_to_${end}`;
-  const exportRows = rphData.map(r => Object.fromEntries(map.map(([k,h]) => [h, r[k]])));
+  const exportRows = exportData.map(r => Object.fromEntries(colMap.map(([k,h]) => [h, k === '_delta' ? (r._delta ?? '') : r[k]])));
   const body  = { rows: exportRows, columns: hdrs, title };
   showExportPreview(`Pump Hours — ${plantLabel} (${start} to ${end})`, body,
     { rows: exportRows, columns: hdrs, rowCount: exportRows.length });
@@ -1189,17 +1272,12 @@ rwrRunBtn.addEventListener('click', async () => {
       return;
     }
 
-    let html = `<table class="data-table"><thead><tr>
-      ${RWR_HDRS.map(h => `<th>${h}</th>`).join('')}
-    </tr></thead><tbody>`;
-    for (const row of rwrData) {
-      html += `<tr>${RWR_COLS.map(c => `<td>${formatCell(row[c])}</td>`).join('')}</tr>`;
-    }
-    html += '</tbody></table>';
-    rwrGrid.innerHTML = html;
+    rwrDelta = { active: false };
+    renderReportTable(rwrGrid, rwrData, RWR_COLS, RWR_HDRS, $('rwr-col-copy-bar'), $('rwr-col-copy-label'));
     rwrStatus.textContent = `${rwrData.length} reading${rwrData.length !== 1 ? 's' : ''} found.`;
     rwrExportBtn.classList.remove('hidden');
-    initColSelect(rwrGrid, $('rwr-col-copy-bar'), $('rwr-col-copy-label'));
+    setupDeltaBar('rwr', rwrGrid, () => rwrData, RWR_COLS, RWR_HDRS,
+      $('rwr-col-copy-bar'), $('rwr-col-copy-label'), p => { rwrDelta = p; });
   } catch (err) {
     rwrGrid.innerHTML = errorState(err.message);
     rwrStatus.textContent = 'Error running report.';
@@ -1211,10 +1289,15 @@ rwrExportBtn.addEventListener('click', () => {
   const area  = rwrArea.value;
   const start = rwrStart.value;
   const end   = rwrEnd.value;
-  const map   = RWR_COLS.map((k, i) => [k, RWR_HDRS[i]]);
-  const hdrs  = RWR_HDRS;
+  const colMap = RWR_COLS.map((k, i) => [k, RWR_HDRS[i]]);
+  let exportData = rwrData;
+  if (rwrDelta.active) {
+    exportData = computeDeltaRows(rwrData, rwrDelta.valueKey, rwrDelta.groupKey);
+    colMap.push(['_delta', rwrDelta.label]);
+  }
+  const hdrs = colMap.map(([,h]) => h);
   const title = `Well_Readings_${area}_${start}_to_${end}`;
-  const exportRows = rwrData.map(r => Object.fromEntries(map.map(([k,h]) => [h, r[k]])));
+  const exportRows = exportData.map(r => Object.fromEntries(colMap.map(([k,h]) => [h, k === '_delta' ? (r._delta ?? '') : r[k]])));
   const body  = { rows: exportRows, columns: hdrs, title };
   showExportPreview(`Well Readings — ${area} (${start} to ${end})`, body,
     { rows: exportRows, columns: hdrs, rowCount: exportRows.length });
@@ -1232,6 +1315,7 @@ function makeReport({ sidebarId, panelId, title, prefix, optionsUrl, reportUrl, 
   const copyBar = $(prefix + '-col-copy-bar');
   const copyLbl = $(prefix + '-col-copy-label');
   let data = [];
+  let deltaParams = { active: false };
 
   $(sidebarId).addEventListener('click', async () => {
     showReport(sidebarId.replace('report-', ''), title);
@@ -1275,15 +1359,11 @@ function makeReport({ sidebarId, panelId, title, prefix, optionsUrl, reportUrl, 
         status.textContent = 'No results.';
         return;
       }
-      let html = `<table class="data-table"><thead><tr>${hdrs.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>`;
-      for (const row of data) {
-        html += `<tr>${cols.map(c => `<td>${formatCell(row[c])}</td>`).join('')}</tr>`;
-      }
-      html += '</tbody></table>';
-      grid.innerHTML = html;
+      deltaParams = { active: false };
+      renderReportTable(grid, data, cols, hdrs, copyBar, copyLbl);
       status.textContent = `${data.length} reading${data.length !== 1 ? 's' : ''} found.`;
       expBtn.classList.remove('hidden');
-      initColSelect(grid, copyBar, copyLbl);
+      setupDeltaBar(prefix, grid, () => data, cols, hdrs, copyBar, copyLbl, p => { deltaParams = p; });
     } catch (err) {
       grid.innerHTML = errorState(err.message);
       status.textContent = 'Error running report.';
@@ -1295,12 +1375,18 @@ function makeReport({ sidebarId, panelId, title, prefix, optionsUrl, reportUrl, 
     const filterText = sel.options[sel.selectedIndex]?.text || 'All';
     const start = startEl.value;
     const end   = endEl.value;
-    const map   = cols.map((k, i) => [k, hdrs[i]]);
+    const colMap = cols.map((k, i) => [k, hdrs[i]]);
+    let exportData = data;
+    if (deltaParams.active) {
+      exportData = computeDeltaRows(data, deltaParams.valueKey, deltaParams.groupKey);
+      colMap.push(['_delta', deltaParams.label]);
+    }
+    const expHdrs = colMap.map(([,h]) => h);
     const exportTitle = `${title.replace(/ /g,'_')}_${filterText.replace(/ /g,'_')}_${start}_to_${end}`;
-    const exportRows  = data.map(r => Object.fromEntries(map.map(([k, h]) => [h, r[k]])));
-    const body = { rows: exportRows, columns: hdrs, title: exportTitle };
+    const exportRows  = exportData.map(r => Object.fromEntries(colMap.map(([k,h]) => [h, k === '_delta' ? (r._delta ?? '') : r[k]])));
+    const body = { rows: exportRows, columns: expHdrs, title: exportTitle };
     showExportPreview(`${title} — ${filterText} (${start} to ${end})`, body,
-      { rows: exportRows, columns: hdrs, rowCount: exportRows.length });
+      { rows: exportRows, columns: expHdrs, rowCount: exportRows.length });
   });
 }
 
