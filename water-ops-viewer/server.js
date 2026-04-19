@@ -959,9 +959,32 @@ app.get('/api/reports/canal-readings', requireDB, async (req, res) => {
     const { rows } = await pool.query(
       `SELECT cs.structure_name, r.reading_date, r.reading_time,
               r.instantaneous_flow_cfs, r.totalizer_reading_af,
-              r.gate_setting, r.head_reading_ft, r.derived_flow_cfs
+              r.gate_setting, r.head_reading_ft, r.derived_flow_cfs,
+              CASE
+                WHEN r.totalizer_reading_af IS NULL
+                  OR prev.totalizer_reading_af IS NULL
+                  OR prev.elapsed_secs IS NULL
+                  OR prev.elapsed_secs <= 0
+                THEN NULL
+                ELSE ROUND(
+                  ((r.totalizer_reading_af - prev.totalizer_reading_af) * 43560.0
+                   / prev.elapsed_secs)::numeric, 2)
+              END AS totalizer_calc
        FROM readings_canal r
        JOIN canal_structures cs ON cs.structure_id = r.structure_id
+       LEFT JOIN LATERAL (
+         SELECT p.totalizer_reading_af,
+                EXTRACT(EPOCH FROM (
+                  (r.reading_date + COALESCE(r.reading_time, '00:00:00'::time))::timestamp -
+                  (p.reading_date + COALESCE(p.reading_time, '00:00:00'::time))::timestamp
+                )) AS elapsed_secs
+         FROM readings_canal p
+         WHERE p.structure_id = r.structure_id
+           AND (p.reading_date + COALESCE(p.reading_time, '00:00:00'::time)) <
+               (r.reading_date + COALESCE(r.reading_time, '00:00:00'::time))
+         ORDER BY (p.reading_date + COALESCE(p.reading_time, '00:00:00'::time)) DESC
+         LIMIT 1
+       ) prev ON true
        WHERE r.reading_date >= $1 AND r.reading_date <= $2${clause}
        ORDER BY r.reading_date, r.reading_time, cs.structure_name`, params
     );

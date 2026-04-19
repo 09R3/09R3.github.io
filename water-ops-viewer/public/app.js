@@ -1437,7 +1437,7 @@ makeReport({
   reportUrl:  '/api/reports/canal-readings',
   filterParam: 'structure_id',
   cols: ['structure_name','reading_date','reading_time','instantaneous_flow_cfs','totalizer_reading_af','totalizer_calc','gate_setting','head_reading_ft','derived_flow_cfs'],
-  hdrs: ['Structure','Date','Time','Flow (cfs)','Totalizer (af)','Totalizer Calc','Gate Setting','Head (ft)','Derived Flow (cfs)'],
+  hdrs: ['Structure','Date','Time','Flow (cfs)','Totalizer (af)','Totalizer CFS','Gate Setting','Head (ft)','Derived Flow (cfs)'],
   colFormatters: {
     totalizer_calc: val => val === null || val === undefined
       ? '<span class="null-val">N/A</span>'

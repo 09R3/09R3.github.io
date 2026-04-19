@@ -1,6 +1,6 @@
 {
   "name": "water-ops-viewer",
-  "version": "1.6.2",
+  "version": "1.6.3",
   "description": "PostgreSQL database viewer and report exporter",
   "main": "server.js",
   "scripts": {
