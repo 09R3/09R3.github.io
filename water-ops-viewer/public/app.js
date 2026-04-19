@@ -904,7 +904,7 @@ let rwrDelta = { active: false };
 const colSel = { copy: null, clear: null };
 
 // One-time button setup — avoids stacking listeners on re-runs
-for (const pfx of ['rph', 'rwr', 'rcn', 'rch', 'rkf', 'rpge', 'rpwr', 'rdwr', 'rvm']) {
+for (const pfx of ['rph', 'rwr', 'rcn', 'rch', 'rkf', 'rpge', 'rpwr', 'rdwr', 'rvm', 'rdo']) {
   $(`${pfx}-col-copy-btn`).addEventListener('click', () => colSel.copy?.());
   $(`${pfx}-col-copy-clear`).addEventListener('click', () => colSel.clear?.());
   wireMonthSelect(`${pfx}-month`, $(`${pfx}-start`), $(`${pfx}-end`));
@@ -1449,6 +1449,16 @@ makeReport({
   filterParam: 'area',
   cols: ['common_name','state_well_number','reading_date','reading_time','depth_to_water','method','operator'],
   hdrs: ['Well','State Well #','Date','Time','Depth to Water','Method','Operator'],
+});
+
+makeReport({
+  sidebarId: 'report-dripper-oil', panelId: 'report-dripper-oil-panel',
+  title: 'Dripper Oil Report', prefix: 'rdo',
+  optionsUrl: '/api/reports/dripper-oil/areas',
+  reportUrl:  '/api/reports/dripper-oil',
+  filterParam: 'area',
+  cols: ['common_name', 'reading_date', 'reading_time', 'entered_by', 'dripper_oil'],
+  hdrs: ['Well', 'Date', 'Time', 'Entered By', 'Dripper Oil (qt)'],
 });
 
 makeReport({

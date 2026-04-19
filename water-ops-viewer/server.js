@@ -1159,6 +1159,37 @@ app.get('/api/reports/vehicle-monthly', requireDB, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── Dripper Oil ──────────────────────────────────────────────────────────────
+app.get('/api/reports/dripper-oil/areas', requireDB, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT DISTINCT w.area
+       FROM readings_well r
+       JOIN wells w ON r.well_id = w.well_id
+       WHERE r.dripper_oil IS NOT NULL AND w.area IS NOT NULL
+       ORDER BY w.area`
+    );
+    res.json(rows.map(r => r.area));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+app.get('/api/reports/dripper-oil', requireDB, async (req, res) => {
+  const { area, start, end } = req.query;
+  if (!start || !end) return res.status(400).json({ error: 'start and end required.' });
+  try {
+    const { clause, param } = optTextFilter(area, 'w.area', 3);
+    const params = [start, end, ...(param != null ? [param] : [])];
+    const { rows } = await pool.query(
+      `SELECT w.common_name, r.reading_date, r.reading_time, r.entered_by, r.dripper_oil
+       FROM readings_well r
+       JOIN wells w ON r.well_id = w.well_id
+       WHERE r.dripper_oil IS NOT NULL
+         AND r.reading_date >= $1 AND r.reading_date <= $2${clause}
+       ORDER BY r.reading_date, r.reading_time, w.common_name`, params
+    );
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ─── Start Server ─────────────────────────────────────────────────────────────
 
 const PORT = process.env.PORT || 3000;

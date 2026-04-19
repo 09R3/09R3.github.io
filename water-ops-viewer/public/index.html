@@ -99,6 +99,7 @@
           <button class="report-item" id="report-power-monitors">📊 Power Monitors</button>
           <button class="report-item" id="report-run-dwr">🗒️ Run DWR</button>
           <button class="report-item" id="report-vehicle-monthly">🚗 Vehicle Monthly</button>
+          <button class="report-item" id="report-dripper-oil">🛢️ Dripper Oil</button>
         </div>
       </div>
 
@@ -328,6 +329,24 @@
         <div class="report-status" id="rdwr-status"></div>
         <div class="col-copy-bar hidden" id="rdwr-col-copy-bar"><span class="col-copy-label" id="rdwr-col-copy-label"></span><button class="btn btn-ghost btn-sm col-copy-btn" id="rdwr-col-copy-btn">📋 Copy</button><button class="col-copy-clear" id="rdwr-col-copy-clear">✕</button></div>
         <div class="report-grid-wrap" id="rdwr-grid"><div class="empty-state"><div class="empty-icon">🗒️</div><p>Select an area and date range,<br>then click Run Report</p></div></div>
+      </div>
+
+      <!-- Dripper Oil Report -->
+      <div id="report-dripper-oil-panel" class="hidden">
+        <div class="report-controls">
+          <div class="report-control-group">
+            <label class="report-label">Area</label>
+            <select id="rdo-select" class="report-select"><option value="">Loading…</option></select>
+          </div>
+          <div class="report-control-group"><label class="report-label">Month</label><select id="rdo-month" class="report-select report-month-select"><option value="">Quick select…</option></select></div>
+          <div class="report-control-group"><label class="report-label">From</label><input type="date" id="rdo-start" class="report-date" /></div>
+          <div class="report-control-group"><label class="report-label">To</label><input type="date" id="rdo-end" class="report-date" /></div>
+          <button class="btn btn-primary btn-sm" id="rdo-run-btn">▶ Run Report</button>
+          <button class="btn btn-ghost btn-sm hidden" id="rdo-export-btn">↓ Export</button>
+        </div>
+        <div class="report-status" id="rdo-status"></div>
+        <div class="col-copy-bar hidden" id="rdo-col-copy-bar"><span class="col-copy-label" id="rdo-col-copy-label"></span><button class="btn btn-ghost btn-sm col-copy-btn" id="rdo-col-copy-btn">📋 Copy</button><button class="col-copy-clear" id="rdo-col-copy-clear">✕</button></div>
+        <div class="report-grid-wrap" id="rdo-grid"><div class="empty-state"><div class="empty-icon">🛢️</div><p>Select an area and date range,<br>then click Run Report</p></div></div>
       </div>
 
       <!-- Vehicle Monthly Report -->
