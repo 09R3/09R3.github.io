@@ -1343,7 +1343,7 @@ rwrExportBtn.addEventListener('click', () => {
 });
 
 // ── Generic Report Factory ─────────────────────────────────────────────────
-function makeReport({ sidebarId, panelId, title, prefix, optionsUrl, reportUrl, filterParam, cols, hdrs }) {
+function makeReport({ sidebarId, panelId, title, prefix, optionsUrl, reportUrl, filterParam, cols, hdrs, colFormatters = {} }) {
   const sel     = $(prefix + '-select');
   const startEl = $(prefix + '-start');
   const endEl   = $(prefix + '-end');
