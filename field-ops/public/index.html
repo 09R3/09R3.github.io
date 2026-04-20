@@ -1701,12 +1701,12 @@
 
 <!-- GPS Map Modal -->
 <div id="gps-map-modal" class="modal-overlay hidden">
-  <div class="modal-card" style="max-width:680px;width:calc(100% - 12px)">
+  <div class="modal-card" style="width:calc(100% - 24px);max-width:none">
     <div class="modal-header">
       <span>Photo Location</span>
       <button class="modal-close" id="gps-map-close">&#x2715;</button>
     </div>
-    <div id="gps-map-container" style="height:300px;width:100%;border-radius:8px;overflow:hidden;margin-top:8px"></div>
+    <div id="gps-map-container" style="height:min(520px,65vh);width:100%;border-radius:8px;overflow:hidden;margin-top:8px"></div>
     <div id="gps-map-coords" style="font-size:0.75rem;text-align:center;margin-top:6px;color:var(--text-dim)"></div>
   </div>
 </div>

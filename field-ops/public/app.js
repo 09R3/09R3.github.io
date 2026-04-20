@@ -2774,17 +2774,19 @@ function openGPSMap(lat, lon) {
   el('gps-map-coords').textContent = `${lat.toFixed(6)}, ${lon.toFixed(6)}`;
   el('gps-map-modal').classList.remove('hidden');
 
-  // Init map lazily
+  // Init map lazily; always invalidate so tiles fill the now-visible container
   if (!gpsLeafletMap) {
-    gpsLeafletMap = L.map('gps-map-container').setView([lat, lon], 16);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '© OpenStreetMap contributors',
+    gpsLeafletMap = L.map('gps-map-container').setView([lat, lon], 18);
+    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+      attribution: '© Esri, Maxar, Earthstar Geographics',
+      maxZoom: 19,
     }).addTo(gpsLeafletMap);
     gpsLeafletMarker = L.marker([lat, lon]).addTo(gpsLeafletMap);
+    setTimeout(() => gpsLeafletMap.invalidateSize(), 50);
   } else {
-    gpsLeafletMap.setView([lat, lon], 16);
+    gpsLeafletMap.setView([lat, lon], 18);
     gpsLeafletMarker.setLatLng([lat, lon]);
-    gpsLeafletMap.invalidateSize();
+    setTimeout(() => gpsLeafletMap.invalidateSize(), 50);
   }
 }
 
