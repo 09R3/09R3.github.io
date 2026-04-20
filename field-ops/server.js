@@ -1510,7 +1510,7 @@ app.post('/api/canal-issues', requireAuth, async (req, res) => {
 
 app.patch('/api/canal-issues/:id', requireAuth, async (req, res) => {
   const { id } = req.params;
-  const { status, action_taken, resolution_notes, po_number, cost, notes } = req.body;
+  const { status, action_taken, resolution_notes, po_number, cost, notes, gps_lat, gps_lon } = req.body;
   try {
     await pool.query(`
       UPDATE canal_issues SET
@@ -1520,10 +1520,15 @@ app.patch('/api/canal-issues/:id', requireAuth, async (req, res) => {
         po_number        = COALESCE($4, po_number),
         cost             = COALESCE($5, cost),
         notes            = COALESCE($6, notes),
+        gps_lat          = CASE WHEN $8::boolean THEN $9::double precision ELSE gps_lat END,
+        gps_lon          = CASE WHEN $8::boolean THEN $10::double precision ELSE gps_lon END,
         updated_at       = NOW()
       WHERE issue_id = $7
     `, [status || null, action_taken ?? null, resolution_notes ?? null,
-        po_number ?? null, cost ?? null, notes ?? null, id]);
+        po_number ?? null, cost ?? null, notes ?? null, id,
+        gps_lat != null && gps_lon != null,
+        gps_lat != null ? parseFloat(gps_lat) : null,
+        gps_lon != null ? parseFloat(gps_lon) : null]);
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });

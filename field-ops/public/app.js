@@ -2421,7 +2421,8 @@ let canalIssues       = [];
 let canalIssuesLoaded = false;
 let canalShowResolved = false;
 let canalNewPhotoFile = null;
-let canalNewPhotoGPS  = null; // {lat, lon} if EXIF GPS found
+let canalNewPhotoGPS  = null; // {lat, lon} if EXIF GPS found on new-issue photo
+const canalCardGPS    = new Map(); // Map<issueId, {lat, lon}> for card photo uploads
 
 function initMaintCanalPanel() {
   if (canalIssuesLoaded) return;
@@ -2669,9 +2670,16 @@ el('canal-issue-list').addEventListener('click', async e => {
     errEl.classList.add('hidden');
     e.target.disabled = true;
     try {
-      await api('PATCH', `/api/canal-issues/${issueId}`, { status, action_taken: actionTaken, resolution_notes: resNotes, po_number: poNumber, cost, notes });
+      const cardGPS = canalCardGPS.get(issueId) || null;
+      await api('PATCH', `/api/canal-issues/${issueId}`, {
+        status, action_taken: actionTaken, resolution_notes: resNotes,
+        po_number: poNumber, cost, notes,
+        gps_lat: cardGPS?.lat ?? null,
+        gps_lon: cardGPS?.lon ?? null,
+      });
       const pending = issueCardFiles.get(issueId);
       if (pending?.length) { await doUploadIssueAttachments(issueId, 'canal_issues', pending, item.dataset.entityName); issueCardFiles.delete(issueId); }
+      canalCardGPS.delete(issueId);
       canalIssuesLoaded = false;
       await loadCanalIssues();
       showToast('Issue updated', 'success');
@@ -2817,7 +2825,7 @@ issueInvInput.addEventListener('change', async () => {
   renderIssueAttachQueue(issueCardActiveId);
 });
 
-issuePicInput.addEventListener('change', () => {
+issuePicInput.addEventListener('change', async () => {
   if (!issueCardActiveId) return;
   const files = [...issuePicInput.files];
   issuePicInput.value = '';
@@ -2826,6 +2834,11 @@ issuePicInput.addEventListener('change', () => {
   files.forEach(f => pending.push({ file: f, fileType: 'photo' }));
   issueCardFiles.set(issueCardActiveId, pending);
   renderIssueAttachQueue(issueCardActiveId);
+  // For canal issues, extract GPS from the first photo and store for save
+  if (issueCardActiveTable === 'canal_issues' && !canalCardGPS.has(issueCardActiveId)) {
+    const gps = await readExifGPS(files[0]);
+    if (gps) canalCardGPS.set(issueCardActiveId, gps);
+  }
 });
 
 function renderIssueAttachQueue(issueId) {
