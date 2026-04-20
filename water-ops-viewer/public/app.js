@@ -1502,7 +1502,7 @@ makeReport({
   reportUrl:  '/api/reports/dripper-oil',
   filterParam: 'area',
   cols: ['common_name', 'reading_date', 'reading_time', 'entered_by', 'dripper_oil'],
-  hdrs: ['Well', 'Date', 'Time', 'Entered By', 'Dripper Oil (qt)'],
+  hdrs: ['Well', 'Date', 'Time', 'Entered By', 'Dripper Oil (gal)'],
 });
 
 makeReport({
