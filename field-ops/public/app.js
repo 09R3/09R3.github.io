@@ -2420,9 +2420,7 @@ el('equip-issue-list').addEventListener('click', async e => {
 let canalIssues       = [];
 let canalIssuesLoaded = false;
 let canalShowResolved = false;
-let canalNewPhotoFile = null;
-let canalNewPhotoGPS  = null; // {lat, lon} if EXIF GPS found on new-issue photo
-const canalCardGPS    = new Map(); // Map<issueId, {lat, lon}> for card photo uploads
+let canalNewPhotos    = []; // [{file, gps}] for new-issue form, gps is null until extracted
 
 function initMaintCanalPanel() {
   if (canalIssuesLoaded) return;
@@ -2540,41 +2538,61 @@ el('canal-cancel-btn').addEventListener('click', () => {
 });
 
 function resetCanalNewForm() {
-  canalNewPhotoFile = null;
-  canalNewPhotoGPS  = null;
-  el('canal-issue-pool').value     = '';
-  el('canal-issue-desc').value     = '';
-  el('canal-issue-date').value     = todayISO();
-  el('canal-new-photo-name').textContent = '';
-  el('canal-new-map-btn').classList.add('hidden');
+  canalNewPhotos = [];
+  el('canal-issue-pool').value = '';
+  el('canal-issue-desc').value = '';
+  el('canal-issue-date').value = todayISO();
+  renderCanalNewPhotoList();
 }
 
-// Photo picker for new issue
+function renderCanalNewPhotoList() {
+  const listEl = el('canal-new-photo-list');
+  if (!canalNewPhotos.length) { listEl.innerHTML = ''; return; }
+  listEl.innerHTML = canalNewPhotos.map((p, i) => `
+    <div class="maint-aq-item">
+      <span class="maint-aq-badge">PIC</span>
+      <span style="flex:1;font-size:0.8rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(p.file.name)}</span>
+      ${p.gps ? `<button type="button" class="canal-aq-map-btn" data-idx="${i}" style="padding:2px 7px;font-size:0.8rem;border:1px solid var(--border);border-radius:6px;background:var(--surface2);cursor:pointer">&#127757;</button>` : ''}
+      <button class="maint-aq-remove canal-new-aq-remove" data-idx="${i}">×</button>
+    </div>`).join('');
+  listEl.querySelectorAll('.canal-new-aq-remove').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      canalNewPhotos.splice(parseInt(btn.dataset.idx), 1);
+      renderCanalNewPhotoList();
+    });
+  });
+  listEl.querySelectorAll('.canal-aq-map-btn').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const p = canalNewPhotos[parseInt(btn.dataset.idx)];
+      if (p?.gps) openGPSMap(p.gps.lat, p.gps.lon);
+    });
+  });
+}
+
+// Photo picker for new issue (multiple)
 const canalNewPhotoInput = document.createElement('input');
 canalNewPhotoInput.type = 'file';
 canalNewPhotoInput.accept = 'image/*';
+canalNewPhotoInput.multiple = true;
 canalNewPhotoInput.style.display = 'none';
 document.body.appendChild(canalNewPhotoInput);
 
 el('canal-new-photo-btn').addEventListener('click', () => canalNewPhotoInput.click());
 
 canalNewPhotoInput.addEventListener('change', async () => {
-  const file = canalNewPhotoInput.files[0];
+  const files = [...canalNewPhotoInput.files];
   canalNewPhotoInput.value = '';
-  if (!file) return;
-  canalNewPhotoFile = file;
-  el('canal-new-photo-name').textContent = file.name;
-  // Attempt to extract GPS EXIF
-  canalNewPhotoGPS = await readExifGPS(file);
-  if (canalNewPhotoGPS) {
-    el('canal-new-map-btn').classList.remove('hidden');
-  } else {
-    el('canal-new-map-btn').classList.add('hidden');
-  }
-});
-
-el('canal-new-map-btn').addEventListener('click', () => {
-  if (canalNewPhotoGPS) openGPSMap(canalNewPhotoGPS.lat, canalNewPhotoGPS.lon);
+  if (!files.length) return;
+  const newEntries = files.map(f => ({ file: f, gps: null }));
+  canalNewPhotos.push(...newEntries);
+  renderCanalNewPhotoList();
+  // Extract GPS from each photo, re-render as results come in
+  await Promise.all(newEntries.map(async entry => {
+    entry.gps = await readExifGPS(entry.file);
+    if (entry.gps) renderCanalNewPhotoList();
+  }));
 });
 
 // Submit new canal issue
@@ -2585,19 +2603,21 @@ el('canal-submit-btn').addEventListener('click', async () => {
 
   el('canal-submit-btn').disabled = true;
   try {
+    const firstGPS = canalNewPhotos.find(p => p.gps)?.gps ?? null;
     const body = {
       pool:          el('canal-issue-pool').value || null,
       description:   desc,
       reported_date: el('canal-issue-date').value || null,
-      gps_lat:       canalNewPhotoGPS?.lat ?? null,
-      gps_lon:       canalNewPhotoGPS?.lon ?? null,
+      gps_lat:       firstGPS?.lat ?? null,
+      gps_lon:       firstGPS?.lon ?? null,
     };
     const newIssue = await api('POST', '/api/canal-issues', body);
 
-    // Upload photo if one was attached
-    if (canalNewPhotoFile) {
+    // Upload all attached photos
+    if (canalNewPhotos.length) {
       const entityName = `canal-pool${body.pool || 'x'}`;
-      await doUploadIssueAttachments(newIssue.issue_id, 'canal_issues', [{ file: canalNewPhotoFile, fileType: 'photo' }], entityName);
+      const pending = canalNewPhotos.map(p => ({ file: p.file, fileType: 'photo' }));
+      await doUploadIssueAttachments(newIssue.issue_id, 'canal_issues', pending, entityName);
     }
 
     el('canal-new-issue-form').classList.add('hidden');
@@ -2670,16 +2690,15 @@ el('canal-issue-list').addEventListener('click', async e => {
     errEl.classList.add('hidden');
     e.target.disabled = true;
     try {
-      const cardGPS = canalCardGPS.get(issueId) || null;
+      const pending   = issueCardFiles.get(issueId) || [];
+      const cardGPS   = pending.find(e => e.fileType === 'photo' && e.gps)?.gps ?? null;
       await api('PATCH', `/api/canal-issues/${issueId}`, {
         status, action_taken: actionTaken, resolution_notes: resNotes,
         po_number: poNumber, cost, notes,
         gps_lat: cardGPS?.lat ?? null,
         gps_lon: cardGPS?.lon ?? null,
       });
-      const pending = issueCardFiles.get(issueId);
-      if (pending?.length) { await doUploadIssueAttachments(issueId, 'canal_issues', pending, item.dataset.entityName); issueCardFiles.delete(issueId); }
-      canalCardGPS.delete(issueId);
+      if (pending.length) { await doUploadIssueAttachments(issueId, 'canal_issues', pending, item.dataset.entityName); issueCardFiles.delete(issueId); }
       canalIssuesLoaded = false;
       await loadCanalIssues();
       showToast('Issue updated', 'success');
@@ -2831,19 +2850,22 @@ issuePicInput.addEventListener('change', async () => {
   issuePicInput.value = '';
   if (!files.length) return;
   const pending = issueCardFiles.get(issueCardActiveId) || [];
-  files.forEach(f => pending.push({ file: f, fileType: 'photo' }));
+  const newEntries = files.map(f => ({ file: f, fileType: 'photo' }));
+  newEntries.forEach(e => pending.push(e));
   issueCardFiles.set(issueCardActiveId, pending);
   renderIssueAttachQueue(issueCardActiveId);
-  // For canal issues, extract GPS from the first photo and store for save
-  if (issueCardActiveTable === 'canal_issues' && !canalCardGPS.has(issueCardActiveId)) {
-    const gps = await readExifGPS(files[0]);
-    if (gps) canalCardGPS.set(issueCardActiveId, gps);
+  // For canal issues, extract GPS from each photo; re-render as results arrive
+  if (issueCardActiveTable === 'canal_issues') {
+    const id = issueCardActiveId;
+    await Promise.all(newEntries.map(async entry => {
+      entry.gps = await readExifGPS(entry.file);
+      if (entry.gps) renderIssueAttachQueue(id);
+    }));
   }
 });
 
 function renderIssueAttachQueue(issueId) {
   const pending = issueCardFiles.get(issueId) || [];
-  // Find queue element across all three lists
   const queueEl = document.querySelector(`.equip-issue-item[data-issue-id="${issueId}"] .issue-attach-queue`);
   if (!queueEl) return;
   if (!pending.length) { queueEl.classList.add('hidden'); queueEl.innerHTML = ''; return; }
@@ -2852,8 +2874,15 @@ function renderIssueAttachQueue(issueId) {
     <div class="maint-aq-item">
       <span class="maint-aq-badge">${a.fileType === 'invoice' ? 'INV' : 'PIC'}</span>
       <span style="flex:1;font-size:0.8rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${a.file.name}</span>
+      ${a.gps ? `<button type="button" class="canal-aq-map-btn" data-lat="${a.gps.lat}" data-lon="${a.gps.lon}" style="padding:2px 7px;font-size:0.8rem;border:1px solid var(--border);border-radius:6px;background:var(--surface2);cursor:pointer">&#127757;</button>` : ''}
       <button class="maint-aq-remove" data-idx="${i}">×</button>
     </div>`).join('');
+  queueEl.querySelectorAll('.canal-aq-map-btn').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      openGPSMap(parseFloat(btn.dataset.lat), parseFloat(btn.dataset.lon));
+    });
+  });
   queueEl.querySelectorAll('.maint-aq-remove').forEach(btn => {
     btn.addEventListener('click', e => {
       e.stopPropagation();
