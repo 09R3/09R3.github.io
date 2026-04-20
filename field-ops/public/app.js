@@ -1835,7 +1835,7 @@ function onIssueStatusChange(e) {
   item.querySelector('.issue-action-group').style.display = e.target.value === 'in_progress' ? '' : 'none';
   item.querySelector('.issue-res-group').style.display    = e.target.value === 'resolved'    ? '' : 'none';
 }
-['well-issue-list','bldg-issue-list','equip-issue-list'].forEach(id =>
+['well-issue-list','bldg-issue-list','equip-issue-list','canal-issue-list'].forEach(id =>
   el(id).addEventListener('change', onIssueStatusChange)
 );
 
@@ -2416,6 +2416,355 @@ el('equip-issue-list').addEventListener('click', async e => {
   }
 });
 
+/* ── Canal Issues ────────────────────────────────────────────────────────── */
+let canalIssues       = [];
+let canalIssuesLoaded = false;
+let canalShowResolved = false;
+let canalNewPhotoFile = null;
+let canalNewPhotoGPS  = null; // {lat, lon} if EXIF GPS found
+
+function initMaintCanalPanel() {
+  if (canalIssuesLoaded) return;
+  canalIssuesLoaded = true;
+  el('canal-issue-date').value = todayISO();
+  loadCanalIssues();
+}
+
+async function loadCanalIssues() {
+  try {
+    canalIssues = await api('GET', `/api/canal-issues?include_resolved=${canalShowResolved}`);
+    renderCanalIssues();
+    updateCanalBadge();
+  } catch {
+    el('canal-issue-list').innerHTML = `<div class="placeholder-msg">Failed to load issues</div>`;
+  }
+}
+
+function updateCanalBadge() {
+  const count = canalIssues.filter(i => i.status === 'open' || i.status === 'in_progress').length;
+  setBadge('maint-badge-canal', count);
+}
+
+function renderCanalIssues() {
+  const list = el('canal-issue-list');
+  if (!canalIssues.length) {
+    list.innerHTML = `<div class="placeholder-msg">No ${canalShowResolved ? '' : 'open '}issues</div>`;
+    return;
+  }
+  list.innerHTML = canalIssues.map(issue => {
+    const statusClass = issue.status.replace('_', '-');
+    const title   = issue.pool ? `Pool ${escHtml(issue.pool)}` : 'Canal';
+    const snippet = (issue.description || '').slice(0, 80) + (issue.description?.length > 80 ? '…' : '');
+    const entityName = `canal-pool${issue.pool || 'x'}`.slice(0, 30);
+    const hasGPS = issue.gps_lat != null && issue.gps_lon != null;
+    return `
+      <div class="equip-issue-item" data-issue-id="${issue.issue_id}" data-entity-name="${entityName}">
+        <div class="equip-issue-header">
+          <div class="equip-issue-meta">
+            <div class="equip-issue-name">${title}</div>
+            <div class="equip-issue-snippet">${escHtml(snippet)}</div>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+            <span class="status-pill ${statusClass}">${issue.status.replace('_',' ')}</span>
+            <span class="equip-issue-date">${issue.reported_date?.slice(0,10) || ''}</span>
+          </div>
+        </div>
+        <div class="equip-issue-body hidden">
+          <div class="form-group">
+            <label>Pool</label>
+            <div style="font-size:0.9rem;padding:6px 0">${issue.pool ? `Pool ${escHtml(issue.pool)}` : '—'}</div>
+          </div>
+          <div class="form-group">
+            <label>Description</label>
+            <div style="font-size:0.9rem;padding:6px 0">${escHtml(issue.description || '')}</div>
+          </div>
+          <div class="form-group">
+            <label>Status</label>
+            <select class="ctrl-select issue-status-select">
+              <option value="open"        ${issue.status==='open'        ?'selected':''}>Open</option>
+              <option value="in_progress" ${issue.status==='in_progress' ?'selected':''}>In Progress</option>
+              <option value="resolved"    ${issue.status==='resolved'    ?'selected':''}>Resolved</option>
+            </select>
+          </div>
+          <div class="form-group issue-action-group" style="${issue.status==='in_progress' ? '' : 'display:none'}">
+            <label>Action Taken</label>
+            <textarea class="ctrl-textarea issue-action-taken" rows="2" placeholder="Describe the action being taken…">${escHtml(issue.action_taken || '')}</textarea>
+          </div>
+          <div class="issue-res-group" style="${issue.status==='resolved' ? '' : 'display:none'}">
+            <div class="form-group">
+              <label>Resolution Notes</label>
+              <textarea class="ctrl-textarea issue-res-notes" rows="2" placeholder="Describe how it was resolved…">${escHtml(issue.resolution_notes || '')}</textarea>
+            </div>
+            <div class="form-group">
+              <label>PO Number</label>
+              <input type="text" class="ctrl-input issue-po-number" value="${escHtml(issue.po_number || '')}" placeholder="Optional">
+            </div>
+            <div class="form-group">
+              <label>Cost ($)</label>
+              <input type="number" class="ctrl-input issue-cost" value="${issue.cost != null ? issue.cost : ''}" placeholder="0.00" min="0" step="0.01">
+            </div>
+            <div class="form-group">
+              <label>Notes</label>
+              <textarea class="ctrl-textarea issue-notes" rows="2" placeholder="Additional notes…">${escHtml(issue.notes || '')}</textarea>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Attachments</label>
+            <div class="maint-attach-btns">
+              <button type="button" class="btn btn-secondary btn-sm issue-inv-btn">${icon('invoice')} Invoice</button>
+              <button type="button" class="btn btn-secondary btn-sm issue-pic-btn">${icon('photo')} Photo(s)</button>
+              ${hasGPS ? `<button type="button" class="btn btn-secondary btn-sm canal-map-btn" data-lat="${issue.gps_lat}" data-lon="${issue.gps_lon}">&#127757; Map</button>` : ''}
+              ${Number(issue.attachment_count) > 0 ? `<button type="button" class="btn btn-secondary btn-sm issue-files-btn" data-table="canal_issues">${icon('attachments')} ${issue.attachment_count} file${issue.attachment_count > 1 ? 's' : ''}</button>` : ''}
+            </div>
+            <div class="maint-attach-queue issue-attach-queue hidden"></div>
+            <div class="maint-hist-attach-area issue-files-area hidden"></div>
+          </div>
+          <div class="error-msg hidden issue-update-error"></div>
+          <button class="btn btn-save btn-full issue-save-btn" data-table="canal_issues">Save Changes</button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+// New issue form toggle
+el('canal-new-issue-btn').addEventListener('click', () => {
+  el('canal-new-issue-form').classList.remove('hidden');
+  el('canal-new-issue-btn').classList.add('hidden');
+});
+el('canal-cancel-btn').addEventListener('click', () => {
+  el('canal-new-issue-form').classList.add('hidden');
+  el('canal-new-issue-btn').classList.remove('hidden');
+  el('canal-new-error').classList.add('hidden');
+  resetCanalNewForm();
+});
+
+function resetCanalNewForm() {
+  canalNewPhotoFile = null;
+  canalNewPhotoGPS  = null;
+  el('canal-issue-pool').value     = '';
+  el('canal-issue-desc').value     = '';
+  el('canal-issue-date').value     = todayISO();
+  el('canal-new-photo-name').textContent = '';
+  el('canal-new-map-btn').classList.add('hidden');
+}
+
+// Photo picker for new issue
+const canalNewPhotoInput = document.createElement('input');
+canalNewPhotoInput.type = 'file';
+canalNewPhotoInput.accept = 'image/*';
+canalNewPhotoInput.style.display = 'none';
+document.body.appendChild(canalNewPhotoInput);
+
+el('canal-new-photo-btn').addEventListener('click', () => canalNewPhotoInput.click());
+
+canalNewPhotoInput.addEventListener('change', async () => {
+  const file = canalNewPhotoInput.files[0];
+  canalNewPhotoInput.value = '';
+  if (!file) return;
+  canalNewPhotoFile = file;
+  el('canal-new-photo-name').textContent = file.name;
+  // Attempt to extract GPS EXIF
+  canalNewPhotoGPS = await readExifGPS(file);
+  if (canalNewPhotoGPS) {
+    el('canal-new-map-btn').classList.remove('hidden');
+  } else {
+    el('canal-new-map-btn').classList.add('hidden');
+  }
+});
+
+el('canal-new-map-btn').addEventListener('click', () => {
+  if (canalNewPhotoGPS) openGPSMap(canalNewPhotoGPS.lat, canalNewPhotoGPS.lon);
+});
+
+// Submit new canal issue
+el('canal-submit-btn').addEventListener('click', async () => {
+  clearError('canal-new-error');
+  const desc = el('canal-issue-desc').value.trim();
+  if (!desc) return showError('canal-new-error', 'Issue description is required');
+
+  el('canal-submit-btn').disabled = true;
+  try {
+    const body = {
+      pool:          el('canal-issue-pool').value || null,
+      description:   desc,
+      reported_date: el('canal-issue-date').value || null,
+      gps_lat:       canalNewPhotoGPS?.lat ?? null,
+      gps_lon:       canalNewPhotoGPS?.lon ?? null,
+    };
+    const newIssue = await api('POST', '/api/canal-issues', body);
+
+    // Upload photo if one was attached
+    if (canalNewPhotoFile) {
+      const entityName = `canal-pool${body.pool || 'x'}`;
+      await doUploadIssueAttachments(newIssue.issue_id, 'canal_issues', [{ file: canalNewPhotoFile, fileType: 'photo' }], entityName);
+    }
+
+    el('canal-new-issue-form').classList.add('hidden');
+    el('canal-new-issue-btn').classList.remove('hidden');
+    resetCanalNewForm();
+    canalIssuesLoaded = false;
+    await loadCanalIssues();
+    showToast('Issue submitted', 'success');
+    refreshMaintenanceBadges();
+  } catch (err) {
+    showError('canal-new-error', err.message);
+  } finally {
+    el('canal-submit-btn').disabled = false;
+  }
+});
+
+// Show/hide resolved toggle
+el('canal-show-resolved-btn').addEventListener('click', () => {
+  canalShowResolved = !canalShowResolved;
+  el('canal-show-resolved-btn').textContent = canalShowResolved ? 'Hide Resolved' : 'Show Resolved';
+  canalIssuesLoaded = false;
+  loadCanalIssues();
+});
+
+// Issue list interactions (delegated)
+el('canal-issue-list').addEventListener('click', async e => {
+  const item = e.target.closest('.equip-issue-item');
+  if (!item) return;
+
+  if (e.target.closest('.equip-issue-header')) {
+    item.querySelector('.equip-issue-body').classList.toggle('hidden');
+    return;
+  }
+
+  if (e.target.classList.contains('issue-inv-btn')) {
+    issueCardActiveId = item.dataset.issueId; issueCardActiveTable = 'canal_issues'; issueInvInput.click(); return;
+  }
+  if (e.target.classList.contains('issue-pic-btn')) {
+    issueCardActiveId = item.dataset.issueId; issueCardActiveTable = 'canal_issues'; issuePicInput.click(); return;
+  }
+  if (e.target.classList.contains('canal-map-btn')) {
+    openGPSMap(parseFloat(e.target.dataset.lat), parseFloat(e.target.dataset.lon)); return;
+  }
+  if (e.target.classList.contains('issue-files-btn')) {
+    const area = item.querySelector('.issue-files-area');
+    if (!area.classList.contains('hidden')) { area.classList.add('hidden'); return; }
+    area.classList.remove('hidden');
+    if (area.dataset.loaded) return;
+    area.innerHTML = '<div style="font-size:0.8rem;color:var(--text-dim)">Loading…</div>';
+    try {
+      const atts = await api('GET', `/api/maintenance/attachments?table_name=canal_issues&record_id=${item.dataset.issueId}`);
+      area.dataset.loaded = '1';
+      if (!atts.length) { area.innerHTML = '<div class="maint-att-empty">No files</div>'; return; }
+      area.innerHTML = atts.map(a => { const isPdf = a.mime_type==='application/pdf'||a.original_name.endsWith('.pdf'); const url=`/uploads/${a.rel_path.split('/').map(encodeURIComponent).join('/')}`; return `<div class="maint-att-item" data-url="${url}" data-pdf="${isPdf}" data-name="${a.original_name.replace(/"/g,'&quot;')}"><div class="maint-att-thumb">${isPdf?`<span class="maint-att-pdf-icon">${icon('invoice', 28)}</span>`:`<img src="${url}" loading="lazy" alt="">`}</div><span class="maint-att-type-badge">${a.file_type==='invoice'?'INV':'PIC'}</span><div class="maint-att-name">${a.original_name}</div></div>`; }).join('');
+      area.querySelectorAll('.maint-att-item').forEach(card => card.addEventListener('click', () => openAttachmentPreview(card.dataset.url, card.dataset.name, card.dataset.pdf==='true')));
+    } catch (err) { area.innerHTML = `<div class="maint-att-empty" style="color:var(--red-light)">${err.message}</div>`; }
+    return;
+  }
+
+  if (e.target.classList.contains('issue-save-btn')) {
+    const issueId     = item.dataset.issueId;
+    const status      = item.querySelector('.issue-status-select').value;
+    const actionTaken = item.querySelector('.issue-action-taken').value.trim() || null;
+    const resNotes    = item.querySelector('.issue-res-notes').value.trim()    || null;
+    const poNumber    = item.querySelector('.issue-po-number').value.trim()    || null;
+    const costVal     = item.querySelector('.issue-cost').value;
+    const cost        = costVal !== '' ? parseFloat(costVal) : null;
+    const notes       = item.querySelector('.issue-notes').value.trim()        || null;
+    const errEl       = item.querySelector('.issue-update-error');
+    errEl.classList.add('hidden');
+    e.target.disabled = true;
+    try {
+      await api('PATCH', `/api/canal-issues/${issueId}`, { status, action_taken: actionTaken, resolution_notes: resNotes, po_number: poNumber, cost, notes });
+      const pending = issueCardFiles.get(issueId);
+      if (pending?.length) { await doUploadIssueAttachments(issueId, 'canal_issues', pending, item.dataset.entityName); issueCardFiles.delete(issueId); }
+      canalIssuesLoaded = false;
+      await loadCanalIssues();
+      showToast('Issue updated', 'success');
+      refreshMaintenanceBadges();
+    } catch (err) {
+      errEl.textContent = err.message;
+      errEl.classList.remove('hidden');
+      e.target.disabled = false;
+    }
+  }
+});
+
+// ── EXIF GPS reader ───────────────────────────────────────────────────────────
+async function readExifGPS(file) {
+  if (!file.type.startsWith('image/')) return null;
+  try {
+    const buf  = await file.slice(0, 128 * 1024).arrayBuffer();
+    const view = new DataView(buf);
+    if (view.getUint16(0) !== 0xFFD8) return null;
+
+    let markerOff = 2;
+    while (markerOff + 4 < buf.byteLength) {
+      const marker = view.getUint16(markerOff);
+      const segLen = view.getUint16(markerOff + 2);
+      if (marker === 0xFFE1 &&
+          view.getUint32(markerOff + 4) === 0x45786966 &&
+          view.getUint16(markerOff + 8) === 0) {
+        const tiff = markerOff + 10;
+        const le   = view.getUint16(tiff) === 0x4949;
+        const u16  = o => view.getUint16(tiff + o, le);
+        const u32  = o => view.getUint32(tiff + o, le);
+        const rat  = o => { const n = u32(o), d = u32(o + 4); return d ? n / d : 0; };
+
+        const ifd0    = u32(4);
+        const n0      = u16(ifd0);
+        let gpsDirOff = null;
+        for (let i = 0; i < n0; i++) {
+          const e = ifd0 + 2 + i * 12;
+          if (u16(e) === 0x8825) { gpsDirOff = u32(e + 8); break; }
+        }
+        if (gpsDirOff === null) return null;
+
+        const ng = u16(gpsDirOff);
+        let latRef = 'N', lonRef = 'E', latDMS = null, lonDMS = null;
+        for (let i = 0; i < ng; i++) {
+          const e   = gpsDirOff + 2 + i * 12;
+          const tag = u16(e);
+          const vOff = u32(e + 8);
+          if      (tag === 0x0001) latRef = String.fromCharCode(view.getUint8(tiff + e + 8));
+          else if (tag === 0x0002) latDMS = [rat(vOff), rat(vOff + 8), rat(vOff + 16)];
+          else if (tag === 0x0003) lonRef = String.fromCharCode(view.getUint8(tiff + e + 8));
+          else if (tag === 0x0004) lonDMS = [rat(vOff), rat(vOff + 8), rat(vOff + 16)];
+        }
+        if (!latDMS || !lonDMS) return null;
+        let lat = latDMS[0] + latDMS[1] / 60 + latDMS[2] / 3600;
+        let lon = lonDMS[0] + lonDMS[1] / 60 + lonDMS[2] / 3600;
+        if (latRef === 'S') lat = -lat;
+        if (lonRef === 'W') lon = -lon;
+        return { lat, lon };
+      }
+      if (segLen < 2) break;
+      markerOff += 2 + segLen;
+    }
+    return null;
+  } catch { return null; }
+}
+
+// ── GPS Map Modal ─────────────────────────────────────────────────────────────
+let gpsLeafletMap = null;
+let gpsLeafletMarker = null;
+
+function openGPSMap(lat, lon) {
+  el('gps-map-coords').textContent = `${lat.toFixed(6)}, ${lon.toFixed(6)}`;
+  el('gps-map-modal').classList.remove('hidden');
+
+  // Init map lazily
+  if (!gpsLeafletMap) {
+    gpsLeafletMap = L.map('gps-map-container').setView([lat, lon], 16);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap contributors',
+    }).addTo(gpsLeafletMap);
+    gpsLeafletMarker = L.marker([lat, lon]).addTo(gpsLeafletMap);
+  } else {
+    gpsLeafletMap.setView([lat, lon], 16);
+    gpsLeafletMarker.setLatLng([lat, lon]);
+    gpsLeafletMap.invalidateSize();
+  }
+}
+
+el('gps-map-close').addEventListener('click', () => {
+  el('gps-map-modal').classList.add('hidden');
+});
+
 /* ── Maintenance ─────────────────────────────────────────────────────────── */
 let maintType       = 'vehicle';
 let maintContractor = false;
@@ -2782,12 +3131,13 @@ el('veh-record-list').addEventListener('click', async e => {
 });
 
 const MAINT_PANEL_NAMES = {
-  vehicles:  'Vehicle Maintenance',
-  equipment: 'Equipment Issues',
-  buildings: 'Building Issues',
-  wells:     'Well Issues',
-  swaps:     'Equipment Swaps',
-  pms:       'PM Records',
+  vehicles:       'Vehicle Maintenance',
+  equipment:      'Equipment Issues',
+  buildings:      'Building Issues',
+  wells:          'Well Issues',
+  swaps:          'Equipment Swaps',
+  pms:            'PM Records',
+  'canal-issues': 'Canal Issues',
 };
 function openMaintPanel(panelId) {
   el('maint-main').classList.add('hidden');
@@ -2795,12 +3145,13 @@ function openMaintPanel(panelId) {
   el('maint-panel-' + panelId).classList.remove('hidden');
   setPanelNav(el('screen-maintenance'), closeMaintPanel,
     'Maintenance Log - ' + (MAINT_PANEL_NAMES[panelId] || panelId));
-  if (panelId === 'equipment') initMaintEquipmentPanel();
-  if (panelId === 'buildings') initMaintBuildingsPanel();
-  if (panelId === 'wells')     initMaintWellsPanel();
-  if (panelId === 'vehicles')  initMaintVehiclesPanel();
-  if (panelId === 'swaps')     initMaintSwapsPanel();
-  if (panelId === 'pms')       initMaintPMsPanel();
+  if (panelId === 'equipment')    initMaintEquipmentPanel();
+  if (panelId === 'buildings')    initMaintBuildingsPanel();
+  if (panelId === 'wells')        initMaintWellsPanel();
+  if (panelId === 'vehicles')     initMaintVehiclesPanel();
+  if (panelId === 'swaps')        initMaintSwapsPanel();
+  if (panelId === 'pms')          initMaintPMsPanel();
+  if (panelId === 'canal-issues') initMaintCanalPanel();
 }
 
 function closeMaintPanel() {
@@ -2829,7 +3180,8 @@ async function refreshMaintenanceBadges() {
     setBadge('maint-badge-buildings', counts.buildings);
     setBadge('maint-badge-wells',     counts.wells);
     setBadge('maint-badge-vehicles',  counts.vehicles);
-    setBadge('maint-main-badge', counts.equipment + counts.buildings + counts.wells + counts.vehicles);
+    setBadge('maint-badge-canal',     counts.canal);
+    setBadge('maint-main-badge', counts.equipment + counts.buildings + counts.wells + counts.vehicles + counts.canal);
   } catch { /* non-critical — badges stay at last known value */ }
 }
 

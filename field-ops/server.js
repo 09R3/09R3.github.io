@@ -166,6 +166,26 @@ pool.query(`
   )
 `).catch(err => console.error('Migration error (maint_attachments):', err.message));
 
+pool.query(`
+  CREATE TABLE IF NOT EXISTS canal_issues (
+    issue_id       SERIAL PRIMARY KEY,
+    pool           TEXT,
+    status         TEXT NOT NULL DEFAULT 'open',
+    description    TEXT,
+    reported_date  DATE,
+    entered_by     TEXT,
+    action_taken   TEXT,
+    resolution_notes TEXT,
+    po_number      TEXT,
+    cost           NUMERIC(10,2),
+    notes          TEXT,
+    gps_lat        DOUBLE PRECISION,
+    gps_lon        DOUBLE PRECISION,
+    created_at     TIMESTAMPTZ DEFAULT NOW(),
+    updated_at     TIMESTAMPTZ DEFAULT NOW()
+  )
+`).catch(err => console.error('Migration error (canal_issues):', err.message));
+
 // ── Auth / Sessions ───────────────────────────────────────────────────────────
 const SESSION_TTL = 8 * 60 * 60 * 1000; // 8 hours
 const sessions = new Map();
@@ -1451,6 +1471,65 @@ app.patch('/api/equipment-issues/:id', requireAuth, async (req, res) => {
   }
 });
 
+// ── Canal Issues ──────────────────────────────────────────────────────────────
+app.get('/api/canal-issues', requireAuth, async (req, res) => {
+  const includeResolved = req.query.include_resolved === 'true';
+  try {
+    const { rows } = await pool.query(`
+      SELECT ci.*,
+             (SELECT COUNT(*) FROM maintenance_attachments
+              WHERE table_name = 'canal_issues' AND record_id = ci.issue_id) AS attachment_count
+      FROM canal_issues ci
+      WHERE $1 OR ci.status != 'resolved'
+      ORDER BY
+        CASE ci.status WHEN 'open' THEN 0 WHEN 'in_progress' THEN 1 ELSE 2 END,
+        ci.reported_date DESC
+    `, [includeResolved]);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/canal-issues', requireAuth, async (req, res) => {
+  const { pool: poolNum, description, reported_date, gps_lat, gps_lon } = req.body;
+  const entered_by = req.user.username;
+  try {
+    const { rows } = await pool.query(`
+      INSERT INTO canal_issues (pool, description, reported_date, entered_by, gps_lat, gps_lon)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      RETURNING *
+    `, [poolNum || null, description || null, reported_date || null, entered_by,
+        gps_lat != null ? parseFloat(gps_lat) : null,
+        gps_lon != null ? parseFloat(gps_lon) : null]);
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch('/api/canal-issues/:id', requireAuth, async (req, res) => {
+  const { id } = req.params;
+  const { status, action_taken, resolution_notes, po_number, cost, notes } = req.body;
+  try {
+    await pool.query(`
+      UPDATE canal_issues SET
+        status           = COALESCE($1, status),
+        action_taken     = COALESCE($2, action_taken),
+        resolution_notes = COALESCE($3, resolution_notes),
+        po_number        = COALESCE($4, po_number),
+        cost             = COALESCE($5, cost),
+        notes            = COALESCE($6, notes),
+        updated_at       = NOW()
+      WHERE issue_id = $7
+    `, [status || null, action_taken ?? null, resolution_notes ?? null,
+        po_number ?? null, cost ?? null, notes ?? null, id]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Equipment Swap Units (unified, by category) ───────────────────────────────
 app.get('/api/equipment-swap-units/:category', requireAuth, async (req, res) => {
   const { category } = req.params;
@@ -1608,7 +1687,9 @@ app.get('/api/maintenance/badge-counts', requireAuth, async (req, res) => {
         (SELECT COUNT(*) FROM well_issues
          WHERE status IN ('open','in_progress')) AS wells,
         (SELECT COUNT(*) FROM maintenance_vehicles
-         WHERE status IN ('open','in-progress')) AS vehicles
+         WHERE status IN ('open','in-progress')) AS vehicles,
+        (SELECT COUNT(*) FROM canal_issues
+         WHERE status IN ('open','in_progress')) AS canal
     `);
     const counts = rows[0];
     res.json({
@@ -1616,6 +1697,7 @@ app.get('/api/maintenance/badge-counts', requireAuth, async (req, res) => {
       buildings: parseInt(counts.buildings) || 0,
       wells:     parseInt(counts.wells)     || 0,
       vehicles:  parseInt(counts.vehicles)  || 0,
+      canal:     parseInt(counts.canal)     || 0,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

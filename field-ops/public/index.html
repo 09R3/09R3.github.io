@@ -84,7 +84,7 @@
         <div id="login-error" class="error-msg hidden"></div>
         <button type="submit" class="btn btn-primary btn-full">Sign In</button>
       </form>
-      <div class="login-version">v 1.43</div>
+      <div class="login-version">v 1.44</div>
     </div>
   </div>
 </div>
@@ -472,6 +472,13 @@
             <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-swaps.svg);mask-image:url(/marv-site/icons/icon-swaps.svg)"></span>
           </div>
           <span class="dash-label">Equipment Swaps</span>
+        </button>
+        <button class="dash-tile" data-maint-panel="canal-issues">
+          <div class="dash-icon-wrap">
+            <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-canal.svg);mask-image:url(/marv-site/icons/icon-canal.svg)"></span>
+          </div>
+          <span class="dash-label">Canal Issues</span>
+          <span class="maint-badge hidden" id="maint-badge-canal">0</span>
         </button>
         <button class="dash-tile" data-maint-panel="pms">
           <div class="dash-icon-wrap">
@@ -861,6 +868,56 @@
       <div id="pm-panel-annual-pp"     class="pm-panel hidden"><div class="pm-type-content"></div></div>
 
     </div><!-- /maint-panel-pms -->
+
+    <!-- Canal Issues Panel -->
+    <div id="maint-panel-canal-issues" class="maint-panel hidden">
+      <div class="issue-toolbar">
+        <button class="btn btn-secondary btn-sm" id="canal-show-resolved-btn">Show Resolved</button>
+        <button class="btn btn-save btn-sm" id="canal-new-issue-btn">+ New Issue</button>
+      </div>
+
+      <!-- New issue form -->
+      <div id="canal-new-issue-form" class="form-card hidden">
+        <div class="form-group">
+          <label>Pool</label>
+          <select id="canal-issue-pool" class="ctrl-select">
+            <option value="">Select pool…</option>
+            <option value="1">Pool 1</option>
+            <option value="2">Pool 2</option>
+            <option value="3">Pool 3</option>
+            <option value="4">Pool 4</option>
+            <option value="5">Pool 5</option>
+            <option value="6">Pool 6</option>
+            <option value="7">Pool 7</option>
+            <option value="8">Pool 8</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Issue Description</label>
+          <textarea id="canal-issue-desc" class="ctrl-textarea" rows="3" placeholder="Describe the problem…"></textarea>
+        </div>
+        <div class="form-group">
+          <label>Reported Date</label>
+          <input type="date" id="canal-issue-date" class="ctrl-input ctrl-input-sm">
+        </div>
+        <div class="form-group">
+          <label>Photo (optional)</label>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <button type="button" class="btn btn-secondary btn-sm" id="canal-new-photo-btn">Add Photo</button>
+            <span id="canal-new-photo-name" style="font-size:0.8rem;color:var(--text-dim)"></span>
+            <button type="button" class="btn btn-secondary btn-sm hidden" id="canal-new-map-btn">&#127757; Map</button>
+          </div>
+        </div>
+        <div id="canal-new-error" class="error-msg hidden"></div>
+        <div class="two-col">
+          <button class="btn btn-secondary" id="canal-cancel-btn">Cancel</button>
+          <button class="btn btn-save" id="canal-submit-btn">Submit Issue</button>
+        </div>
+      </div>
+
+      <!-- Issue list -->
+      <div id="canal-issue-list"></div>
+    </div><!-- /maint-panel-canal-issues -->
 
   </div><!-- /screen-maintenance -->
 
@@ -1336,7 +1393,7 @@
     <div id="settings-panel-appinfo" class="settings-panel hidden">
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 1.43</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 1.44</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>
@@ -1642,6 +1699,18 @@
       <button class="modal-close" id="pm-view-modal-close">&times;</button>
     </div>
     <div class="modal-body" id="pm-view-modal-body"></div>
+  </div>
+</div>
+
+<!-- GPS Map Modal -->
+<div id="gps-map-modal" class="modal-overlay hidden">
+  <div class="modal-card" style="max-width:680px;width:calc(100% - 12px)">
+    <div class="modal-header">
+      <span>Photo Location</span>
+      <button class="modal-close" id="gps-map-close">&#x2715;</button>
+    </div>
+    <div id="gps-map-container" style="height:300px;width:100%;border-radius:8px;overflow:hidden;margin-top:8px"></div>
+    <div id="gps-map-coords" style="font-size:0.75rem;text-align:center;margin-top:6px;color:var(--text-dim)"></div>
   </div>
 </div>
 
