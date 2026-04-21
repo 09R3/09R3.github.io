@@ -7423,8 +7423,7 @@ function createDWRItem(w, dateInput, timeInput) {
   // Map button (individual well)
   div.querySelector('.dwr-map-item-btn')?.addEventListener('click', e => {
     e.stopPropagation();
-    const url = `https://maps.apple.com/?ll=${w.gps_latitude},${w.gps_longitude}&q=${encodeURIComponent(wellLabel)}`;
-    window.open(url, '_blank');
+    openLocationModal(w.gps_latitude, w.gps_longitude, wellLabel);
   });
 
   // History button
