@@ -403,7 +403,7 @@ function showScreen(name) {
     currentScreen = name;
   }
   const titles = {
-    dashboard:       'Field Ops',
+    dashboard:       'WaterMark',
     'pumping-plant': 'Pumping Plant Readings',
     wells:           'Well Readings',
     canal:           'Canal Readings',
@@ -420,9 +420,9 @@ function showScreen(name) {
   // Add / update ‹ Back nav + swipe-back for non-dashboard screens.
   // Each sub-panel open/close will call setPanelNav again to update title + back target.
   if (name !== 'dashboard') {
-    setPanelNav(el(`screen-${name}`), () => showScreen('dashboard'), titles[name] || 'Field Ops');
+    setPanelNav(el(`screen-${name}`), () => showScreen('dashboard'), titles[name] || 'WaterMark');
   } else {
-    el('screen-title').textContent = 'Field Ops';
+    el('screen-title').textContent = 'WaterMark';
   }
 
   // Block supervisor/admin-only screens for operators
