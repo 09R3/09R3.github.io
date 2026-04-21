@@ -1,0 +1,22 @@
+{
+  "name": "FieldView",
+  "short_name": "FieldView",
+  "description": "Water operations data viewer",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f1117",
+  "theme_color": "#667eea",
+  "icons": [
+    {
+      "src": "/icons/icon-FV.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-FV.png",
+      "sizes": "180x180",
+      "type": "image/png"
+    }
+  ]
+}
