@@ -87,7 +87,7 @@ async function api(method, path, body, offlineLabel) {
 /* ── Offline Queue (IndexedDB) ───────────────────────────────────────────── */
 function openOfflineDB() {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open('field-ops-offline', 1);
+    const req = indexedDB.open('watermark-offline', 1);
     req.onupgradeneeded = e =>
       e.target.result.createObjectStore('queue', { keyPath: 'id', autoIncrement: true });
     req.onsuccess = e => resolve(e.target.result);
@@ -505,7 +505,7 @@ el('logout-btn').addEventListener('click', async () => {
 
 function onLogin(user) {
   currentUser = user;
-  localStorage.setItem('field-ops-user', JSON.stringify(user));
+  localStorage.setItem('watermark-user', JSON.stringify(user));
   el('screen-login').classList.remove('active');
   el('app-shell').classList.remove('hidden');
   el('user-badge').textContent = user.initials || user.username.slice(0, 2).toUpperCase();
@@ -539,7 +539,7 @@ el('export-pending-btn').addEventListener('click', async () => {
   const blob = new Blob([JSON.stringify(items, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = `field-ops-pending-${new Date().toISOString().slice(0, 10)}.json`;
+  a.download = `watermark-pending-${new Date().toISOString().slice(0, 10)}.json`;
   a.click();
 });
 
@@ -581,7 +581,7 @@ async function loadDashboardStats() {
 
 function onLogout() {
   currentUser = null;
-  localStorage.removeItem('field-ops-user');
+  localStorage.removeItem('watermark-user');
   el('app-shell').classList.add('hidden');
   el('screen-login').classList.add('active');
   el('login-password').value = '';
@@ -610,7 +610,7 @@ async function checkAuth() {
       err instanceof TypeError ||
       err.message?.includes('Failed to fetch') ||
       err.message?.includes('Load failed');
-    const cached = localStorage.getItem('field-ops-user');
+    const cached = localStorage.getItem('watermark-user');
     if (isNetworkError && cached) {
       try { onLogin(JSON.parse(cached)); } catch { /* bad cache, ignore */ }
     }
@@ -4198,12 +4198,12 @@ function createPiezItem(p, dateInput, timeInput) {
 
 // Text size preference — apply on load
 (function applyTextSize() {
-  const saved = localStorage.getItem('field-ops-text-size');
+  const saved = localStorage.getItem('watermark-text-size');
   if (saved) document.documentElement.style.fontSize = saved + 'px';
 })();
 
 function updateTextSizeBtns() {
-  const saved = localStorage.getItem('field-ops-text-size');
+  const saved = localStorage.getItem('watermark-text-size');
   const current = saved ? parseInt(saved) : 16;
   // Find closest button (in case saved size doesn't exactly match a button)
   const btns = [...document.querySelectorAll('.text-size-btn')];
@@ -4220,7 +4220,7 @@ document.querySelectorAll('.text-size-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     const size = btn.dataset.size;
     document.documentElement.style.fontSize = size + 'px';
-    localStorage.setItem('field-ops-text-size', size);
+    localStorage.setItem('watermark-text-size', size);
     updateTextSizeBtns();
   });
 });
@@ -4247,7 +4247,7 @@ function openSettingsPanel(panelId) {
   if (panelId === 'bugreports') loadBugReports();
   if (panelId === 'kf-widget')  initKFWidgetPanel();
   if (panelId === 'appinfo') {
-    const ls = localStorage.getItem('field-ops-last-sync');
+    const ls = localStorage.getItem('watermark-last-sync');
     el('settings-last-sync').textContent = ls ? new Date(ls).toLocaleString() : 'Never';
     el('settings-db-status').textContent = el('db-dot').classList.contains('connected') ? 'Connected' : 'Disconnected';
   }

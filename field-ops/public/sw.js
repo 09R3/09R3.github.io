@@ -1,4 +1,4 @@
-const CACHE = 'field-ops-v1.44';
+const CACHE = 'watermark-v1.45';
 const SHELL = ['/', '/app.js', '/style.css', '/manifest.json'];
 
 self.addEventListener('install', e => {
