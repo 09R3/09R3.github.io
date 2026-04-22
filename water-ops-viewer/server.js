@@ -191,7 +191,7 @@ app.get('/auth/me', requireAuth, (req, res) => res.json({ user: req.user }));
 
 // Serve login page without auth; protect everything else
 app.use((req, res, next) => {
-  if (req.path === '/login.html' || req.path === '/login.css' || req.path.startsWith('/auth/')) {
+  if (req.path === '/login.html' || req.path === '/login.css' || req.path.startsWith('/auth/') || req.path.startsWith('/icons/') || req.path === '/manifest.json') {
     return next();
   }
   requireAuth(req, res, next);
