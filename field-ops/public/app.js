@@ -1138,8 +1138,25 @@ async function initWellsScreen() {
 
     body.innerHTML = '';
     Object.entries(byArea).forEach(([area, areaWells]) => {
-      const items = areaWells.map(w => createWellItem(w, dateInput, timeInput));
-      body.appendChild(makeCollapsibleSection(area, items));
+      const items   = areaWells.map(w => createWellItem(w, dateInput, timeInput));
+      const section = makeCollapsibleSection(area, items);
+
+      // Group Map button — only if at least one well in this area has GPS
+      const gpsWells = areaWells.filter(w => w.gps_latitude && w.gps_longitude);
+      if (gpsWells.length) {
+        const hdr    = section.querySelector('.list-section-header');
+        const mapBtn = document.createElement('button');
+        mapBtn.className = 'btn btn-secondary btn-sm';
+        mapBtn.style.cssText = 'margin-left:auto;margin-right:8px;padding:2px 10px;font-size:0.75rem;flex-shrink:0';
+        mapBtn.innerHTML = `${icon('map')} Map`;
+        mapBtn.addEventListener('click', e => {
+          e.stopPropagation();
+          openSetMapModal(area, areaWells);
+        });
+        hdr.insertBefore(mapBtn, hdr.querySelector('.section-chevron'));
+      }
+
+      body.appendChild(section);
     });
   } catch (err) {
     body.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
@@ -1204,6 +1221,7 @@ function createWellItem(w, dateInput, timeInput) {
       </div>
       <div class="lif-error error-msg hidden"></div>
       <div class="lif-footer">
+        ${w.gps_latitude && w.gps_longitude ? `<button class="btn btn-secondary btn-sm w-map-btn">${icon('map-pin')} Map</button>` : ''}
         <button class="btn btn-secondary btn-sm w-hist-btn">${icon('history')} History</button>
         <button class="btn btn-save w-save-btn">Save Well Reading</button>
       </div>
@@ -1213,6 +1231,11 @@ function createWellItem(w, dateInput, timeInput) {
   div.querySelector('.w-hist-btn').addEventListener('click', e => {
     e.stopPropagation();
     openHistoryModal('well', w.well_id, w.common_name);
+  });
+
+  div.querySelector('.w-map-btn')?.addEventListener('click', e => {
+    e.stopPropagation();
+    openLocationModal(w.gps_latitude, w.gps_longitude, w.common_name);
   });
 
   // Hours, Flow, Dripper Oil, PG&E: prev + live Δ
