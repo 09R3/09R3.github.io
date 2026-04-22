@@ -896,13 +896,43 @@ app.get('/api/reports/well-readings/areas', requireDB, async (req, res) => {
   }
 });
 
-// GET /api/reports/well-readings — readings joined to wells, filtered by area and date range
+// GET /api/reports/well-readings/pools — distinct discharge_pool values
+app.get('/api/reports/well-readings/pools', requireDB, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT DISTINCT discharge_pool FROM wells WHERE discharge_pool IS NOT NULL ORDER BY discharge_pool`
+    );
+    res.json(result.rows.map(r => r.discharge_pool));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/well-readings/participants — distinct participant values
+app.get('/api/reports/well-readings/participants', requireDB, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT DISTINCT participant FROM wells WHERE participant IS NOT NULL ORDER BY participant`
+    );
+    res.json(result.rows.map(r => r.participant));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/well-readings — readings joined to wells with optional area/pool/participant filters
 app.get('/api/reports/well-readings', requireDB, async (req, res) => {
-  const { area, start, end } = req.query;
-  if (!area || !start || !end) {
-    return res.status(400).json({ error: 'area, start, and end are required.' });
+  const { area, pool: poolFilter, participant, start, end } = req.query;
+  if (!start || !end) {
+    return res.status(400).json({ error: 'start and end are required.' });
   }
   try {
+    const params = [start, end];
+    const clauses = ['r.reading_date >= $1', 'r.reading_date <= $2'];
+    if (area) { params.push(area); clauses.push(`w.area = $${params.length}`); }
+    if (poolFilter) { params.push(poolFilter); clauses.push(`w.discharge_pool = $${params.length}`); }
+    if (participant) { params.push(participant); clauses.push(`w.participant = $${params.length}`); }
+
     const result = await pool.query(
       `SELECT r.reading_date,
               r.reading_time,
@@ -911,14 +941,35 @@ app.get('/api/reports/well-readings', requireDB, async (req, res) => {
               r.hour_reading,
               r.flow_cfs,
               r.totalizer,
+              CASE
+                WHEN r.totalizer IS NULL
+                  OR prev.totalizer IS NULL
+                  OR prev.elapsed_secs IS NULL
+                  OR prev.elapsed_secs <= 0
+                THEN NULL
+                ELSE ROUND(
+                  ((r.totalizer - prev.totalizer) * 43560.0
+                   / prev.elapsed_secs)::numeric, 2)
+              END AS totalizer_calc,
               r.pge_kwh
        FROM readings_well r
        JOIN wells w ON w.well_id = r.well_id
-       WHERE w.area = $1
-         AND r.reading_date >= $2
-         AND r.reading_date <= $3
+       LEFT JOIN LATERAL (
+         SELECT p.totalizer,
+                EXTRACT(EPOCH FROM (
+                  (r.reading_date + COALESCE(r.reading_time, '00:00:00'::time))::timestamp -
+                  (p.reading_date + COALESCE(p.reading_time, '00:00:00'::time))::timestamp
+                )) AS elapsed_secs
+         FROM readings_well p
+         WHERE p.well_id = r.well_id
+           AND (p.reading_date + COALESCE(p.reading_time, '00:00:00'::time)) <
+               (r.reading_date + COALESCE(r.reading_time, '00:00:00'::time))
+         ORDER BY (p.reading_date + COALESCE(p.reading_time, '00:00:00'::time)) DESC
+         LIMIT 1
+       ) prev ON true
+       WHERE ${clauses.join(' AND ')}
        ORDER BY r.reading_date ASC, w.common_name ASC`,
-      [area, start, end]
+      params
     );
     res.json(result.rows);
   } catch (err) {
