@@ -275,9 +275,12 @@ select { cursor: pointer; }
 
 /* ── Report Panel ── */
 .report-panel {
-  display: flex; flex-direction: column; flex: 1; overflow: hidden;
+  display: flex; flex-direction: column; flex: 1; overflow: hidden; min-height: 0;
 }
 .report-panel.hidden { display: none; }
+#report-panel > div:not(.hidden) {
+  display: flex; flex-direction: column; flex: 1; overflow: hidden; min-height: 0;
+}
 
 .report-controls {
   display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap;
