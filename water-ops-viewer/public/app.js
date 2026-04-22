@@ -818,13 +818,13 @@ function esc(str) {
 }
 
 function emptyState(msg) {
-  return `<div class="empty-state"><div class="empty-icon">💧</div><p>${msg}</p></div>`;
+  return `<div class="empty-state"><div class="empty-icon"><img src="/icons/icon-FV.svg" alt="" style="width:48px;height:48px;opacity:0.3;" /></div><p>${msg}</p></div>`;
 }
 function errorState(msg) {
   return `<div class="empty-state"><div class="empty-icon" style="color:var(--error)">✕</div><p style="color:var(--error)">${esc(msg)}</p></div>`;
 }
 function loadingGrid() {
-  return '<div class="empty-state"><div class="empty-icon loading-row">💧</div><p>Loading…</p></div>';
+  return '<div class="empty-state"><div class="empty-icon loading-row"><img src="/icons/icon-FV.svg" alt="" style="width:48px;height:48px;opacity:0.3;" /></div><p>Loading…</p></div>';
 }
 
 // ── Sidebar Sections ───────────────────────────────────────────────────────
