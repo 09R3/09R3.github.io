@@ -1,3 +1,12 @@
+/* ── Icon helper ─────────────────────────────────────────────────────────── */
+// Icons are rendered as CSS-masked spans so `color` on any ancestor controls
+// the icon tint — no filter math needed, works with black or white SVGs.
+const ICON_CDN = '/marv-site/icons';
+function icon(name, sz = 16) {
+  const u = `${ICON_CDN}/icon-${name}.svg`;
+  return `<span class="app-icon" style="width:${sz}px;height:${sz}px;-webkit-mask-image:url(${u});mask-image:url(${u})" aria-hidden="true"></span>`;
+}
+
 /* ── State ───────────────────────────────────────────────────────────────── */
 let currentUser   = null;
 let currentScreen = null;
@@ -78,7 +87,7 @@ async function api(method, path, body, offlineLabel) {
 /* ── Offline Queue (IndexedDB) ───────────────────────────────────────────── */
 function openOfflineDB() {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open('field-ops-offline', 1);
+    const req = indexedDB.open('watermark-offline', 1);
     req.onupgradeneeded = e =>
       e.target.result.createObjectStore('queue', { keyPath: 'id', autoIncrement: true });
     req.onsuccess = e => resolve(e.target.result);
@@ -394,7 +403,7 @@ function showScreen(name) {
     currentScreen = name;
   }
   const titles = {
-    dashboard:       'Field Ops',
+    dashboard:       'WaterMark',
     'pumping-plant': 'Pumping Plant Readings',
     wells:           'Well Readings',
     canal:           'Canal Readings',
@@ -411,9 +420,9 @@ function showScreen(name) {
   // Add / update ‹ Back nav + swipe-back for non-dashboard screens.
   // Each sub-panel open/close will call setPanelNav again to update title + back target.
   if (name !== 'dashboard') {
-    setPanelNav(el(`screen-${name}`), () => showScreen('dashboard'), titles[name] || 'Field Ops');
+    setPanelNav(el(`screen-${name}`), () => showScreen('dashboard'), titles[name] || 'WaterMark');
   } else {
-    el('screen-title').textContent = 'Field Ops';
+    el('screen-title').textContent = 'WaterMark';
   }
 
   // Block supervisor/admin-only screens for operators
@@ -496,7 +505,7 @@ el('logout-btn').addEventListener('click', async () => {
 
 function onLogin(user) {
   currentUser = user;
-  localStorage.setItem('field-ops-user', JSON.stringify(user));
+  localStorage.setItem('watermark-user', JSON.stringify(user));
   el('screen-login').classList.remove('active');
   el('app-shell').classList.remove('hidden');
   el('user-badge').textContent = user.initials || user.username.slice(0, 2).toUpperCase();
@@ -530,7 +539,7 @@ el('export-pending-btn').addEventListener('click', async () => {
   const blob = new Blob([JSON.stringify(items, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = `field-ops-pending-${new Date().toISOString().slice(0, 10)}.json`;
+  a.download = `watermark-pending-${new Date().toISOString().slice(0, 10)}.json`;
   a.click();
 });
 
@@ -548,12 +557,14 @@ async function loadDashboardStats() {
     const rangeLabel = (s.kf_widget_start && s.kf_widget_end)
       ? `${fmtDate(s.kf_widget_start)} – ${fmtDate(s.kf_widget_end)}`
       : 'This Month';
+    const pct = s.kf_total > 0 ? Math.round((s.kf_done / s.kf_total) * 100) : 0;
     const grid = el('dashboard-stats');
     grid.innerHTML = `
-      <div class="stat-card">
-        <div class="stat-value">${s.kf_done} / ${s.kf_total}</div>
+      <div class="stat-card stat-accent">
+        <div class="stat-value">${s.kf_done}<span style="font-size:1rem;color:var(--text-dim)">/${s.kf_total}</span></div>
         <div class="stat-label">KF Complete</div>
         <div class="stat-sublabel">${rangeLabel}</div>
+        <div class="stat-bar"><div class="stat-bar-fill" style="width:${pct}%"></div></div>
       </div>
       <div class="stat-card">
         <div class="stat-value">${s.kf_total - s.kf_done}</div>
@@ -561,7 +572,7 @@ async function loadDashboardStats() {
         <div class="stat-sublabel">${rangeLabel}</div>
       </div>
       <div class="stat-card">
-        <div class="stat-value">${s.wells_read_today} / ${s.wells_total}</div>
+        <div class="stat-value">${s.wells_read_today}<span style="font-size:1rem;color:var(--text-dim)">/${s.wells_total}</span></div>
         <div class="stat-label">Wells Read Today</div>
       </div>
     `;
@@ -570,7 +581,7 @@ async function loadDashboardStats() {
 
 function onLogout() {
   currentUser = null;
-  localStorage.removeItem('field-ops-user');
+  localStorage.removeItem('watermark-user');
   el('app-shell').classList.add('hidden');
   el('screen-login').classList.add('active');
   el('login-password').value = '';
@@ -599,7 +610,7 @@ async function checkAuth() {
       err instanceof TypeError ||
       err.message?.includes('Failed to fetch') ||
       err.message?.includes('Load failed');
-    const cached = localStorage.getItem('field-ops-user');
+    const cached = localStorage.getItem('watermark-user');
     if (isNetworkError && cached) {
       try { onLogin(JSON.parse(cached)); } catch { /* bad cache, ignore */ }
     }
@@ -681,7 +692,7 @@ function openAttachmentPreview(url, name, isPdf) {
   const body = el('att-preview-body');
   if (isPdf) {
     body.innerHTML = `<div class="uptool-pdf-msg">
-      <p style="font-size:2rem">&#128196;</p>
+      <p style="font-size:2rem">${icon('invoice', 32)}</p>
       <p style="margin-top:8px">${name}</p>
       <p style="margin-top:8px;font-size:0.85rem;color:var(--text-dim)">Click "Save / Download" to open the PDF.</p>
     </div>`;
@@ -753,7 +764,7 @@ async function openHistoryModal(type, id, label) {
         <td>${d}${t ? `<div class="hist-time">${t}</div>` : ''}</td>
         ${valCells}
         <td class="hist-notes">${r.notes || ''}</td>
-        <td>${showDel ? `<button class="hist-del-btn" data-id="${r.id}">🗑</button>` : ''}</td>`;
+        <td>${showDel ? `<button class="hist-del-btn" data-id="${r.id}">${icon('delete')}</button>` : ''}</td>`;
       tbody.appendChild(tr);
 
       if (showDel) {
@@ -957,7 +968,7 @@ function createReadingRow({ type, id, label, prev, prevDate, prevNotes, unit, de
     </div>
     <div class="rr-notes-wrap">
       <textarea class="rr-notes-input rr-notes" rows="1" placeholder="Notes…"></textarea>
-      <button class="hist-btn" title="View history">&#128200;</button>
+      <button class="hist-btn" title="View history">${icon('history')}</button>
     </div>
   `;
 
@@ -1127,8 +1138,25 @@ async function initWellsScreen() {
 
     body.innerHTML = '';
     Object.entries(byArea).forEach(([area, areaWells]) => {
-      const items = areaWells.map(w => createWellItem(w, dateInput, timeInput));
-      body.appendChild(makeCollapsibleSection(area, items));
+      const items   = areaWells.map(w => createWellItem(w, dateInput, timeInput));
+      const section = makeCollapsibleSection(area, items);
+
+      // Group Map button — only if at least one well in this area has GPS
+      const gpsWells = areaWells.filter(w => w.gps_latitude && w.gps_longitude);
+      if (gpsWells.length) {
+        const hdr    = section.querySelector('.list-section-header');
+        const mapBtn = document.createElement('button');
+        mapBtn.className = 'btn btn-secondary btn-sm';
+        mapBtn.style.cssText = 'margin-left:auto;margin-right:8px;padding:2px 10px;font-size:0.75rem;flex-shrink:0';
+        mapBtn.innerHTML = `${icon('map')} Map`;
+        mapBtn.addEventListener('click', e => {
+          e.stopPropagation();
+          openSetMapModal(area, areaWells);
+        });
+        hdr.insertBefore(mapBtn, hdr.querySelector('.section-chevron'));
+      }
+
+      body.appendChild(section);
     });
   } catch (err) {
     body.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
@@ -1193,7 +1221,8 @@ function createWellItem(w, dateInput, timeInput) {
       </div>
       <div class="lif-error error-msg hidden"></div>
       <div class="lif-footer">
-        <button class="btn btn-secondary btn-sm w-hist-btn">&#128200; History</button>
+        ${w.gps_latitude && w.gps_longitude ? `<button class="btn btn-secondary btn-sm w-map-btn">${icon('map-pin')} Map</button>` : ''}
+        <button class="btn btn-secondary btn-sm w-hist-btn">${icon('history')} History</button>
         <button class="btn btn-save w-save-btn">Save Well Reading</button>
       </div>
     </div>`;
@@ -1202,6 +1231,11 @@ function createWellItem(w, dateInput, timeInput) {
   div.querySelector('.w-hist-btn').addEventListener('click', e => {
     e.stopPropagation();
     openHistoryModal('well', w.well_id, w.common_name);
+  });
+
+  div.querySelector('.w-map-btn')?.addEventListener('click', e => {
+    e.stopPropagation();
+    openLocationModal(w.gps_latitude, w.gps_longitude, w.common_name);
   });
 
   // Hours, Flow, Dripper Oil, PG&E: prev + live Δ
@@ -1371,7 +1405,7 @@ function createCanalItem(s, dateInput, timeInput) {
         <textarea class="ctrl-textarea c-notes" rows="2" placeholder="Optional notes…"></textarea></div>
       <div class="lif-error error-msg hidden"></div>
       <div class="lif-footer">
-        <button class="btn btn-secondary btn-sm c-hist-btn">&#128200; History</button>
+        <button class="btn btn-secondary btn-sm c-hist-btn">${icon('history')} History</button>
         <button class="btn btn-save c-save-btn">Save Reading</button>
       </div>
     </div>`;
@@ -1563,7 +1597,7 @@ function createVehicleItem(v, dateInput, timeInput) {
       </div>
       <div class="lif-error error-msg hidden"></div>
       <div class="lif-footer">
-        <button class="btn btn-secondary btn-sm v-hist-btn">&#128200; History</button>
+        <button class="btn btn-secondary btn-sm v-hist-btn">${icon('history')} History</button>
         <button class="btn btn-save v-save-btn">Save Reading</button>
       </div>
     </div>`;
@@ -1745,9 +1779,9 @@ function renderWellIssues() {
           <div class="form-group">
             <label>Attachments</label>
             <div class="maint-attach-btns">
-              <button type="button" class="btn btn-secondary btn-sm issue-inv-btn">&#128196; Invoice</button>
-              <button type="button" class="btn btn-secondary btn-sm issue-pic-btn">&#128247; Photo(s)</button>
-              ${Number(issue.attachment_count) > 0 ? `<button type="button" class="btn btn-secondary btn-sm issue-files-btn" data-table="well_issues">&#128206; ${issue.attachment_count} file${issue.attachment_count > 1 ? 's' : ''}</button>` : ''}
+              <button type="button" class="btn btn-secondary btn-sm issue-inv-btn">${icon('invoice')} Invoice</button>
+              <button type="button" class="btn btn-secondary btn-sm issue-pic-btn">${icon('photo')} Photo(s)</button>
+              ${Number(issue.attachment_count) > 0 ? `<button type="button" class="btn btn-secondary btn-sm issue-files-btn" data-table="well_issues">${icon('attachments')} ${issue.attachment_count} file${issue.attachment_count > 1 ? 's' : ''}</button>` : ''}
             </div>
             <div class="maint-attach-queue issue-attach-queue hidden"></div>
             <div class="maint-hist-attach-area issue-files-area hidden"></div>
@@ -1824,7 +1858,7 @@ function onIssueStatusChange(e) {
   item.querySelector('.issue-action-group').style.display = e.target.value === 'in_progress' ? '' : 'none';
   item.querySelector('.issue-res-group').style.display    = e.target.value === 'resolved'    ? '' : 'none';
 }
-['well-issue-list','bldg-issue-list','equip-issue-list'].forEach(id =>
+['well-issue-list','bldg-issue-list','equip-issue-list','canal-issue-list'].forEach(id =>
   el(id).addEventListener('change', onIssueStatusChange)
 );
 
@@ -1854,7 +1888,7 @@ el('well-issue-list').addEventListener('click', async e => {
       const atts = await api('GET', `/api/maintenance/attachments?table_name=well_issues&record_id=${item.dataset.issueId}`);
       area.dataset.loaded = '1';
       if (!atts.length) { area.innerHTML = '<div class="maint-att-empty">No files</div>'; return; }
-      area.innerHTML = atts.map(a => { const isPdf = a.mime_type==='application/pdf'||a.original_name.endsWith('.pdf'); const url=`/uploads/${a.rel_path.split('/').map(encodeURIComponent).join('/')}`; return `<div class="maint-att-item" data-url="${url}" data-pdf="${isPdf}" data-name="${a.original_name.replace(/"/g,'&quot;')}"><div class="maint-att-thumb">${isPdf?'<span class="maint-att-pdf-icon">&#128196;</span>':`<img src="${url}" loading="lazy" alt="">`}</div><span class="maint-att-type-badge">${a.file_type==='invoice'?'INV':'PIC'}</span><div class="maint-att-name">${a.original_name}</div></div>`; }).join('');
+      area.innerHTML = atts.map(a => { const isPdf = a.mime_type==='application/pdf'||a.original_name.endsWith('.pdf'); const url=`/uploads/${a.rel_path.split('/').map(encodeURIComponent).join('/')}`; return `<div class="maint-att-item" data-url="${url}" data-pdf="${isPdf}" data-name="${a.original_name.replace(/"/g,'&quot;')}"><div class="maint-att-thumb">${isPdf?`<span class="maint-att-pdf-icon">${icon('invoice', 28)}</span>`:`<img src="${url}" loading="lazy" alt="">`}</div><span class="maint-att-type-badge">${a.file_type==='invoice'?'INV':'PIC'}</span><div class="maint-att-name">${a.original_name}</div></div>`; }).join('');
       area.querySelectorAll('.maint-att-item').forEach(card => card.addEventListener('click', () => openAttachmentPreview(card.dataset.url, card.dataset.name, card.dataset.pdf==='true')));
     } catch (err) { area.innerHTML = `<div class="maint-att-empty" style="color:var(--red-light)">${err.message}</div>`; }
     return;
@@ -1987,9 +2021,9 @@ function renderBldgIssues() {
           <div class="form-group">
             <label>Attachments</label>
             <div class="maint-attach-btns">
-              <button type="button" class="btn btn-secondary btn-sm issue-inv-btn">&#128196; Invoice</button>
-              <button type="button" class="btn btn-secondary btn-sm issue-pic-btn">&#128247; Photo(s)</button>
-              ${Number(issue.attachment_count) > 0 ? `<button type="button" class="btn btn-secondary btn-sm issue-files-btn" data-table="building_issues">&#128206; ${issue.attachment_count} file${issue.attachment_count > 1 ? 's' : ''}</button>` : ''}
+              <button type="button" class="btn btn-secondary btn-sm issue-inv-btn">${icon('invoice')} Invoice</button>
+              <button type="button" class="btn btn-secondary btn-sm issue-pic-btn">${icon('photo')} Photo(s)</button>
+              ${Number(issue.attachment_count) > 0 ? `<button type="button" class="btn btn-secondary btn-sm issue-files-btn" data-table="building_issues">${icon('attachments')} ${issue.attachment_count} file${issue.attachment_count > 1 ? 's' : ''}</button>` : ''}
             </div>
             <div class="maint-attach-queue issue-attach-queue hidden"></div>
             <div class="maint-hist-attach-area issue-files-area hidden"></div>
@@ -2107,7 +2141,7 @@ el('bldg-issue-list').addEventListener('click', async e => {
       const atts = await api('GET', `/api/maintenance/attachments?table_name=building_issues&record_id=${item.dataset.issueId}`);
       area.dataset.loaded = '1';
       if (!atts.length) { area.innerHTML = '<div class="maint-att-empty">No files</div>'; return; }
-      area.innerHTML = atts.map(a => { const isPdf = a.mime_type==='application/pdf'||a.original_name.endsWith('.pdf'); const url=`/uploads/${a.rel_path.split('/').map(encodeURIComponent).join('/')}`; return `<div class="maint-att-item" data-url="${url}" data-pdf="${isPdf}" data-name="${a.original_name.replace(/"/g,'&quot;')}"><div class="maint-att-thumb">${isPdf?'<span class="maint-att-pdf-icon">&#128196;</span>':`<img src="${url}" loading="lazy" alt="">`}</div><span class="maint-att-type-badge">${a.file_type==='invoice'?'INV':'PIC'}</span><div class="maint-att-name">${a.original_name}</div></div>`; }).join('');
+      area.innerHTML = atts.map(a => { const isPdf = a.mime_type==='application/pdf'||a.original_name.endsWith('.pdf'); const url=`/uploads/${a.rel_path.split('/').map(encodeURIComponent).join('/')}`; return `<div class="maint-att-item" data-url="${url}" data-pdf="${isPdf}" data-name="${a.original_name.replace(/"/g,'&quot;')}"><div class="maint-att-thumb">${isPdf?`<span class="maint-att-pdf-icon">${icon('invoice', 28)}</span>`:`<img src="${url}" loading="lazy" alt="">`}</div><span class="maint-att-type-badge">${a.file_type==='invoice'?'INV':'PIC'}</span><div class="maint-att-name">${a.original_name}</div></div>`; }).join('');
       area.querySelectorAll('.maint-att-item').forEach(card => card.addEventListener('click', () => openAttachmentPreview(card.dataset.url, card.dataset.name, card.dataset.pdf==='true')));
     } catch (err) { area.innerHTML = `<div class="maint-att-empty" style="color:var(--red-light)">${err.message}</div>`; }
     return;
@@ -2230,9 +2264,9 @@ function renderEquipIssues() {
           <div class="form-group">
             <label>Attachments</label>
             <div class="maint-attach-btns">
-              <button type="button" class="btn btn-secondary btn-sm issue-inv-btn">&#128196; Invoice</button>
-              <button type="button" class="btn btn-secondary btn-sm issue-pic-btn">&#128247; Photo(s)</button>
-              ${Number(issue.attachment_count) > 0 ? `<button type="button" class="btn btn-secondary btn-sm issue-files-btn" data-table="equipment_issues">&#128206; ${issue.attachment_count} file${issue.attachment_count > 1 ? 's' : ''}</button>` : ''}
+              <button type="button" class="btn btn-secondary btn-sm issue-inv-btn">${icon('invoice')} Invoice</button>
+              <button type="button" class="btn btn-secondary btn-sm issue-pic-btn">${icon('photo')} Photo(s)</button>
+              ${Number(issue.attachment_count) > 0 ? `<button type="button" class="btn btn-secondary btn-sm issue-files-btn" data-table="equipment_issues">${icon('attachments')} ${issue.attachment_count} file${issue.attachment_count > 1 ? 's' : ''}</button>` : ''}
             </div>
             <div class="maint-attach-queue issue-attach-queue hidden"></div>
             <div class="maint-hist-attach-area issue-files-area hidden"></div>
@@ -2370,7 +2404,7 @@ el('equip-issue-list').addEventListener('click', async e => {
       const atts = await api('GET', `/api/maintenance/attachments?table_name=equipment_issues&record_id=${item.dataset.issueId}`);
       area.dataset.loaded = '1';
       if (!atts.length) { area.innerHTML = '<div class="maint-att-empty">No files</div>'; return; }
-      area.innerHTML = atts.map(a => { const isPdf = a.mime_type==='application/pdf'||a.original_name.endsWith('.pdf'); const url=`/uploads/${a.rel_path.split('/').map(encodeURIComponent).join('/')}`; return `<div class="maint-att-item" data-url="${url}" data-pdf="${isPdf}" data-name="${a.original_name.replace(/"/g,'&quot;')}"><div class="maint-att-thumb">${isPdf?'<span class="maint-att-pdf-icon">&#128196;</span>':`<img src="${url}" loading="lazy" alt="">`}</div><span class="maint-att-type-badge">${a.file_type==='invoice'?'INV':'PIC'}</span><div class="maint-att-name">${a.original_name}</div></div>`; }).join('');
+      area.innerHTML = atts.map(a => { const isPdf = a.mime_type==='application/pdf'||a.original_name.endsWith('.pdf'); const url=`/uploads/${a.rel_path.split('/').map(encodeURIComponent).join('/')}`; return `<div class="maint-att-item" data-url="${url}" data-pdf="${isPdf}" data-name="${a.original_name.replace(/"/g,'&quot;')}"><div class="maint-att-thumb">${isPdf?`<span class="maint-att-pdf-icon">${icon('invoice', 28)}</span>`:`<img src="${url}" loading="lazy" alt="">`}</div><span class="maint-att-type-badge">${a.file_type==='invoice'?'INV':'PIC'}</span><div class="maint-att-name">${a.original_name}</div></div>`; }).join('');
       area.querySelectorAll('.maint-att-item').forEach(card => card.addEventListener('click', () => openAttachmentPreview(card.dataset.url, card.dataset.name, card.dataset.pdf==='true')));
     } catch (err) { area.innerHTML = `<div class="maint-att-empty" style="color:var(--red-light)">${err.message}</div>`; }
     return;
@@ -2403,6 +2437,384 @@ el('equip-issue-list').addEventListener('click', async e => {
       e.target.disabled = false;
     }
   }
+});
+
+/* ── Canal Issues ────────────────────────────────────────────────────────── */
+let canalIssues       = [];
+let canalIssuesLoaded = false;
+let canalShowResolved = false;
+let canalNewPhotos    = []; // [{file, gps}] for new-issue form, gps is null until extracted
+
+function initMaintCanalPanel() {
+  if (canalIssuesLoaded) return;
+  canalIssuesLoaded = true;
+  el('canal-issue-date').value = todayISO();
+  loadCanalIssues();
+}
+
+async function loadCanalIssues() {
+  try {
+    canalIssues = await api('GET', `/api/canal-issues?include_resolved=${canalShowResolved}`);
+    renderCanalIssues();
+    updateCanalBadge();
+  } catch {
+    el('canal-issue-list').innerHTML = `<div class="placeholder-msg">Failed to load issues</div>`;
+  }
+}
+
+function updateCanalBadge() {
+  const count = canalIssues.filter(i => i.status === 'open' || i.status === 'in_progress').length;
+  setBadge('maint-badge-canal', count);
+}
+
+function renderCanalIssues() {
+  const list = el('canal-issue-list');
+  if (!canalIssues.length) {
+    list.innerHTML = `<div class="placeholder-msg">No ${canalShowResolved ? '' : 'open '}issues</div>`;
+    return;
+  }
+  list.innerHTML = canalIssues.map(issue => {
+    const statusClass = issue.status.replace('_', '-');
+    const title   = issue.pool ? `Pool ${escHtml(issue.pool)}` : 'Canal';
+    const snippet = (issue.description || '').slice(0, 80) + (issue.description?.length > 80 ? '…' : '');
+    const entityName = `canal-pool${issue.pool || 'x'}`.slice(0, 30);
+    const hasGPS = issue.gps_lat != null && issue.gps_lon != null;
+    return `
+      <div class="equip-issue-item" data-issue-id="${issue.issue_id}" data-entity-name="${entityName}">
+        <div class="equip-issue-header">
+          <div class="equip-issue-meta">
+            <div class="equip-issue-name">${title}</div>
+            <div class="equip-issue-snippet">${escHtml(snippet)}</div>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+            <span class="status-pill ${statusClass}">${issue.status.replace('_',' ')}</span>
+            <span class="equip-issue-date">${issue.reported_date?.slice(0,10) || ''}</span>
+          </div>
+        </div>
+        <div class="equip-issue-body hidden">
+          <div class="form-group">
+            <label>Pool</label>
+            <div style="font-size:0.9rem;padding:6px 0">${issue.pool ? `Pool ${escHtml(issue.pool)}` : '—'}</div>
+          </div>
+          <div class="form-group">
+            <label>Description</label>
+            <div style="font-size:0.9rem;padding:6px 0">${escHtml(issue.description || '')}</div>
+          </div>
+          <div class="form-group">
+            <label>Status</label>
+            <select class="ctrl-select issue-status-select">
+              <option value="open"        ${issue.status==='open'        ?'selected':''}>Open</option>
+              <option value="in_progress" ${issue.status==='in_progress' ?'selected':''}>In Progress</option>
+              <option value="resolved"    ${issue.status==='resolved'    ?'selected':''}>Resolved</option>
+            </select>
+          </div>
+          <div class="form-group issue-action-group" style="${issue.status==='in_progress' ? '' : 'display:none'}">
+            <label>Action Taken</label>
+            <textarea class="ctrl-textarea issue-action-taken" rows="2" placeholder="Describe the action being taken…">${escHtml(issue.action_taken || '')}</textarea>
+          </div>
+          <div class="issue-res-group" style="${issue.status==='resolved' ? '' : 'display:none'}">
+            <div class="form-group">
+              <label>Resolution Notes</label>
+              <textarea class="ctrl-textarea issue-res-notes" rows="2" placeholder="Describe how it was resolved…">${escHtml(issue.resolution_notes || '')}</textarea>
+            </div>
+            <div class="form-group">
+              <label>PO Number</label>
+              <input type="text" class="ctrl-input issue-po-number" value="${escHtml(issue.po_number || '')}" placeholder="Optional">
+            </div>
+            <div class="form-group">
+              <label>Cost ($)</label>
+              <input type="number" class="ctrl-input issue-cost" value="${issue.cost != null ? issue.cost : ''}" placeholder="0.00" min="0" step="0.01">
+            </div>
+            <div class="form-group">
+              <label>Notes</label>
+              <textarea class="ctrl-textarea issue-notes" rows="2" placeholder="Additional notes…">${escHtml(issue.notes || '')}</textarea>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Attachments</label>
+            <div class="maint-attach-btns">
+              <button type="button" class="btn btn-secondary btn-sm issue-inv-btn">${icon('invoice')} Invoice</button>
+              <button type="button" class="btn btn-secondary btn-sm issue-pic-btn">${icon('photo')} Photo(s)</button>
+              ${hasGPS ? `<button type="button" class="btn btn-secondary btn-sm canal-map-btn" data-lat="${issue.gps_lat}" data-lon="${issue.gps_lon}">&#127757; Map</button>` : ''}
+              ${Number(issue.attachment_count) > 0 ? `<button type="button" class="btn btn-secondary btn-sm issue-files-btn" data-table="canal_issues">${icon('attachments')} ${issue.attachment_count} file${issue.attachment_count > 1 ? 's' : ''}</button>` : ''}
+            </div>
+            <div class="maint-attach-queue issue-attach-queue hidden"></div>
+            <div class="maint-hist-attach-area issue-files-area hidden"></div>
+          </div>
+          <div class="error-msg hidden issue-update-error"></div>
+          <button class="btn btn-save btn-full issue-save-btn" data-table="canal_issues">Save Changes</button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+// New issue form toggle
+el('canal-new-issue-btn').addEventListener('click', () => {
+  el('canal-new-issue-form').classList.remove('hidden');
+  el('canal-new-issue-btn').classList.add('hidden');
+});
+el('canal-cancel-btn').addEventListener('click', () => {
+  el('canal-new-issue-form').classList.add('hidden');
+  el('canal-new-issue-btn').classList.remove('hidden');
+  el('canal-new-error').classList.add('hidden');
+  resetCanalNewForm();
+});
+
+function resetCanalNewForm() {
+  canalNewPhotos = [];
+  el('canal-issue-pool').value = '';
+  el('canal-issue-desc').value = '';
+  el('canal-issue-date').value = todayISO();
+  renderCanalNewPhotoList();
+}
+
+function renderCanalNewPhotoList() {
+  const listEl = el('canal-new-photo-list');
+  if (!canalNewPhotos.length) { listEl.innerHTML = ''; return; }
+  listEl.innerHTML = canalNewPhotos.map((p, i) => `
+    <div class="maint-aq-item">
+      <span class="maint-aq-badge">PIC</span>
+      <span style="flex:1;font-size:0.8rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(p.file.name)}</span>
+      ${p.gps ? `<button type="button" class="canal-aq-map-btn" data-idx="${i}" style="padding:2px 7px;font-size:0.8rem;border:1px solid var(--border);border-radius:6px;background:var(--surface2);cursor:pointer">&#127757;</button>` : ''}
+      <button class="maint-aq-remove canal-new-aq-remove" data-idx="${i}">×</button>
+    </div>`).join('');
+  listEl.querySelectorAll('.canal-new-aq-remove').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      canalNewPhotos.splice(parseInt(btn.dataset.idx), 1);
+      renderCanalNewPhotoList();
+    });
+  });
+  listEl.querySelectorAll('.canal-aq-map-btn').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const p = canalNewPhotos[parseInt(btn.dataset.idx)];
+      if (p?.gps) openGPSMap(p.gps.lat, p.gps.lon);
+    });
+  });
+}
+
+// Photo picker for new issue (multiple)
+const canalNewPhotoInput = document.createElement('input');
+canalNewPhotoInput.type = 'file';
+canalNewPhotoInput.accept = 'image/*';
+canalNewPhotoInput.multiple = true;
+canalNewPhotoInput.style.display = 'none';
+document.body.appendChild(canalNewPhotoInput);
+
+el('canal-new-photo-btn').addEventListener('click', () => canalNewPhotoInput.click());
+
+canalNewPhotoInput.addEventListener('change', async () => {
+  const files = [...canalNewPhotoInput.files];
+  canalNewPhotoInput.value = '';
+  if (!files.length) return;
+  const newEntries = files.map(f => ({ file: f, gps: null }));
+  canalNewPhotos.push(...newEntries);
+  renderCanalNewPhotoList();
+  // Extract GPS from each photo, re-render as results come in
+  await Promise.all(newEntries.map(async entry => {
+    entry.gps = await readExifGPS(entry.file);
+    if (entry.gps) renderCanalNewPhotoList();
+  }));
+});
+
+// Submit new canal issue
+el('canal-submit-btn').addEventListener('click', async () => {
+  clearError('canal-new-error');
+  const desc = el('canal-issue-desc').value.trim();
+  if (!desc) return showError('canal-new-error', 'Issue description is required');
+
+  el('canal-submit-btn').disabled = true;
+  try {
+    const firstGPS = canalNewPhotos.find(p => p.gps)?.gps ?? null;
+    const body = {
+      pool:          el('canal-issue-pool').value || null,
+      description:   desc,
+      reported_date: el('canal-issue-date').value || null,
+      gps_lat:       firstGPS?.lat ?? null,
+      gps_lon:       firstGPS?.lon ?? null,
+    };
+    const newIssue = await api('POST', '/api/canal-issues', body);
+
+    // Upload all attached photos
+    if (canalNewPhotos.length) {
+      const entityName = `canal-pool${body.pool || 'x'}`;
+      const pending = canalNewPhotos.map(p => ({ file: p.file, fileType: 'photo' }));
+      await doUploadIssueAttachments(newIssue.issue_id, 'canal_issues', pending, entityName);
+    }
+
+    el('canal-new-issue-form').classList.add('hidden');
+    el('canal-new-issue-btn').classList.remove('hidden');
+    resetCanalNewForm();
+    canalIssuesLoaded = false;
+    await loadCanalIssues();
+    showToast('Issue submitted', 'success');
+    refreshMaintenanceBadges();
+  } catch (err) {
+    showError('canal-new-error', err.message);
+  } finally {
+    el('canal-submit-btn').disabled = false;
+  }
+});
+
+// Show/hide resolved toggle
+el('canal-show-resolved-btn').addEventListener('click', () => {
+  canalShowResolved = !canalShowResolved;
+  el('canal-show-resolved-btn').textContent = canalShowResolved ? 'Hide Resolved' : 'Show Resolved';
+  canalIssuesLoaded = false;
+  loadCanalIssues();
+});
+
+// Issue list interactions (delegated)
+el('canal-issue-list').addEventListener('click', async e => {
+  const item = e.target.closest('.equip-issue-item');
+  if (!item) return;
+
+  if (e.target.closest('.equip-issue-header')) {
+    item.querySelector('.equip-issue-body').classList.toggle('hidden');
+    return;
+  }
+
+  if (e.target.classList.contains('issue-inv-btn')) {
+    issueCardActiveId = item.dataset.issueId; issueCardActiveTable = 'canal_issues'; issueInvInput.click(); return;
+  }
+  if (e.target.classList.contains('issue-pic-btn')) {
+    issueCardActiveId = item.dataset.issueId; issueCardActiveTable = 'canal_issues'; issuePicInput.click(); return;
+  }
+  if (e.target.classList.contains('canal-map-btn')) {
+    openGPSMap(parseFloat(e.target.dataset.lat), parseFloat(e.target.dataset.lon)); return;
+  }
+  if (e.target.classList.contains('issue-files-btn')) {
+    const area = item.querySelector('.issue-files-area');
+    if (!area.classList.contains('hidden')) { area.classList.add('hidden'); return; }
+    area.classList.remove('hidden');
+    if (area.dataset.loaded) return;
+    area.innerHTML = '<div style="font-size:0.8rem;color:var(--text-dim)">Loading…</div>';
+    try {
+      const atts = await api('GET', `/api/maintenance/attachments?table_name=canal_issues&record_id=${item.dataset.issueId}`);
+      area.dataset.loaded = '1';
+      if (!atts.length) { area.innerHTML = '<div class="maint-att-empty">No files</div>'; return; }
+      area.innerHTML = atts.map(a => { const isPdf = a.mime_type==='application/pdf'||a.original_name.endsWith('.pdf'); const url=`/uploads/${a.rel_path.split('/').map(encodeURIComponent).join('/')}`; return `<div class="maint-att-item" data-url="${url}" data-pdf="${isPdf}" data-name="${a.original_name.replace(/"/g,'&quot;')}"><div class="maint-att-thumb">${isPdf?`<span class="maint-att-pdf-icon">${icon('invoice', 28)}</span>`:`<img src="${url}" loading="lazy" alt="">`}</div><span class="maint-att-type-badge">${a.file_type==='invoice'?'INV':'PIC'}</span><div class="maint-att-name">${a.original_name}</div></div>`; }).join('');
+      area.querySelectorAll('.maint-att-item').forEach(card => card.addEventListener('click', () => openAttachmentPreview(card.dataset.url, card.dataset.name, card.dataset.pdf==='true')));
+    } catch (err) { area.innerHTML = `<div class="maint-att-empty" style="color:var(--red-light)">${err.message}</div>`; }
+    return;
+  }
+
+  if (e.target.classList.contains('issue-save-btn')) {
+    const issueId     = item.dataset.issueId;
+    const status      = item.querySelector('.issue-status-select').value;
+    const actionTaken = item.querySelector('.issue-action-taken').value.trim() || null;
+    const resNotes    = item.querySelector('.issue-res-notes').value.trim()    || null;
+    const poNumber    = item.querySelector('.issue-po-number').value.trim()    || null;
+    const costVal     = item.querySelector('.issue-cost').value;
+    const cost        = costVal !== '' ? parseFloat(costVal) : null;
+    const notes       = item.querySelector('.issue-notes').value.trim()        || null;
+    const errEl       = item.querySelector('.issue-update-error');
+    errEl.classList.add('hidden');
+    e.target.disabled = true;
+    try {
+      const pending   = issueCardFiles.get(issueId) || [];
+      const cardGPS   = pending.find(e => e.fileType === 'photo' && e.gps)?.gps ?? null;
+      await api('PATCH', `/api/canal-issues/${issueId}`, {
+        status, action_taken: actionTaken, resolution_notes: resNotes,
+        po_number: poNumber, cost, notes,
+        gps_lat: cardGPS?.lat ?? null,
+        gps_lon: cardGPS?.lon ?? null,
+      });
+      if (pending.length) { await doUploadIssueAttachments(issueId, 'canal_issues', pending, item.dataset.entityName); issueCardFiles.delete(issueId); }
+      canalIssuesLoaded = false;
+      await loadCanalIssues();
+      showToast('Issue updated', 'success');
+      refreshMaintenanceBadges();
+    } catch (err) {
+      errEl.textContent = err.message;
+      errEl.classList.remove('hidden');
+      e.target.disabled = false;
+    }
+  }
+});
+
+// ── EXIF GPS reader ───────────────────────────────────────────────────────────
+async function readExifGPS(file) {
+  if (!file.type.startsWith('image/')) return null;
+  try {
+    const buf  = await file.slice(0, 128 * 1024).arrayBuffer();
+    const view = new DataView(buf);
+    if (view.getUint16(0) !== 0xFFD8) return null;
+
+    let markerOff = 2;
+    while (markerOff + 4 < buf.byteLength) {
+      const marker = view.getUint16(markerOff);
+      const segLen = view.getUint16(markerOff + 2);
+      if (marker === 0xFFE1 &&
+          view.getUint32(markerOff + 4) === 0x45786966 &&
+          view.getUint16(markerOff + 8) === 0) {
+        const tiff = markerOff + 10;
+        const le   = view.getUint16(tiff) === 0x4949;
+        const u16  = o => view.getUint16(tiff + o, le);
+        const u32  = o => view.getUint32(tiff + o, le);
+        const rat  = o => { const n = u32(o), d = u32(o + 4); return d ? n / d : 0; };
+
+        const ifd0    = u32(4);
+        const n0      = u16(ifd0);
+        let gpsDirOff = null;
+        for (let i = 0; i < n0; i++) {
+          const e = ifd0 + 2 + i * 12;
+          if (u16(e) === 0x8825) { gpsDirOff = u32(e + 8); break; }
+        }
+        if (gpsDirOff === null) return null;
+
+        const ng = u16(gpsDirOff);
+        let latRef = 'N', lonRef = 'E', latDMS = null, lonDMS = null;
+        for (let i = 0; i < ng; i++) {
+          const e   = gpsDirOff + 2 + i * 12;
+          const tag = u16(e);
+          const vOff = u32(e + 8);
+          if      (tag === 0x0001) latRef = String.fromCharCode(view.getUint8(tiff + e + 8));
+          else if (tag === 0x0002) latDMS = [rat(vOff), rat(vOff + 8), rat(vOff + 16)];
+          else if (tag === 0x0003) lonRef = String.fromCharCode(view.getUint8(tiff + e + 8));
+          else if (tag === 0x0004) lonDMS = [rat(vOff), rat(vOff + 8), rat(vOff + 16)];
+        }
+        if (!latDMS || !lonDMS) return null;
+        let lat = latDMS[0] + latDMS[1] / 60 + latDMS[2] / 3600;
+        let lon = lonDMS[0] + lonDMS[1] / 60 + lonDMS[2] / 3600;
+        if (latRef === 'S') lat = -lat;
+        if (lonRef === 'W') lon = -lon;
+        return { lat, lon };
+      }
+      if (segLen < 2) break;
+      markerOff += 2 + segLen;
+    }
+    return null;
+  } catch { return null; }
+}
+
+// ── GPS Map Modal ─────────────────────────────────────────────────────────────
+let gpsLeafletMap = null;
+let gpsLeafletMarker = null;
+
+function openGPSMap(lat, lon) {
+  el('gps-map-coords').textContent = `${lat.toFixed(6)}, ${lon.toFixed(6)}`;
+  el('gps-map-modal').classList.remove('hidden');
+
+  // Init map lazily; always invalidate so tiles fill the now-visible container
+  if (!gpsLeafletMap) {
+    gpsLeafletMap = L.map('gps-map-container').setView([lat, lon], 18);
+    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+      attribution: '© Esri, Maxar, Earthstar Geographics',
+      maxZoom: 19,
+    }).addTo(gpsLeafletMap);
+    gpsLeafletMarker = L.marker([lat, lon]).addTo(gpsLeafletMap);
+    setTimeout(() => gpsLeafletMap.invalidateSize(), 50);
+  } else {
+    gpsLeafletMap.setView([lat, lon], 18);
+    gpsLeafletMarker.setLatLng([lat, lon]);
+    setTimeout(() => gpsLeafletMap.invalidateSize(), 50);
+  }
+}
+
+el('gps-map-close').addEventListener('click', () => {
+  el('gps-map-modal').classList.add('hidden');
 });
 
 /* ── Maintenance ─────────────────────────────────────────────────────────── */
@@ -2457,20 +2869,28 @@ issueInvInput.addEventListener('change', async () => {
   renderIssueAttachQueue(issueCardActiveId);
 });
 
-issuePicInput.addEventListener('change', () => {
+issuePicInput.addEventListener('change', async () => {
   if (!issueCardActiveId) return;
   const files = [...issuePicInput.files];
   issuePicInput.value = '';
   if (!files.length) return;
   const pending = issueCardFiles.get(issueCardActiveId) || [];
-  files.forEach(f => pending.push({ file: f, fileType: 'photo' }));
+  const newEntries = files.map(f => ({ file: f, fileType: 'photo' }));
+  newEntries.forEach(e => pending.push(e));
   issueCardFiles.set(issueCardActiveId, pending);
   renderIssueAttachQueue(issueCardActiveId);
+  // For canal issues, extract GPS from each photo; re-render as results arrive
+  if (issueCardActiveTable === 'canal_issues') {
+    const id = issueCardActiveId;
+    await Promise.all(newEntries.map(async entry => {
+      entry.gps = await readExifGPS(entry.file);
+      if (entry.gps) renderIssueAttachQueue(id);
+    }));
+  }
 });
 
 function renderIssueAttachQueue(issueId) {
   const pending = issueCardFiles.get(issueId) || [];
-  // Find queue element across all three lists
   const queueEl = document.querySelector(`.equip-issue-item[data-issue-id="${issueId}"] .issue-attach-queue`);
   if (!queueEl) return;
   if (!pending.length) { queueEl.classList.add('hidden'); queueEl.innerHTML = ''; return; }
@@ -2479,8 +2899,15 @@ function renderIssueAttachQueue(issueId) {
     <div class="maint-aq-item">
       <span class="maint-aq-badge">${a.fileType === 'invoice' ? 'INV' : 'PIC'}</span>
       <span style="flex:1;font-size:0.8rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${a.file.name}</span>
+      ${a.gps ? `<button type="button" class="canal-aq-map-btn" data-lat="${a.gps.lat}" data-lon="${a.gps.lon}" style="padding:2px 7px;font-size:0.8rem;border:1px solid var(--border);border-radius:6px;background:var(--surface2);cursor:pointer">&#127757;</button>` : ''}
       <button class="maint-aq-remove" data-idx="${i}">×</button>
     </div>`).join('');
+  queueEl.querySelectorAll('.canal-aq-map-btn').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      openGPSMap(parseFloat(btn.dataset.lat), parseFloat(btn.dataset.lon));
+    });
+  });
   queueEl.querySelectorAll('.maint-aq-remove').forEach(btn => {
     btn.addEventListener('click', e => {
       e.stopPropagation();
@@ -2566,7 +2993,7 @@ function renderVehCardQueue(id) {
   el2.innerHTML = queue.map((a, i) => {
     const isPdf = a.file.type === 'application/pdf' || a.file.name.endsWith('.pdf');
     return `<div class="maint-aq-item">
-      ${isPdf ? '<span class="maint-aq-icon">&#128196;</span>' : `<img src="${URL.createObjectURL(a.file)}" alt="">`}
+      ${isPdf ? `<span class="maint-aq-icon">${icon('invoice', 28)}</span>` : `<img src="${URL.createObjectURL(a.file)}" alt="">`}
       <span class="maint-aq-badge">${a.fileType === 'invoice' ? 'INV' : 'PIC'}</span>
       <button class="maint-aq-remove" data-cardid="${id}" data-idx="${i}">&times;</button>
       <div class="maint-aq-name">${a.file.name}</div>
@@ -2596,7 +3023,7 @@ function renderVehRecords() {
     const existingFiles = Number(r.attachment_count) > 0
       ? `<div class="form-group">
            <label>Existing Files</label>
-           <button class="btn btn-secondary btn-xs maint-hist-attach-btn" data-id="${id}">&#128206; ${r.attachment_count} file${r.attachment_count > 1 ? 's' : ''} — tap to view</button>
+           <button class="btn btn-secondary btn-xs maint-hist-attach-btn" data-id="${id}">${icon('attachments')} ${r.attachment_count} file${r.attachment_count > 1 ? 's' : ''} — tap to view</button>
            <div class="maint-hist-attach-area hidden" data-id="${id}"></div>
          </div>` : '';
     return `
@@ -2645,8 +3072,8 @@ function renderVehRecords() {
           <div class="form-group">
             <label>Add Attachments</label>
             <div class="maint-attach-btns">
-              <button type="button" class="btn btn-secondary btn-sm veh-card-inv-btn" data-id="${id}">&#128196; Invoice</button>
-              <button type="button" class="btn btn-secondary btn-sm veh-card-pic-btn" data-id="${id}">&#128247; Photo(s)</button>
+              <button type="button" class="btn btn-secondary btn-sm veh-card-inv-btn" data-id="${id}">${icon('invoice')} Invoice</button>
+              <button type="button" class="btn btn-secondary btn-sm veh-card-pic-btn" data-id="${id}">${icon('photo')} Photo(s)</button>
             </div>
             <div class="maint-attach-queue veh-card-queue hidden" id="veh-card-queue-${id}"></div>
           </div>
@@ -2718,7 +3145,7 @@ el('veh-record-list').addEventListener('click', async e => {
         const isPdf = a.mime_type === 'application/pdf' || a.original_name.endsWith('.pdf');
         const url = `/uploads/${a.rel_path.split('/').map(encodeURIComponent).join('/')}`;
         return `<div class="maint-att-item" data-url="${url}" data-pdf="${isPdf}" data-name="${a.original_name.replace(/"/g,'&quot;')}">
-          <div class="maint-att-thumb">${isPdf ? '<span class="maint-att-pdf-icon">&#128196;</span>' : `<img src="${url}" loading="lazy" alt="">`}</div>
+          <div class="maint-att-thumb">${isPdf ? `<span class="maint-att-pdf-icon">${icon('invoice', 28)}</span>` : `<img src="${url}" loading="lazy" alt="">`}</div>
           <span class="maint-att-type-badge">${a.file_type === 'invoice' ? 'INV' : 'PIC'}</span>
           <div class="maint-att-name">${escHtml(a.original_name)}</div>
         </div>`;
@@ -2771,12 +3198,13 @@ el('veh-record-list').addEventListener('click', async e => {
 });
 
 const MAINT_PANEL_NAMES = {
-  vehicles:  'Vehicle Maintenance',
-  equipment: 'Equipment Issues',
-  buildings: 'Building Issues',
-  wells:     'Well Issues',
-  swaps:     'Equipment Swaps',
-  pms:       'PM Records',
+  vehicles:       'Vehicle Maintenance',
+  equipment:      'Equipment Issues',
+  buildings:      'Building Issues',
+  wells:          'Well Issues',
+  swaps:          'Equipment Swaps',
+  pms:            'PM Records',
+  'canal-issues': 'Canal Issues',
 };
 function openMaintPanel(panelId) {
   el('maint-main').classList.add('hidden');
@@ -2784,12 +3212,13 @@ function openMaintPanel(panelId) {
   el('maint-panel-' + panelId).classList.remove('hidden');
   setPanelNav(el('screen-maintenance'), closeMaintPanel,
     'Maintenance Log - ' + (MAINT_PANEL_NAMES[panelId] || panelId));
-  if (panelId === 'equipment') initMaintEquipmentPanel();
-  if (panelId === 'buildings') initMaintBuildingsPanel();
-  if (panelId === 'wells')     initMaintWellsPanel();
-  if (panelId === 'vehicles')  initMaintVehiclesPanel();
-  if (panelId === 'swaps')     initMaintSwapsPanel();
-  if (panelId === 'pms')       initMaintPMsPanel();
+  if (panelId === 'equipment')    initMaintEquipmentPanel();
+  if (panelId === 'buildings')    initMaintBuildingsPanel();
+  if (panelId === 'wells')        initMaintWellsPanel();
+  if (panelId === 'vehicles')     initMaintVehiclesPanel();
+  if (panelId === 'swaps')        initMaintSwapsPanel();
+  if (panelId === 'pms')          initMaintPMsPanel();
+  if (panelId === 'canal-issues') initMaintCanalPanel();
 }
 
 function closeMaintPanel() {
@@ -2818,7 +3247,8 @@ async function refreshMaintenanceBadges() {
     setBadge('maint-badge-buildings', counts.buildings);
     setBadge('maint-badge-wells',     counts.wells);
     setBadge('maint-badge-vehicles',  counts.vehicles);
-    setBadge('maint-main-badge', counts.equipment + counts.buildings + counts.wells + counts.vehicles);
+    setBadge('maint-badge-canal',     counts.canal);
+    setBadge('maint-main-badge', counts.equipment + counts.buildings + counts.wells + counts.vehicles + counts.canal);
   } catch { /* non-critical — badges stay at last known value */ }
 }
 
@@ -3048,7 +3478,7 @@ function renderMaintAttachQueue() {
     const isPdf = a.file.type === 'application/pdf' || a.file.name.endsWith('.pdf');
     const badge = a.fileType === 'invoice' ? 'INV' : 'PIC';
     const thumb = isPdf
-      ? `<span class="maint-aq-icon">&#128196;</span>`
+      ? `<span class="maint-aq-icon">${icon('invoice', 28)}</span>`
       : `<img src="${URL.createObjectURL(a.file)}" alt="">`;
     return `<div class="maint-aq-item">
       ${thumb}
@@ -3345,7 +3775,7 @@ function renderKFList() {
         <span class="kf-set-title-name">${setLabel}</span>
         <span class="kf-set-title-count">${doneCount} / ${totalCount} complete</span>
       </div>
-      <button class="btn btn-secondary btn-sm kf-set-map-card-btn">&#128506; Map</button>`;
+      <button class="btn btn-secondary btn-sm kf-set-map-card-btn">${icon('map')} Map</button>`;
     card.querySelector('.kf-set-map-card-btn').addEventListener('click', () => {
       openSetMapModal(setLabel, filtered);
     });
@@ -3412,8 +3842,8 @@ function createKFItem(w, dateInput, timeInput) {
       </div>
       <div class="lif-error error-msg hidden"></div>
       <div class="lif-footer">
-        ${hasGPS ? `<button class="btn btn-secondary btn-sm kf-map-btn">&#128205; Map</button>` : ''}
-        <button class="btn btn-secondary btn-sm kf-hist-btn">&#128200; History</button>
+        ${hasGPS ? `<button class="btn btn-secondary btn-sm kf-map-btn">${icon('map-pin')} Map</button>` : ''}
+        <button class="btn btn-secondary btn-sm kf-hist-btn">${icon('history')} History</button>
         <button class="btn btn-save kf-save">Save Reading</button>
       </div>
     </div>`;
@@ -3595,7 +4025,7 @@ function renderPiezList() {
       <span class="kf-set-title-name">Pool: ${piezActivePool || 'All'}</span>
       <span class="kf-set-title-count">${doneCount} / ${totalCount} have readings</span>
     </div>
-    <button class="btn btn-secondary btn-sm piez-pool-map-btn">&#128506; Map</button>`;
+    <button class="btn btn-secondary btn-sm piez-pool-map-btn">${icon('map')} Map</button>`;
   titleCard.querySelector('.piez-pool-map-btn').addEventListener('click', () => {
     openSetMapModal(`Pool: ${piezActivePool}`, filtered.map(p => ({
       common_name:   p.piezometer_name,
@@ -3665,8 +4095,8 @@ function createPiezItem(p, dateInput, timeInput) {
       </div>
       <div class="lif-error error-msg hidden"></div>
       <div class="lif-footer">
-        ${hasGPS ? `<button class="btn btn-secondary btn-sm piez-map-btn">&#128205; Map</button>` : ''}
-        <button class="btn btn-secondary btn-sm piez-hist-btn">&#128200; History</button>
+        ${hasGPS ? `<button class="btn btn-secondary btn-sm piez-map-btn">${icon('map-pin')} Map</button>` : ''}
+        <button class="btn btn-secondary btn-sm piez-hist-btn">${icon('history')} History</button>
         <button class="btn btn-save piez-save">Save Reading</button>
       </div>
     </div>`;
@@ -3791,12 +4221,12 @@ function createPiezItem(p, dateInput, timeInput) {
 
 // Text size preference — apply on load
 (function applyTextSize() {
-  const saved = localStorage.getItem('field-ops-text-size');
+  const saved = localStorage.getItem('watermark-text-size');
   if (saved) document.documentElement.style.fontSize = saved + 'px';
 })();
 
 function updateTextSizeBtns() {
-  const saved = localStorage.getItem('field-ops-text-size');
+  const saved = localStorage.getItem('watermark-text-size');
   const current = saved ? parseInt(saved) : 16;
   // Find closest button (in case saved size doesn't exactly match a button)
   const btns = [...document.querySelectorAll('.text-size-btn')];
@@ -3813,7 +4243,7 @@ document.querySelectorAll('.text-size-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     const size = btn.dataset.size;
     document.documentElement.style.fontSize = size + 'px';
-    localStorage.setItem('field-ops-text-size', size);
+    localStorage.setItem('watermark-text-size', size);
     updateTextSizeBtns();
   });
 });
@@ -3840,7 +4270,7 @@ function openSettingsPanel(panelId) {
   if (panelId === 'bugreports') loadBugReports();
   if (panelId === 'kf-widget')  initKFWidgetPanel();
   if (panelId === 'appinfo') {
-    const ls = localStorage.getItem('field-ops-last-sync');
+    const ls = localStorage.getItem('watermark-last-sync');
     el('settings-last-sync').textContent = ls ? new Date(ls).toLocaleString() : 'Never';
     el('settings-db-status').textContent = el('db-dot').classList.contains('connected') ? 'Connected' : 'Disconnected';
   }
@@ -4525,7 +4955,7 @@ async function openMaintHistoryModal(type, id, label, equip_type) {
       const statusBadge = r.status
         ? `<span class="maint-status-badge maint-status-${r.status}">${statusLabel[r.status] || r.status}</span>` : '';
       const attachBtn = Number(r.attachment_count) > 0
-        ? `<button class="btn btn-secondary btn-xs maint-hist-attach-btn" data-id="${r.maintenance_id}">&#128206; ${r.attachment_count} file${r.attachment_count > 1 ? 's' : ''}</button>` : '';
+        ? `<button class="btn btn-secondary btn-xs maint-hist-attach-btn" data-id="${r.maintenance_id}">${icon('attachments')} ${r.attachment_count} file${r.attachment_count > 1 ? 's' : ''}</button>` : '';
       return `
         <div class="maint-hist-row">
           <div class="maint-hist-header">
@@ -4562,7 +4992,7 @@ async function openMaintHistoryModal(type, id, label, equip_type) {
             const isPdf = a.mime_type === 'application/pdf' || a.original_name.endsWith('.pdf');
             const url = `/uploads/${a.rel_path.split('/').map(encodeURIComponent).join('/')}`;
             const thumb = isPdf
-              ? `<span class="maint-att-pdf-icon">&#128196;</span>`
+              ? `<span class="maint-att-pdf-icon">${icon('invoice', 28)}</span>`
               : `<img src="${url}" alt="" loading="lazy">`;
             const typeLabel = a.file_type === 'invoice' ? 'INV' : 'PIC';
             return `<div class="maint-att-item" data-url="${url}" data-pdf="${isPdf}" data-name="${a.original_name.replace(/"/g,'&quot;')}" data-id="${a.attachment_id}">
@@ -5721,17 +6151,20 @@ let vehicleReportType = 'mileage';
 let lastReportRows  = [];
 
 // ── Navigation ────────────────────────────────────────────────────────────────
+const ALL_REPORT_PANELS = ['vehicles','kf','maintenance','pms','piezometers','canal'];
+
 function initReportsScreen() {
-  // Just ensure main tile grid is visible and panels are closed
   el('report-main').classList.remove('hidden');
-  ['vehicles','kf','maintenance','pms'].forEach(c => el(`report-panel-${c}`).classList.add('hidden'));
+  ALL_REPORT_PANELS.forEach(c => el(`report-panel-${c}`).classList.add('hidden'));
 }
 
 const REPORT_PANEL_NAMES = {
-  vehicles:    'Vehicles',
-  kf:          'KF Monthly',
-  maintenance: 'Maintenance Issues',
-  pms:         'PM Records',
+  vehicles:     'Vehicles',
+  kf:           'KF Monthly',
+  maintenance:  'Maintenance Issues',
+  pms:          'PM Records',
+  piezometers:  'Piezometers',
+  canal:        'Canal Readings',
 };
 function openReportPanel(cat) {
   el('report-main').classList.add('hidden');
@@ -5742,10 +6175,12 @@ function openReportPanel(cat) {
   if (cat === 'kf')          initKFReportPanel();
   if (cat === 'maintenance') initMaintenanceReportPanel();
   if (cat === 'pms')         initPMReportPanel();
+  if (cat === 'piezometers') initPiezReportPanel();
+  if (cat === 'canal')       initCanalReportPanel();
 }
 
 function closeReportPanel() {
-  ['vehicles','kf','maintenance','pms'].forEach(c => el(`report-panel-${c}`).classList.add('hidden'));
+  ALL_REPORT_PANELS.forEach(c => el(`report-panel-${c}`).classList.add('hidden'));
   el('report-main').classList.remove('hidden');
   setPanelNav(el('screen-reports'), () => showScreen('dashboard'), 'Reports');
 }
@@ -6139,7 +6574,7 @@ async function renderPMGridReport() {
       const sbRec = sbRecords[plant.name];
       const recDate = sbRec ? localDateStr(sbRec.completed_date, {month:'short',day:'numeric'}) : '—';
       sbRows += `<td class="pmgrid-date-col">${recDate}</td>`;
-      sbRows += `<td><button class="pmgrid-hist-btn" data-pm-type="siphon_breaker" data-pm-building="${escHtml(plant.name)}" data-pm-label="PP ${escHtml(plant.num)} Siphon Breakers" title="View history">&#128203;</button></td></tr>`;
+      sbRows += `<td><button class="pmgrid-hist-btn" data-pm-type="siphon_breaker" data-pm-building="${escHtml(plant.name)}" data-pm-label="PP ${escHtml(plant.num)} Siphon Breakers" title="View history">${icon('pm-records')}</button></td></tr>`;
     });
 
     const sbHtml = `<div class="pmgrid-section-title">Siphon Breakers</div>
@@ -6177,7 +6612,7 @@ async function renderPMGridReport() {
     // History row
     acRows += `<tr><td class="pmgrid-check-label" style="font-style:italic;color:var(--text-dim)">History</td>`;
     plants.forEach(plant => {
-      acRows += `<td><button class="pmgrid-hist-btn" data-pm-type="air_compressor" data-pm-building="${escHtml(plant.name)}" data-pm-label="PP ${escHtml(plant.num)} Air Compressors" title="View history">&#128203;</button></td>`;
+      acRows += `<td><button class="pmgrid-hist-btn" data-pm-type="air_compressor" data-pm-building="${escHtml(plant.name)}" data-pm-label="PP ${escHtml(plant.num)} Air Compressors" title="View history">${icon('pm-records')}</button></td>`;
     });
     acRows += '</tr>';
 
@@ -6270,12 +6705,102 @@ async function openPMGridHistory(pmType, building, label) {
   }
 }
 
+// ── Canal Readings Report Panel ────────────────────────────────────────────────
+function initCanalReportPanel() {
+  if (!el('canal-report-start-date').value) {
+    el('canal-report-start-date').value = todayISO();
+    el('canal-report-end-date').value   = todayISO();
+  }
+  renderCanalReport();
+}
+
+el('canal-report-start-date').addEventListener('change', renderCanalReport);
+el('canal-report-end-date').addEventListener('change',   renderCanalReport);
+
+async function renderCanalReport() {
+  const start = el('canal-report-start-date').value;
+  const end   = el('canal-report-end-date').value;
+  if (!start || !end) return;
+  const out = el('report-canal-output');
+  out.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const rows = await api('GET', `/api/reports/canal?start_date=${start}&end_date=${end}`);
+    if (!rows.length) {
+      out.innerHTML = '<div class="placeholder-msg">No canal readings found.</div>';
+      return;
+    }
+
+    const fmtDate = s => s ? localDateStr(s, { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
+    const fmtNum  = (v, dec = 2) => v != null ? Number(v).toFixed(dec) : '—';
+
+    // Group by date
+    const byDate = {};
+    rows.forEach(r => {
+      const d = r.reading_date?.slice(0, 10) || 'Unknown';
+      if (!byDate[d]) byDate[d] = [];
+      byDate[d].push(r);
+    });
+
+    let html = `<div class="report-card">
+      <div class="report-title">Canal Readings</div>
+      <div class="report-subtitle">${fmtDate(start)}${start !== end ? ' – ' + fmtDate(end) : ''}</div>`;
+
+    Object.keys(byDate).sort().forEach(date => {
+      const readings = byDate[date];
+      html += `<div class="report-section-title">${fmtDate(date)}</div>
+        <table class="report-table">
+          <thead><tr>
+            <th>Structure</th>
+            <th class="report-num">Flow (cfs)</th>
+            <th class="report-num">Totalizer (af)</th>
+            <th class="report-num">Gate</th>
+            <th class="report-num">Head (ft)</th>
+            <th>By</th>
+          </tr></thead>
+          <tbody>`;
+      readings.forEach(r => {
+        html += `<tr>
+          <td>${escHtml(r.structure_name)}</td>
+          <td class="report-num">${fmtNum(r.instantaneous_flow_cfs)}</td>
+          <td class="report-num">${fmtNum(r.totalizer_reading_af)}</td>
+          <td class="report-num">${fmtNum(r.gate_setting)}</td>
+          <td class="report-num">${fmtNum(r.head_reading_ft)}</td>
+          <td>${escHtml(r.entered_by || '—')}</td>
+        </tr>`;
+        if (r.notes) html += `<tr><td colspan="6" style="color:var(--text-dim);font-size:0.82rem;padding:2px 4px 6px">↳ ${escHtml(r.notes)}</td></tr>`;
+      });
+      html += '</tbody></table>';
+    });
+
+    html += '</div>';
+    out.innerHTML = html;
+  } catch (err) {
+    out.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
+  }
+}
+
 /* ── Export Modal ────────────────────────────────────────────────────────── */
+let exportContext = 'vehicles'; // 'vehicles' | 'piezometers-status' | 'piezometers-compare'
+
 el('report-export-btn').addEventListener('click', () => {
   if (!lastReportRows.length) return showToast('No report data to export', 'error');
+  exportContext = 'vehicles';
   const d = new Date(reportsYear, reportsMonth - 1, 1);
-  const label = d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-  el('export-modal-subtitle').textContent = `CVC Mileage — ${label}`;
+  el('export-modal-subtitle').textContent = `CVC Mileage — ${d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}`;
+  el('export-modal').classList.remove('hidden');
+});
+
+el('piez-export-btn').addEventListener('click', () => {
+  if (piezRepType === 'status') {
+    if (!lastPiezStatusRows.length) return showToast('No report data to export', 'error');
+    exportContext = 'piezometers-status';
+    const fmtDate = s => s ? localDateStr(s, { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+    el('export-modal-subtitle').textContent = `Piezometers — ${fmtDate(piezRepStart)} to ${fmtDate(piezRepEnd)}`;
+  } else {
+    if (!lastPiezCompareRows1.length) return showToast('No report data to export', 'error');
+    exportContext = 'piezometers-compare';
+    el('export-modal-subtitle').textContent = `Piezometer Comparison`;
+  }
   el('export-modal').classList.remove('hidden');
 });
 
@@ -6296,48 +6821,332 @@ function triggerBlobDownload(blob, filename) {
 
 el('export-csv-btn').addEventListener('click', () => {
   el('export-modal').classList.add('hidden');
-  // CSV generated entirely client-side — no server call, no session issues
+
+  if (exportContext === 'piezometers-status') {
+    const csvEsc = v => (v == null || v === '') ? '' : /[,"\n]/.test(String(v)) ? `"${String(v).replace(/"/g,'""')}"` : String(v);
+    const lines = [`Piezometer Readings,${piezRepStart} to ${piezRepEnd}`, '', 'Pool,Name,DTW (ft),Method,Operator,Date'];
+    lastPiezStatusRows.forEach(p => {
+      const method = [p.plopper_sounder, p.wet_dry_moist].filter(Boolean).join(' / ');
+      lines.push([p.pool||'', p.piezometer_name, p.dtw_reading??'', method, p.operator||'', p.reading_date?.slice(0,10)||''].map(csvEsc).join(','));
+    });
+    triggerBlobDownload(new Blob([lines.join('\r\n')], { type: 'text/csv' }), `Piezometers_${piezRepStart}_${piezRepEnd}.csv`);
+    return;
+  }
+
+  if (exportContext === 'piezometers-compare') {
+    const s1 = el('piez-cmp-start1').value, e1 = el('piez-cmp-end1').value;
+    const s2 = el('piez-cmp-start2').value, e2 = el('piez-cmp-end2').value;
+    const map2 = new Map(lastPiezCompareRows2.map(r => [r.piezometer_id, r]));
+    const lines = [`Piezometer Comparison,${s1}–${e1} vs ${s2}–${e2}`, '', `Pool,Name,DTW 1,DTW 2,Difference`];
+    lastPiezCompareRows1.forEach(p => {
+      const r2 = map2.get(p.piezometer_id);
+      const d1 = p.dtw_reading != null ? Number(p.dtw_reading) : '';
+      const d2 = r2?.dtw_reading != null ? Number(r2.dtw_reading) : '';
+      const diff = d1 !== '' && d2 !== '' ? (d2 - d1).toFixed(2) : '';
+      lines.push([p.pool||'', p.piezometer_name, d1, d2, diff].join(','));
+    });
+    triggerBlobDownload(new Blob([lines.join('\r\n')], { type: 'text/csv' }), `Piezometers_Compare_${s1}_${s2}.csv`);
+    return;
+  }
+
+  // vehicles (default)
   const ac = v => (v.assigned_user && v.assigned_user.trim().toLowerCase() !== 'ops & maint') ? v.assigned_user : '';
   const trucks = lastReportRows.filter(r => !r.reading_type || r.reading_type === 'odometer');
   const heavy  = lastReportRows.filter(r => r.reading_type === 'hours' || r.reading_type === 'both');
   const d = new Date(reportsYear, reportsMonth - 1, 1);
-  const label = d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-  const lines = [`CVC Mileage — ${label}`, '', 'TRUCKS', 'Unit #,Make,Model,Operator,Odometer'];
+  const lines = [`CVC Mileage — ${d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}`, '', 'TRUCKS', 'Unit #,Make,Model,Operator,Odometer'];
   trucks.forEach(v => lines.push([v.vehicle_number, v.make, v.model, ac(v), v.odometer_miles ?? ''].join(',')));
   lines.push('', 'HEAVY EQUIPMENT', 'Unit #,Make,Model,Operator,Odometer,Engine Hours');
   heavy.forEach(v => lines.push([v.vehicle_number, v.make, v.model, ac(v), v.odometer_miles ?? '', v.engine_hours ?? ''].join(',')));
-  const blob = new Blob([lines.join('\r\n')], { type: 'text/csv' });
-  triggerBlobDownload(blob, `CVC_Mileage_${reportsYear}_${reportsMonth}.csv`);
+  triggerBlobDownload(new Blob([lines.join('\r\n')], { type: 'text/csv' }), `CVC_Mileage_${reportsYear}_${reportsMonth}.csv`);
 });
 
 el('export-xlsx-btn').addEventListener('click', async () => {
   el('export-modal').classList.add('hidden');
   try {
-    // Get a one-time token so fetch works without relying on session cookie
-    const { token } = await api('POST', '/api/reports/download-token',
-      { year: reportsYear, month: reportsMonth });
+    if (exportContext === 'piezometers-status') {
+      const { token } = await api('POST', '/api/reports/download-token', {});
+      const url = `/api/reports/piezometers/export?start_date=${piezRepStart}&end_date=${piezRepEnd}&token=${token}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('Export failed');
+      triggerBlobDownload(await res.blob(), `Piezometers_${piezRepStart}_${piezRepEnd}.xlsx`);
+      return;
+    }
+    if (exportContext === 'piezometers-compare') {
+      const s1 = el('piez-cmp-start1').value, e1 = el('piez-cmp-end1').value;
+      const s2 = el('piez-cmp-start2').value, e2 = el('piez-cmp-end2').value;
+      const { token } = await api('POST', '/api/reports/download-token', {});
+      const url = `/api/reports/piezometers/compare/export?s1=${s1}&e1=${e1}&s2=${s2}&e2=${e2}&token=${token}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('Export failed');
+      triggerBlobDownload(await res.blob(), `Piezometers_Compare_${s1}_${s2}.xlsx`);
+      return;
+    }
+    // vehicles
+    const { token } = await api('POST', '/api/reports/download-token', { year: reportsYear, month: reportsMonth });
     const url = `/api/reports/mileage/export?format=xlsx&year=${reportsYear}&month=${reportsMonth}&token=${token}`;
     const res = await fetch(url);
     if (!res.ok) throw new Error('Export failed');
-    const blob = await res.blob();
-    triggerBlobDownload(blob, `CVC_Mileage_${reportsYear}_${reportsMonth}.xlsx`);
+    triggerBlobDownload(await res.blob(), `CVC_Mileage_${reportsYear}_${reportsMonth}.xlsx`);
   } catch (err) {
     showToast('Export failed: ' + err.message, 'error');
   }
 });
 
+// ── Piezometers Report Panel ───────────────────────────────────────────────────
+let piezRepType        = 'status';
+let lastPiezStatusRows = [];
+let lastPiezCompareRows1 = [];
+let lastPiezCompareRows2 = [];
+let piezRepYear  = new Date().getFullYear();
+let piezRepMonth = new Date().getMonth() + 1;
+let piezRepStart = '';
+let piezRepEnd   = '';
+
+// Compare ranges default: previous month vs current month
+(function () {
+  const now   = new Date();
+  const cy    = now.getFullYear(), cm = now.getMonth() + 1;
+  let   py    = cy, pm = cm - 1;
+  if (pm < 1) { pm = 12; py--; }
+  const pad   = n => String(n).padStart(2, '0');
+  const lastP = new Date(py, pm, 0).getDate();
+  const lastC = new Date(cy, cm, 0).getDate();
+  el('piez-cmp-start1').value = `${py}-${pad(pm)}-01`;
+  el('piez-cmp-end1').value   = `${py}-${pad(pm)}-${pad(lastP)}`;
+  el('piez-cmp-start2').value = `${cy}-${pad(cm)}-01`;
+  el('piez-cmp-end2').value   = `${cy}-${pad(cm)}-${pad(lastC)}`;
+})();
+
+// Numeric pool sort: Pool 1, 2, 3… first; Central Pioneer and other named last
+function sortPools(poolKeys) {
+  const num = n => { const m = /^Pool\s+(\d+)$/i.exec(n); return m ? parseInt(m[1]) : null; };
+  return [...poolKeys].sort((a, b) => {
+    const na = num(a), nb = num(b);
+    if (na !== null && nb !== null) return na - nb;
+    if (na !== null) return -1;
+    if (nb !== null) return 1;
+    return a.localeCompare(b);
+  });
+}
+
+function piezRepMonthBounds() {
+  const pad = n => String(n).padStart(2, '0');
+  const lastDay = new Date(piezRepYear, piezRepMonth, 0).getDate();
+  piezRepStart = `${piezRepYear}-${pad(piezRepMonth)}-01`;
+  piezRepEnd   = `${piezRepYear}-${pad(piezRepMonth)}-${pad(lastDay)}`;
+  el('piez-report-start-date').value = piezRepStart;
+  el('piez-report-end-date').value   = piezRepEnd;
+}
+
+function updatePiezRepLabel() {
+  const d = new Date(piezRepYear, piezRepMonth - 1, 1);
+  el('piez-report-month-label').textContent = d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+}
+
+function initPiezReportPanel() {
+  if (!piezRepStart) piezRepMonthBounds();
+  updatePiezRepLabel();
+  runPiezReport();
+}
+
+function runPiezReport() {
+  if (piezRepType === 'status') renderPiezReport();
+  else                          renderPiezCompareReport();
+}
+
+document.querySelectorAll('#piez-report-seg .seg-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#piez-report-seg .seg-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    piezRepType = btn.dataset.val;
+    el('piez-status-toolbar').style.display  = piezRepType === 'status'  ? '' : 'none';
+    el('piez-compare-toolbar').style.display = piezRepType === 'compare' ? '' : 'none';
+    runPiezReport();
+  });
+});
+
+el('piez-report-prev-month').addEventListener('click', () => {
+  piezRepMonth--;
+  if (piezRepMonth < 1) { piezRepMonth = 12; piezRepYear--; }
+  piezRepMonthBounds();
+  updatePiezRepLabel();
+  renderPiezReport();
+});
+el('piez-report-next-month').addEventListener('click', () => {
+  piezRepMonth++;
+  if (piezRepMonth > 12) { piezRepMonth = 1; piezRepYear++; }
+  piezRepMonthBounds();
+  updatePiezRepLabel();
+  renderPiezReport();
+});
+el('piez-report-start-date').addEventListener('change', () => { piezRepStart = el('piez-report-start-date').value; renderPiezReport(); });
+el('piez-report-end-date').addEventListener('change',   () => { piezRepEnd   = el('piez-report-end-date').value;   renderPiezReport(); });
+['piez-cmp-start1','piez-cmp-end1','piez-cmp-start2','piez-cmp-end2'].forEach(id => {
+  el(id).addEventListener('change', renderPiezCompareReport);
+});
+
+function groupByPool(rows) {
+  const pools = {};
+  rows.forEach(r => {
+    const pool = r.pool || 'No Pool';
+    if (!pools[pool]) pools[pool] = [];
+    pools[pool].push(r);
+  });
+  return pools;
+}
+
+async function renderPiezReport() {
+  const out = el('report-piez-output');
+  out.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    lastPiezStatusRows = await api('GET', `/api/reports/piezometers?start_date=${piezRepStart}&end_date=${piezRepEnd}`);
+    const rows = lastPiezStatusRows;
+    const fmtDate = s => s ? localDateStr(s, { month: 'short', day: 'numeric' }) : '—';
+    const pools = groupByPool(rows);
+
+    const totalPiezs = rows.length;
+    const readCount  = rows.filter(r => r.reading_date).length;
+    const pct = totalPiezs > 0 ? (readCount / totalPiezs * 100).toFixed(0) : 0;
+
+    let html = `<div class="report-card">
+      <div class="report-title">Piezometer Readings</div>
+      <div class="report-subtitle">${fmtDate(piezRepStart)} – ${fmtDate(piezRepEnd)}</div>
+      <div class="kf-complete-banner">
+        <span class="kf-complete-fraction">${readCount} / ${totalPiezs}</span>
+        <span class="kf-complete-label">piezometers read</span>
+        <span class="kf-complete-pct">${pct}%</span>
+      </div>`;
+
+    sortPools(Object.keys(pools)).forEach(pool => {
+      const piezs = pools[pool];
+      html += `<div class="report-section-title">${pool}</div>
+        <table class="report-table">
+          <thead><tr><th>Name</th><th class="report-num">DTW (ft)</th><th>Method</th><th>Operator</th><th class="report-num">Date</th></tr></thead>
+          <tbody>`;
+      piezs.forEach(p => {
+        const read = !!p.reading_date;
+        const dtw  = p.dtw_reading != null ? Number(p.dtw_reading).toFixed(2) : '—';
+        const method = [p.plopper_sounder, p.wet_dry_moist].filter(Boolean).join(' / ') || '—';
+        const dateCell = read
+          ? `<span style="color:var(--green)">${fmtDate(p.reading_date)}</span>`
+          : `<span style="color:var(--red-light)">Not read</span>`;
+        html += `<tr${read ? '' : ' style="opacity:0.6"'}>
+          <td>${escHtml(p.piezometer_name)}</td>
+          <td class="report-num">${dtw}</td>
+          <td>${method}</td>
+          <td>${escHtml(p.operator || '—')}</td>
+          <td class="report-num">${dateCell}</td>
+        </tr>`;
+      });
+      html += '</tbody></table>';
+    });
+
+    html += '</div>';
+    out.innerHTML = html;
+  } catch (err) {
+    out.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
+  }
+}
+
+async function renderPiezCompareReport() {
+  const s1 = el('piez-cmp-start1').value, e1 = el('piez-cmp-end1').value;
+  const s2 = el('piez-cmp-start2').value, e2 = el('piez-cmp-end2').value;
+  if (!s1 || !e1 || !s2 || !e2) return;
+
+  const out = el('report-piez-output');
+  out.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    [lastPiezCompareRows1, lastPiezCompareRows2] = await Promise.all([
+      api('GET', `/api/reports/piezometers?start_date=${s1}&end_date=${e1}`),
+      api('GET', `/api/reports/piezometers?start_date=${s2}&end_date=${e2}`),
+    ]);
+    const [rows1, rows2] = [lastPiezCompareRows1, lastPiezCompareRows2];
+
+    const fmtDate = s => s ? localDateStr(s, { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
+    const map2 = new Map(rows2.map(r => [r.piezometer_id, r]));
+    const pools = groupByPool(rows1);
+
+    let html = `<div class="report-card">
+      <div class="report-title">Piezometer Comparison</div>
+      <div class="report-subtitle">${fmtDate(s1)}–${fmtDate(e1)} vs ${fmtDate(s2)}–${fmtDate(e2)}</div>`;
+
+    sortPools(Object.keys(pools)).forEach(pool => {
+      const piezs = pools[pool];
+      html += `<div class="report-section-title">${pool}</div>
+        <table class="report-table">
+          <thead><tr><th>Name</th><th class="report-num">DTW 1</th><th class="report-num">DTW 2</th><th class="report-num">Difference</th></tr></thead>
+          <tbody>`;
+      piezs.forEach(p => {
+        const r2   = map2.get(p.piezometer_id);
+        const dtw1 = p.dtw_reading    != null ? Number(p.dtw_reading)    : null;
+        const dtw2 = r2?.dtw_reading  != null ? Number(r2.dtw_reading)   : null;
+        const d1   = dtw1 != null ? dtw1.toFixed(2) : '—';
+        const d2   = dtw2 != null ? dtw2.toFixed(2) : '—';
+        let diffCell = '—';
+        if (dtw1 != null && dtw2 != null) {
+          const diff = dtw2 - dtw1;
+          const abs  = Math.abs(diff).toFixed(2);
+          if (Math.abs(diff) < 0.005) {
+            diffCell = abs;
+          } else if (diff < 0) {
+            diffCell = `<span style="color:var(--green)">↓ ${abs}</span>`;
+          } else {
+            diffCell = `<span style="color:var(--yellow)">↑ ${abs}</span>`;
+          }
+        }
+        html += `<tr>
+          <td>${escHtml(p.piezometer_name)}</td>
+          <td class="report-num">${d1}</td>
+          <td class="report-num">${d2}</td>
+          <td class="report-num">${diffCell}</td>
+        </tr>`;
+      });
+      html += '</tbody></table>';
+    });
+
+    html += '</div>';
+    out.innerHTML = html;
+  } catch (err) {
+    out.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
+  }
+}
+
 el('export-pdf-btn').addEventListener('click', () => {
-  // Clone report into a dedicated print area
   let printArea = document.getElementById('print-area');
   if (!printArea) {
     printArea = document.createElement('div');
     printArea.id = 'print-area';
     document.body.appendChild(printArea);
   }
-  printArea.innerHTML = buildMileageHTML(lastReportRows, reportsYear, reportsMonth);
+
+  if (exportContext === 'piezometers-status' || exportContext === 'piezometers-compare') {
+    delete printArea.dataset.printType;
+    const rendered = el('report-piez-output').querySelector('.report-card');
+    printArea.innerHTML = rendered ? rendered.outerHTML : '';
+  } else {
+    printArea.dataset.printType = 'vehicle';
+    printArea.innerHTML = buildMileageHTML(lastReportRows, reportsYear, reportsMonth);
+  }
+
   el('export-modal').classList.add('hidden');
-  setTimeout(() => window.print(), 100);
+  document.body.style.overflow = ''; // ensure scroll-lock is released before print dialog
+  setTimeout(() => {
+    window.print();
+    window.addEventListener('afterprint', () => { printArea.innerHTML = ''; }, { once: true });
+  }, 100);
 });
+
+/* ── Lock body scroll when any modal is open (prevents background scroll on iOS) ── */
+(function () {
+  const observer = new MutationObserver(() => {
+    const anyOpen = document.querySelector('.modal-overlay:not(.hidden)');
+    document.body.style.overflow = anyOpen ? 'hidden' : '';
+  });
+  document.querySelectorAll('.modal-overlay').forEach(m => {
+    observer.observe(m, { attributes: true, attributeFilter: ['class'] });
+  });
+})();
 
 /* ── Left-edge swipe to go back (system-wide) ────────────────────────────── */
 (function () {
@@ -6602,8 +7411,8 @@ function createDWRItem(w, dateInput, timeInput) {
       </div>
       <div class="lif-error error-msg hidden"></div>
       <div class="lif-footer">
-        ${hasGPS ? `<button class="btn btn-secondary btn-sm dwr-map-item-btn">&#128205; Map</button>` : ''}
-        <button class="btn btn-secondary btn-sm dwr-hist-btn">&#128200; History</button>
+        ${hasGPS ? `<button class="btn btn-secondary btn-sm dwr-map-item-btn">${icon('map-pin')} Map</button>` : ''}
+        <button class="btn btn-secondary btn-sm dwr-hist-btn">${icon('history')} History</button>
         <button class="btn btn-save dwr-save-btn">Save Reading</button>
       </div>
     </div>`;
@@ -6637,8 +7446,7 @@ function createDWRItem(w, dateInput, timeInput) {
   // Map button (individual well)
   div.querySelector('.dwr-map-item-btn')?.addEventListener('click', e => {
     e.stopPropagation();
-    const url = `https://maps.apple.com/?ll=${w.gps_latitude},${w.gps_longitude}&q=${encodeURIComponent(wellLabel)}`;
-    window.open(url, '_blank');
+    openLocationModal(w.gps_latitude, w.gps_longitude, wellLabel);
   });
 
   // History button
@@ -6796,7 +7604,7 @@ function createDWRItem(w, dateInput, timeInput) {
     queue.innerHTML = pendingFiles.map((f, i) => {
       const isPdf = f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf');
       const thumb = isPdf
-        ? `<span class="uptool-qi-pdf">&#128196;</span>`
+        ? `<span class="uptool-qi-pdf">${icon('invoice', 28)}</span>`
         : `<img src="${URL.createObjectURL(f)}" alt="">`;
       return `<div class="uptool-queue-item">${thumb}<div class="uptool-qi-name">${f.name}</div></div>`;
     }).join('');
@@ -6877,7 +7685,7 @@ function createDWRItem(w, dateInput, timeInput) {
     grid.innerHTML = files.map(f => {
       const isPdf = f.name.toLowerCase().endsWith('.pdf');
       const thumb = isPdf
-        ? `<div class="uptool-fc-thumb"><span class="uptool-pdf-icon">&#128196;</span></div>`
+        ? `<div class="uptool-fc-thumb"><span class="uptool-pdf-icon">${icon('invoice', 28)}</span></div>`
         : `<div class="uptool-fc-thumb"><img src="/uploads/${encodePathSegments(f.relPath)}" loading="lazy" alt=""></div>`;
       return `<div class="uptool-file-card" data-rel="${escapeAttr(f.relPath)}" data-name="${escapeAttr(f.name)}" data-pdf="${isPdf}">
         ${thumb}
@@ -6907,7 +7715,7 @@ function createDWRItem(w, dateInput, timeInput) {
     const url = `/uploads/${encodePathSegments(relPath)}`;
     if (isPdf) {
       body.innerHTML = `<div class="uptool-pdf-msg">
-        <p>&#128196; ${escapeHtml(name)}</p>
+        <p>${icon('invoice', 32)} ${escapeHtml(name)}</p>
         <p style="margin-top:8px;font-size:0.85rem;color:var(--text-dim)">Click "Save / Download" to open the PDF.</p>
       </div>`;
     } else {
