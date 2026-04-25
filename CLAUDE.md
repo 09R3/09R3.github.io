@@ -16,10 +16,10 @@ by field operators. Includes report generation and CSV/Excel/PDF export.
 
 | App | Branch | Appdata Path | Port |
 |-----|--------|-------------|------|
-| field-ops | `main` | `/mnt/user/appdata/field-ops` | 3067 |
-| field-ops | beta (`claude/field-operator-form-app-dEwL1`) | `/mnt/user/appdata/field-ops-beta` | 3066 |
-| water-ops-viewer | `main` | `/mnt/user/appdata/water-ops-viewer` | 3069 |
-| water-ops-viewer | beta (`claude/database-viewer-reports-i8gRu`) | `/mnt/user/appdata/water-ops-viewer-beta` | 3068 |
+| WaterMark | `main` | `/mnt/user/appdata/field-ops` | 3067 |
+| WaterMark | beta (`claude/field-operator-form-app-dEwL1`) | `/mnt/user/appdata/field-ops-beta` | 3066 |
+| FieldView | `main` | `/mnt/user/appdata/water-ops-viewer` | 3069 |
+| FieldView | beta (`claude/database-viewer-reports-i8gRu`) | `/mnt/user/appdata/water-ops-viewer-beta` | 3068 |
 
 ---
 If any deploy.sh files are updated reminde me to update the one on the server.
