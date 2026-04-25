@@ -2,11 +2,11 @@
 
 ## Project Context
 
-### Field Ops (`field-ops/`)
+### WaterMark (`field-ops/`)
 A mobile-friendly form app used by field operators to take readings and report
 issues found in the field. Readings are saved into a PostgreSQL database.
 
-### Water Ops Viewer (`water-ops-viewer/`)
+### FieldView (`water-ops-viewer/`)
 A database viewer used to access, organize, sort, and analyze the data entered
 by field operators. Includes report generation and CSV/Excel/PDF export.
 
@@ -23,6 +23,9 @@ by field operators. Includes report generation and CSV/Excel/PDF export.
 
 ---
 If any deploy.sh files are updated reminde me to update the one on the server.
+The names of each app have been changed (field-ops -> WaterMark, water-ops-viewer -> FieldView) but 
+the Branch names, Appdata Paths directories, and possibly Ports will remain the same until the system 
+is migrated to a different Network. At that point we will update this file to reflect the changes.
 ---
 
 ## Branch Strategy
