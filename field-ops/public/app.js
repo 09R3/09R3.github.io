@@ -771,18 +771,8 @@ async function renderPPBody() {
     await Promise.all(sitesToShow.map(async site => {
       if (pp.loadedSites.has(site.site_id)) return;
       pp.loadedSites.add(site.site_id);
-      const buildings = await api('GET', `/api/buildings?site_id=${site.site_id}`);
-      const withData = await Promise.all(buildings.map(async b => {
-        const [pumps, compressors, pgeMeters, powerMonitors] = await Promise.all([
-          api('GET', `/api/pump-positions?building_id=${b.building_id}`),
-          api('GET', `/api/air-compressors?building_id=${b.building_id}`),
-          api('GET', `/api/pge-meters?building_id=${b.building_id}`),
-          api('GET', `/api/power-monitors?building_id=${b.building_id}`),
-        ]);
-        return { ...b, pumps, compressors, pgeMeters, powerMonitors };
-      }));
-      withData.sort((a, b) => (a.building_letter || '').localeCompare(b.building_letter || ''));
-      pp.buildings[site.site_id] = withData;
+      const buildings = await api('GET', `/api/pp-site-data?site_id=${site.site_id}`);
+      pp.buildings[site.site_id] = buildings;
     }));
   } catch (err) {
     body.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">Error: ${err.message}</div>`;
@@ -2864,7 +2854,7 @@ function closeSettingsPanel() {
   el('settings-main').classList.remove('hidden');
 }
 
-document.querySelectorAll('.settings-menu-row').forEach(btn => {
+document.querySelectorAll('.settings-menu-row[data-panel]').forEach(btn => {
   btn.addEventListener('click', () => openSettingsPanel(btn.dataset.panel));
 });
 
