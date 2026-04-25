@@ -2415,10 +2415,9 @@ app.get('/api/reports/piezometers/export', async (req, res) => {
     if (!t || Date.now() > t.expires) return res.status(401).json({ error: 'Invalid or expired token' });
     downloadTokens.delete(token);
   } else {
-    if (!req.cookies?.session_id) return res.status(401).json({ error: 'Unauthorized' });
-    const session = sessions.get(req.cookies.session_id);
-    if (!session || Date.now() > session.expires) return res.status(401).json({ error: 'Unauthorized' });
-    if (session.user.role !== 'admin' && session.user.role !== 'supervisor')
+    const sessionUser = getSession(req.cookies?.fo_session);
+    if (!sessionUser) return res.status(401).json({ error: 'Unauthorized' });
+    if (sessionUser.role !== 'admin' && sessionUser.role !== 'supervisor')
       return res.status(403).json({ error: 'Forbidden' });
   }
   try {
@@ -2468,10 +2467,9 @@ app.get('/api/reports/piezometers/compare/export', async (req, res) => {
     if (!t || Date.now() > t.expires) return res.status(401).json({ error: 'Invalid or expired token' });
     downloadTokens.delete(token);
   } else {
-    if (!req.cookies?.session_id) return res.status(401).json({ error: 'Unauthorized' });
-    const session = sessions.get(req.cookies.session_id);
-    if (!session || Date.now() > session.expires) return res.status(401).json({ error: 'Unauthorized' });
-    if (session.user.role !== 'admin' && session.user.role !== 'supervisor')
+    const sessionUser = getSession(req.cookies?.fo_session);
+    if (!sessionUser) return res.status(401).json({ error: 'Unauthorized' });
+    if (sessionUser.role !== 'admin' && sessionUser.role !== 'supervisor')
       return res.status(403).json({ error: 'Forbidden' });
   }
   try {
