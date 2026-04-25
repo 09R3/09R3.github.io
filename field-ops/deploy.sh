@@ -15,6 +15,7 @@ CONTAINER_NAME="field-ops"
 IMAGE_NAME="field-ops"
 HOST_PORT=3067          # port exposed on Unraid
 CONTAINER_PORT=4000     # port inside the container (matches PORT in .env)
+UPLOADS_SHARE="/mnt/user/field-ops-uploads"     # Unraid share for photo/PDF uploads
 # ─────────────────────────────────────────────────────────────────────────────
 
 ENV_FILE="$APPDATA_DIR/.env"
@@ -90,8 +91,13 @@ git clone \
 
 cd "$SOURCE_DIR"
 git sparse-checkout set field-ops
-cd "$APPDATA_DIR"
 
+echo "      Fetching latest icons (Marv-s-site)..."
+git clone --depth 1 --quiet https://github.com/09R3/Marv-s-site.git \
+    "$SOURCE_DIR/field-ops/public/marv-site" \
+    || echo "      Warning: could not fetch icons — Marv-s-site clone failed."
+
+cd "$APPDATA_DIR"
 echo "      Done."
 
 # ── 5. Build Docker image ─────────────────────────────────────────────────────
@@ -109,12 +115,14 @@ echo "      Done."
 
 # ── 7. Run the container ──────────────────────────────────────────────────────
 echo "[5/5] Starting container..."
+mkdir -p "$UPLOADS_SHARE"
 docker run \
     --detach \
     --name "$CONTAINER_NAME" \
     --restart unless-stopped \
     --publish "${HOST_PORT}:${CONTAINER_PORT}" \
     --env-file "$ENV_FILE" \
+    --volume "${UPLOADS_SHARE}:/app/uploads" \
     "$IMAGE_NAME" \
     >/dev/null
 

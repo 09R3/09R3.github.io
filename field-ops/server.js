@@ -5,12 +5,107 @@ const bcrypt       = require('bcryptjs');
 const crypto       = require('crypto');
 const cookieParser = require('cookie-parser');
 const path         = require('path');
+const fs           = require('fs');
+const multer       = require('multer');
 const XLSX         = require('xlsx');
 
 const app = express();
 app.use(express.json());
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
+
+// ── File Uploads ──────────────────────────────────────────────────────────────
+const UPLOADS_ROOT = process.env.UPLOADS_PATH || '/app/uploads';
+fs.mkdirSync(UPLOADS_ROOT, { recursive: true });
+
+// /uploads static route registered after sessions Map is declared (see below)
+
+const UPLOAD_CATEGORIES = ['pumps','motors','wells','vehicles','electrical',
+                           'structures','siphon-breakers','air-compressors',
+                           'canal','misc','general'];
+
+const multerStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const cat = UPLOAD_CATEGORIES.includes(req.query.category)
+      ? req.query.category : 'general';
+    const now  = new Date();
+    const dir  = path.join(UPLOADS_ROOT, cat,
+                           String(now.getFullYear()),
+                           String(now.getMonth() + 1).padStart(2, '0'));
+    fs.mkdirSync(dir, { recursive: true });
+    cb(null, dir);
+  },
+  filename: (req, file, cb) => {
+    const ext  = path.extname(file.originalname).toLowerCase();
+    const base = path.basename(file.originalname, ext)
+                     .replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 60);
+    cb(null, `${base}${ext}`);
+  },
+});
+const upload = multer({
+  storage: multerStorage,
+  limits: { fileSize: 50 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const ok = /^image\/(jpeg|jpg|png|heic|heif|webp)|application\/pdf$/.test(file.mimetype);
+    cb(null, ok);
+  },
+});
+
+app.post('/api/tools/upload', requireAuth, requireRole('supervisor', 'admin'),
+  upload.array('files', 20), (req, res) => {
+    if (!req.files?.length) return res.status(400).json({ error: 'No valid files' });
+    const cat = UPLOAD_CATEGORIES.includes(req.query.category)
+      ? req.query.category : 'general';
+    res.json(req.files.map(f => ({
+      name:     f.originalname,
+      filename: f.filename,
+      url:      '/uploads/' + path.relative(UPLOADS_ROOT, f.path).replace(/\\/g, '/'),
+      size:     f.size,
+      mime:     f.mimetype,
+      category: cat,
+    })));
+  }
+);
+
+app.get('/api/tools/files', requireAuth, requireRole('supervisor', 'admin'), (req, res) => {
+  const cat     = req.query.category;
+  const scanDir = cat && UPLOAD_CATEGORIES.includes(cat)
+    ? path.join(UPLOADS_ROOT, cat) : UPLOADS_ROOT;
+
+  if (!fs.existsSync(scanDir)) return res.json([]);
+  const results = [];
+  (function scan(dir) {
+    fs.readdirSync(dir, { withFileTypes: true }).forEach(e => {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) { scan(full); return; }
+      const rel   = path.relative(UPLOADS_ROOT, full).replace(/\\/g, '/');
+      const parts = rel.split('/');
+      results.push({
+        url:      '/uploads/' + rel,
+        relPath:  rel,
+        name:     e.name,
+        category: parts[0] || 'general',
+        year:     parts[1] || '',
+        month:    parts[2] || '',
+        size:     fs.statSync(full).size,
+        mtime:    fs.statSync(full).mtime,
+      });
+    });
+  })(scanDir);
+  results.sort((a, b) => new Date(b.mtime) - new Date(a.mtime));
+  res.json(results);
+});
+
+app.delete('/api/tools/file', requireAuth, requireRole('supervisor', 'admin'), (req, res) => {
+  const { relPath, filePath } = req.body;
+  const target = relPath || filePath;
+  if (!target) return res.status(400).json({ error: 'relPath required' });
+  const abs = path.resolve(UPLOADS_ROOT, target.replace(/^\/uploads\//, ''));
+  if (!abs.startsWith(path.resolve(UPLOADS_ROOT)))
+    return res.status(403).json({ error: 'Invalid path' });
+  try { fs.unlinkSync(abs); res.json({ ok: true }); }
+  catch (err) { res.status(500).json({ error: err.message }); }
+});
 
 // ── Database ──────────────────────────────────────────────────────────────────
 const pool = new Pool({
@@ -40,9 +135,67 @@ pool.query(`
   )
 `).catch(err => console.error('Migration error:', err.message));
 
+pool.query(`ALTER TABLE maintenance_vehicles ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'open'`)
+  .catch(err => console.error('Migration error (mv_status):', err.message));
+
+pool.query(`
+  CREATE TABLE IF NOT EXISTS readings_piezometers (
+    piezometer_reading_id SERIAL PRIMARY KEY,
+    piezometer_id         INTEGER REFERENCES piezometers(piezometer_id),
+    reading_date          DATE,
+    reading_time          TIME,
+    dtw_reading           NUMERIC,
+    operator              TEXT,
+    plopper_sounder       TEXT CHECK (plopper_sounder IN ('plopper','sounder')),
+    wet_dry_moist         TEXT CHECK (wet_dry_moist IN ('wet','dry','moist')),
+    notes                 TEXT
+  )
+`).catch(err => console.error('Migration error (readings_piezometers):', err.message));
+
+pool.query(`
+  CREATE TABLE IF NOT EXISTS maintenance_attachments (
+    attachment_id  SERIAL PRIMARY KEY,
+    table_name     TEXT NOT NULL,
+    record_id      INTEGER NOT NULL,
+    rel_path       TEXT NOT NULL,
+    original_name  TEXT NOT NULL,
+    file_type      TEXT DEFAULT 'photo',
+    mime_type      TEXT,
+    uploaded_by    TEXT,
+    uploaded_at    TIMESTAMPTZ DEFAULT NOW()
+  )
+`).catch(err => console.error('Migration error (maint_attachments):', err.message));
+
+pool.query(`
+  CREATE TABLE IF NOT EXISTS canal_issues (
+    issue_id       SERIAL PRIMARY KEY,
+    pool           TEXT,
+    status         TEXT NOT NULL DEFAULT 'open',
+    description    TEXT,
+    reported_date  DATE,
+    entered_by     TEXT,
+    action_taken   TEXT,
+    resolution_notes TEXT,
+    po_number      TEXT,
+    cost           NUMERIC(10,2),
+    notes          TEXT,
+    gps_lat        DOUBLE PRECISION,
+    gps_lon        DOUBLE PRECISION,
+    created_at     TIMESTAMPTZ DEFAULT NOW(),
+    updated_at     TIMESTAMPTZ DEFAULT NOW()
+  )
+`).catch(err => console.error('Migration error (canal_issues):', err.message));
+
 // ── Auth / Sessions ───────────────────────────────────────────────────────────
 const SESSION_TTL = 8 * 60 * 60 * 1000; // 8 hours
 const sessions = new Map();
+
+// Serve uploads behind session auth now that sessions Map exists
+app.use('/uploads', (req, res, next) => {
+  const session = sessions.get(req.cookies?.fo_session);
+  if (!session || Date.now() > session.expires) return res.status(401).send('Unauthorized');
+  next();
+}, express.static(UPLOADS_ROOT));
 
 function createSession(user) {
   const token = crypto.randomBytes(32).toString('hex');
@@ -222,12 +375,14 @@ app.get('/api/pump-positions', requireAuth, async (req, res) => {
     const { rows } = await pool.query(`
       SELECT
         pp.position_id, pp.pump_letter, pp.status,
+        pu.status AS pump_unit_status,
         r.reading_id    AS last_reading_id,
         r.hour_reading  AS last_reading,
         r.reading_date  AS last_reading_date,
         r.entered_by    AS last_entered_by,
         r.notes         AS last_notes
       FROM pump_positions pp
+      LEFT JOIN pump_units pu ON pu.pump_unit_id = pp.current_pump_unit_id
       LEFT JOIN LATERAL (
         SELECT reading_id, hour_reading, reading_date, entered_by, notes
         FROM readings_pump_hours
@@ -533,12 +688,21 @@ async function deleteReading(req, res, table, idCol) {
     const row = rows[0];
     if (!row) return res.status(404).json({ error: 'Reading not found' });
 
-    if (req.user.role === 'operator') {
-      if (row.entered_by !== req.user.username || dateString(row.reading_date) !== todayString()) {
-        return res.status(403).json({ error: 'Operators can only delete their own readings from today' });
+    const role = req.user.role;
+    const username = req.user.username;
+    const readingDT = new Date(`${dateString(row.reading_date)}T${(row.reading_time || '00:00').slice(0,5)}`);
+    const within24h = (Date.now() - readingDT.getTime()) <= 24 * 60 * 60 * 1000;
+
+    if (role === 'admin') {
+      // admins: unrestricted
+    } else if (role === 'supervisor') {
+      if (!within24h) return res.status(403).json({ error: 'Supervisors can only delete readings within 24 hours' });
+    } else {
+      // operator (and any other role): own entry within 24h
+      if (row.entered_by !== username || !within24h) {
+        return res.status(403).json({ error: 'You can only delete your own readings within 24 hours' });
       }
     }
-    // supervisors and admins can delete any
 
     await pool.query(`DELETE FROM ${table} WHERE ${idCol} = $1`, [id]);
     res.json({ ok: true });
@@ -644,6 +808,7 @@ app.get('/api/wells/operational', requireAuth, async (req, res) => {
     const { rows } = await pool.query(`
       SELECT
         w.well_id, w.common_name, w.area, w.well_type, w.status,
+        w.gps_latitude, w.gps_longitude,
         r.reading_id        AS last_reading_id,
         r.reading_date      AS last_reading_date,
         r.reading_time      AS last_reading_time,
@@ -701,7 +866,126 @@ app.post('/api/readings/kf-monthly', requireAuth, async (req, res) => {
 app.delete('/api/readings/kf-monthly/:id', requireAuth, (req, res) =>
   deleteReading(req, res, 'readings_kf_monthly', 'kf_reading_id'));
 
-// ── Wells ─────────────────────────────────────────────────────────────────────
+// ── Piezometers ───────────────────────────────────────────────────────────────
+app.get('/api/piezometers', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        p.piezometer_id, p.piezometer_name, p.pool, p.sort_order,
+        p.max_depth, p.gps_latitude, p.gps_longitude, p.notes,
+        prev.piezometer_reading_id AS last_reading_id,
+        prev.reading_date          AS last_reading_date,
+        prev.dtw_reading           AS last_dtw,
+        prev.plopper_sounder       AS last_method,
+        prev.wet_dry_moist         AS last_wet_dry_moist,
+        prev.notes                 AS last_reading_notes
+      FROM piezometers p
+      LEFT JOIN LATERAL (
+        SELECT piezometer_reading_id, reading_date, dtw_reading, plopper_sounder, wet_dry_moist, notes
+        FROM readings_piezometers
+        WHERE piezometer_id = p.piezometer_id
+        ORDER BY reading_date DESC, reading_time DESC
+        LIMIT 1
+      ) prev ON true
+      WHERE LOWER(p.status) = 'active'
+      ORDER BY p.pool, p.sort_order, p.piezometer_name
+    `);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/readings/piezometer', requireAuth, async (req, res) => {
+  const {
+    piezometer_id, reading_date, reading_time,
+    dtw_reading, operator, plopper_sounder, wet_dry_moist, notes,
+  } = req.body;
+  if (!piezometer_id || !reading_date) {
+    return res.status(400).json({ error: 'piezometer_id and reading_date are required' });
+  }
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO readings_piezometers
+         (piezometer_id, reading_date, reading_time, dtw_reading, operator, plopper_sounder, wet_dry_moist, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+       RETURNING piezometer_reading_id`,
+      [piezometer_id, reading_date, reading_time || null, dtw_reading ?? null,
+       operator || null, plopper_sounder || null, wet_dry_moist || null, notes || null]
+    );
+    res.json({ ok: true, piezometer_reading_id: rows[0].piezometer_reading_id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── DWR Well Run ──────────────────────────────────────────────────────────────
+app.get('/api/wells/dwr', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        w.well_id, w.common_name, w.state_well_number, w.area,
+        w.gps_latitude, w.gps_longitude,
+        prev.reading_id      AS last_reading_id,
+        prev.reading_date    AS last_reading_date,
+        prev.depth_to_water  AS last_dtw,
+        prev.method          AS last_method,
+        prev.notes           AS last_notes,
+        prev.no_measurement  AS last_no_measurement,
+        (CURRENT_DATE - prev.reading_date)::int AS days_since_reading
+      FROM wells w
+      LEFT JOIN LATERAL (
+        SELECT reading_id, reading_date, depth_to_water, method, notes, no_measurement
+        FROM readings_run_dwr
+        WHERE well_id = w.well_id
+        ORDER BY reading_date DESC, reading_time DESC
+        LIMIT 1
+      ) prev ON true
+      WHERE w.well_run = 'DWR'
+        AND (LOWER(w.status) != 'inactive' OR w.status IS NULL)
+      ORDER BY w.state_well_number, w.common_name
+    `);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/readings/run-dwr', requireAuth, async (req, res) => {
+  const {
+    well_id, reading_date, reading_time,
+    depth_to_water, method, operator,
+    no_measurement, questionable_measurement, notes,
+  } = req.body;
+  if (!well_id || !reading_date) {
+    return res.status(400).json({ error: 'well_id and reading_date are required' });
+  }
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO readings_run_dwr
+         (well_id, reading_date, reading_time, depth_to_water, method, operator,
+          no_measurement, questionable_measurement, notes, entered_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+       RETURNING reading_id`,
+      [
+        well_id, reading_date, reading_time || null,
+        depth_to_water != null ? depth_to_water : null,
+        method || null, operator || null,
+        no_measurement?.length ? no_measurement : null,
+        questionable_measurement?.length ? questionable_measurement : null,
+        notes || null, req.user.username,
+      ]
+    );
+    res.json({ reading_id: rows[0].reading_id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/readings/run-dwr/:id', requireAuth, (req, res) =>
+  deleteReading(req, res, 'readings_run_dwr', 'reading_id'));
+
+
 app.get('/api/wells', requireAuth, async (req, res) => {
   try {
     const { rows } = await pool.query(
@@ -842,6 +1126,20 @@ app.get('/api/history', requireAuth, async (req, res) => {
         `SELECT reading_id AS id, reading_date, reading_time, odometer_miles, engine_hours, entered_by, notes
          FROM readings_vehicle_monthly WHERE vehicle_id = $1
          ORDER BY reading_date DESC, reading_time DESC LIMIT $2`, [id, LIMIT]));
+    } else if (type === 'dwr') {
+      ({ rows } = await pool.query(
+        `SELECT reading_id AS id, reading_date, reading_time,
+                depth_to_water AS value, method, operator AS entered_by,
+                no_measurement, questionable_measurement, notes
+         FROM readings_run_dwr WHERE well_id = $1
+         ORDER BY reading_date DESC, reading_time DESC LIMIT $2`, [id, LIMIT]));
+    } else if (type === 'piezometer') {
+      ({ rows } = await pool.query(
+        `SELECT piezometer_reading_id AS id, reading_date, reading_time,
+                dtw_reading AS value, plopper_sounder AS method, wet_dry_moist,
+                operator AS entered_by, notes
+         FROM readings_piezometers WHERE piezometer_id = $1
+         ORDER BY reading_date DESC, reading_time DESC LIMIT $2`, [id, LIMIT]));
     } else {
       return res.status(400).json({ error: 'unknown type' });
     }
@@ -863,6 +1161,8 @@ app.delete('/api/history/:type/:id', requireAuth, async (req, res) => {
     kf:         { table: 'readings_kf_monthly',       pk: 'kf_reading_id' },
     canal:      { table: 'readings_canal',            pk: 'reading_id' },
     vehicle:    { table: 'readings_vehicle_monthly',  pk: 'reading_id' },
+    dwr:        { table: 'readings_run_dwr',          pk: 'reading_id' },
+    piezometer: { table: 'readings_piezometers',      pk: 'piezometer_reading_id' },
   };
   const map = TABLE_MAP[type];
   if (!map) return res.status(400).json({ error: 'unknown type' });
@@ -871,8 +1171,25 @@ app.delete('/api/history/:type/:id', requireAuth, async (req, res) => {
   const username = req.user.username;
 
   try {
-    if (role === 'operator') {
-      // Operators may only delete their own readings submitted within the last 24 hours
+    if (role === 'admin') {
+      // Admins: unrestricted
+      const { rows } = await pool.query(
+        `DELETE FROM ${map.table} WHERE ${map.pk} = $1 RETURNING ${map.pk}`,
+        [id]
+      );
+      if (!rows.length) return res.status(404).json({ error: 'Reading not found' });
+    } else if (role === 'supervisor') {
+      // Supervisors: any reading within 24 hours
+      const { rows } = await pool.query(
+        `DELETE FROM ${map.table}
+         WHERE ${map.pk} = $1
+           AND (reading_date + COALESCE(reading_time, '00:00'::time)) >= NOW() - INTERVAL '24 hours'
+         RETURNING ${map.pk}`,
+        [id]
+      );
+      if (!rows.length) return res.status(403).json({ error: 'Supervisors can only delete readings within 24 hours' });
+    } else {
+      // Operators: own entry only, within 24 hours
       const { rows } = await pool.query(
         `DELETE FROM ${map.table}
          WHERE ${map.pk} = $1
@@ -881,15 +1198,7 @@ app.delete('/api/history/:type/:id', requireAuth, async (req, res) => {
          RETURNING ${map.pk}`,
         [id, username]
       );
-      if (!rows.length) return res.status(403).json({ error: 'Not authorized or outside 24-hour window' });
-    } else if (role === 'supervisor' || role === 'admin') {
-      const { rows } = await pool.query(
-        `DELETE FROM ${map.table} WHERE ${map.pk} = $1 RETURNING ${map.pk}`,
-        [id]
-      );
-      if (!rows.length) return res.status(404).json({ error: 'Reading not found' });
-    } else {
-      return res.status(403).json({ error: 'Insufficient permissions' });
+      if (!rows.length) return res.status(403).json({ error: 'You can only delete your own readings within 24 hours' });
     }
     res.json({ ok: true });
   } catch (err) {
@@ -1062,15 +1371,17 @@ app.get('/api/well-issues', requireAuth, async (req, res) => {
   const includeResolved = req.query.include_resolved === 'true';
   try {
     const { rows } = await pool.query(`
-      SELECT issue_id, well_id, well_name, well_area,
-             status, description, reported_date, resolved_date,
-             action_taken, resolution_notes, po_number, cost,
-             entered_by, assigned_to, notes, created_at
-      FROM well_issues
-      WHERE $1 OR status != 'resolved'
+      SELECT wi.issue_id, wi.well_id, wi.well_name, wi.well_area,
+             wi.status, wi.description, wi.reported_date, wi.resolved_date,
+             wi.action_taken, wi.resolution_notes, wi.po_number, wi.cost,
+             wi.entered_by, wi.assigned_to, wi.notes, wi.created_at,
+             (SELECT COUNT(*) FROM maintenance_attachments
+              WHERE table_name = 'well_issues' AND record_id = wi.issue_id) AS attachment_count
+      FROM well_issues wi
+      WHERE $1 OR wi.status != 'resolved'
       ORDER BY
-        CASE status WHEN 'open' THEN 1 WHEN 'in_progress' THEN 2 ELSE 3 END,
-        reported_date DESC
+        CASE wi.status WHEN 'open' THEN 1 WHEN 'in_progress' THEN 2 ELSE 3 END,
+        wi.reported_date DESC
     `, [includeResolved]);
     res.json(rows);
   } catch (err) {
@@ -1130,15 +1441,17 @@ app.get('/api/building-issues', requireAuth, async (req, res) => {
   const includeResolved = req.query.include_resolved === 'true';
   try {
     const { rows } = await pool.query(`
-      SELECT issue_id, building_id, site_id, building_name, site_name,
-             status, description, reported_date, resolved_date,
-             action_taken, resolution_notes, po_number, cost,
-             entered_by, assigned_to, notes, created_at
-      FROM building_issues
-      WHERE $1 OR status != 'resolved'
+      SELECT bi.issue_id, bi.building_id, bi.site_id, bi.building_name, bi.site_name,
+             bi.status, bi.description, bi.reported_date, bi.resolved_date,
+             bi.action_taken, bi.resolution_notes, bi.po_number, bi.cost,
+             bi.entered_by, bi.assigned_to, bi.notes, bi.created_at,
+             (SELECT COUNT(*) FROM maintenance_attachments
+              WHERE table_name = 'building_issues' AND record_id = bi.issue_id) AS attachment_count
+      FROM building_issues bi
+      WHERE $1 OR bi.status != 'resolved'
       ORDER BY
-        CASE status WHEN 'open' THEN 1 WHEN 'in_progress' THEN 2 ELSE 3 END,
-        reported_date DESC
+        CASE bi.status WHEN 'open' THEN 1 WHEN 'in_progress' THEN 2 ELSE 3 END,
+        bi.reported_date DESC
     `, [includeResolved]);
     res.json(rows);
   } catch (err) {
@@ -1198,15 +1511,17 @@ app.get('/api/equipment-issues', requireAuth, async (req, res) => {
   const includeResolved = req.query.include_resolved === 'true';
   try {
     const { rows } = await pool.query(`
-      SELECT issue_id, equipment_type, equipment_id, equipment_name,
-             status, description, reported_date, resolved_date,
-             action_taken, resolution_notes, po_number, cost,
-             entered_by, assigned_to, notes, created_at
-      FROM equipment_issues
-      WHERE $1 OR status != 'resolved'
+      SELECT ei.issue_id, ei.equipment_type, ei.equipment_id, ei.equipment_name,
+             ei.status, ei.description, ei.reported_date, ei.resolved_date,
+             ei.action_taken, ei.resolution_notes, ei.po_number, ei.cost,
+             ei.entered_by, ei.assigned_to, ei.notes, ei.created_at,
+             (SELECT COUNT(*) FROM maintenance_attachments
+              WHERE table_name = 'equipment_issues' AND record_id = ei.issue_id) AS attachment_count
+      FROM equipment_issues ei
+      WHERE $1 OR ei.status != 'resolved'
       ORDER BY
-        CASE status WHEN 'open' THEN 1 WHEN 'in_progress' THEN 2 ELSE 3 END,
-        reported_date DESC
+        CASE ei.status WHEN 'open' THEN 1 WHEN 'in_progress' THEN 2 ELSE 3 END,
+        ei.reported_date DESC
     `, [includeResolved]);
     res.json(rows);
   } catch (err) {
@@ -1255,6 +1570,70 @@ app.patch('/api/equipment-issues/:id', requireAuth, async (req, res) => {
       WHERE issue_id = $8
     `, [status || null, action_taken ?? null, resolution_notes ?? null,
         po_number ?? null, cost ?? null, assigned_to ?? null, notes ?? null, id]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Canal Issues ──────────────────────────────────────────────────────────────
+app.get('/api/canal-issues', requireAuth, async (req, res) => {
+  const includeResolved = req.query.include_resolved === 'true';
+  try {
+    const { rows } = await pool.query(`
+      SELECT ci.*,
+             (SELECT COUNT(*) FROM maintenance_attachments
+              WHERE table_name = 'canal_issues' AND record_id = ci.issue_id) AS attachment_count
+      FROM canal_issues ci
+      WHERE $1 OR ci.status != 'resolved'
+      ORDER BY
+        CASE ci.status WHEN 'open' THEN 0 WHEN 'in_progress' THEN 1 ELSE 2 END,
+        ci.reported_date DESC
+    `, [includeResolved]);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/canal-issues', requireAuth, async (req, res) => {
+  const { pool: poolNum, description, reported_date, gps_lat, gps_lon } = req.body;
+  const entered_by = req.user.username;
+  try {
+    const { rows } = await pool.query(`
+      INSERT INTO canal_issues (pool, description, reported_date, entered_by, gps_lat, gps_lon)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      RETURNING *
+    `, [poolNum || null, description || null, reported_date || null, entered_by,
+        gps_lat != null ? parseFloat(gps_lat) : null,
+        gps_lon != null ? parseFloat(gps_lon) : null]);
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch('/api/canal-issues/:id', requireAuth, async (req, res) => {
+  const { id } = req.params;
+  const { status, action_taken, resolution_notes, po_number, cost, notes, gps_lat, gps_lon } = req.body;
+  try {
+    await pool.query(`
+      UPDATE canal_issues SET
+        status           = COALESCE($1, status),
+        action_taken     = COALESCE($2, action_taken),
+        resolution_notes = COALESCE($3, resolution_notes),
+        po_number        = COALESCE($4, po_number),
+        cost             = COALESCE($5, cost),
+        notes            = COALESCE($6, notes),
+        gps_lat          = CASE WHEN $8::boolean THEN $9::double precision ELSE gps_lat END,
+        gps_lon          = CASE WHEN $8::boolean THEN $10::double precision ELSE gps_lon END,
+        updated_at       = NOW()
+      WHERE issue_id = $7
+    `, [status || null, action_taken ?? null, resolution_notes ?? null,
+        po_number ?? null, cost ?? null, notes ?? null, id,
+        gps_lat != null && gps_lon != null,
+        gps_lat != null ? parseFloat(gps_lat) : null,
+        gps_lon != null ? parseFloat(gps_lon) : null]);
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1416,14 +1795,60 @@ app.get('/api/maintenance/badge-counts', requireAuth, async (req, res) => {
         (SELECT COUNT(*) FROM building_issues
          WHERE status IN ('open','in_progress')) AS buildings,
         (SELECT COUNT(*) FROM well_issues
-         WHERE status IN ('open','in_progress')) AS wells
+         WHERE status IN ('open','in_progress')) AS wells,
+        (SELECT COUNT(*) FROM maintenance_vehicles
+         WHERE status IN ('open','in-progress')) AS vehicles,
+        (SELECT COUNT(*) FROM canal_issues
+         WHERE status IN ('open','in_progress')) AS canal
     `);
     const counts = rows[0];
     res.json({
       equipment: parseInt(counts.equipment) || 0,
       buildings: parseInt(counts.buildings) || 0,
       wells:     parseInt(counts.wells)     || 0,
+      vehicles:  parseInt(counts.vehicles)  || 0,
+      canal:     parseInt(counts.canal)     || 0,
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/maintenance/vehicles-list', requireAuth, async (req, res) => {
+  const includeResolved = req.query.include_resolved === 'true';
+  try {
+    const { rows } = await pool.query(`
+      SELECT mv.maintenance_id, mv.work_date, mv.work_type, mv.description,
+             mv.status, mv.notes, mv.performed_by, mv.entered_by,
+             mv.parts_used, mv.cost, mv.po_number,
+             v.vehicle_number, v.make, v.model,
+             (SELECT COUNT(*) FROM maintenance_attachments
+              WHERE table_name = 'maintenance_vehicles' AND record_id = mv.maintenance_id
+             ) AS attachment_count
+      FROM maintenance_vehicles mv
+      JOIN vehicles v ON v.vehicle_id = mv.vehicle_id
+      WHERE ($1 OR mv.status NOT IN ('resolved'))
+      ORDER BY mv.work_date DESC, mv.maintenance_id DESC
+      LIMIT 100
+    `, [includeResolved]);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch('/api/maintenance/vehicle/:id', requireAuth, async (req, res) => {
+  const { status, notes, performed_by, po_number, cost } = req.body;
+  try {
+    await pool.query(
+      `UPDATE maintenance_vehicles
+       SET status=$1, notes=$2, performed_by=$3, po_number=$4, cost=$5
+       WHERE maintenance_id=$6`,
+      [status, notes || null, performed_by || null, po_number || null,
+       cost != null && cost !== '' ? parseFloat(cost) : null,
+       parseInt(req.params.id)]
+    );
+    res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1568,20 +1993,21 @@ app.post('/api/maintenance/vehicle', requireAuth, async (req, res) => {
   const {
     vehicle_id, work_date, work_type, performed_by, is_contractor,
     description, odometer_at_service, engine_hours_at_service,
-    parts_used, cost, po_number, next_service_date, next_service_miles, next_service_hours, notes,
+    parts_used, cost, po_number, next_service_date, next_service_miles, next_service_hours,
+    notes, status,
   } = req.body;
   try {
     const { rows } = await pool.query(
       `INSERT INTO maintenance_vehicles
          (vehicle_id, work_date, work_type, performed_by, is_contractor, entered_by,
           description, odometer_at_service, engine_hours_at_service, parts_used, cost,
-          po_number, next_service_date, next_service_miles, next_service_hours, notes)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING maintenance_id`,
+          po_number, next_service_date, next_service_miles, next_service_hours, notes, status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING maintenance_id`,
       [vehicle_id, work_date, work_type, performed_by, is_contractor ?? false,
        req.user.username, description || null, odometer_at_service ?? null,
        engine_hours_at_service ?? null, parts_used || null, cost ?? null,
        po_number || null, next_service_date || null, next_service_miles ?? null,
-       next_service_hours ?? null, notes || null]
+       next_service_hours ?? null, notes || null, status || 'open']
     );
     res.json({ ok: true, maintenance_id: rows[0].maintenance_id });
   } catch (err) {
@@ -1630,12 +2056,17 @@ app.get('/api/maintenance/history', requireAuth, async (req, res) => {
       ));
     } else if (type === 'vehicle') {
       ({ rows } = await pool.query(
-        `SELECT work_date, work_type, description, performed_by, is_contractor,
-                parts_used, cost, odometer_at_service, engine_hours_at_service,
-                next_service_miles, next_service_hours, notes, entered_by
-         FROM maintenance_vehicles
-         WHERE vehicle_id = $1
-         ORDER BY work_date DESC LIMIT 15`,
+        `SELECT mv.maintenance_id, mv.work_date, mv.work_type, mv.description,
+                mv.performed_by, mv.is_contractor, mv.parts_used, mv.cost,
+                mv.odometer_at_service, mv.engine_hours_at_service,
+                mv.next_service_miles, mv.next_service_hours, mv.notes,
+                mv.entered_by, mv.status,
+                (SELECT COUNT(*) FROM maintenance_attachments
+                 WHERE table_name = 'maintenance_vehicles' AND record_id = mv.maintenance_id
+                ) AS attachment_count
+         FROM maintenance_vehicles mv
+         WHERE mv.vehicle_id = $1
+         ORDER BY mv.work_date DESC LIMIT 15`,
         [id]
       ));
     } else if (type === 'building') {
@@ -1651,6 +2082,65 @@ app.get('/api/maintenance/history', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'Invalid type' });
     }
     res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Maintenance Attachments ───────────────────────────────────────────────────
+app.post('/api/maintenance/attachment', requireAuth,
+  upload.single('file'), async (req, res) => {
+    if (!req.file) return res.status(400).json({ error: 'No file received' });
+    const { table_name, record_id, file_type } = req.query;
+    const rel = path.relative(UPLOADS_ROOT, req.file.path).replace(/\\/g, '/');
+    try {
+      const { rows } = await pool.query(
+        `INSERT INTO maintenance_attachments
+           (table_name, record_id, rel_path, original_name, file_type, mime_type, uploaded_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING attachment_id`,
+        [table_name || 'maintenance_vehicles', parseInt(record_id), rel,
+         req.file.originalname, file_type || 'photo', req.file.mimetype, req.user.username]
+      );
+      res.json({ ok: true, attachment_id: rows[0].attachment_id, rel_path: rel });
+    } catch (err) {
+      try { fs.unlinkSync(req.file.path); } catch {}
+      res.status(500).json({ error: err.message });
+    }
+  }
+);
+
+app.get('/api/maintenance/attachments', requireAuth, async (req, res) => {
+  const { table_name, record_id } = req.query;
+  if (!table_name || !record_id) return res.status(400).json({ error: 'table_name and record_id required' });
+  try {
+    const { rows } = await pool.query(
+      `SELECT attachment_id, rel_path, original_name, file_type, mime_type, uploaded_by, uploaded_at
+       FROM maintenance_attachments
+       WHERE table_name = $1 AND record_id = $2
+       ORDER BY uploaded_at`,
+      [table_name, parseInt(record_id)]
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/maintenance/attachment/:id', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT rel_path, uploaded_by FROM maintenance_attachments WHERE attachment_id = $1`,
+      [parseInt(req.params.id)]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Not found' });
+    const { rel_path, uploaded_by } = rows[0];
+    if (req.user.username !== uploaded_by && !['admin', 'supervisor'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Cannot delete another user\'s attachment' });
+    }
+    await pool.query(`DELETE FROM maintenance_attachments WHERE attachment_id = $1`, [parseInt(req.params.id)]);
+    const abs = path.join(UPLOADS_ROOT, rel_path);
+    if (fs.existsSync(abs)) fs.unlinkSync(abs);
+    res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1868,6 +2358,160 @@ app.get('/api/reports/vehicle-service', requireAuth, requireRole('supervisor', '
   }
 });
 
+// Piezometer readings report — latest reading per piezometer within date range
+app.get('/api/reports/piezometers', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+  const { start_date, end_date } = req.query;
+  if (!start_date || !end_date) return res.status(400).json({ error: 'start_date and end_date required' });
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        p.piezometer_id, p.piezometer_name, p.pool, p.sort_order,
+        r.reading_date, r.reading_time, r.dtw_reading,
+        r.operator, r.plopper_sounder, r.wet_dry_moist, r.notes
+      FROM piezometers p
+      LEFT JOIN LATERAL (
+        SELECT reading_date, reading_time, dtw_reading, operator,
+               plopper_sounder, wet_dry_moist, notes
+        FROM readings_piezometers
+        WHERE piezometer_id = p.piezometer_id
+          AND reading_date BETWEEN $1 AND $2
+        ORDER BY reading_date DESC, reading_time DESC
+        LIMIT 1
+      ) r ON true
+      WHERE LOWER(p.status) != 'inactive'
+      ORDER BY p.pool NULLS LAST, p.sort_order, p.piezometer_name
+    `, [start_date, end_date]);
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Canal readings report — all readings for a date range
+app.get('/api/reports/canal', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+  const { start_date, end_date } = req.query;
+  if (!start_date || !end_date) return res.status(400).json({ error: 'start_date and end_date required' });
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        cs.structure_name, cs.structure_type,
+        r.reading_date, r.reading_time,
+        r.instantaneous_flow_cfs, r.totalizer_reading_af,
+        r.gate_setting, r.head_reading_ft, r.derived_flow_cfs,
+        r.entered_by, r.notes
+      FROM readings_canal r
+      JOIN canal_structures cs ON cs.structure_id = r.structure_id
+      WHERE r.reading_date BETWEEN $1 AND $2
+      ORDER BY r.reading_date, r.reading_time, cs.structure_name
+    `, [start_date, end_date]);
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Piezometer status/compare XLSX export (token-authenticated)
+app.get('/api/reports/piezometers/export', async (req, res) => {
+  const { start_date, end_date, token } = req.query;
+  if (!start_date || !end_date) return res.status(400).json({ error: 'start_date and end_date required' });
+  if (token) {
+    const t = downloadTokens.get(token);
+    if (!t || Date.now() > t.expires) return res.status(401).json({ error: 'Invalid or expired token' });
+    downloadTokens.delete(token);
+  } else {
+    if (!req.cookies?.session_id) return res.status(401).json({ error: 'Unauthorized' });
+    const session = sessions.get(req.cookies.session_id);
+    if (!session || Date.now() > session.expires) return res.status(401).json({ error: 'Unauthorized' });
+    if (session.user.role !== 'admin' && session.user.role !== 'supervisor')
+      return res.status(403).json({ error: 'Forbidden' });
+  }
+  try {
+    const { rows } = await pool.query(`
+      SELECT p.piezometer_name, p.pool, p.sort_order,
+             r.reading_date, r.dtw_reading, r.operator, r.plopper_sounder, r.wet_dry_moist
+      FROM piezometers p
+      LEFT JOIN LATERAL (
+        SELECT reading_date, dtw_reading, operator, plopper_sounder, wet_dry_moist
+        FROM readings_piezometers
+        WHERE piezometer_id = p.piezometer_id
+          AND reading_date BETWEEN $1 AND $2
+        ORDER BY reading_date DESC, reading_time DESC LIMIT 1
+      ) r ON true
+      WHERE LOWER(p.status) != 'inactive'
+      ORDER BY p.pool NULLS LAST, p.sort_order, p.piezometer_name
+    `, [start_date, end_date]);
+
+    const wb = XLSX.utils.book_new();
+    const data = [
+      ['Piezometer Readings', `${start_date} to ${end_date}`],
+      [],
+      ['Pool', 'Name', 'DTW (ft)', 'Method', 'Operator', 'Date'],
+      ...rows.map(r => [
+        r.pool || '', r.piezometer_name,
+        r.dtw_reading != null ? Number(r.dtw_reading) : '',
+        [r.plopper_sounder, r.wet_dry_moist].filter(Boolean).join(' / ') || '',
+        r.operator || '',
+        r.reading_date ? r.reading_date.toISOString().slice(0, 10) : '',
+      ]),
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    ws['!cols'] = [{ wch: 18 }, { wch: 22 }, { wch: 10 }, { wch: 16 }, { wch: 14 }, { wch: 12 }];
+    XLSX.utils.book_append_sheet(wb, ws, 'Piezometers');
+    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="Piezometers_${start_date}_${end_date}.xlsx"`);
+    return res.send(buf);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/reports/piezometers/compare/export', async (req, res) => {
+  const { s1, e1, s2, e2, token } = req.query;
+  if (!s1 || !e1 || !s2 || !e2) return res.status(400).json({ error: 'Four date params required' });
+  if (token) {
+    const t = downloadTokens.get(token);
+    if (!t || Date.now() > t.expires) return res.status(401).json({ error: 'Invalid or expired token' });
+    downloadTokens.delete(token);
+  } else {
+    if (!req.cookies?.session_id) return res.status(401).json({ error: 'Unauthorized' });
+    const session = sessions.get(req.cookies.session_id);
+    if (!session || Date.now() > session.expires) return res.status(401).json({ error: 'Unauthorized' });
+    if (session.user.role !== 'admin' && session.user.role !== 'supervisor')
+      return res.status(403).json({ error: 'Forbidden' });
+  }
+  try {
+    const latestReading = (piezId, start, end) => pool.query(`
+      SELECT dtw_reading FROM readings_piezometers
+      WHERE piezometer_id = $1 AND reading_date BETWEEN $2 AND $3
+      ORDER BY reading_date DESC, reading_time DESC LIMIT 1
+    `, [piezId, start, end]);
+
+    const { rows: piez } = await pool.query(`
+      SELECT piezometer_id, piezometer_name, pool, sort_order
+      FROM piezometers WHERE LOWER(status) != 'inactive'
+      ORDER BY pool NULLS LAST, sort_order, piezometer_name
+    `);
+
+    const rows = await Promise.all(piez.map(async p => {
+      const [r1, r2] = await Promise.all([latestReading(p.piezometer_id, s1, e1), latestReading(p.piezometer_id, s2, e2)]);
+      const d1 = r1.rows[0]?.dtw_reading != null ? Number(r1.rows[0].dtw_reading) : null;
+      const d2 = r2.rows[0]?.dtw_reading != null ? Number(r2.rows[0].dtw_reading) : null;
+      const diff = d1 != null && d2 != null ? d2 - d1 : null;
+      return [p.pool || '', p.piezometer_name, d1 ?? '', d2 ?? '', diff != null ? Number(diff.toFixed(2)) : ''];
+    }));
+
+    const wb = XLSX.utils.book_new();
+    const data = [
+      ['Piezometer Comparison', `${s1}–${e1}  vs  ${s2}–${e2}`],
+      [],
+      ['Pool', 'Name', `DTW 1 (${s1}–${e1})`, `DTW 2 (${s2}–${e2})`, 'Difference'],
+      ...rows,
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    ws['!cols'] = [{ wch: 18 }, { wch: 22 }, { wch: 16 }, { wch: 16 }, { wch: 12 }];
+    XLSX.utils.book_append_sheet(wb, ws, 'Comparison');
+    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="Piezometers_Compare_${s1}_${s2}.xlsx"`);
+    return res.send(buf);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // KF set-by-set breakdown
 app.get('/api/reports/kf-sets', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
   const { start_date, end_date } = req.query;
@@ -1926,6 +2570,15 @@ app.get('/api/reports/maintenance-issues', requireAuth, requireRole('supervisor'
 
 // PM Grid report — latest per-plant siphon breaker + air compressor records + positions
 app.get('/api/reports/pm-grid', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+  const { year, month } = req.query;
+  let dateClause = '';
+  const params = [];
+  if (year && month) {
+    const from = `${parseInt(year)}-${String(parseInt(month)).padStart(2,'0')}-01`;
+    const d = new Date(parseInt(year), parseInt(month), 0); // last day of month
+    const to = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    dateClause = `AND p.completed_date >= '${from}' AND p.completed_date <= '${to}'`;
+  }
   try {
     const [sbRes, acRes, posRes] = await Promise.all([
       pool.query(`
@@ -1934,7 +2587,7 @@ app.get('/api/reports/pm-grid', requireAuth, requireRole('supervisor', 'admin'),
           u.full_name AS applied_by, p.checklist
         FROM pm_records p
         LEFT JOIN users u ON u.user_id = p.completed_by
-        WHERE p.pm_type = 'siphon_breaker' AND p.building IS NOT NULL
+        WHERE p.pm_type = 'siphon_breaker' AND p.building IS NOT NULL ${dateClause}
         ORDER BY p.building, p.completed_date DESC, p.completed_time DESC
       `),
       pool.query(`
@@ -1943,7 +2596,7 @@ app.get('/api/reports/pm-grid', requireAuth, requireRole('supervisor', 'admin'),
           u.full_name AS applied_by, p.checklist
         FROM pm_records p
         LEFT JOIN users u ON u.user_id = p.completed_by
-        WHERE p.pm_type = 'air_compressor' AND p.building IS NOT NULL
+        WHERE p.pm_type = 'air_compressor' AND p.building IS NOT NULL ${dateClause}
         ORDER BY p.building, p.completed_date DESC, p.completed_time DESC
       `),
       pool.query(`
@@ -2116,18 +2769,21 @@ app.get('/api/pm-records/last-completed', requireAuth, async (req, res) => {
 
 // List records for a PM type
 app.get('/api/pm-records', requireAuth, async (req, res) => {
-  const { type } = req.query;
+  const { type, building } = req.query;
   if (!type) return res.status(400).json({ error: 'type required' });
   try {
+    const params = [type];
+    const buildingClause = building ? ` AND LOWER(p.building) = LOWER($2)` : '';
+    if (building) params.push(building);
     const { rows } = await pool.query(
       `SELECT p.pm_id, p.pm_type, p.building, p.completed_date, p.completed_time,
               u.full_name AS completed_by_name, p.checklist, p.notes, p.created_at
        FROM pm_records p
        LEFT JOIN users u ON u.user_id = p.completed_by
-       WHERE p.pm_type = $1
+       WHERE p.pm_type = $1${buildingClause}
        ORDER BY p.completed_date DESC, p.completed_time DESC
        LIMIT 100`,
-      [type]
+      params
     );
     res.json(rows);
   } catch (err) {
