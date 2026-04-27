@@ -6,8 +6,16 @@ const PDFDocument = require('pdfkit');
 const bcrypt = require('bcryptjs');
 const path = require('path');
 const crypto = require('crypto');
+const fs = require('fs');
 const Anthropic = require('@anthropic-ai/sdk');
 const { version: APP_VERSION } = require('./package.json');
+
+// Load optional schema context file — used to give Claude domain knowledge
+// about the database. Edit schema-context.md and rebuild the container to update.
+let schemaContext = '';
+try {
+  schemaContext = fs.readFileSync(path.join(__dirname, 'schema-context.md'), 'utf8').trim();
+} catch (_) { /* file is optional */ }
 
 const app = express();
 app.use(express.json());
@@ -859,14 +867,19 @@ app.post('/api/nl-query', requireAuth, requireDB, async (req, res) => {
 
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
+    const systemPrompt = [
+      'You are a PostgreSQL expert. Given a database schema, write a single valid read-only SELECT statement that answers the user\'s question. Return ONLY the raw SQL — no markdown code fences, no explanation, no comments. The query must start with SELECT.',
+      schemaContext ? `\n\nAdditional context about this database:\n${schemaContext}` : '',
+    ].join('');
+
     const message = await client.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 1024,
-      system: `You are a PostgreSQL expert. Given a database schema, write a single valid read-only SELECT statement that answers the user's question. Return ONLY the raw SQL — no markdown code fences, no explanation, no comments. The query must start with SELECT.`,
+      system: systemPrompt,
       messages: [
         {
           role: 'user',
-          content: `Database schema:\n${schemaText}\n\nQuestion: ${question.trim()}`,
+          content: `Column-level schema (table: columns):\n${schemaText}\n\nQuestion: ${question.trim()}`,
         },
       ],
     });
