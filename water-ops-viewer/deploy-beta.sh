@@ -1,19 +1,21 @@
 #!/bin/bash
 # ─────────────────────────────────────────────────────────────────────────────
-#  FieldView — Unraid Deploy Script  (production)
-#  Save this file to: /mnt/user/appdata/fieldview/deploy.sh
-#  Run with:  bash /mnt/user/appdata/fieldview/deploy.sh
+#  FieldView Beta — Unraid Deploy Script
+#  Save this file to: /mnt/user/appdata/fieldview-beta/deploy-beta.sh
+#  Run with:  bash /mnt/user/appdata/fieldview-beta/deploy-beta.sh
+#
+#  Shares the same PostgreSQL database as the production instance (fieldview).
 # ─────────────────────────────────────────────────────────────────────────────
 
 set -e
 
 # ── Config (edit these if needed) ────────────────────────────────────────────
-APPDATA_DIR="/mnt/user/appdata/fieldview"
+APPDATA_DIR="/mnt/user/appdata/fieldview-beta"
 REPO_URL="https://github.com/09r3/09r3.github.io"
-BRANCH="Fieldview"
-CONTAINER_NAME="fieldview"
-IMAGE_NAME="fieldview"
-HOST_PORT=3069          # port exposed on Unraid
+BRANCH="Fieldview-beta"
+CONTAINER_NAME="fieldview-beta"
+IMAGE_NAME="fieldview-beta"
+HOST_PORT=3068          # port exposed on Unraid (production uses 3069)
 CONTAINER_PORT=3000     # port inside the container (matches PORT in .env)
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -22,7 +24,7 @@ SOURCE_DIR="$APPDATA_DIR/_source"
 
 echo ""
 echo "══════════════════════════════════════════"
-echo "  FieldView Deploy"
+echo "  FieldView Beta Deploy"
 echo "  Branch : $BRANCH"
 echo "  Port   : $HOST_PORT"
 echo "══════════════════════════════════════════"
@@ -37,7 +39,7 @@ if [ ! -f "$ENV_FILE" ]; then
     echo "[1/5] No .env found — creating from template..."
 
     cat > "$ENV_FILE" <<'EOF'
-# PostgreSQL connection
+# PostgreSQL connection — use the same credentials as your production instance.
 # IMPORTANT — if Postgres runs on the SAME Unraid machine, do NOT use "localhost".
 # Use your server's LAN IP (e.g. 192.168.1.100) or 172.17.0.1 (Docker bridge default).
 DB_HOST=192.168.1.100
@@ -124,7 +126,7 @@ docker run \
 HOST_IP=$(ip route get 1 2>/dev/null | awk '{print $7; exit}' || hostname -I 2>/dev/null | awk '{print $1}')
 echo ""
 echo "  ┌──────────────────────────────────────────────────┐"
-echo "  │  ✓  FieldView is running!                       │"
+echo "  │  ✓  FieldView Beta is running!                  │"
 echo "  │                                                  │"
 echo "  │  http://${HOST_IP}:${HOST_PORT}"
 echo "  │                                                  │"
