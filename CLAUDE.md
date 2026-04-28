@@ -16,24 +16,21 @@ by field operators. Includes report generation and CSV/Excel/PDF export.
 
 | App | Branch | Appdata Path | Port |
 |-----|--------|-------------|------|
-| WaterMark | `main` | `/mnt/user/appdata/field-ops` | 3067 |
-| WaterMark | beta (`claude/field-operator-form-app-dEwL1`) | `/mnt/user/appdata/field-ops-beta` | 3066 |
-| FieldView | `main` | `/mnt/user/appdata/water-ops-viewer` | 3069 |
-| FieldView | beta (`claude/database-viewer-reports-i8gRu`) | `/mnt/user/appdata/water-ops-viewer-beta` | 3068 |
+| WaterMark | `main` | `/mnt/user/appdata/watermark` | 3067 |
+| WaterMark | beta (`Watermark-beta`) | `/mnt/user/appdata/watermark-beta` | 3066 |
+| FieldView | `Fieldview` | `/mnt/user/appdata/fieldview` | 3069 |
+| FieldView | beta (`Fieldview-beta`) | `/mnt/user/appdata/fieldview-beta` | 3068 |
 
 ---
-If any deploy.sh files are updated reminde me to update the one on the server.
-The names of each app have been changed (field-ops -> WaterMark, water-ops-viewer -> FieldView) but 
-the Branch names, Appdata Paths directories, and possibly Ports will remain the same until the system 
-is migrated to a different Network. At that point we will update this file to reflect the changes.
+If any deploy.sh files are updated remind me to update the one on the server.
+
 ---
 
 ## Branch Strategy
 
-- **water-ops-viewer** changes → branch `claude/database-viewer-reports-i8gRu`
-- **field-ops** changes → branch `claude/field-operator-form-app-dEwL1`
-- Beta branches map to the `claude/` feature branches above
-- Never push directly to `main`
+- **water-ops-viewer** changes → branch `Fieldview-beta`
+- **field-ops** changes → branch `Watermark-beta`
+- Never push directly to `main` or `Fieldview`
 
 ---
 

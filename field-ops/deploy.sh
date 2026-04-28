@@ -1,18 +1,18 @@
 #!/bin/bash
 # ─────────────────────────────────────────────────────────────────────────────
-#  Field Ops — Unraid Deploy Script
-#  Save this file to: /mnt/user/appdata/field-ops/deploy.sh
-#  Run with:  bash /mnt/user/appdata/field-ops/deploy.sh
+#  WaterMark — Unraid Deploy Script  (production)
+#  Save this file to: /mnt/user/appdata/watermark/deploy.sh
+#  Run with:  bash /mnt/user/appdata/watermark/deploy.sh
 # ─────────────────────────────────────────────────────────────────────────────
 
 set -e
 
 # ── Config (edit these if needed) ────────────────────────────────────────────
-APPDATA_DIR="/mnt/user/appdata/field-ops"
+APPDATA_DIR="/mnt/user/appdata/watermark"
 REPO_URL="https://github.com/09r3/09r3.github.io"
 BRANCH="main"
-CONTAINER_NAME="field-ops"
-IMAGE_NAME="field-ops"
+CONTAINER_NAME="watermark"
+IMAGE_NAME="watermark"
 HOST_PORT=3067          # port exposed on Unraid
 CONTAINER_PORT=4000     # port inside the container (matches PORT in .env)
 UPLOADS_SHARE="/mnt/user/field-ops-uploads"     # Unraid share for photo/PDF uploads
@@ -23,7 +23,7 @@ SOURCE_DIR="$APPDATA_DIR/_source"
 
 echo ""
 echo "══════════════════════════════════════════"
-echo "  Field Ops Deploy"
+echo "  WaterMark Deploy"
 echo "  Branch : $BRANCH"
 echo "  Port   : $HOST_PORT"
 echo "══════════════════════════════════════════"
@@ -39,7 +39,7 @@ if [ ! -f "$ENV_FILE" ]; then
 
     # Grab just the .env.example from the repo without cloning everything
     curl -fsSL \
-        "https://raw.githubusercontent.com/09r3/$BRANCH/field-ops/.env.example" \
+        "https://raw.githubusercontent.com/09r3/09r3.github.io/$BRANCH/field-ops/.env.example" \
         -o "$ENV_FILE" 2>/dev/null \
     || {
         # Fallback: write a minimal template if curl fails
@@ -130,7 +130,7 @@ docker run \
 HOST_IP=$(ip route get 1 2>/dev/null | awk '{print $7; exit}' || hostname -I 2>/dev/null | awk '{print $1}')
 echo ""
 echo "  ┌──────────────────────────────────────────────────┐"
-echo "  │  ✓  Field Ops is running!                       │"
+echo "  │  ✓  WaterMark is running!                       │"
 echo "  │                                                  │"
 echo "  │  http://${HOST_IP}:${HOST_PORT}"
 echo "  │                                                  │"
