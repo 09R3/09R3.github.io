@@ -1,6 +1,6 @@
 {
   "name": "water-ops-viewer",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "description": "PostgreSQL database viewer and report exporter",
   "main": "server.js",
   "scripts": {
@@ -8,6 +8,7 @@
     "dev": "node --watch server.js"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",

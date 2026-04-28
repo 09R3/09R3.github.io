@@ -6,7 +6,16 @@ const PDFDocument = require('pdfkit');
 const bcrypt = require('bcryptjs');
 const path = require('path');
 const crypto = require('crypto');
+const fs = require('fs');
+const Anthropic = require('@anthropic-ai/sdk');
 const { version: APP_VERSION } = require('./package.json');
+
+// Load optional schema context file — used to give Claude domain knowledge
+// about the database. Edit schema-context.md and rebuild the container to update.
+let schemaContext = '';
+try {
+  schemaContext = fs.readFileSync(path.join(__dirname, 'schema-context.md'), 'utf8').trim();
+} catch (_) { /* file is optional */ }
 
 const app = express();
 app.use(express.json());
@@ -818,6 +827,82 @@ app.delete('/api/saved-queries/:id', requireDB, async (req, res) => {
   try {
     await pool.query('DELETE FROM _waterops_saved_queries WHERE id = $1', [id]);
     res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Natural Language Query ───────────────────────────────────────────────────
+
+// POST /api/nl-query — translate a natural language question into SQL via Claude,
+// execute it (SELECT only), and return rows + the SQL used.
+app.post('/api/nl-query', requireAuth, requireDB, async (req, res) => {
+  const { question } = req.body;
+  if (!question || typeof question !== 'string' || !question.trim()) {
+    return res.status(400).json({ error: 'question is required.' });
+  }
+
+  if (!process.env.ANTHROPIC_API_KEY) {
+    return res.status(503).json({ error: 'ANTHROPIC_API_KEY is not configured on the server.' });
+  }
+
+  try {
+    // Build schema description from information_schema
+    const schemaResult = await pool.query(`
+      SELECT table_name, column_name, data_type
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+      ORDER BY table_name, ordinal_position
+    `);
+
+    // Group columns by table
+    const tables = {};
+    for (const row of schemaResult.rows) {
+      if (!tables[row.table_name]) tables[row.table_name] = [];
+      tables[row.table_name].push(`${row.column_name} ${row.data_type}`);
+    }
+    const schemaText = Object.entries(tables)
+      .map(([t, cols]) => `${t}(${cols.join(', ')})`)
+      .join('\n');
+
+    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+    const systemPrompt = [
+      'You are a PostgreSQL expert. Given a database schema, write a single valid read-only SELECT statement that answers the user\'s question. Return ONLY the raw SQL — no markdown code fences, no explanation, no comments. The query must start with SELECT.',
+      schemaContext ? `\n\nAdditional context about this database:\n${schemaContext}` : '',
+    ].join('');
+
+    const message = await client.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 1024,
+      system: systemPrompt,
+      messages: [
+        {
+          role: 'user',
+          content: `Column-level schema (table: columns):\n${schemaText}\n\nQuestion: ${question.trim()}`,
+        },
+      ],
+    });
+
+    let sql = message.content[0].text.trim();
+    // Strip accidental markdown fences
+    sql = sql.replace(/^```(?:sql)?\s*/i, '').replace(/\s*```$/, '').trim();
+
+    if (!/^SELECT\b/i.test(sql)) {
+      return res.status(400).json({ error: 'Claude did not return a valid SELECT query. Please rephrase your question.' });
+    }
+
+    const t0 = Date.now();
+    const result = await pool.query(sql);
+    const duration = Date.now() - t0;
+
+    res.json({
+      sql,
+      rows: result.rows,
+      columns: result.fields.map(f => f.name),
+      rowCount: result.rowCount,
+      duration,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

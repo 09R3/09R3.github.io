@@ -39,6 +39,11 @@ const sqlPanel = $('sql-panel');
 const sqlEditor = $('sql-editor');
 const sqlResult = $('sql-result');
 const sqlStatus = $('sql-status');
+const nlPanel = $('nl-panel');
+const nlResult = $('nl-result');
+const nlStatus = $('nl-status');
+const nlSqlBlock = $('nl-sql-block');
+const nlSqlText = $('nl-sql-text');
 
 // ── Caps Lock warning on DB password field ─────────────────────────────────
 const dbPass = $('db-pass');
@@ -361,6 +366,68 @@ function renderSQLResult(data) {
   html += '</tbody></table>';
   sqlResult.innerHTML = html;
 }
+
+// ── Ask Claude ─────────────────────────────────────────────────────────────
+$('nl-ask-btn').addEventListener('click', () => {
+  nlPanel.classList.remove('hidden');
+  $('nl-question').focus();
+});
+$('nl-close-btn').addEventListener('click', () => nlPanel.classList.add('hidden'));
+$('nl-run-btn').addEventListener('click', runNlQuery);
+$('nl-question').addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); runNlQuery(); }
+});
+
+let nlLastResult = null;
+
+async function runNlQuery() {
+  const question = $('nl-question').value.trim();
+  if (!question) return;
+  nlStatus.textContent = 'Asking Claude…';
+  nlStatus.className = 'sql-status';
+  nlSqlBlock.classList.add('hidden');
+  nlResult.innerHTML = '<div class="empty-state-sm">Running…</div>';
+  $('nl-export-btn').style.display = 'none';
+  nlLastResult = null;
+
+  try {
+    const data = await post('/api/nl-query', { question });
+    nlLastResult = data;
+    nlSqlText.textContent = data.sql;
+    nlSqlBlock.classList.remove('hidden');
+    nlStatus.className = 'sql-status ok';
+    nlStatus.textContent = `✓ ${data.rowCount} row${data.rowCount !== 1 ? 's' : ''} — ${data.duration}ms`;
+
+    if (data.rows.length) {
+      let html = '<table class="data-table"><thead><tr>';
+      for (const col of data.columns) html += `<th>${esc(col)}</th>`;
+      html += '</tr></thead><tbody>';
+      for (const row of data.rows) {
+        html += '<tr>';
+        for (const col of data.columns) html += `<td>${formatCell(row[col])}</td>`;
+        html += '</tr>';
+      }
+      html += '</tbody></table>';
+      nlResult.innerHTML = html;
+      $('nl-export-btn').style.display = '';
+    } else {
+      nlResult.innerHTML = '<div class="empty-state-sm">Query returned no rows.</div>';
+    }
+  } catch (err) {
+    nlResult.innerHTML = `<div class="empty-state-sm" style="color:var(--error)">${esc(err.message)}</div>`;
+    nlStatus.className = 'sql-status err';
+    nlStatus.textContent = `✗ ${err.message}`;
+  }
+}
+
+$('nl-export-btn').addEventListener('click', () => {
+  if (!nlLastResult) return;
+  showExportPreview('Ask Claude Result', { sql: nlLastResult.sql }, {
+    rows: nlLastResult.rows,
+    columns: nlLastResult.columns,
+    rowCount: nlLastResult.rowCount,
+  });
+});
 
 // ── Exports (SQL result) ───────────────────────────────────────────────────
 $('sql-export-btn').addEventListener('click', () => {
