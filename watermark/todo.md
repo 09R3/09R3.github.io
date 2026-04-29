@@ -73,7 +73,7 @@ The flag is declared in `app.js` but `initAdminScreen()` never marks it as loade
 Severity: **Low**
 
 **2.2.3** `deploy.sh` curl URL is missing the repo name
-The URL `raw.githubusercontent.com/09r3/$BRANCH/field-ops/.env.example` interpolates without the repository segment. First-run `.env` creation always falls back to the heredoc template instead of pulling from GitHub.
+The URL `raw.githubusercontent.com/09r3/$BRANCH/watermark/.env.example` interpolates without the repository segment. First-run `.env` creation always falls back to the heredoc template instead of pulling from GitHub.
 Severity: **Low**
 
 ---
@@ -105,7 +105,7 @@ Severity: **Medium**
 `PATCH /api/well-issues/:id`, `PATCH /api/building-issues/:id`, and `PATCH /api/equipment-issues/:id` (`server.js:998`, `1066`, `1134`) are structurally identical — same fields, same `COALESCE` logic, same `resolved_date CASE` expression. A shared `patchIssue(table, id, body)` helper cuts ~60 lines.
 
 **4.3** Version number hardcoded in 3 places
-`index.html` has `v 1.11` at two locations (lines ~80 and ~1070) and `sw.js` line 1 has `field-ops-v1.11`. All three must be updated in sync on every release; missing one causes stale service worker cache behavior.
+`index.html` has `v 1.11` at two locations (lines ~80 and ~1070) and `sw.js` line 1 has `watermark-v1.11`. All three must be updated in sync on every release; missing one causes stale service worker cache behavior.
 
 **4.4** Status string case inconsistency
 Status values (`'active'`, `'spare'`, `'inactive'`, etc.) are raw strings scattered through server and client. Siphon breakers insert `'Spare'` (capital S) in one code path and `'spare'` (lowercase) in another. Queries use `LOWER(status)` to compensate, leaving the underlying data inconsistent.

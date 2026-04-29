@@ -2,7 +2,7 @@
 
 ## Project Context
 
-### WaterMark (`field-ops/`)
+### WaterMark (`watermark/`)
 A mobile-friendly form app used by field operators to take readings and report
 issues found in the field. Readings are saved into a PostgreSQL database.
 
@@ -29,7 +29,7 @@ If any deploy.sh files are updated remind me to update the one on the server.
 ## Branch Strategy
 
 - **water-ops-viewer** changes → branch `Fieldview-beta`
-- **field-ops** changes → branch `Watermark-beta`
+- **watermark** changes → branch `Watermark-beta`
 - Never push directly to `main` or `Fieldview`
 
 ---
@@ -46,9 +46,9 @@ Use semantic versioning — patch for fixes/small changes, minor for new feature
 The version is displayed in the app UI (sidebar footer) and read from
 `package.json` via the `/api/version` endpoint — no other files need updating.
 
-**Whenever changes are made to files inside `field-ops/`**, bump the version in
-both `field-ops/public/index.html` (two places: login footer and settings row)
-and `field-ops/public/sw.js` (cache name) before committing.
+**Whenever changes are made to files inside `watermark/`**, bump the version in
+both `watermark/public/index.html` (two places: login footer and settings row)
+and `watermark/public/sw.js` (cache name) before committing.
 
 Use simple incrementing minor versions — bump for any change:
 - Any fix or feature → `v 1.26` → `v 1.27`
@@ -58,7 +58,7 @@ invalidation, so it must always be updated alongside `index.html`.
 
 ## Field Ops UI/UX Standards
 
-These standards apply to all current and future work on `field-ops/`. When
+These standards apply to all current and future work on `watermark/`. When
 adding new screens or features, match the patterns below. When fixing bugs,
 bring the affected area into compliance if it isn't already.
 

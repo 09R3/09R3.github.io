@@ -125,11 +125,11 @@ All colors are CSS custom properties defined in `:root`.
 
 ### Icon Source — Git Submodule
 Icons live in `09R3/Marv-s-site` and are included here as a git submodule at
-`field-ops/public/marv-site/`. They are served locally at `/marv-site/icons/icon-{name}.svg`.
+`watermark/public/marv-site/`. They are served locally at `/marv-site/icons/icon-{name}.svg`.
 
 **To update icons:**
 1. Push new/changed SVGs to `09R3/Marv-s-site` main branch
-2. In this repo: `git submodule update --remote field-ops/public/marv-site`
+2. In this repo: `git submodule update --remote watermark/public/marv-site`
 3. Commit the submodule pointer update and redeploy — icons update instantly with no CDN cache lag
 
 ### Rendering — CSS Mask Approach
@@ -209,6 +209,6 @@ function icon(name, sz = 16) {
 ## Version Tracking
 
 - Version displayed in login footer and Settings > App Info
-- Location: `field-ops/public/index.html` (two places) and `field-ops/public/sw.js` (cache name)
-- Format: `v 1.33` in HTML, `field-ops-v1.33` in sw.js
+- Location: `watermark/public/index.html` (two places) and `watermark/public/sw.js` (cache name)
+- Format: `v 1.33` in HTML, `watermark-v1.33` in sw.js
 - Bump for any change; cache name controls service worker invalidation

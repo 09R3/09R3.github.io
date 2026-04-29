@@ -1,5 +1,5 @@
 {
-  "name": "field-ops",
+  "name": "watermark",
   "version": "1.0.0",
   "description": "Field operator data entry app for pumping plant and well readings",
   "main": "server.js",

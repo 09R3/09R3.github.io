@@ -1,3 +1,3 @@
-[submodule "field-ops/public/marv-site"]
-	path = field-ops/public/marv-site
+[submodule "watermark/public/marv-site"]
+	path = watermark/public/marv-site
 	url = https://github.com/09R3/Marv-s-site.git
