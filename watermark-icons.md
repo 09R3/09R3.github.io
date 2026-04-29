@@ -4,7 +4,7 @@
 
 ### Folder
 ```
-field-ops/public/icons/
+watermark/public/icons/
 ```
 
 ### File Format

@@ -308,7 +308,7 @@ app.get('/api/db-status', async (req, res) => {
   }
 });
 
-app.post('/api/db-test', async (req, res) => {
+app.post('/api/db-test', requireAuth, requireRole('admin'), async (req, res) => {
   const { host, port, database, user, password } = req.body || {};
   if (!host || !database || !user) {
     return res.status(400).json({ error: 'host, database, and user are required' });
@@ -502,6 +502,110 @@ app.get('/api/power-monitors', requireAuth, async (req, res) => {
       ORDER BY pm.monitor_id
     `, [building_id]);
     res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Pumping Plant — All site data in one query (replaces N+1 per-building calls)
+app.get('/api/pp-site-data', requireAuth, async (req, res) => {
+  const { site_id } = req.query;
+  if (!site_id) return res.status(400).json({ error: 'site_id required' });
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        b.building_id, b.building_letter, b.building_name,
+        (
+          SELECT COALESCE(json_agg(p ORDER BY p.pump_letter), '[]'::json)
+          FROM (
+            SELECT
+              pp.position_id, pp.pump_letter, pp.status,
+              r.reading_id   AS last_reading_id,
+              r.hour_reading AS last_reading,
+              r.reading_date AS last_reading_date,
+              r.entered_by   AS last_entered_by,
+              r.notes        AS last_notes
+            FROM pump_positions pp
+            LEFT JOIN LATERAL (
+              SELECT reading_id, hour_reading, reading_date, entered_by, notes
+              FROM readings_pump_hours
+              WHERE position_id = pp.position_id
+              ORDER BY reading_date DESC, reading_time DESC
+              LIMIT 1
+            ) r ON true
+            WHERE pp.building_id = b.building_id
+          ) p
+        ) AS pumps,
+        (
+          SELECT COALESCE(json_agg(c ORDER BY c.compressor_id), '[]'::json)
+          FROM (
+            SELECT
+              ac.compressor_id, ac.manufacturer, ac.model_number, ac.status,
+              r.reading_id   AS last_reading_id,
+              r.hour_reading AS last_reading,
+              r.reading_date AS last_reading_date,
+              r.notes        AS last_notes
+            FROM air_compressors ac
+            LEFT JOIN LATERAL (
+              SELECT reading_id, hour_reading, reading_date, notes
+              FROM readings_compressor_hours
+              WHERE compressor_id = ac.compressor_id
+              ORDER BY reading_date DESC, reading_time DESC
+              LIMIT 1
+            ) r ON true
+            WHERE ac.building_id = b.building_id
+          ) c
+        ) AS compressors,
+        (
+          SELECT COALESCE(json_agg(m ORDER BY m.pge_meter_id), '[]'::json)
+          FROM (
+            SELECT
+              pm.pge_meter_id, pm.meter_name, pm.meter_number,
+              r.reading_id   AS last_reading_id,
+              r.kwh_reading  AS last_reading,
+              r.reading_date AS last_reading_date,
+              r.notes        AS last_notes
+            FROM pge_meters pm
+            LEFT JOIN LATERAL (
+              SELECT reading_id, kwh_reading, reading_date, notes
+              FROM readings_pge_meters
+              WHERE pge_meter_id = pm.pge_meter_id
+              ORDER BY reading_date DESC, reading_time DESC
+              LIMIT 1
+            ) r ON true
+            WHERE pm.building_id = b.building_id
+          ) m
+        ) AS pge_meters,
+        (
+          SELECT COALESCE(json_agg(mo ORDER BY mo.monitor_id), '[]'::json)
+          FROM (
+            SELECT
+              pw.monitor_id, pw.monitor_number, pw.manufacturer,
+              r.reading_id   AS last_reading_id,
+              r.kwh_reading  AS last_reading,
+              r.reading_date AS last_reading_date,
+              r.notes        AS last_notes
+            FROM power_monitors pw
+            LEFT JOIN LATERAL (
+              SELECT reading_id, kwh_reading, reading_date, notes
+              FROM readings_power_monitors
+              WHERE monitor_id = pw.monitor_id
+              ORDER BY reading_date DESC, reading_time DESC
+              LIMIT 1
+            ) r ON true
+            WHERE pw.building_id = b.building_id
+          ) mo
+        ) AS power_monitors
+      FROM buildings b
+      WHERE b.site_id = $1
+      ORDER BY b.building_letter
+    `, [site_id]);
+
+    res.json(rows.map(({ pge_meters, power_monitors, ...b }) => ({
+      ...b,
+      pgeMeters: pge_meters,
+      powerMonitors: power_monitors,
+    })));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -2087,10 +2191,9 @@ app.get('/api/reports/mileage/export', async (req, res) => {
     downloadTokens.delete(token); // one-time use
   } else {
     // Fall back to session auth
-    if (!req.cookies?.session_id) return res.status(401).json({ error: 'Unauthorized' });
-    const session = sessions.get(req.cookies.session_id);
-    if (!session || Date.now() > session.expires) return res.status(401).json({ error: 'Unauthorized' });
-    if (session.user.role !== 'admin' && session.user.role !== 'supervisor')
+    const sessionUser = getSession(req.cookies?.fo_session);
+    if (!sessionUser) return res.status(401).json({ error: 'Unauthorized' });
+    if (sessionUser.role !== 'admin' && sessionUser.role !== 'supervisor')
       return res.status(403).json({ error: 'Forbidden' });
   }
   try {
@@ -2312,10 +2415,9 @@ app.get('/api/reports/piezometers/export', async (req, res) => {
     if (!t || Date.now() > t.expires) return res.status(401).json({ error: 'Invalid or expired token' });
     downloadTokens.delete(token);
   } else {
-    if (!req.cookies?.session_id) return res.status(401).json({ error: 'Unauthorized' });
-    const session = sessions.get(req.cookies.session_id);
-    if (!session || Date.now() > session.expires) return res.status(401).json({ error: 'Unauthorized' });
-    if (session.user.role !== 'admin' && session.user.role !== 'supervisor')
+    const sessionUser = getSession(req.cookies?.fo_session);
+    if (!sessionUser) return res.status(401).json({ error: 'Unauthorized' });
+    if (sessionUser.role !== 'admin' && sessionUser.role !== 'supervisor')
       return res.status(403).json({ error: 'Forbidden' });
   }
   try {
@@ -2365,10 +2467,9 @@ app.get('/api/reports/piezometers/compare/export', async (req, res) => {
     if (!t || Date.now() > t.expires) return res.status(401).json({ error: 'Invalid or expired token' });
     downloadTokens.delete(token);
   } else {
-    if (!req.cookies?.session_id) return res.status(401).json({ error: 'Unauthorized' });
-    const session = sessions.get(req.cookies.session_id);
-    if (!session || Date.now() > session.expires) return res.status(401).json({ error: 'Unauthorized' });
-    if (session.user.role !== 'admin' && session.user.role !== 'supervisor')
+    const sessionUser = getSession(req.cookies?.fo_session);
+    if (!sessionUser) return res.status(401).json({ error: 'Unauthorized' });
+    if (sessionUser.role !== 'admin' && sessionUser.role !== 'supervisor')
       return res.status(403).json({ error: 'Forbidden' });
   }
   try {

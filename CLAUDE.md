@@ -2,11 +2,11 @@
 
 ## Project Context
 
-### Field Ops (`field-ops/`)
+### WaterMark (`watermark/`)
 A mobile-friendly form app used by field operators to take readings and report
 issues found in the field. Readings are saved into a PostgreSQL database.
 
-### Water Ops Viewer (`water-ops-viewer/`)
+### FieldView (`water-ops-viewer/`)
 A database viewer used to access, organize, sort, and analyze the data entered
 by field operators. Includes report generation and CSV/Excel/PDF export.
 
@@ -16,21 +16,21 @@ by field operators. Includes report generation and CSV/Excel/PDF export.
 
 | App | Branch | Appdata Path | Port |
 |-----|--------|-------------|------|
-| field-ops | `main` | `/mnt/user/appdata/field-ops` | 3067 |
-| field-ops | beta (`claude/field-operator-form-app-dEwL1`) | `/mnt/user/appdata/field-ops-beta` | 3066 |
-| water-ops-viewer | `main` | `/mnt/user/appdata/water-ops-viewer` | 3069 |
-| water-ops-viewer | beta (`claude/database-viewer-reports-i8gRu`) | `/mnt/user/appdata/water-ops-viewer-beta` | 3068 |
+| WaterMark | `main` | `/mnt/user/appdata/watermark` | 3067 |
+| WaterMark | beta (`Watermark-beta`) | `/mnt/user/appdata/watermark-beta` | 3066 |
+| FieldView | `Fieldview` | `/mnt/user/appdata/fieldview` | 3069 |
+| FieldView | beta (`Fieldview-beta`) | `/mnt/user/appdata/fieldview-beta` | 3068 |
 
 ---
-If any deploy.sh files are updated reminde me to update the one on the server.
+If any deploy.sh files are updated remind me to update the one on the server.
+
 ---
 
 ## Branch Strategy
 
-- **water-ops-viewer** changes → branch `claude/database-viewer-reports-i8gRu`
-- **field-ops** changes → branch `claude/field-operator-form-app-dEwL1`
-- Beta branches map to the `claude/` feature branches above
-- Never push directly to `main`
+- **water-ops-viewer** changes → branch `Fieldview-beta`
+- **watermark** changes → branch `Watermark-beta`
+- Never push directly to `main` or `Fieldview`
 
 ---
 
@@ -46,9 +46,9 @@ Use semantic versioning — patch for fixes/small changes, minor for new feature
 The version is displayed in the app UI (sidebar footer) and read from
 `package.json` via the `/api/version` endpoint — no other files need updating.
 
-**Whenever changes are made to files inside `field-ops/`**, bump the version in
-both `field-ops/public/index.html` (two places: login footer and settings row)
-and `field-ops/public/sw.js` (cache name) before committing.
+**Whenever changes are made to files inside `watermark/`**, bump the version in
+both `watermark/public/index.html` (two places: login footer and settings row)
+and `watermark/public/sw.js` (cache name) before committing.
 
 Use simple incrementing minor versions — bump for any change:
 - Any fix or feature → `v 1.26` → `v 1.27`
@@ -58,7 +58,7 @@ invalidation, so it must always be updated alongside `index.html`.
 
 ## Field Ops UI/UX Standards
 
-These standards apply to all current and future work on `field-ops/`. When
+These standards apply to all current and future work on `watermark/`. When
 adding new screens or features, match the patterns below. When fixing bugs,
 bring the affected area into compliance if it isn't already.
 
