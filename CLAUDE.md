@@ -6,7 +6,7 @@
 A mobile-friendly form app used by field operators to take readings and report
 issues found in the field. Readings are saved into a PostgreSQL database.
 
-### FieldView (`water-ops-viewer/`)
+### FieldView (`fieldview/`)
 A database viewer used to access, organize, sort, and analyze the data entered
 by field operators. Includes report generation and CSV/Excel/PDF export.
 
@@ -28,7 +28,7 @@ If any deploy.sh files are updated remind me to update the one on the server.
 
 ## Branch Strategy
 
-- **water-ops-viewer** changes → branch `Fieldview-beta`
+- **fieldview** changes → branch `Fieldview-beta`
 - **field-ops** changes → branch `Watermark-beta`
 - Never push directly to `main` or `Fieldview`
 
@@ -36,8 +36,8 @@ If any deploy.sh files are updated remind me to update the one on the server.
 
 ## Version Bumping
 
-**Whenever changes are made to files inside `water-ops-viewer/`**, bump the
-patch version in `water-ops-viewer/package.json` before committing.
+**Whenever changes are made to files inside `fieldview/`**, bump the
+patch version in `fieldview/package.json` before committing.
 
 Use semantic versioning — patch for fixes/small changes, minor for new features:
 - Bug fix or tweak → `1.1.0` → `1.1.1`

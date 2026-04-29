@@ -79,7 +79,7 @@ else
     echo "      No existing container found."
 fi
 
-# ── 4. Pull latest source (sparse clone — only water-ops-viewer/ subdir) ─────
+# ── 4. Pull latest source (sparse clone — only fieldview/ subdir) ────────────
 echo "[2/5] Downloading latest code from GitHub..."
 rm -rf "$SOURCE_DIR"
 
@@ -93,7 +93,7 @@ git clone \
     "$SOURCE_DIR"
 
 cd "$SOURCE_DIR"
-git sparse-checkout set water-ops-viewer
+git sparse-checkout set fieldview
 cd "$APPDATA_DIR"
 
 echo "      Done."
@@ -103,7 +103,7 @@ echo "[3/5] Building Docker image..."
 docker build \
     --tag "$IMAGE_NAME" \
     --quiet \
-    "$SOURCE_DIR/water-ops-viewer"
+    "$SOURCE_DIR/fieldview"
 echo "      Built."
 
 # ── 6. Clean up source clone ──────────────────────────────────────────────────
