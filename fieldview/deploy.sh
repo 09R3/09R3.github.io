@@ -1,19 +1,19 @@
 #!/bin/bash
 # ─────────────────────────────────────────────────────────────────────────────
-#  Water Ops Viewer — Unraid Deploy Script
-#  Save this file to: /mnt/user/appdata/water-ops-viewer/deploy.sh
-#  Run with:  bash /mnt/user/appdata/water-ops-viewer/deploy.sh
+#  FieldView — Unraid Deploy Script  (production)
+#  Save this file to: /mnt/user/appdata/fieldview/deploy.sh
+#  Run with:  bash /mnt/user/appdata/fieldview/deploy.sh
 # ─────────────────────────────────────────────────────────────────────────────
 
 set -e
 
 # ── Config (edit these if needed) ────────────────────────────────────────────
-APPDATA_DIR="/mnt/user/appdata/water-ops-viewer"
+APPDATA_DIR="/mnt/user/appdata/fieldview"
 REPO_URL="https://github.com/09r3/09r3.github.io"
-BRANCH="claude/database-viewer-reports-i8gRu"
-CONTAINER_NAME="water-ops-viewer"
-IMAGE_NAME="water-ops-viewer"
-HOST_PORT=3068          # port exposed on Unraid
+BRANCH="Fieldview"
+CONTAINER_NAME="fieldview"
+IMAGE_NAME="fieldview"
+HOST_PORT=3069          # port exposed on Unraid
 CONTAINER_PORT=3000     # port inside the container (matches PORT in .env)
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -22,7 +22,7 @@ SOURCE_DIR="$APPDATA_DIR/_source"
 
 echo ""
 echo "══════════════════════════════════════════"
-echo "  Water Ops Viewer Deploy"
+echo "  FieldView Deploy"
 echo "  Branch : $BRANCH"
 echo "  Port   : $HOST_PORT"
 echo "══════════════════════════════════════════"
@@ -52,6 +52,9 @@ PORT=3000
 # App login credentials (protects the web UI)
 AUTH_USER=admin
 AUTH_PASS=changeme
+
+# Anthropic API key — required for the "Ask Claude" natural language query feature
+ANTHROPIC_API_KEY=
 EOF
 
     echo ""
@@ -74,7 +77,7 @@ else
     echo "      No existing container found."
 fi
 
-# ── 4. Pull latest source (sparse clone — only water-ops-viewer/ subdir) ─────
+# ── 4. Pull latest source (sparse clone — only fieldview/ subdir) ────────────
 echo "[2/5] Downloading latest code from GitHub..."
 rm -rf "$SOURCE_DIR"
 
@@ -88,7 +91,7 @@ git clone \
     "$SOURCE_DIR"
 
 cd "$SOURCE_DIR"
-git sparse-checkout set water-ops-viewer
+git sparse-checkout set fieldview
 cd "$APPDATA_DIR"
 
 echo "      Done."
@@ -98,7 +101,7 @@ echo "[3/5] Building Docker image..."
 docker build \
     --tag "$IMAGE_NAME" \
     --quiet \
-    "$SOURCE_DIR/water-ops-viewer"
+    "$SOURCE_DIR/fieldview"
 echo "      Built."
 
 # ── 6. Clean up source clone ──────────────────────────────────────────────────
@@ -121,7 +124,7 @@ docker run \
 HOST_IP=$(ip route get 1 2>/dev/null | awk '{print $7; exit}' || hostname -I 2>/dev/null | awk '{print $1}')
 echo ""
 echo "  ┌──────────────────────────────────────────────────┐"
-echo "  │  ✓  Water Ops Viewer is running!                │"
+echo "  │  ✓  FieldView is running!                       │"
 echo "  │                                                  │"
 echo "  │  http://${HOST_IP}:${HOST_PORT}"
 echo "  │                                                  │"
