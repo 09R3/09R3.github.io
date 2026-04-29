@@ -2460,7 +2460,8 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
 }
 .charts-tab-btn.active { background: var(--accent); color: #fff; }
 .charts-table-wrap {
-  border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  overflow: auto; max-height: 60vh; -webkit-overflow-scrolling: touch;
 }
 .charts-table {
   border-collapse: collapse; font-size: 0.75rem; white-space: nowrap;

@@ -7876,7 +7876,7 @@ function initOverpourPanel() {
     html += '</tr></thead><tbody>';
     heads.forEach(h => {
       html += `<tr><td>${h}</td>`;
-      widths.forEach(w => { html += `<td>${calcOverpour(w, h).toFixed(3)}</td>`; });
+      widths.forEach(w => { html += `<td>${calcOverpour(w, h).toFixed(2)}</td>`; });
       html += '</tr>';
     });
     html += '</tbody></table>';
@@ -7899,27 +7899,30 @@ function switchOverpourTab(tab) {
 function updateOverpourCalc() {
   const w = parseFloat(el('overpour-width').value);
   const h = parseFloat(el('overpour-head').value);
-  el('overpour-result').textContent = (w > 0 && h > 0) ? calcOverpour(w, h).toFixed(3) : '—';
+  el('overpour-result').textContent = (w > 0 && h > 0) ? calcOverpour(w, h).toFixed(2) : '—';
 }
 
-// Pressurized / open-air gate: Q = 0.748 × (W/12) × (O/12) × √(64.4 × H/12)
-function calcGate(w, o, h) {
+// Gate formula: Cd × (W/12) × (O/12) × √(64.4 × H/12)
+// Pressure / P-11: Cd = 0.74682 — Open Air free-discharge: Cd = 0.66950
+function calcGate(w, o, h, cd = 0.74682) {
   if (!(w > 0 && o > 0 && h > 0)) return null;
-  return 0.748 * (w / 12) * (o / 12) * Math.sqrt(64.4 * (h / 12));
+  return cd * (w / 12) * (o / 12) * Math.sqrt(64.4 * (h / 12));
 }
 
 function initGatePanel(panelId) {
   const pfx = panelId === 'pressure' ? 'pres' : 'oa';
+  const cd  = panelId === 'open-air' ? 0.66950 : 0.74682;
   const fixedWidths = [54, 55, 56];
   function update() {
     const h  = parseFloat(el(`${pfx}-head`).value);
     const o  = parseFloat(el(`${pfx}-opening`).value);
     const cw = parseFloat(el(`${pfx}-custom-width`).value);
     fixedWidths.forEach((w, i) => {
-      const q = calcGate(w, o, h);
-      el(`${pfx}-q${i}`).textContent = q !== null ? q.toFixed(3) : '—';
+      const q = calcGate(w, o, h, cd);
+      el(`${pfx}-q${i}`).textContent = q !== null ? q.toFixed(2) : '—';
     });
-    el(`${pfx}-qc`).textContent = calcGate(cw, o, h) !== null ? calcGate(cw, o, h).toFixed(3) : '—';
+    const qc = calcGate(cw, o, h, cd);
+    el(`${pfx}-qc`).textContent = qc !== null ? qc.toFixed(2) : '—';
   }
   el(`${pfx}-head`).oninput         = update;
   el(`${pfx}-opening`).oninput      = update;
@@ -7934,7 +7937,7 @@ function initP11Panel() {
     const o   = 72 * (pct / 100);
     el('p11-opening-display').textContent = (pct > 0) ? `Opening: ${o.toFixed(1)} in` : '';
     const q = calcGate(72, o, h);
-    el('p11-result').textContent = q !== null ? q.toFixed(3) : '—';
+    el('p11-result').textContent = q !== null ? q.toFixed(2) : '—';
   }
   el('p11-head').oninput = update;
   el('p11-pct').oninput  = update;
