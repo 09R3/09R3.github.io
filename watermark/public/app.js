@@ -414,6 +414,7 @@ function showScreen(name) {
     'well-runs':     'Well Runs',
     reports:         'Reports',
     admin:           'Settings',
+    hr:              'HR',
   };
   closeDrawer();
 
@@ -445,6 +446,7 @@ function showScreen(name) {
   if (name === 'well-runs')     initWellRunsScreen();
   if (name === 'reports')       initReportsScreen();
   if (name === 'admin')         { initAdminScreen(); initSettingsScreen(); }
+  if (name === 'hr')            initHRScreen();
 
   // Refresh time to current on every screen visit
   const screenTimeIds = {
@@ -7751,6 +7753,83 @@ function createDWRItem(w, dateInput, timeInput) {
     }
   });
 })();
+
+/* ── HR ──────────────────────────────────────────────────────────────────── */
+function openHRPanel(panelId) {
+  el('hr-main').classList.add('hidden');
+  document.querySelectorAll('#screen-hr .maint-panel').forEach(p => p.classList.add('hidden'));
+  el(`hr-panel-${panelId}`).classList.remove('hidden');
+  const panelTitles = { 'time-off': 'Time Off Request' };
+  setPanelNav(el('screen-hr'), closeHRPanel, 'HR – ' + (panelTitles[panelId] || panelId));
+  if (panelId === 'time-off') initTimeOffPanel();
+}
+
+function closeHRPanel() {
+  document.querySelectorAll('#screen-hr .maint-panel').forEach(p => p.classList.add('hidden'));
+  el('hr-main').classList.remove('hidden');
+  setPanelNav(el('screen-hr'), () => showScreen('dashboard'), 'HR');
+}
+
+function initHRScreen() {
+  closeHRPanel();
+}
+
+function initTimeOffPanel() {
+  const today = new Date().toLocaleDateString('en-CA');
+  if (!el('tor-start').value) el('tor-start').value = today;
+  if (!el('tor-end').value)   el('tor-end').value   = today;
+  el('tor-error').classList.add('hidden');
+}
+
+document.querySelectorAll('[data-hr-panel]').forEach(btn => {
+  btn.addEventListener('click', () => openHRPanel(btn.dataset.hrPanel));
+});
+
+el('tor-submit-btn').addEventListener('click', () => {
+  const start = el('tor-start').value;
+  const end   = el('tor-end').value;
+  const hours = el('tor-hours').value;
+  const notes = el('tor-notes').value.trim();
+  const errEl = el('tor-error');
+  errEl.classList.add('hidden');
+  errEl.textContent = '';
+
+  if (!start || !end) {
+    errEl.textContent = 'Please select both a start and end date.';
+    errEl.classList.remove('hidden');
+    return;
+  }
+  if (end < start) {
+    errEl.textContent = 'End date must be on or after the start date.';
+    errEl.classList.remove('hidden');
+    return;
+  }
+  if (!hours || parseFloat(hours) <= 0) {
+    errEl.textContent = 'Please enter the number of hours requested.';
+    errEl.classList.remove('hidden');
+    return;
+  }
+
+  const fullName = currentUser?.full_name || currentUser?.username || '';
+  const subject  = `Time Off Request – ${fullName}`;
+  const fmt = d => new Date(d + 'T00:00:00').toLocaleDateString('en-US', {
+    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+  });
+
+  let body = 'Time Off Request\n';
+  body += `Submitted by: ${fullName}\n\n`;
+  if (start === end) {
+    body += `Date:            ${fmt(start)}\n`;
+  } else {
+    body += `Start Date:      ${fmt(start)}\n`;
+    body += `End Date:        ${fmt(end)}\n`;
+  }
+  body += `Hours Requested: ${hours}\n`;
+  if (notes) body += `\nNotes:\n${notes}\n`;
+
+  const to = 'syoder@kcwa.com,mansolabehere@kcwa.com';
+  window.location.href = `mailto:${to}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+});
 
 /* ── Init ────────────────────────────────────────────────────────────────── */
 checkDBStatus();

@@ -83,7 +83,7 @@
         <div id="login-error" class="error-msg hidden"></div>
         <button type="submit" class="btn btn-primary btn-full">Sign In</button>
       </form>
-      <div class="login-version">v 1.45</div>
+      <div class="login-version">v 1.46</div>
     </div>
   </div>
 </div>
@@ -364,6 +364,12 @@
             <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-settings.svg);mask-image:url(/marv-site/icons/icon-settings.svg)"></span>
           </div>
           <span class="dash-label">Settings</span>
+        </button>
+        <button class="dash-tile" id="dash-hr-tile" data-screen="hr">
+          <div class="dash-icon-wrap">
+            <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-pm-records.svg);mask-image:url(/marv-site/icons/icon-pm-records.svg)"></span>
+          </div>
+          <span class="dash-label">HR</span>
         </button>
       </div>
     </div>
@@ -1392,7 +1398,7 @@
     <div id="settings-panel-appinfo" class="settings-panel hidden">
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 1.45</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 1.46</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>
@@ -1590,6 +1596,51 @@
       </div>
     </div>
   </div>
+
+  <!-- ── HR ───────────────────────────────────────────────────────────────── -->
+  <div id="screen-hr" class="screen-content">
+
+    <div id="hr-main">
+      <div class="dashboard-grid">
+        <button class="dash-tile" data-hr-panel="time-off">
+          <div class="dash-icon-wrap">
+            <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-annual-pm.svg);mask-image:url(/marv-site/icons/icon-annual-pm.svg)"></span>
+          </div>
+          <span class="dash-label">Time Off Request</span>
+        </button>
+      </div>
+    </div>
+
+    <div id="hr-panel-time-off" class="maint-panel hidden">
+      <div class="settings-section">
+        <div class="settings-card">
+          <div class="settings-pad">
+            <div class="two-col">
+              <div class="form-group">
+                <label>Start Date</label>
+                <input type="date" id="tor-start" class="ctrl-input ctrl-input-sm">
+              </div>
+              <div class="form-group">
+                <label>End Date</label>
+                <input type="date" id="tor-end" class="ctrl-input ctrl-input-sm">
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Hours Requested</label>
+              <input type="number" id="tor-hours" class="ctrl-input" min="0.5" step="0.5" placeholder="8">
+            </div>
+            <div class="form-group">
+              <label>Notes <span style="color:var(--text-dim);font-weight:400">(optional)</span></label>
+              <textarea id="tor-notes" class="ctrl-textarea" rows="3" placeholder="Add any additional details…"></textarea>
+            </div>
+            <div id="tor-error" class="error-msg hidden"></div>
+            <button class="btn btn-save" id="tor-submit-btn">Open in Email App</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /screen-hr -->
 
 </div><!-- /app-shell -->
 
