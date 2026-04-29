@@ -415,6 +415,7 @@ function showScreen(name) {
     reports:         'Reports',
     admin:           'Settings',
     hr:              'HR',
+    charts:          'Charts',
   };
   closeDrawer();
 
@@ -447,6 +448,7 @@ function showScreen(name) {
   if (name === 'reports')       initReportsScreen();
   if (name === 'admin')         { initAdminScreen(); initSettingsScreen(); }
   if (name === 'hr')            initHRScreen();
+  if (name === 'charts')        initChartsScreen();
 
   // Refresh time to current on every screen visit
   const screenTimeIds = {
@@ -7829,6 +7831,117 @@ el('tor-submit-btn').addEventListener('click', () => {
 
   const to = 'syoder@kcwa.com,mansolabehere@kcwa.com';
   window.location.href = `mailto:${to}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+});
+
+/* ── Charts ───────────────────────────────────────────────────────────────── */
+const CHART_PANEL_TITLES = {
+  overpour: 'Overpour', pressure: 'Pressure', 'open-air': 'Open Air', p11: 'P-11',
+};
+
+function openChartsPanel(panelId) {
+  el('charts-main').classList.add('hidden');
+  document.querySelectorAll('#screen-charts .maint-panel').forEach(p => p.classList.add('hidden'));
+  el(`charts-panel-${panelId}`).classList.remove('hidden');
+  setPanelNav(el('screen-charts'), closeChartsPanel, 'Charts – ' + (CHART_PANEL_TITLES[panelId] || panelId));
+  if (panelId === 'overpour')  initOverpourPanel();
+  else if (panelId === 'pressure')  initGatePanel('pressure');
+  else if (panelId === 'open-air')  initGatePanel('open-air');
+  else if (panelId === 'p11')       initP11Panel();
+}
+
+function closeChartsPanel() {
+  document.querySelectorAll('#screen-charts .maint-panel').forEach(p => p.classList.add('hidden'));
+  el('charts-main').classList.remove('hidden');
+  setPanelNav(el('screen-charts'), () => showScreen('dashboard'), 'Charts');
+}
+
+function initChartsScreen() {
+  closeChartsPanel();
+}
+
+// Overpour weir: Q = 3.996 × (W/12) × (H/12)^1.5
+function calcOverpour(w, h) {
+  return 3.996 * (w / 12) * Math.pow(h / 12, 1.5);
+}
+
+function initOverpourPanel() {
+  const container = el('overpour-table-container');
+  if (!container.dataset.built) {
+    const widths = [];
+    for (let w = 24; w <= 66; w += 2) widths.push(w);
+    const heads = [];
+    for (let h = 0.5; h <= 40; h += 0.5) heads.push(+h.toFixed(1));
+    let html = '<table class="charts-table"><thead><tr><th>Head (in)</th>';
+    widths.forEach(w => { html += `<th>${w}"</th>`; });
+    html += '</tr></thead><tbody>';
+    heads.forEach(h => {
+      html += `<tr><td>${h}</td>`;
+      widths.forEach(w => { html += `<td>${calcOverpour(w, h).toFixed(3)}</td>`; });
+      html += '</tr>';
+    });
+    html += '</tbody></table>';
+    container.innerHTML = html;
+    container.dataset.built = '1';
+  }
+  el('overpour-tab-btn-table').onclick = () => switchOverpourTab('table');
+  el('overpour-tab-btn-calc').onclick  = () => switchOverpourTab('calc');
+  el('overpour-width').oninput = updateOverpourCalc;
+  el('overpour-head').oninput  = updateOverpourCalc;
+}
+
+function switchOverpourTab(tab) {
+  el('overpour-tab-table').style.display = tab === 'table' ? '' : 'none';
+  el('overpour-tab-calc').style.display  = tab === 'calc'  ? '' : 'none';
+  el('overpour-tab-btn-table').classList.toggle('active', tab === 'table');
+  el('overpour-tab-btn-calc').classList.toggle('active',  tab === 'calc');
+}
+
+function updateOverpourCalc() {
+  const w = parseFloat(el('overpour-width').value);
+  const h = parseFloat(el('overpour-head').value);
+  el('overpour-result').textContent = (w > 0 && h > 0) ? calcOverpour(w, h).toFixed(3) : '—';
+}
+
+// Pressurized / open-air gate: Q = 0.748 × (W/12) × (O/12) × √(64.4 × H/12)
+function calcGate(w, o, h) {
+  if (!(w > 0 && o > 0 && h > 0)) return null;
+  return 0.748 * (w / 12) * (o / 12) * Math.sqrt(64.4 * (h / 12));
+}
+
+function initGatePanel(panelId) {
+  const pfx = panelId === 'pressure' ? 'pres' : 'oa';
+  const fixedWidths = [54, 55, 56];
+  function update() {
+    const h  = parseFloat(el(`${pfx}-head`).value);
+    const o  = parseFloat(el(`${pfx}-opening`).value);
+    const cw = parseFloat(el(`${pfx}-custom-width`).value);
+    fixedWidths.forEach((w, i) => {
+      const q = calcGate(w, o, h);
+      el(`${pfx}-q${i}`).textContent = q !== null ? q.toFixed(3) : '—';
+    });
+    el(`${pfx}-qc`).textContent = calcGate(cw, o, h) !== null ? calcGate(cw, o, h).toFixed(3) : '—';
+  }
+  el(`${pfx}-head`).oninput         = update;
+  el(`${pfx}-opening`).oninput      = update;
+  el(`${pfx}-custom-width`).oninput = update;
+}
+
+// P-11: 72" fixed width, head (in) + % open → derives opening inches
+function initP11Panel() {
+  function update() {
+    const h   = parseFloat(el('p11-head').value);
+    const pct = parseFloat(el('p11-pct').value);
+    const o   = 72 * (pct / 100);
+    el('p11-opening-display').textContent = (pct > 0) ? `Opening: ${o.toFixed(1)} in` : '';
+    const q = calcGate(72, o, h);
+    el('p11-result').textContent = q !== null ? q.toFixed(3) : '—';
+  }
+  el('p11-head').oninput = update;
+  el('p11-pct').oninput  = update;
+}
+
+document.querySelectorAll('[data-charts-panel]').forEach(btn => {
+  btn.addEventListener('click', () => openChartsPanel(btn.dataset.chartsPanel));
 });
 
 /* ── Init ────────────────────────────────────────────────────────────────── */

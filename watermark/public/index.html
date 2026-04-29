@@ -83,7 +83,7 @@
         <div id="login-error" class="error-msg hidden"></div>
         <button type="submit" class="btn btn-primary btn-full">Sign In</button>
       </form>
-      <div class="login-version">v 1.46</div>
+      <div class="login-version">v 1.47</div>
     </div>
   </div>
 </div>
@@ -370,6 +370,12 @@
             <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-pm-records.svg);mask-image:url(/marv-site/icons/icon-pm-records.svg)"></span>
           </div>
           <span class="dash-label">HR</span>
+        </button>
+        <button class="dash-tile" id="dash-charts-tile" data-screen="charts">
+          <div class="dash-icon-wrap">
+            <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-usage.svg);mask-image:url(/marv-site/icons/icon-usage.svg)"></span>
+          </div>
+          <span class="dash-label">Charts</span>
         </button>
       </div>
     </div>
@@ -1398,7 +1404,7 @@
     <div id="settings-panel-appinfo" class="settings-panel hidden">
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 1.46</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 1.47</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>
@@ -1641,6 +1647,204 @@
     </div>
 
   </div><!-- /screen-hr -->
+
+  <!-- ── Charts ────────────────────────────────────────────────────────────── -->
+  <div id="screen-charts" class="screen-content">
+
+    <div id="charts-main">
+      <div class="dashboard-grid">
+        <button class="dash-tile" data-charts-panel="overpour">
+          <div class="dash-icon-wrap">
+            <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-canal.svg);mask-image:url(/marv-site/icons/icon-canal.svg)"></span>
+          </div>
+          <span class="dash-label">Overpour</span>
+        </button>
+        <button class="dash-tile" data-charts-panel="pressure">
+          <div class="dash-icon-wrap">
+            <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-pumping-plant.svg);mask-image:url(/marv-site/icons/icon-pumping-plant.svg)"></span>
+          </div>
+          <span class="dash-label">Pressure</span>
+        </button>
+        <button class="dash-tile" data-charts-panel="open-air">
+          <div class="dash-icon-wrap">
+            <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-air-compressor.svg);mask-image:url(/marv-site/icons/icon-air-compressor.svg)"></span>
+          </div>
+          <span class="dash-label">Open Air</span>
+        </button>
+        <button class="dash-tile" data-charts-panel="p11">
+          <div class="dash-icon-wrap">
+            <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-electrical.svg);mask-image:url(/marv-site/icons/icon-electrical.svg)"></span>
+          </div>
+          <span class="dash-label">P-11</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Overpour panel -->
+    <div id="charts-panel-overpour" class="maint-panel hidden">
+      <div class="settings-section">
+        <div class="settings-card">
+          <div class="settings-pad">
+            <div class="charts-tabs">
+              <button class="charts-tab-btn active" id="overpour-tab-btn-table">Table</button>
+              <button class="charts-tab-btn" id="overpour-tab-btn-calc">Calculator</button>
+            </div>
+            <div id="overpour-tab-table" style="max-height:60vh;overflow-y:auto;">
+              <div class="charts-table-wrap" id="overpour-table-container"></div>
+            </div>
+            <div id="overpour-tab-calc" class="charts-calc" style="display:none">
+              <div class="charts-field-row">
+                <label>Width</label>
+                <input type="number" id="overpour-width" class="ctrl-input" min="1" step="1" placeholder="in">
+                <span class="charts-unit-label">in</span>
+              </div>
+              <div class="charts-field-row">
+                <label>Head</label>
+                <input type="number" id="overpour-head" class="ctrl-input" min="0.1" step="0.5" placeholder="in">
+                <span class="charts-unit-label">in</span>
+              </div>
+              <div class="charts-result-area">
+                <div class="charts-result-label">Flow Rate Q</div>
+                <div><span class="charts-result-value" id="overpour-result">—</span><span class="charts-result-unit">cfs</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Pressure panel -->
+    <div id="charts-panel-pressure" class="maint-panel hidden">
+      <div class="settings-section">
+        <div class="settings-card">
+          <div class="settings-pad">
+            <div class="two-col">
+              <div class="form-group">
+                <label>Head</label>
+                <div class="charts-input-with-unit">
+                  <input type="number" id="pres-head" class="ctrl-input" min="0" step="0.5" placeholder="inches">
+                  <span class="charts-unit-label">in</span>
+                </div>
+              </div>
+              <div class="form-group">
+                <label>Opening</label>
+                <div class="charts-input-with-unit">
+                  <input type="number" id="pres-opening" class="ctrl-input" min="0" step="0.5" placeholder="inches">
+                  <span class="charts-unit-label">in</span>
+                </div>
+              </div>
+            </div>
+            <div class="charts-gate-grid">
+              <div class="charts-gate-col">
+                <div class="charts-gate-col-header">54"</div>
+                <div class="charts-gate-q" id="pres-q0">—</div>
+                <div class="charts-gate-q-unit">cfs</div>
+              </div>
+              <div class="charts-gate-col">
+                <div class="charts-gate-col-header">55"</div>
+                <div class="charts-gate-q" id="pres-q1">—</div>
+                <div class="charts-gate-q-unit">cfs</div>
+              </div>
+              <div class="charts-gate-col">
+                <div class="charts-gate-col-header">56"</div>
+                <div class="charts-gate-q" id="pres-q2">—</div>
+                <div class="charts-gate-q-unit">cfs</div>
+              </div>
+              <div class="charts-gate-col">
+                <div class="charts-gate-col-header">
+                  <input type="number" id="pres-custom-width" class="ctrl-input ctrl-input-sm" min="1" step="1" placeholder="W">"
+                </div>
+                <div class="charts-gate-q" id="pres-qc">—</div>
+                <div class="charts-gate-q-unit">cfs</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Open Air panel -->
+    <div id="charts-panel-open-air" class="maint-panel hidden">
+      <div class="settings-section">
+        <div class="settings-card">
+          <div class="settings-pad">
+            <div class="two-col">
+              <div class="form-group">
+                <label>Head</label>
+                <div class="charts-input-with-unit">
+                  <input type="number" id="oa-head" class="ctrl-input" min="0" step="0.5" placeholder="inches">
+                  <span class="charts-unit-label">in</span>
+                </div>
+              </div>
+              <div class="form-group">
+                <label>Opening</label>
+                <div class="charts-input-with-unit">
+                  <input type="number" id="oa-opening" class="ctrl-input" min="0" step="0.5" placeholder="inches">
+                  <span class="charts-unit-label">in</span>
+                </div>
+              </div>
+            </div>
+            <div class="charts-gate-grid">
+              <div class="charts-gate-col">
+                <div class="charts-gate-col-header">54"</div>
+                <div class="charts-gate-q" id="oa-q0">—</div>
+                <div class="charts-gate-q-unit">cfs</div>
+              </div>
+              <div class="charts-gate-col">
+                <div class="charts-gate-col-header">55"</div>
+                <div class="charts-gate-q" id="oa-q1">—</div>
+                <div class="charts-gate-q-unit">cfs</div>
+              </div>
+              <div class="charts-gate-col">
+                <div class="charts-gate-col-header">56"</div>
+                <div class="charts-gate-q" id="oa-q2">—</div>
+                <div class="charts-gate-q-unit">cfs</div>
+              </div>
+              <div class="charts-gate-col">
+                <div class="charts-gate-col-header">
+                  <input type="number" id="oa-custom-width" class="ctrl-input ctrl-input-sm" min="1" step="1" placeholder="W">"
+                </div>
+                <div class="charts-gate-q" id="oa-qc">—</div>
+                <div class="charts-gate-q-unit">cfs</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- P-11 panel -->
+    <div id="charts-panel-p11" class="maint-panel hidden">
+      <div class="settings-section">
+        <div class="settings-card">
+          <div class="settings-pad">
+            <div class="two-col">
+              <div class="form-group">
+                <label>Head</label>
+                <div class="charts-input-with-unit">
+                  <input type="number" id="p11-head" class="ctrl-input" min="0" step="0.5" placeholder="inches">
+                  <span class="charts-unit-label">in</span>
+                </div>
+              </div>
+              <div class="form-group">
+                <label>% Open</label>
+                <div class="charts-input-with-unit">
+                  <input type="number" id="p11-pct" class="ctrl-input" min="0" max="100" step="1" placeholder="%">
+                  <span class="charts-unit-label">%</span>
+                </div>
+              </div>
+            </div>
+            <div class="charts-derived" id="p11-opening-display"></div>
+            <div class="charts-result-area">
+              <div class="charts-result-label">Width 72" · Flow Rate Q</div>
+              <div><span class="charts-result-value" id="p11-result">—</span><span class="charts-result-unit">cfs</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /screen-charts -->
 
 </div><!-- /app-shell -->
 
