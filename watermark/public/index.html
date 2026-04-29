@@ -83,7 +83,7 @@
         <div id="login-error" class="error-msg hidden"></div>
         <button type="submit" class="btn btn-primary btn-full">Sign In</button>
       </form>
-      <div class="login-version">v 1.48</div>
+      <div class="login-version">v 1.49</div>
     </div>
   </div>
 </div>
@@ -1404,7 +1404,7 @@
     <div id="settings-panel-appinfo" class="settings-panel hidden">
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 1.48</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 1.49</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>
@@ -1677,6 +1677,18 @@
           </div>
           <span class="dash-label">P-11</span>
         </button>
+        <button class="dash-tile" data-charts-panel="gate">
+          <div class="dash-icon-wrap">
+            <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-siphon-breaker.svg);mask-image:url(/marv-site/icons/icon-siphon-breaker.svg)"></span>
+          </div>
+          <span class="dash-label">Gate Discharge</span>
+        </button>
+        <button class="dash-tile" data-charts-panel="rrb">
+          <div class="dash-icon-wrap">
+            <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-canal.svg);mask-image:url(/marv-site/icons/icon-canal.svg)"></span>
+          </div>
+          <span class="dash-label">RRB T.O. 1 & 2</span>
+        </button>
       </div>
     </div>
 
@@ -1838,6 +1850,76 @@
             <div class="charts-result-area">
               <div class="charts-result-label">Width 72" · Flow Rate Q</div>
               <div><span class="charts-result-value" id="p11-result">—</span><span class="charts-result-unit">cfs</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Gate Discharge panel -->
+    <div id="charts-panel-gate" class="maint-panel hidden">
+      <div class="settings-section">
+        <div class="settings-card">
+          <div class="settings-pad">
+            <div class="charts-tabs">
+              <button class="charts-tab-btn active" id="gate-tab-btn-table">Table</button>
+              <button class="charts-tab-btn" id="gate-tab-btn-calc">Calculator</button>
+            </div>
+            <div class="charts-field-row" style="margin-bottom:14px;margin-top:4px">
+              <label>Gate Size</label>
+              <select id="gate-size-select" class="ctrl-select" style="width:auto">
+                <option value="30">30"</option>
+                <option value="36">36"</option>
+                <option value="42">42"</option>
+                <option value="48">48"</option>
+              </select>
+            </div>
+            <div id="gate-tab-table">
+              <div class="charts-table-wrap" id="gate-table-container"></div>
+            </div>
+            <div id="gate-tab-calc" class="charts-calc" style="display:none">
+              <div class="charts-field-row">
+                <label>Head</label>
+                <input type="number" id="gate-head" class="ctrl-input" min="1" max="40" step="0.25" placeholder="in">
+                <span class="charts-unit-label">in</span>
+              </div>
+              <div class="charts-field-row">
+                <label>Opening</label>
+                <input type="number" id="gate-opening" class="ctrl-input" min="2" max="48" step="0.5" placeholder="in">
+                <span class="charts-unit-label">in</span>
+              </div>
+              <div class="charts-result-area">
+                <div class="charts-result-label">Flow Rate Q</div>
+                <div><span class="charts-result-value" id="gate-result">—</span><span class="charts-result-unit">cfs</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RRB T.O. 1 & 2 panel -->
+    <div id="charts-panel-rrb" class="maint-panel hidden">
+      <div class="settings-section">
+        <div class="settings-card">
+          <div class="settings-pad">
+            <div class="charts-tabs">
+              <button class="charts-tab-btn active" id="rrb-tab-btn-table">Table</button>
+              <button class="charts-tab-btn" id="rrb-tab-btn-calc">Calculator</button>
+            </div>
+            <div id="rrb-tab-table" style="margin-top:12px">
+              <div class="charts-table-wrap" id="rrb-table-container"></div>
+            </div>
+            <div id="rrb-tab-calc" class="charts-calc" style="display:none">
+              <div class="charts-field-row">
+                <label>Head</label>
+                <input type="number" id="rrb-head" class="ctrl-input" min="0" max="3.39" step="0.01" placeholder="ft">
+                <span class="charts-unit-label">ft</span>
+              </div>
+              <div class="charts-result-area">
+                <div class="charts-result-label">Flow Rate Q</div>
+                <div><span class="charts-result-value" id="rrb-result">—</span><span class="charts-result-unit">cfs</span></div>
+              </div>
             </div>
           </div>
         </div>
