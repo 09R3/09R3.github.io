@@ -629,10 +629,9 @@ app.get('/api/template/:schema/:table', requireDB, async (req, res) => {
 
     if (!colResult.rows.length) return res.status(404).json({ error: 'Table not found.' });
 
-    // Exclude auto-generated (serial/identity) columns — DB assigns these
-    const importCols = colResult.rows
-      .filter(c => !c.column_default || !c.column_default.startsWith('nextval('))
-      .map(c => c.column_name);
+    // Include all columns — serial PK columns are included so users can provide
+    // existing IDs for upsert. Leave them blank in the file for new rows.
+    const importCols = colResult.rows.map(c => c.column_name);
 
     const title = `${schema}.${table}`;
     const safeName = title.replace(/[^a-zA-Z0-9_.-]/g, '_');
@@ -665,7 +664,10 @@ app.get('/api/template/:schema/:table', requireDB, async (req, res) => {
   }
 });
 
-// POST /api/import/:schema/:table — insert rows from uploaded CSV or Excel
+// POST /api/import/:schema/:table — upsert rows from uploaded CSV or Excel.
+// Rows that include a non-null primary key use INSERT ... ON CONFLICT DO UPDATE
+// so existing records are updated rather than duplicated. Rows without a PK
+// value fall back to plain INSERT so the DB auto-assigns the key.
 // Body: { filename: string, data: base64string }
 app.post('/api/import/:schema/:table', requireDB, async (req, res) => {
   const { schema, table } = req.params;
@@ -683,13 +685,25 @@ app.post('/api/import/:schema/:table', requireDB, async (req, res) => {
   }
 
   try {
-    // Get table column metadata
-    const colResult = await pool.query(`
-      SELECT column_name, column_default, data_type
-      FROM information_schema.columns
-      WHERE table_schema = $1 AND table_name = $2
-      ORDER BY ordinal_position
-    `, [schema, table]);
+    // Get table column metadata + primary key columns in one round-trip
+    const [colResult, pkResult] = await Promise.all([
+      pool.query(`
+        SELECT column_name, column_default, data_type
+        FROM information_schema.columns
+        WHERE table_schema = $1 AND table_name = $2
+        ORDER BY ordinal_position
+      `, [schema, table]),
+      pool.query(`
+        SELECT kcu.column_name
+        FROM information_schema.table_constraints tc
+        JOIN information_schema.key_column_usage kcu
+          ON tc.constraint_name = kcu.constraint_name
+          AND tc.table_schema = kcu.table_schema
+        WHERE tc.constraint_type = 'PRIMARY KEY'
+          AND tc.table_schema = $1 AND tc.table_name = $2
+        ORDER BY kcu.ordinal_position
+      `, [schema, table]),
+    ]);
 
     if (!colResult.rows.length) return res.status(404).json({ error: 'Table not found.' });
 
@@ -699,6 +713,8 @@ app.post('/api/import/:schema/:table', requireDB, async (req, res) => {
         .filter(c => c.column_default && c.column_default.startsWith('nextval('))
         .map(c => c.column_name)
     );
+    const pkCols = pkResult.rows.map(r => r.column_name);
+    const pkSet = new Set(pkCols);
 
     // Parse uploaded file
     const buffer = Buffer.from(data, 'base64');
@@ -734,41 +750,70 @@ app.post('/api/import/:schema/:table', requireDB, async (req, res) => {
       return res.status(400).json({ error: `Unknown columns in file: ${unknownCols.join(', ')}` });
     }
 
-    // Only insert non-serial columns that are present in the file
-    const insertCols = fileColumns.filter(c => c && !serialCols.has(c));
-    if (!insertCols.length) {
+    // All valid columns from the file (serial cols allowed when user provides a value)
+    const allFileCols = fileColumns.filter(c => c && tableColNames.has(c));
+    if (!allFileCols.length) {
       return res.status(400).json({ error: 'No importable columns found in the file.' });
     }
 
+    // pkInFile: PK columns that the file actually contains
+    const pkInFile = pkCols.filter(c => allFileCols.includes(c));
+    const canUpsert = pkInFile.length === pkCols.length && pkCols.length > 0;
+
     const quotedTable = `"${schema}"."${table}"`;
-    const colList = insertCols.map(c => `"${c}"`).join(', ');
-    const placeholders = insertCols.map((_, i) => `$${i + 1}`).join(', ');
-    const sql = `INSERT INTO ${quotedTable} (${colList}) VALUES (${placeholders})`;
+
+    // Build upsert SQL (used when all PK columns are present and non-null in a row)
+    let upsertSQL = null;
+    if (canUpsert) {
+      // Non-PK cols that are in the file — these get updated on conflict
+      const updateCols = allFileCols.filter(c => !pkSet.has(c));
+      const colList = allFileCols.map(c => `"${c}"`).join(', ');
+      const placeholders = allFileCols.map((_, i) => `$${i + 1}`).join(', ');
+      const conflictCols = pkInFile.map(c => `"${c}"`).join(', ');
+      const setClauses = updateCols.map(c => `"${c}" = EXCLUDED."${c}"`).join(', ');
+      upsertSQL = `INSERT INTO ${quotedTable} (${colList}) VALUES (${placeholders})
+        ON CONFLICT (${conflictCols}) DO UPDATE SET ${setClauses}
+        RETURNING (xmax = 0) AS inserted`;
+    }
+
+    // Plain insert SQL — excludes serial cols (DB assigns them)
+    const plainCols = allFileCols.filter(c => !serialCols.has(c));
+    const plainColList = plainCols.map(c => `"${c}"`).join(', ');
+    const plainPlaceholders = plainCols.map((_, i) => `$${i + 1}`).join(', ');
+    const plainSQL = `INSERT INTO ${quotedTable} (${plainColList}) VALUES (${plainPlaceholders})`;
 
     const client = await pool.connect();
-    let imported = 0;
+    let inserted = 0;
+    let updated = 0;
     const errors = [];
 
     try {
       for (let i = 0; i < rows.length; i++) {
         const row = rows[i];
-        const values = insertCols.map(c => {
-          const v = row[c];
-          if (v === '' || v === null || v === undefined) return null;
-          return v;
-        });
+        const normalize = v => (v === '' || v === null || v === undefined) ? null : v;
+
+        // Decide upsert vs plain insert based on whether all PK values are present
+        const pkValuesPresent = canUpsert && pkInFile.every(c => normalize(row[c]) !== null);
+
         try {
-          await client.query(sql, values);
-          imported++;
+          if (pkValuesPresent) {
+            const values = allFileCols.map(c => normalize(row[c]));
+            const result = await client.query(upsertSQL, values);
+            if (result.rows[0]?.inserted) inserted++; else updated++;
+          } else {
+            const values = plainCols.map(c => normalize(row[c]));
+            await client.query(plainSQL, values);
+            inserted++;
+          }
         } catch (err) {
-          errors.push({ row: i + 2, error: err.message }); // row 1 = headers, so data starts at 2
+          errors.push({ row: i + 2, error: err.message });
         }
       }
     } finally {
       client.release();
     }
 
-    res.json({ imported, total: rows.length, errors });
+    res.json({ inserted, updated, total: rows.length, errors });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
