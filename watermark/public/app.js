@@ -8508,6 +8508,67 @@ el('pond-map-modal').addEventListener('click', e => {
   if (e.target === el('pond-map-modal')) el('pond-map-modal').classList.add('hidden');
 });
 
+async function openAllPondsMap() {
+  el('pond-map-title').textContent = 'Pond Maps';
+  el('pond-map-modal').classList.remove('hidden');
+
+  const container = el('pond-map-container');
+  container.innerHTML = '<div class="placeholder-msg" style="padding:20px">Loading…</div>';
+
+  if (_pondMap) { _pondMap.remove(); _pondMap = null; }
+
+  // One color per location so ponds cluster visually by area
+  const LOC_COLORS = { 1: '#2196f3', 2: '#4caf50', 3: '#ff9800', 4: '#9c27b0' };
+
+  try {
+    const ponds = await api('GET', '/api/ponds/polygons');
+    if (!ponds.length) {
+      container.innerHTML = '<div class="placeholder-msg" style="padding:20px">No pond maps have been entered yet.</div>';
+      return;
+    }
+
+    container.innerHTML = '';
+    const map = L.map(container, { zoomControl: true });
+    _pondMap = map;
+
+    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+      attribution: 'Tiles &copy; Esri &mdash; Esri, USGS, USDA',
+      maxZoom: 19,
+    }).addTo(map);
+
+    const allLayers = [];
+
+    for (const pond of ponds) {
+      const color = LOC_COLORS[pond.location_id] || '#2196f3';
+
+      const poly = L.geoJSON(pond.polygon, {
+        style: { color, weight: 2, fillColor: color, fillOpacity: 0.2 },
+      }).addTo(map);
+      allLayers.push(poly);
+
+      const [lon, lat] = pond.centroid.coordinates;
+      L.marker([lat, lon], {
+        icon: L.divIcon({
+          className: '',
+          html: `<div style="background:rgba(0,0,0,0.62);color:#fff;padding:2px 8px;border-radius:4px;font-size:0.72rem;white-space:nowrap;font-family:sans-serif">${pond.pond_name}</div>`,
+          iconAnchor: [-4, 10],
+        }),
+        interactive: false,
+      }).addTo(map);
+    }
+
+    // Fit to combined bounds of all polygons
+    const group = L.featureGroup(allLayers);
+    map.fitBounds(group.getBounds(), { padding: [24, 24] });
+
+    setTimeout(() => map.invalidateSize(), 50);
+  } catch (err) {
+    container.innerHTML = `<div class="placeholder-msg" style="padding:20px">Failed to load maps: ${err.message}</div>`;
+  }
+}
+
+el('pond-maps-btn').addEventListener('click', openAllPondsMap);
+
 /* ── Init ────────────────────────────────────────────────────────────────── */
 checkDBStatus();
 loadLoginUserList();
