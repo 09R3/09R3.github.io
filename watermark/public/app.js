@@ -8168,12 +8168,12 @@ function createPondCard(pond, dateInput, timeInput) {
   const badgeClass  = !statusDate ? 'default' : (statusDate === today ? 'ok' : 'due');
   const badgeText   = !statusDate ? 'Not read' : (statusDate === today ? 'Today' : fmtDate(statusDate));
 
-  // Gauge hint shown on the card when there's a prior reading
+  // Gauge hint — always shown; falls back to dash when no reading yet
   const gaugeLevel = pond.last_gauge_level;
   const gaugeDate  = pond.last_gauge_date ? String(pond.last_gauge_date).slice(0, 10) : null;
   const gaugeHint  = gaugeLevel != null
-    ? `Staff Gauge: ${Number(gaugeLevel).toFixed(2)} ft${gaugeDate ? ' · ' + fmtDate(gaugeDate) : ''}`
-    : '';
+    ? `Staff: ${Number(gaugeLevel).toFixed(2)} ft · ${gaugeDate ? fmtDate(gaugeDate) : 'Today'}`
+    : 'Staff: —';
 
   const div = document.createElement('div');
   div.className = 'list-item';
@@ -8182,8 +8182,8 @@ function createPondCard(pond, dateInput, timeInput) {
   div.innerHTML = `
     <div class="list-item-header">
       <span class="list-item-name">${pond.name}</span>
+      <span class="pond-gauge-hint">${gaugeHint}</span>
       <button class="pond-map-btn btn btn-secondary btn-sm" title="View map" style="padding:2px 7px;flex-shrink:0">${mapPinSvg}</button>
-      ${gaugeHint ? `<span class="pond-gauge-hint">${gaugeHint}</span>` : ''}
       <span class="status-badge ${badgeClass}">${badgeText}</span>
       <span class="expand-chevron">&#9660;</span>
     </div>
@@ -8286,7 +8286,7 @@ function buildGaugeForm(pond, dateInput, timeInput, cardEl) {
       saveBtn.disabled = false;
       // Update the gauge hint on the card header
       const hint = cardEl.querySelector('.pond-gauge-hint');
-      const hintText = `Staff Gauge: ${level.toFixed(2)} ft · Today`;
+      const hintText = `Staff: ${level.toFixed(2)} ft · Today`;
       if (hint) hint.textContent = hintText;
       else {
         const s = document.createElement('span');
@@ -8472,8 +8472,8 @@ async function openPondMap(pondId, pondName) {
     const map = L.map(container, { zoomControl: true });
     _pondMap = map;
 
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '&copy; OpenStreetMap contributors',
+    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+      attribution: 'Tiles &copy; Esri &mdash; Esri, USGS, USDA',
       maxZoom: 19,
     }).addTo(map);
 
