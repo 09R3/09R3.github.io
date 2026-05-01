@@ -251,13 +251,25 @@ pool.query(`
     reading_time TIME,
     head_ft      NUMERIC,
     opening_in   NUMERIC,
-    overpour_ft  NUMERIC,
+    overpour_in  NUMERIC,
     flow_cfs     NUMERIC,
     entered_by   TEXT,
     notes        TEXT,
     created_at   TIMESTAMP DEFAULT NOW()
   )
 `).catch(err => console.error('Migration error (readings_pond_gates):', err.message));
+
+// Rename overpour column if it was created with the old name
+pool.query(`
+  DO $$ BEGIN
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_name='readings_pond_gates' AND column_name='overpour_ft'
+    ) THEN
+      ALTER TABLE readings_pond_gates RENAME COLUMN overpour_ft TO overpour_in;
+    END IF;
+  END $$
+`).catch(err => console.error('Migration error (overpour rename):', err.message));
 
 // ── Auth / Sessions ───────────────────────────────────────────────────────────
 const SESSION_TTL = 8 * 60 * 60 * 1000; // 8 hours
@@ -1172,11 +1184,12 @@ app.get('/api/ponds', requireAuth, async (req, res) => {
         pg.label           AS gate_label,
         pg.gate_type,
         pg.width_in,
+        pg.notes           AS gate_notes,
         pg.sort_order      AS gate_sort,
         gr.reading_id      AS last_gate_reading_id,
         gr.head_ft         AS last_head,
         gr.opening_in      AS last_opening,
-        gr.overpour_ft     AS last_overpour,
+        gr.overpour_in     AS last_overpour,
         gr.flow_cfs        AS last_flow,
         gr.reading_date    AS last_gate_date
       FROM pond_locations pl
@@ -1191,7 +1204,7 @@ app.get('/api/ponds', requireAuth, async (req, res) => {
       LEFT JOIN pond_connections pc ON pc.pond_id = p.pond_id AND pc.active = true
       LEFT JOIN pond_gates pg ON pg.connection_id = pc.connection_id AND pg.active = true
       LEFT JOIN LATERAL (
-        SELECT reading_id, head_ft, opening_in, overpour_ft, flow_cfs, reading_date
+        SELECT reading_id, head_ft, opening_in, overpour_in, flow_cfs, reading_date
         FROM readings_pond_gates
         WHERE gate_id = pg.gate_id
         ORDER BY reading_date DESC, reading_time DESC
@@ -1222,14 +1235,14 @@ app.post('/api/readings/staff-gauge', requireAuth, async (req, res) => {
 });
 
 app.post('/api/readings/pond-gate', requireAuth, async (req, res) => {
-  const { gate_id, reading_date, reading_time, head_ft, opening_in, overpour_ft, flow_cfs, notes } = req.body;
+  const { gate_id, reading_date, reading_time, head_ft, opening_in, overpour_in, flow_cfs, notes } = req.body;
   try {
     const { rows } = await pool.query(
       `INSERT INTO readings_pond_gates
-         (gate_id, reading_date, reading_time, head_ft, opening_in, overpour_ft, flow_cfs, entered_by, notes)
+         (gate_id, reading_date, reading_time, head_ft, opening_in, overpour_in, flow_cfs, entered_by, notes)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING reading_id`,
       [gate_id, reading_date, reading_time || null, head_ft ?? null,
-       opening_in ?? null, overpour_ft ?? null, flow_cfs ?? null,
+       opening_in ?? null, overpour_in ?? null, flow_cfs ?? null,
        req.user.username, notes || null]
     );
     res.json({ ok: true, reading_id: rows[0].reading_id });
@@ -1315,7 +1328,7 @@ app.get('/api/history', requireAuth, async (req, res) => {
     } else if (type === 'pond-gate') {
       ({ rows } = await pool.query(
         `SELECT reading_id AS id, reading_date, reading_time,
-                head_ft, opening_in, overpour_ft, flow_cfs, entered_by, notes
+                head_ft, opening_in, overpour_in, flow_cfs, entered_by, notes
          FROM readings_pond_gates WHERE gate_id = $1
          ORDER BY reading_date DESC, reading_time DESC LIMIT $2`, [id, LIMIT]));
     } else {

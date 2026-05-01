@@ -57,55 +57,29 @@
     }
 
     /* ── Ponds screen ─────────────────────────────────────────────────────── */
-    .pond-gauge-section {
-      border-bottom: 1px solid var(--border);
-      padding-bottom: 12px;
-      margin-bottom: 12px;
-    }
-    .pond-section-label {
-      font-size: 0.75rem;
-      text-transform: uppercase;
-      letter-spacing: 0.07em;
-      color: var(--text-dim);
-      margin-bottom: 8px;
-      font-weight: 600;
-    }
-    .pond-gate-row {
-      border-top: 1px solid var(--border);
-      padding-top: 12px;
-      margin-top: 12px;
-    }
-    .pond-gate-header {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      margin-bottom: 10px;
-    }
-    .pond-gate-name {
-      font-weight: 600;
-      font-size: 0.9rem;
-    }
-    .pond-gate-inputs {
-      display: grid;
-      grid-template-columns: 1fr 1fr 1fr;
-      gap: 10px;
-      margin-bottom: 8px;
+    .pond-gauge-hint {
+      flex: 1;
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      padding: 0 4px;
+      min-width: 0;
     }
     .pond-total-row {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      padding: 8px 0 4px;
+      padding: 6px 10px;
       border-top: 1px solid var(--border);
-      margin-top: 12px;
-      font-size: 0.85rem;
+      font-size: 0.82rem;
       color: var(--text-dim);
       font-weight: 600;
     }
     .pond-total-cfs {
       color: var(--accent);
       font-variant-numeric: tabular-nums;
-      font-size: 1rem;
     }
   </style>
 </head>

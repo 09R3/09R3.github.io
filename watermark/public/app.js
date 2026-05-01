@@ -689,7 +689,7 @@ const HIST_COLS = {
   canal:       [{ key: 'flow',          label: 'Flow (cfs)' }, { key: 'totalizer', label: 'Totalizer (AF)' }, { key: 'gate_setting', label: 'Gate' }],
   vehicle:       [{ key: 'odometer_miles', label: 'Odometer' }, { key: 'engine_hours', label: 'Eng. Hrs' }],
   'staff-gauge': [{ key: 'value',          label: 'Level (ft)' }, { key: 'entered_by', label: 'By' }],
-  'pond-gate':   [{ key: 'head_ft',        label: 'Head (ft)' }, { key: 'opening_in', label: 'Opening (in)' }, { key: 'flow_cfs', label: 'Flow (cfs)' }],
+  'pond-gate':   [{ key: 'head_ft', label: 'Head (ft)' }, { key: 'opening_in', label: 'Opening (in)' }, { key: 'overpour_in', label: 'Overpour (in)' }, { key: 'flow_cfs', label: 'Flow (cfs)' }],
 };
 
 /* ── Attachment Preview Modal ────────────────────────────────────────────── */
@@ -8127,6 +8127,7 @@ async function initPondsScreen() {
             label:        row.gate_label,
             gate_type:    row.gate_type,
             width_in:     row.width_in,
+            gate_notes:   row.gate_notes,
             sort:         row.gate_sort,
             last_head:    row.last_head,
             last_opening: row.last_opening,
@@ -8154,21 +8155,32 @@ async function initPondsScreen() {
 function createPondCard(pond, dateInput, timeInput) {
   const today = todayISO();
   const allGates = [...pond.connections.values()].flatMap(c => c.gates);
+  const hasGates = allGates.length > 0;
+
+  // Gate-specific status (badge reflects gate readings; gauge is shown inline)
   const lastGateDate = allGates.reduce((best, g) => {
     const d = g.last_date ? String(g.last_date).slice(0, 10) : null;
     return (!best || (d && d > best)) ? d : best;
   }, null);
-  const lastDate = pond.last_gauge_date
-    ? String(pond.last_gauge_date).slice(0, 10)
-    : lastGateDate;
-  const badgeClass = !lastDate ? 'default' : (lastDate === today ? 'ok' : 'due');
-  const badgeText  = !lastDate ? 'Not read' : (lastDate === today ? 'Today' : fmtDate(lastDate));
+  // For gauge-only ponds, fall back to gauge date
+  const statusDate  = hasGates ? lastGateDate
+    : (pond.last_gauge_date ? String(pond.last_gauge_date).slice(0, 10) : null);
+  const badgeClass  = !statusDate ? 'default' : (statusDate === today ? 'ok' : 'due');
+  const badgeText   = !statusDate ? 'Not read' : (statusDate === today ? 'Today' : fmtDate(statusDate));
+
+  // Gauge hint shown on the card when there's a prior reading
+  const gaugeLevel = pond.last_gauge_level;
+  const gaugeDate  = pond.last_gauge_date ? String(pond.last_gauge_date).slice(0, 10) : null;
+  const gaugeHint  = gaugeLevel != null
+    ? `Staff Gauge: ${Number(gaugeLevel).toFixed(2)} ft${gaugeDate ? ' · ' + fmtDate(gaugeDate) : ''}`
+    : '';
 
   const div = document.createElement('div');
   div.className = 'list-item';
   div.innerHTML = `
     <div class="list-item-header">
       <span class="list-item-name">${pond.name}</span>
+      ${gaugeHint ? `<span class="pond-gauge-hint">${gaugeHint}</span>` : ''}
       <span class="status-badge ${badgeClass}">${badgeText}</span>
       <span class="expand-chevron">&#9660;</span>
     </div>
@@ -8207,36 +8219,40 @@ function createPondCard(pond, dateInput, timeInput) {
 }
 
 function buildGaugeForm(pond, dateInput, timeInput, cardEl) {
-  const d = document.createElement('div');
-  d.className = 'pond-gauge-section';
+  const wrap = document.createElement('div');
 
-  const prevLevel = pond.last_gauge_level != null
-    ? `${Number(pond.last_gauge_level).toFixed(2)} ft` : null;
+  const row = document.createElement('div');
+  row.className = 'reading-row';
+  row.style.flexWrap = 'wrap';
 
-  d.innerHTML = `
-    <div class="pond-section-label">Staff Gauge</div>
-    <div class="form-group">
-      <label>Level (ft)</label>
-      <input type="number" class="ctrl-input pg-gauge-level" step="0.01"
-             placeholder="0.00" inputmode="decimal">
-      ${prevLevel ? `<span class="prev-hint">Prev: ${prevLevel}</span>` : ''}
+  const prevDate = pond.last_gauge_date ? String(pond.last_gauge_date).slice(0, 10) : null;
+  const prevHint = pond.last_gauge_level != null && prevDate
+    ? `${Number(pond.last_gauge_level).toFixed(2)} ft · ${fmtDate(prevDate)}` : null;
+
+  row.innerHTML = `
+    <div class="rr-label">Staff Gauge${prevHint ? `<div class="prev-date">${prevHint}</div>` : ''}</div>
+    <div class="rr-field-group" style="width:72px">
+      <span class="rr-col-hd">Level (ft)</span>
+      <input type="number" class="rr-input pg-gauge-level" step="0.01" placeholder="—" inputmode="decimal">
     </div>
-    <div class="form-group">
-      <label>Notes</label>
-      <textarea class="ctrl-textarea pg-gauge-notes" rows="2" placeholder="Optional…"></textarea>
-    </div>
-    <div class="lif-error error-msg hidden"></div>
-    <div class="lif-footer">
-      <button class="btn btn-secondary btn-sm">${icon('history')} History</button>
-      <button class="btn btn-save pg-gauge-save">Save Gauge</button>
+    <div class="rr-notes-wrap" style="align-items:center">
+      <textarea class="rr-notes-input pg-gauge-notes" rows="1" placeholder="Notes…"></textarea>
+      <button class="btn btn-secondary btn-sm" title="History" style="flex-shrink:0">${icon('history')}</button>
+      <button class="btn btn-save btn-sm pg-gauge-save" style="flex-shrink:0">Save</button>
     </div>`;
 
-  const levelInput = d.querySelector('.pg-gauge-level');
-  const notesInput = d.querySelector('.pg-gauge-notes');
-  const errDiv     = d.querySelector('.lif-error');
-  const saveBtn    = d.querySelector('.pg-gauge-save');
+  const errDiv = document.createElement('div');
+  errDiv.className = 'error-msg hidden';
+  errDiv.style.cssText = 'font-size:0.78rem;padding:2px 10px 4px';
 
-  d.querySelector('.btn-secondary').addEventListener('click', () =>
+  wrap.appendChild(row);
+  wrap.appendChild(errDiv);
+
+  const levelInput = row.querySelector('.pg-gauge-level');
+  const notesInput = row.querySelector('.pg-gauge-notes');
+  const saveBtn    = row.querySelector('.pg-gauge-save');
+
+  row.querySelector('.btn-secondary').addEventListener('click', () =>
     openHistoryModal('staff-gauge', pond.pond_id, pond.name + ' — Staff Gauge'));
 
   saveBtn.addEventListener('click', async () => {
@@ -8259,6 +8275,16 @@ function buildGaugeForm(pond, dateInput, timeInput, cardEl) {
       });
       saveBtn.textContent = 'Saved ✓';
       saveBtn.disabled = false;
+      // Update the gauge hint on the card header
+      const hint = cardEl.querySelector('.pond-gauge-hint');
+      const hintText = `Staff Gauge: ${level.toFixed(2)} ft · Today`;
+      if (hint) hint.textContent = hintText;
+      else {
+        const s = document.createElement('span');
+        s.className = 'pond-gauge-hint';
+        s.textContent = hintText;
+        cardEl.querySelector('.list-item-name').after(s);
+      }
       updatePondBadge(cardEl, 'Today');
       showToast(`${pond.name} gauge saved`, 'success');
     } catch (err) {
@@ -8269,81 +8295,80 @@ function buildGaugeForm(pond, dateInput, timeInput, cardEl) {
     }
   });
 
-  return d;
+  return wrap;
 }
 
 function buildGateRow(gate, dateInput, timeInput, cardEl) {
-  const today = todayISO();
-  const prevDate  = gate.last_date ? String(gate.last_date).slice(0, 10) : null;
-  const prevFlow  = gate.last_flow != null ? Number(gate.last_flow).toFixed(3) + ' cfs' : null;
-  const isToday   = prevDate === today;
-  const badgeText = prevFlow
-    ? `${prevFlow}${prevDate ? ' · ' + (isToday ? 'Today' : fmtDate(prevDate)) : ''}`
-    : (prevDate ? fmtDate(prevDate) : '');
+  const today    = todayISO();
+  const prevDate = gate.last_date ? String(gate.last_date).slice(0, 10) : null;
+  const prevFlow = gate.last_flow != null ? Number(gate.last_flow).toFixed(3) + ' cfs' : null;
+  const isToday  = prevDate === today;
+  const prevHint = prevFlow
+    ? `${prevFlow} · ${isToday ? 'Today' : (prevDate ? fmtDate(prevDate) : '')}`
+    : (prevDate ? fmtDate(prevDate) : null);
 
-  const d = document.createElement('div');
-  d.className = 'pond-gate-row';
-
+  const wrap = document.createElement('div');
   const isWeir = gate.gate_type === 'weir';
-  d.innerHTML = `
-    <div class="pond-gate-header">
-      <span class="pond-gate-name">${gate.label}</span>
-      ${badgeText ? `<span class="status-badge ${isToday ? 'ok' : 'due'}">${badgeText}</span>` : ''}
+
+  const row = document.createElement('div');
+  row.className = 'reading-row';
+  row.style.flexWrap = 'wrap';
+
+  const labelSub = [
+    prevHint ? `<div class="prev-date">${prevHint}</div>` : '',
+    gate.gate_notes ? `<div class="prev-date" style="font-style:italic">${gate.gate_notes}</div>` : '',
+  ].join('');
+
+  row.innerHTML = `
+    <div class="rr-label">${gate.label}${labelSub}</div>
+    ${!isWeir ? `
+    <div class="rr-field-group" style="width:62px">
+      <span class="rr-col-hd">Head (ft)</span>
+      <input type="number" class="rr-input pg-head" step="0.01" placeholder="—" inputmode="decimal">
     </div>
-    <div class="pond-gate-inputs">
-      ${!isWeir ? `
-      <div class="form-group">
-        <label>Head (ft)</label>
-        <input type="number" class="ctrl-input ctrl-input-sm pg-head" step="0.01"
-               placeholder="0.00" inputmode="decimal">
-      </div>
-      <div class="form-group">
-        <label>Opening (in)</label>
-        <input type="number" class="ctrl-input ctrl-input-sm pg-opening" step="0.1"
-               placeholder="0.0" inputmode="decimal">
-      </div>` : `
-      <div class="form-group">
-        <label>Overpour (ft)</label>
-        <input type="number" class="ctrl-input ctrl-input-sm pg-overpour" step="0.001"
-               placeholder="0.000" inputmode="decimal">
-      </div>`}
-      <div class="form-group">
-        <label>Flow (cfs)</label>
-        <input type="number" class="ctrl-input ctrl-input-sm pg-flow" step="0.001"
-               placeholder="0.000" inputmode="decimal">
-      </div>
+    <div class="rr-field-group" style="width:72px">
+      <span class="rr-col-hd">Opening (in)</span>
+      <input type="number" class="rr-input pg-opening" step="0.1" placeholder="—" inputmode="decimal">
+    </div>` : `
+    <div class="rr-field-group" style="width:82px">
+      <span class="rr-col-hd">Overpour (in)</span>
+      <input type="number" class="rr-input pg-overpour" step="0.01" placeholder="—" inputmode="decimal">
+    </div>`}
+    <div class="rr-field-group" style="width:68px">
+      <span class="rr-col-hd">Flow (cfs)</span>
+      <input type="number" class="rr-input pg-flow" step="0.001" placeholder="—" inputmode="decimal">
     </div>
-    <div class="form-group">
-      <label>Notes</label>
-      <textarea class="ctrl-textarea pg-gate-notes" rows="2" placeholder="Optional…"></textarea>
-    </div>
-    <div class="lif-error error-msg hidden"></div>
-    <div class="lif-footer">
-      <button class="btn btn-secondary btn-sm">${icon('history')} History</button>
-      <button class="btn btn-save pg-gate-save">Save Gate</button>
+    <div class="rr-notes-wrap" style="align-items:center">
+      <textarea class="rr-notes-input pg-gate-notes" rows="1" placeholder="Notes…"></textarea>
+      <button class="btn btn-secondary btn-sm" title="History" style="flex-shrink:0">${icon('history')}</button>
+      <button class="btn btn-save btn-sm pg-gate-save" style="flex-shrink:0">Save</button>
     </div>`;
 
-  const headInput    = d.querySelector('.pg-head');
-  const openingInput = d.querySelector('.pg-opening');
-  const overpourInput= d.querySelector('.pg-overpour');
-  const flowInput    = d.querySelector('.pg-flow');
-  const notesInput   = d.querySelector('.pg-gate-notes');
-  const errDiv       = d.querySelector('.lif-error');
-  const saveBtn      = d.querySelector('.pg-gate-save');
+  const errDiv = document.createElement('div');
+  errDiv.className = 'error-msg hidden';
+  errDiv.style.cssText = 'font-size:0.78rem;padding:2px 10px 4px';
+
+  wrap.appendChild(row);
+  wrap.appendChild(errDiv);
+
+  const headInput     = row.querySelector('.pg-head');
+  const openingInput  = row.querySelector('.pg-opening');
+  const overpourInput = row.querySelector('.pg-overpour');
+  const flowInput     = row.querySelector('.pg-flow');
+  const notesInput    = row.querySelector('.pg-gate-notes');
+  const saveBtn       = row.querySelector('.pg-gate-save');
 
   function calcFlow() {
     let q = null;
     if (isWeir) {
-      const ov = parseFloat(overpourInput?.value);
-      if (!isNaN(ov) && ov > 0 && gate.width_in > 0) {
-        q = 3.996 * (gate.width_in / 12) * Math.pow(ov, 1.5);
-      }
+      const ov = parseFloat(overpourInput?.value); // inches
+      if (!isNaN(ov) && ov > 0 && gate.width_in > 0)
+        q = 3.996 * (gate.width_in / 12) * Math.pow(ov / 12, 1.5);
     } else {
       const h = parseFloat(headInput?.value);
       const o = parseFloat(openingInput?.value);
-      if (!isNaN(h) && h > 0 && !isNaN(o) && o > 0 && gate.width_in > 0) {
+      if (!isNaN(h) && h > 0 && !isNaN(o) && o > 0 && gate.width_in > 0)
         q = 0.748 * (gate.width_in / 12) * (o / 12) * Math.sqrt(64.4 * h);
-      }
     }
     if (q !== null && flowInput) flowInput.value = q.toFixed(3);
     updatePondTotal(cardEl);
@@ -8354,17 +8379,17 @@ function buildGateRow(gate, dateInput, timeInput, cardEl) {
   overpourInput?.addEventListener('input', calcFlow);
   flowInput?.addEventListener('input', () => updatePondTotal(cardEl));
 
-  d.querySelector('.btn-secondary').addEventListener('click', () =>
+  row.querySelector('.btn-secondary').addEventListener('click', () =>
     openHistoryModal('pond-gate', gate.gate_id, gate.label));
 
   saveBtn.addEventListener('click', async () => {
     errDiv.classList.add('hidden');
     saveBtn.disabled = true;
     saveBtn.textContent = 'Saving…';
-    const h  = parseFloat(headInput?.value)     ?? null;
-    const o  = parseFloat(openingInput?.value)  ?? null;
-    const ov = parseFloat(overpourInput?.value) ?? null;
-    const fl = parseFloat(flowInput?.value)     ?? null;
+    const h  = parseFloat(headInput?.value);
+    const o  = parseFloat(openingInput?.value);
+    const ov = parseFloat(overpourInput?.value);
+    const fl = parseFloat(flowInput?.value);
     try {
       await api('POST', '/api/readings/pond-gate', {
         gate_id:      gate.gate_id,
@@ -8372,21 +8397,18 @@ function buildGateRow(gate, dateInput, timeInput, cardEl) {
         reading_time: timeInput.value,
         head_ft:      isNaN(h)  ? null : h,
         opening_in:   isNaN(o)  ? null : o,
-        overpour_ft:  isNaN(ov) ? null : ov,
+        overpour_in:  isNaN(ov) ? null : ov,
         flow_cfs:     isNaN(fl) ? null : fl,
         notes:        notesInput.value || null,
       });
       saveBtn.textContent = 'Saved ✓';
       saveBtn.disabled = false;
-      const badge = d.querySelector('.status-badge');
-      const flowText = fl != null ? fl.toFixed(3) + ' cfs · Today' : 'Today';
-      if (badge) { badge.textContent = flowText; badge.className = 'status-badge ok'; }
-      else {
-        const b = document.createElement('span');
-        b.className = 'status-badge ok';
-        b.textContent = flowText;
-        d.querySelector('.pond-gate-header').appendChild(b);
-      }
+      // Update prev hint in label
+      const label = row.querySelector('.rr-label');
+      const existingDate = label.querySelector('.prev-date');
+      const flowText = fl != null ? `${fl.toFixed(3)} cfs · Today` : 'Today';
+      if (existingDate) existingDate.textContent = flowText;
+      else label.insertAdjacentHTML('beforeend', `<div class="prev-date">${flowText}</div>`);
       updatePondBadge(cardEl, 'Today');
       showToast(`${gate.label} saved`, 'success');
     } catch (err) {
@@ -8397,7 +8419,7 @@ function buildGateRow(gate, dateInput, timeInput, cardEl) {
     }
   });
 
-  return d;
+  return wrap;
 }
 
 function updatePondTotal(cardEl) {

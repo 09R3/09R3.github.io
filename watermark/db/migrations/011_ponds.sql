@@ -63,7 +63,7 @@ CREATE TABLE IF NOT EXISTS readings_pond_gates (
   reading_time TIME,
   head_ft      NUMERIC,
   opening_in   NUMERIC,
-  overpour_ft  NUMERIC,
+  overpour_in  NUMERIC,
   flow_cfs     NUMERIC,
   entered_by   TEXT,
   notes        TEXT,
