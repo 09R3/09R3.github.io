@@ -8213,6 +8213,7 @@ function createPondCard(pond, dateInput, timeInput) {
     const open = !div.classList.contains('expanded');
     div.classList.toggle('expanded', open);
     form.style.display = open ? '' : 'none';
+    if (open) timeInput.value = nowHHMM();
   });
 
   return div;
@@ -8301,7 +8302,7 @@ function buildGaugeForm(pond, dateInput, timeInput, cardEl) {
 function buildGateRow(gate, dateInput, timeInput, cardEl) {
   const today    = todayISO();
   const prevDate = gate.last_date ? String(gate.last_date).slice(0, 10) : null;
-  const prevFlow = gate.last_flow != null ? Number(gate.last_flow).toFixed(3) + ' cfs' : null;
+  const prevFlow = gate.last_flow != null ? Number(gate.last_flow).toFixed(2) + ' cfs' : null;
   const isToday  = prevDate === today;
   const prevHint = prevFlow
     ? `${prevFlow} · ${isToday ? 'Today' : (prevDate ? fmtDate(prevDate) : '')}`
@@ -8334,9 +8335,9 @@ function buildGateRow(gate, dateInput, timeInput, cardEl) {
       <span class="rr-col-hd">Overpour (in)</span>
       <input type="number" class="rr-input pg-overpour" step="0.01" placeholder="—" inputmode="decimal">
     </div>`}
-    <div class="rr-field-group" style="width:68px">
+    <div class="rr-field-group" style="width:84px">
       <span class="rr-col-hd">Flow (cfs)</span>
-      <input type="number" class="rr-input pg-flow" step="0.001" placeholder="—" inputmode="decimal">
+      <input type="number" class="rr-input pg-flow" step="0.01" placeholder="—" inputmode="decimal">
     </div>
     <div class="rr-notes-wrap" style="align-items:center">
       <textarea class="rr-notes-input pg-gate-notes" rows="1" placeholder="Notes…"></textarea>
@@ -8370,7 +8371,7 @@ function buildGateRow(gate, dateInput, timeInput, cardEl) {
       if (!isNaN(h) && h > 0 && !isNaN(o) && o > 0 && gate.width_in > 0)
         q = 0.748 * (gate.width_in / 12) * (o / 12) * Math.sqrt(64.4 * h);
     }
-    if (q !== null && flowInput) flowInput.value = q.toFixed(3);
+    if (q !== null && flowInput) flowInput.value = q.toFixed(2);
     updatePondTotal(cardEl);
   }
 
@@ -8406,7 +8407,7 @@ function buildGateRow(gate, dateInput, timeInput, cardEl) {
       // Update prev hint in label
       const label = row.querySelector('.rr-label');
       const existingDate = label.querySelector('.prev-date');
-      const flowText = fl != null ? `${fl.toFixed(3)} cfs · Today` : 'Today';
+      const flowText = fl != null ? `${fl.toFixed(2)} cfs · Today` : 'Today';
       if (existingDate) existingDate.textContent = flowText;
       else label.insertAdjacentHTML('beforeend', `<div class="prev-date">${flowText}</div>`);
       updatePondBadge(cardEl, 'Today');
@@ -8430,7 +8431,7 @@ function updatePondTotal(cardEl) {
     const v = parseFloat(inp.value);
     if (!isNaN(v)) { total += v; hasAny = true; }
   });
-  totalEl.textContent = hasAny ? total.toFixed(3) + ' cfs' : '—';
+  totalEl.textContent = hasAny ? total.toFixed(2) + ' cfs' : '—';
 }
 
 function updatePondBadge(cardEl, text) {
