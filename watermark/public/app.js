@@ -8177,14 +8177,22 @@ function createPondCard(pond, dateInput, timeInput) {
 
   const div = document.createElement('div');
   div.className = 'list-item';
+  const mapPinSvg = `<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>`;
+
   div.innerHTML = `
     <div class="list-item-header">
       <span class="list-item-name">${pond.name}</span>
+      <button class="pond-map-btn btn btn-secondary btn-sm" title="View map" style="padding:2px 7px;flex-shrink:0">${mapPinSvg}</button>
       ${gaugeHint ? `<span class="pond-gauge-hint">${gaugeHint}</span>` : ''}
       <span class="status-badge ${badgeClass}">${badgeText}</span>
       <span class="expand-chevron">&#9660;</span>
     </div>
     <div class="list-item-form"></div>`;
+
+  div.querySelector('.pond-map-btn').addEventListener('click', e => {
+    e.stopPropagation();
+    openPondMap(pond.pond_id, pond.name);
+  });
 
   const form = div.querySelector('.list-item-form');
   form.style.display = 'none';
@@ -8438,6 +8446,67 @@ function updatePondBadge(cardEl, text) {
   const badge = cardEl.querySelector('.list-item-header .status-badge');
   if (badge) { badge.textContent = text; badge.className = 'status-badge ok'; }
 }
+
+/* ── Pond Map ────────────────────────────────────────────────────────────── */
+let _pondMap = null;
+
+async function openPondMap(pondId, pondName) {
+  el('pond-map-title').textContent = pondName;
+  el('pond-map-modal').classList.remove('hidden');
+
+  const container = el('pond-map-container');
+  container.innerHTML = '<div class="placeholder-msg" style="padding:20px">Loading…</div>';
+
+  // Destroy previous Leaflet instance before re-using the container
+  if (_pondMap) { _pondMap.remove(); _pondMap = null; }
+
+  try {
+    const data = await api('GET', `/api/ponds/${pondId}/polygon`);
+    container.innerHTML = '';
+
+    if (!data.has_polygon) {
+      container.innerHTML = '<div class="placeholder-msg" style="padding:20px">No map data for this pond yet.</div>';
+      return;
+    }
+
+    const map = L.map(container, { zoomControl: true });
+    _pondMap = map;
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap contributors',
+      maxZoom: 19,
+    }).addTo(map);
+
+    const poly = L.geoJSON(data.polygon, {
+      style: { color: '#2196f3', weight: 2.5, fillColor: '#2196f3', fillOpacity: 0.15 },
+    }).addTo(map);
+
+    map.fitBounds(poly.getBounds(), { padding: [24, 24] });
+
+    // Label at centroid
+    const [lon, lat] = data.centroid.coordinates;
+    L.marker([lat, lon], {
+      icon: L.divIcon({
+        className: '',
+        html: `<div style="background:rgba(0,0,0,0.62);color:#fff;padding:3px 10px;border-radius:4px;font-size:0.78rem;white-space:nowrap;font-family:sans-serif">${pondName}</div>`,
+        iconAnchor: [-4, 10],
+      }),
+      interactive: false,
+    }).addTo(map);
+
+    // Leaflet needs a tick after the container is visible to measure size
+    setTimeout(() => map.invalidateSize(), 50);
+  } catch (err) {
+    container.innerHTML = `<div class="placeholder-msg" style="padding:20px">Failed to load map: ${err.message}</div>`;
+  }
+}
+
+el('pond-map-close').addEventListener('click', () => {
+  el('pond-map-modal').classList.add('hidden');
+});
+el('pond-map-modal').addEventListener('click', e => {
+  if (e.target === el('pond-map-modal')) el('pond-map-modal').classList.add('hidden');
+});
 
 /* ── Init ────────────────────────────────────────────────────────────────── */
 checkDBStatus();

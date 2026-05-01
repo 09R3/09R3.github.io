@@ -1257,6 +1257,38 @@ app.delete('/api/readings/staff-gauge/:id', requireAuth, (req, res) =>
 app.delete('/api/readings/pond-gate/:id', requireAuth, (req, res) =>
   deleteReading(req, res, 'readings_pond_gates', 'reading_id'));
 
+app.get('/api/ponds/:id/polygon', requireAuth, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        p.pond_id,
+        p.name                                                        AS pond_name,
+        ST_AsGeoJSON(
+          ST_MakePolygon(ST_MakeLine(array_agg(pp.geom ORDER BY pp.point_order)))
+        )                                                             AS polygon_geojson,
+        ST_AsGeoJSON(
+          ST_Centroid(ST_MakePolygon(ST_MakeLine(array_agg(pp.geom ORDER BY pp.point_order))))
+        )                                                             AS centroid_geojson
+      FROM ponds p
+      JOIN pond_points pp ON pp.pond_id = p.pond_id
+      WHERE p.pond_id = $1
+      GROUP BY p.pond_id, p.name
+      HAVING COUNT(*) >= 3
+    `, [id]);
+    if (!rows.length) return res.json({ has_polygon: false });
+    const row = rows[0];
+    res.json({
+      has_polygon:    true,
+      pond_name:      row.pond_name,
+      polygon:        JSON.parse(row.polygon_geojson),
+      centroid:       JSON.parse(row.centroid_geojson),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Reading History ────────────────────────────────────────────────────────────
 app.get('/api/history', requireAuth, async (req, res) => {
   const { type, id } = req.query;
