@@ -828,7 +828,13 @@ importConfirmBtn.addEventListener('click', async () => {
       { filename: importParsed.filename, data: importParsed.data }
     );
 
-    let msg = `✓ Imported ${result.imported} of ${result.total} row${result.total !== 1 ? 's' : ''}.`;
+    const inserted = result.inserted ?? result.imported ?? 0;
+    const updated = result.updated ?? 0;
+    const parts = [];
+    if (inserted > 0) parts.push(`${inserted} inserted`);
+    if (updated > 0) parts.push(`${updated} updated`);
+    if (!parts.length) parts.push('0 rows changed');
+    let msg = `✓ ${parts.join(', ')} (${result.total} total).`;
     let cls = 'import-status success';
     if (result.errors && result.errors.length) {
       cls = 'import-status warning';
@@ -843,7 +849,7 @@ importConfirmBtn.addEventListener('click', async () => {
     importConfirmBtn.classList.add('hidden');
 
     // Reload the table to show new rows
-    if (result.imported > 0) {
+    if (inserted > 0 || updated > 0) {
       state.page = 1;
       loadTable(state.currentSchema, state.currentTable);
     }
