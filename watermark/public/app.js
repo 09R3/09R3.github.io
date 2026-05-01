@@ -6150,7 +6150,7 @@ let vehicleReportType = 'mileage';
 let lastReportRows  = [];
 
 // ── Navigation ────────────────────────────────────────────────────────────────
-const ALL_REPORT_PANELS = ['vehicles','kf','maintenance','pms','piezometers','canal'];
+const ALL_REPORT_PANELS = ['vehicles','kf','maintenance','pms','piezometers','canal','ponds'];
 
 function initReportsScreen() {
   el('report-main').classList.remove('hidden');
@@ -6164,6 +6164,7 @@ const REPORT_PANEL_NAMES = {
   pms:          'PM Records',
   piezometers:  'Piezometers',
   canal:        'Canal Readings',
+  ponds:        'Pond Report',
 };
 function openReportPanel(cat) {
   el('report-main').classList.add('hidden');
@@ -6176,6 +6177,7 @@ function openReportPanel(cat) {
   if (cat === 'pms')         initPMReportPanel();
   if (cat === 'piezometers') initPiezReportPanel();
   if (cat === 'canal')       initCanalReportPanel();
+  if (cat === 'ponds')       initPondsReportPanel();
 }
 
 function closeReportPanel() {
@@ -6770,6 +6772,126 @@ async function renderCanalReport() {
       });
       html += '</tbody></table>';
     });
+
+    html += '</div>';
+    out.innerHTML = html;
+  } catch (err) {
+    out.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
+  }
+}
+
+// ── Pond Report Panel ─────────────────────────────────────────────────────────
+function initPondsReportPanel() {
+  if (!el('ponds-report-date').value) {
+    el('ponds-report-date').value = todayISO();
+  }
+  renderPondsReport();
+}
+
+el('ponds-report-date').addEventListener('change', renderPondsReport);
+el('ponds-report-print-btn').addEventListener('click', () => {
+  const content = el('report-ponds-output').innerHTML;
+  if (!content || content.includes('placeholder-msg')) return showToast('No report to print', 'error');
+  const w = window.open('', '_blank');
+  w.document.write(`<!doctype html><html><head><title>Pond Report</title>
+    <style>
+      body{font-family:system-ui,sans-serif;font-size:11px;margin:16px}
+      table{width:100%;border-collapse:collapse;margin-bottom:14px}
+      th,td{border:1px solid #ccc;padding:3px 6px;text-align:left}
+      th{background:#f0f0f0;font-weight:600}
+      .report-num{text-align:right}
+      .report-title{font-size:16px;font-weight:700;margin-bottom:2px}
+      .report-subtitle{font-size:12px;color:#666;margin-bottom:10px}
+      .report-section-title{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#444;margin:12px 0 4px;border-bottom:1px solid #ccc;padding-bottom:2px}
+    </style></head><body>${content}</body></html>`);
+  w.document.close();
+  w.focus();
+  w.print();
+});
+
+async function renderPondsReport() {
+  const date = el('ponds-report-date').value;
+  if (!date) return;
+  const out = el('report-ponds-output');
+  out.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const { gauges, gates } = await api('GET', `/api/reports/ponds?date=${date}`);
+    const fmtNum  = (v, dec = 2) => v != null ? Number(v).toFixed(dec) : '—';
+    const fmtDate = s => s ? localDateStr(s, { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
+    const fmtTime = t => t ? t.slice(0, 5) : '—';
+
+    // Staff Gauges table
+    let html = `<div class="report-card">
+      <div class="report-title">Pond Report</div>
+      <div class="report-subtitle">${fmtDate(date)}</div>
+      <div class="report-section-title">Staff Gauges</div>
+      <table class="report-table">
+        <thead><tr>
+          <th>Location</th><th>Pond</th>
+          <th class="report-num">Level (ft)</th>
+          <th>Time</th><th>By</th>
+        </tr></thead><tbody>`;
+
+    let lastLoc = '';
+    gauges.forEach(g => {
+      const locLabel = g.location_name !== lastLoc ? escHtml(g.location_name) : '';
+      lastLoc = g.location_name;
+      const level = g.level_ft != null
+        ? `<strong>${fmtNum(g.level_ft)}</strong>`
+        : `<span style="color:var(--text-dim)">—</span>`;
+      html += `<tr>
+        <td>${locLabel}</td>
+        <td>${escHtml(g.pond_name)}</td>
+        <td class="report-num">${level}</td>
+        <td>${fmtTime(g.reading_time)}</td>
+        <td>${escHtml(g.entered_by || '—')}</td>
+      </tr>`;
+    });
+    html += '</tbody></table>';
+
+    // Inflows section — group gates by pond (order preserved from API)
+    html += '<div class="report-section-title">Inflows</div>';
+    const pondMap = new Map();
+    const pondOrder = [];
+    gates.forEach(g => {
+      if (!pondMap.has(g.pond_id)) {
+        pondMap.set(g.pond_id, { name: g.pond_name, gates: [] });
+        pondOrder.push(g.pond_id);
+      }
+      pondMap.get(g.pond_id).gates.push(g);
+    });
+
+    if (!pondOrder.length) {
+      html += '<div class="report-empty">No gate readings found.</div>';
+    } else {
+      pondOrder.forEach(pid => {
+        const pond = pondMap.get(pid);
+        const totalCfs = pond.gates.reduce((s, g) => s + (g.flow_cfs != null ? Number(g.flow_cfs) : 0), 0);
+        const hasFlow  = pond.gates.some(g => g.flow_cfs != null);
+        html += `<table class="report-table" style="margin-bottom:12px">
+          <thead>
+            <tr><th colspan="5" style="background:var(--surface-2,#f5f5f5)">${escHtml(pond.name)}</th></tr>
+            <tr><th>Gate</th><th class="report-num">Head (ft)</th>
+                <th class="report-num">Opening (in)</th><th class="report-num">Flow (cfs)</th><th>By</th></tr>
+          </thead><tbody>`;
+        pond.gates.forEach(g => {
+          html += `<tr>
+            <td>${escHtml(g.gate_label)}</td>
+            <td class="report-num">${fmtNum(g.head_ft)}</td>
+            <td class="report-num">${g.opening_in != null ? fmtNum(g.opening_in, 1) : '—'}</td>
+            <td class="report-num">${fmtNum(g.flow_cfs)}</td>
+            <td>${escHtml(g.entered_by || '—')}</td>
+          </tr>`;
+        });
+        if (hasFlow) {
+          html += `<tr style="font-weight:600;border-top:2px solid var(--border,#ddd)">
+            <td colspan="3" style="text-align:right">Total</td>
+            <td class="report-num">${totalCfs.toFixed(2)}</td><td></td>
+          </tr>`;
+        }
+        html += '</tbody></table>';
+      });
+    }
 
     html += '</div>';
     out.innerHTML = html;

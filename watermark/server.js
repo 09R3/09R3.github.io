@@ -2665,6 +2665,47 @@ app.get('/api/reports/canal', requireAuth, requireRole('supervisor', 'admin'), a
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+app.get('/api/reports/ponds', requireAuth, async (req, res) => {
+  const { date } = req.query;
+  if (!date) return res.status(400).json({ error: 'date required' });
+  try {
+    // All ponds with their staff gauge reading for the given date (null if not read)
+    const { rows: gauges } = await pool.query(`
+      SELECT
+        pl.name  AS location_name,
+        pl.sort_order AS location_sort,
+        p.pond_id, p.name AS pond_name, p.sort_order AS pond_sort,
+        sg.level_ft, sg.reading_time, sg.entered_by, sg.notes AS gauge_notes
+      FROM ponds p
+      JOIN pond_locations pl ON pl.location_id = p.location_id
+      LEFT JOIN readings_staff_gauge sg
+        ON sg.pond_id = p.pond_id AND sg.reading_date = $1
+      ORDER BY pl.sort_order, p.sort_order
+    `, [date]);
+
+    // Gate readings for the key inflow ponds:
+    //   1=East Pond, 2=West Pond, 8=Basin 1 (Section 4-1), 9=PC-2, 28=BM Pond 1
+    const inflowIds = [1, 2, 8, 9, 28];
+    const { rows: gates } = await pool.query(`
+      SELECT
+        p.pond_id, p.name AS pond_name,
+        pc.name AS connection_name,
+        pg.gate_id, pg.label AS gate_label, pg.width_in,
+        gr.head_ft, gr.opening_in, gr.overpour_in, gr.flow_cfs,
+        gr.reading_time, gr.entered_by
+      FROM ponds p
+      JOIN pond_connections pc ON pc.pond_id = p.pond_id AND pc.active
+      JOIN pond_gates pg ON pg.connection_id = pc.connection_id AND pg.active
+      LEFT JOIN readings_pond_gates gr
+        ON gr.gate_id = pg.gate_id AND gr.reading_date = $1
+      WHERE p.pond_id = ANY($2)
+      ORDER BY p.pond_id, pc.sort_order, pg.sort_order
+    `, [date, inflowIds]);
+
+    res.json({ gauges, gates });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // Piezometer status/compare XLSX export (token-authenticated)
 app.get('/api/reports/piezometers/export', async (req, res) => {
   const { start_date, end_date, token } = req.query;
