@@ -55,6 +55,58 @@
         zoom: 0.78;
       }
     }
+
+    /* ── Ponds screen ─────────────────────────────────────────────────────── */
+    .pond-gauge-section {
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 12px;
+      margin-bottom: 12px;
+    }
+    .pond-section-label {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: var(--text-dim);
+      margin-bottom: 8px;
+      font-weight: 600;
+    }
+    .pond-gate-row {
+      border-top: 1px solid var(--border);
+      padding-top: 12px;
+      margin-top: 12px;
+    }
+    .pond-gate-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .pond-gate-name {
+      font-weight: 600;
+      font-size: 0.9rem;
+    }
+    .pond-gate-inputs {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+    .pond-total-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 0 4px;
+      border-top: 1px solid var(--border);
+      margin-top: 12px;
+      font-size: 0.85rem;
+      color: var(--text-dim);
+      font-weight: 600;
+    }
+    .pond-total-cfs {
+      color: var(--accent);
+      font-variant-numeric: tabular-nums;
+      font-size: 1rem;
+    }
   </style>
 </head>
 <body>
@@ -83,7 +135,7 @@
         <div id="login-error" class="error-msg hidden"></div>
         <button type="submit" class="btn btn-primary btn-full">Sign In</button>
       </form>
-      <div class="login-version">v 1.49</div>
+      <div class="login-version">v 1.50</div>
     </div>
   </div>
 </div>
@@ -328,6 +380,12 @@
           </div>
           <span class="dash-label">Well Runs</span>
         </button>
+        <button class="dash-tile" data-screen="ponds">
+          <div class="dash-icon-wrap">
+            <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-canal.svg);mask-image:url(/marv-site/icons/icon-canal.svg)"></span>
+          </div>
+          <span class="dash-label">Ponds</span>
+        </button>
       </div>
     </div>
 
@@ -419,6 +477,17 @@
       <input type="time" id="canal-time" class="ctrl-input ctrl-input-sm ctrl-time">
     </div>
     <div id="canal-list-body"><div class="placeholder-msg">Loading structures…</div></div>
+  </div>
+
+  <!-- ── Ponds ─────────────────────────────────────────────────────────────── -->
+  <div id="screen-ponds" class="screen-content">
+    <div class="date-bar">
+      <span class="ctrl-label">Date</span>
+      <input type="date" id="ponds-date" class="ctrl-input ctrl-input-sm ctrl-date">
+      <span class="ctrl-label">Time</span>
+      <input type="time" id="ponds-time" class="ctrl-input ctrl-input-sm ctrl-time">
+    </div>
+    <div id="ponds-list-body"><div class="placeholder-msg">Loading…</div></div>
   </div>
 
   <!-- ── Vehicle Monthly ────────────────────────────────────────────────────── -->
@@ -1404,7 +1473,7 @@
     <div id="settings-panel-appinfo" class="settings-panel hidden">
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 1.49</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 1.50</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>

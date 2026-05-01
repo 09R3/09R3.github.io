@@ -186,6 +186,79 @@ pool.query(`
   )
 `).catch(err => console.error('Migration error (canal_issues):', err.message));
 
+pool.query(`
+  CREATE TABLE IF NOT EXISTS pond_locations (
+    location_id SERIAL PRIMARY KEY,
+    name        TEXT NOT NULL,
+    sort_order  INT DEFAULT 0
+  )
+`).catch(err => console.error('Migration error (pond_locations):', err.message));
+
+pool.query(`
+  CREATE TABLE IF NOT EXISTS ponds (
+    pond_id     SERIAL PRIMARY KEY,
+    location_id INT REFERENCES pond_locations(location_id),
+    name        TEXT NOT NULL,
+    sort_order  INT DEFAULT 0,
+    notes       TEXT
+  )
+`).catch(err => console.error('Migration error (ponds):', err.message));
+
+pool.query(`
+  CREATE TABLE IF NOT EXISTS pond_connections (
+    connection_id   SERIAL PRIMARY KEY,
+    pond_id         INT REFERENCES ponds(pond_id),
+    name            TEXT,
+    source_type     TEXT,
+    source_canal_id INT REFERENCES canal_structures(structure_id),
+    sort_order      INT DEFAULT 0,
+    active          BOOLEAN DEFAULT TRUE,
+    notes           TEXT
+  )
+`).catch(err => console.error('Migration error (pond_connections):', err.message));
+
+pool.query(`
+  CREATE TABLE IF NOT EXISTS pond_gates (
+    gate_id       SERIAL PRIMARY KEY,
+    connection_id INT REFERENCES pond_connections(connection_id),
+    label         TEXT NOT NULL,
+    gate_type     TEXT NOT NULL DEFAULT 'gate',
+    width_in      NUMERIC,
+    sort_order    INT DEFAULT 0,
+    active        BOOLEAN DEFAULT TRUE,
+    notes         TEXT
+  )
+`).catch(err => console.error('Migration error (pond_gates):', err.message));
+
+pool.query(`
+  CREATE TABLE IF NOT EXISTS readings_staff_gauge (
+    reading_id   SERIAL PRIMARY KEY,
+    pond_id      INT REFERENCES ponds(pond_id),
+    reading_date DATE NOT NULL,
+    reading_time TIME,
+    level_ft     NUMERIC NOT NULL,
+    entered_by   TEXT,
+    notes        TEXT,
+    created_at   TIMESTAMP DEFAULT NOW()
+  )
+`).catch(err => console.error('Migration error (readings_staff_gauge):', err.message));
+
+pool.query(`
+  CREATE TABLE IF NOT EXISTS readings_pond_gates (
+    reading_id   SERIAL PRIMARY KEY,
+    gate_id      INT REFERENCES pond_gates(gate_id),
+    reading_date DATE NOT NULL,
+    reading_time TIME,
+    head_ft      NUMERIC,
+    opening_in   NUMERIC,
+    overpour_ft  NUMERIC,
+    flow_cfs     NUMERIC,
+    entered_by   TEXT,
+    notes        TEXT,
+    created_at   TIMESTAMP DEFAULT NOW()
+  )
+`).catch(err => console.error('Migration error (readings_pond_gates):', err.message));
+
 // ── Auth / Sessions ───────────────────────────────────────────────────────────
 const SESSION_TTL = 8 * 60 * 60 * 1000; // 8 hours
 const sessions = new Map();
@@ -1078,6 +1151,99 @@ app.post('/api/readings/canal', requireAuth, async (req, res) => {
   }
 });
 
+// ── Ponds ─────────────────────────────────────────────────────────────────────
+app.get('/api/ponds', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        pl.location_id,
+        pl.name            AS location_name,
+        pl.sort_order      AS location_sort,
+        p.pond_id,
+        p.name             AS pond_name,
+        p.sort_order       AS pond_sort,
+        sg.reading_id      AS last_gauge_id,
+        sg.level_ft        AS last_gauge_level,
+        sg.reading_date    AS last_gauge_date,
+        pc.connection_id,
+        pc.name            AS connection_name,
+        pc.sort_order      AS connection_sort,
+        pg.gate_id,
+        pg.label           AS gate_label,
+        pg.gate_type,
+        pg.width_in,
+        pg.sort_order      AS gate_sort,
+        gr.reading_id      AS last_gate_reading_id,
+        gr.head_ft         AS last_head,
+        gr.opening_in      AS last_opening,
+        gr.overpour_ft     AS last_overpour,
+        gr.flow_cfs        AS last_flow,
+        gr.reading_date    AS last_gate_date
+      FROM pond_locations pl
+      JOIN ponds p ON p.location_id = pl.location_id
+      LEFT JOIN LATERAL (
+        SELECT reading_id, level_ft, reading_date
+        FROM readings_staff_gauge
+        WHERE pond_id = p.pond_id
+        ORDER BY reading_date DESC, reading_time DESC
+        LIMIT 1
+      ) sg ON true
+      LEFT JOIN pond_connections pc ON pc.pond_id = p.pond_id AND pc.active = true
+      LEFT JOIN pond_gates pg ON pg.connection_id = pc.connection_id AND pg.active = true
+      LEFT JOIN LATERAL (
+        SELECT reading_id, head_ft, opening_in, overpour_ft, flow_cfs, reading_date
+        FROM readings_pond_gates
+        WHERE gate_id = pg.gate_id
+        ORDER BY reading_date DESC, reading_time DESC
+        LIMIT 1
+      ) gr ON pg.gate_id IS NOT NULL
+      ORDER BY pl.sort_order, p.sort_order, pc.sort_order, pg.sort_order
+    `);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/readings/staff-gauge', requireAuth, async (req, res) => {
+  const { pond_id, reading_date, reading_time, level_ft, notes } = req.body;
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO readings_staff_gauge
+         (pond_id, reading_date, reading_time, level_ft, entered_by, notes)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING reading_id`,
+      [pond_id, reading_date, reading_time || null, level_ft,
+       req.user.username, notes || null]
+    );
+    res.json({ ok: true, reading_id: rows[0].reading_id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/readings/pond-gate', requireAuth, async (req, res) => {
+  const { gate_id, reading_date, reading_time, head_ft, opening_in, overpour_ft, flow_cfs, notes } = req.body;
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO readings_pond_gates
+         (gate_id, reading_date, reading_time, head_ft, opening_in, overpour_ft, flow_cfs, entered_by, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING reading_id`,
+      [gate_id, reading_date, reading_time || null, head_ft ?? null,
+       opening_in ?? null, overpour_ft ?? null, flow_cfs ?? null,
+       req.user.username, notes || null]
+    );
+    res.json({ ok: true, reading_id: rows[0].reading_id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/readings/staff-gauge/:id', requireAuth, (req, res) =>
+  deleteReading(req, res, 'readings_staff_gauge', 'reading_id'));
+
+app.delete('/api/readings/pond-gate/:id', requireAuth, (req, res) =>
+  deleteReading(req, res, 'readings_pond_gates', 'reading_id'));
+
 // ── Reading History ────────────────────────────────────────────────────────────
 app.get('/api/history', requireAuth, async (req, res) => {
   const { type, id } = req.query;
@@ -1140,6 +1306,18 @@ app.get('/api/history', requireAuth, async (req, res) => {
                 operator AS entered_by, notes
          FROM readings_piezometers WHERE piezometer_id = $1
          ORDER BY reading_date DESC, reading_time DESC LIMIT $2`, [id, LIMIT]));
+    } else if (type === 'staff-gauge') {
+      ({ rows } = await pool.query(
+        `SELECT reading_id AS id, reading_date, reading_time,
+                level_ft AS value, entered_by, notes
+         FROM readings_staff_gauge WHERE pond_id = $1
+         ORDER BY reading_date DESC, reading_time DESC LIMIT $2`, [id, LIMIT]));
+    } else if (type === 'pond-gate') {
+      ({ rows } = await pool.query(
+        `SELECT reading_id AS id, reading_date, reading_time,
+                head_ft, opening_in, overpour_ft, flow_cfs, entered_by, notes
+         FROM readings_pond_gates WHERE gate_id = $1
+         ORDER BY reading_date DESC, reading_time DESC LIMIT $2`, [id, LIMIT]));
     } else {
       return res.status(400).json({ error: 'unknown type' });
     }
@@ -1161,8 +1339,10 @@ app.delete('/api/history/:type/:id', requireAuth, async (req, res) => {
     kf:         { table: 'readings_kf_monthly',       pk: 'kf_reading_id' },
     canal:      { table: 'readings_canal',            pk: 'reading_id' },
     vehicle:    { table: 'readings_vehicle_monthly',  pk: 'reading_id' },
-    dwr:        { table: 'readings_run_dwr',          pk: 'reading_id' },
-    piezometer: { table: 'readings_piezometers',      pk: 'piezometer_reading_id' },
+    dwr:          { table: 'readings_run_dwr',          pk: 'reading_id' },
+    piezometer:   { table: 'readings_piezometers',      pk: 'piezometer_reading_id' },
+    'staff-gauge':{ table: 'readings_staff_gauge',      pk: 'reading_id' },
+    'pond-gate':  { table: 'readings_pond_gates',       pk: 'reading_id' },
   };
   const map = TABLE_MAP[type];
   if (!map) return res.status(400).json({ error: 'unknown type' });
