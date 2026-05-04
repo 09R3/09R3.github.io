@@ -2,11 +2,11 @@
 
 ## Project Context
 
-### WaterMark (`field-ops/`)
+### WaterMark (`watermark/`)
 A mobile-friendly form app used by field operators to take readings and report
 issues found in the field. Readings are saved into a PostgreSQL database.
 
-### FieldView (`fieldview/`)
+### FieldView (`water-ops-viewer/`)
 A database viewer used to access, organize, sort, and analyze the data entered
 by field operators. Includes report generation and CSV/Excel/PDF export.
 
@@ -28,16 +28,16 @@ If any deploy.sh files are updated remind me to update the one on the server.
 
 ## Branch Strategy
 
-- **fieldview** changes → branch `Fieldview-beta`
-- **field-ops** changes → branch `Watermark-beta`
+- **water-ops-viewer** changes → branch `Fieldview-beta`
+- **watermark** changes → branch `Watermark-beta`
 - Never push directly to `main` or `Fieldview`
 
 ---
 
 ## Version Bumping
 
-**Whenever changes are made to files inside `fieldview/`**, bump the
-patch version in `fieldview/package.json` before committing.
+**Whenever changes are made to files inside `water-ops-viewer/`**, bump the
+patch version in `water-ops-viewer/package.json` before committing.
 
 Use semantic versioning — patch for fixes/small changes, minor for new features:
 - Bug fix or tweak → `1.1.0` → `1.1.1`
@@ -46,9 +46,9 @@ Use semantic versioning — patch for fixes/small changes, minor for new feature
 The version is displayed in the app UI (sidebar footer) and read from
 `package.json` via the `/api/version` endpoint — no other files need updating.
 
-**Whenever changes are made to files inside `field-ops/`**, bump the version in
-both `field-ops/public/index.html` (two places: login footer and settings row)
-and `field-ops/public/sw.js` (cache name) before committing.
+**Whenever changes are made to files inside `watermark/`**, bump the version in
+both `watermark/public/index.html` (two places: login footer and settings row)
+and `watermark/public/sw.js` (cache name) before committing.
 
 Use simple incrementing minor versions — bump for any change:
 - Any fix or feature → `v 1.26` → `v 1.27`
@@ -58,7 +58,7 @@ invalidation, so it must always be updated alongside `index.html`.
 
 ## Field Ops UI/UX Standards
 
-These standards apply to all current and future work on `field-ops/`. When
+These standards apply to all current and future work on `watermark/`. When
 adding new screens or features, match the patterns below. When fixing bugs,
 bring the affected area into compliance if it isn't already.
 
@@ -245,6 +245,11 @@ pesticides                pesticide_id(PK), name, epa_reg_number, unit_of_measur
 piezometers               piezometer_id(PK), piezometer_name, pool, sort_order, max_depth, status, gps_latitude, gps_longitude, notes, original_name
 pge_meters                pge_meter_id(PK), building_id(→buildings), meter_name, meter_number, account_number, utility_provider, notes
 pm_records                pm_id(PK), pm_type, building, completed_date, completed_time, completed_by(→users), checklist(jsonb), notes, created_at
+pond_connections          connection_id(PK), pond_id(→ponds), name, source_type, source_canal_id(→canal_structures), sort_order, active, notes
+pond_gates                gate_id(PK), connection_id(→pond_connections), label, gate_type, width_in, sort_order, active, notes
+pond_locations            location_id(PK), name, sort_order
+pond_points               point_id(PK), pond_id(→ponds), name, point_order, geom(GEOMETRY Point 4326)
+ponds                     pond_id(PK), location_id(→pond_locations), name, sort_order, notes
 power_monitors            monitor_id(PK), building_id(→buildings), monitor_number, manufacturer, ip_address, notes
 pump_positions            position_id(PK,text), site_id(→sites), building_id(→buildings), pump_letter, rated_hp, current_motor_id, current_pump_unit_id, status, notes
 pump_units                pump_unit_id(PK), serial_number, manufacturer, model_number, rated_hp, frame_type, forward_flow_rating, reverse_flow_rating, install_date_current, current_location, status, notes
@@ -253,9 +258,11 @@ readings_compressor_hours reading_id(PK), compressor_id(→air_compressors), rea
 readings_kf_monthly       kf_reading_id(PK), well_id(→wells), reading_date, reading_time, dtw_reading, operator, plopper_sounder, well_on_off, notes, common_name
 readings_pge_meters       reading_id(PK), pge_meter_id(→pge_meters), reading_date, reading_time, kwh_reading, entered_by, notes
 readings_piezometers      piezometer_reading_id(PK), piezometer_id(→piezometers), reading_date, reading_time, dtw_reading, operator, plopper_sounder, wet_dry_moist, notes
+readings_pond_gates       reading_id(PK), gate_id(→pond_gates), reading_date, reading_time, head_ft, opening_in, overpour_in, flow_cfs, entered_by, notes, created_at
 readings_power_monitors   reading_id(PK), monitor_id(→power_monitors), reading_date, reading_time, kwh_reading, entered_by, notes
 readings_pump_hours       reading_id(PK), position_id(→pump_positions), reading_date, reading_time, hour_reading, entered_by, notes
 readings_run_dwr          reading_id(PK), well_id(→wells), reading_date, reading_time, depth_to_water, method, operator, no_measurement(text[]), questionable_measurement(text[]), notes, entered_by, created_at
+readings_staff_gauge      reading_id(PK), pond_id(→ponds), reading_date, reading_time, level_ft, entered_by, notes, created_at
 readings_vehicle_monthly  reading_id(PK), vehicle_id(→vehicles), vehicle_number, reading_date, reading_time, entered_by, odometer_miles, engine_hours, notes
 readings_well             reading_id(PK), well_id(→wells), common_name, reading_date, reading_time, on_off, hour_reading, flow_cfs, totalizer, motor_oil, dripper_oil, pge_kwh, entered_by, notes
 scada_equipment           scada_id(PK), building_id(→buildings), equipment_number, equipment_name, manufacturer, ip_address, notes
