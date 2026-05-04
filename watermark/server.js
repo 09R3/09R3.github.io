@@ -1177,6 +1177,7 @@ app.get('/api/ponds', requireAuth, async (req, res) => {
         sg.reading_id      AS last_gauge_id,
         sg.level_ft        AS last_gauge_level,
         sg.reading_date    AS last_gauge_date,
+        sg_prev.level_ft   AS prev_gauge_level,
         pc.connection_id,
         pc.name            AS connection_name,
         pc.sort_order      AS connection_sort,
@@ -1191,7 +1192,8 @@ app.get('/api/ponds', requireAuth, async (req, res) => {
         gr.opening_in      AS last_opening,
         gr.overpour_in     AS last_overpour,
         gr.flow_cfs        AS last_flow,
-        gr.reading_date    AS last_gate_date
+        gr.reading_date    AS last_gate_date,
+        gr_prev.flow_cfs   AS prev_flow
       FROM pond_locations pl
       JOIN ponds p ON p.location_id = pl.location_id
       LEFT JOIN LATERAL (
@@ -1201,6 +1203,13 @@ app.get('/api/ponds', requireAuth, async (req, res) => {
         ORDER BY reading_date DESC, reading_time DESC
         LIMIT 1
       ) sg ON true
+      LEFT JOIN LATERAL (
+        SELECT level_ft
+        FROM readings_staff_gauge
+        WHERE pond_id = p.pond_id
+        ORDER BY reading_date DESC, reading_time DESC
+        OFFSET 1 LIMIT 1
+      ) sg_prev ON true
       LEFT JOIN pond_connections pc ON pc.pond_id = p.pond_id AND pc.active = true
       LEFT JOIN pond_gates pg ON pg.connection_id = pc.connection_id AND pg.active = true
       LEFT JOIN LATERAL (
@@ -1210,6 +1219,13 @@ app.get('/api/ponds', requireAuth, async (req, res) => {
         ORDER BY reading_date DESC, reading_time DESC
         LIMIT 1
       ) gr ON pg.gate_id IS NOT NULL
+      LEFT JOIN LATERAL (
+        SELECT flow_cfs
+        FROM readings_pond_gates
+        WHERE gate_id = pg.gate_id
+        ORDER BY reading_date DESC, reading_time DESC
+        OFFSET 1 LIMIT 1
+      ) gr_prev ON pg.gate_id IS NOT NULL
       ORDER BY pl.sort_order, p.sort_order, pc.sort_order, pg.sort_order
     `);
     res.json(rows);

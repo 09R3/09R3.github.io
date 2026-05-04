@@ -81,6 +81,9 @@
       color: var(--accent);
       font-variant-numeric: tabular-nums;
     }
+    .pond-delta { font-size: 0.75rem; font-weight: 700; margin-left: 2px; }
+    .delta-up   { color: #4caf50; }
+    .delta-dn   { color: #ef5350; }
   </style>
 </head>
 <body>
@@ -109,7 +112,7 @@
         <div id="login-error" class="error-msg hidden"></div>
         <button type="submit" class="btn btn-primary btn-full">Sign In</button>
       </form>
-      <div class="login-version">v 1.51</div>
+      <div class="login-version">v 1.52</div>
     </div>
   </div>
 </div>
@@ -1475,7 +1478,7 @@
     <div id="settings-panel-appinfo" class="settings-panel hidden">
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 1.51</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 1.52</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>
@@ -2040,13 +2043,14 @@
 
 <!-- Location Modal -->
 <div id="location-modal" class="modal-overlay hidden">
-  <div class="modal-card" style="max-width:300px">
+  <div class="modal-card" style="max-width:400px;width:calc(100vw - 32px)">
     <div class="modal-header">
       <h2 id="location-modal-name">Location</h2>
       <button class="modal-close" id="location-modal-close">&times;</button>
     </div>
-    <div class="modal-body" style="text-align:center">
-      <div id="location-modal-coords" style="font-size:0.85rem;color:var(--text-dim);margin-bottom:16px"></div>
+    <div id="location-modal-map" style="height:220px;border-radius:8px;margin-bottom:10px;overflow:hidden;background:var(--surface2)"></div>
+    <div class="modal-body" style="text-align:center;padding-top:0">
+      <div id="location-modal-coords" style="font-size:0.85rem;color:var(--text-dim);margin-bottom:12px"></div>
       <button class="btn btn-primary btn-full" id="location-modal-open-btn"><span class="app-icon" style="width:16px;height:16px;-webkit-mask-image:url(/marv-site/icons/icon-map-pin.svg);mask-image:url(/marv-site/icons/icon-map-pin.svg)"></span> Open in Maps</button>
     </div>
   </div>
@@ -2081,19 +2085,6 @@
   </div>
 </div>
 
-<!-- Location Modal -->
-<div id="location-modal" class="modal-overlay hidden">
-  <div class="modal-card" style="max-width:300px">
-    <div class="modal-header">
-      <h2 id="location-modal-name">Location</h2>
-      <button class="modal-close" id="location-modal-close">&times;</button>
-    </div>
-    <div class="modal-body" style="text-align:center">
-      <div id="location-modal-coords" style="font-size:0.85rem;color:var(--text-dim);margin-bottom:16px"></div>
-      <a id="location-modal-link" class="btn btn-primary btn-full" target="_blank" rel="noopener"><span class="app-icon" style="width:16px;height:16px;-webkit-mask-image:url(/marv-site/icons/icon-map-pin.svg);mask-image:url(/marv-site/icons/icon-map-pin.svg)"></span> Open in Maps</a>
-    </div>
-  </div>
-</div>
 
 <!-- Maintenance History Modal -->
 <div id="maint-history-modal" class="modal-overlay hidden">
