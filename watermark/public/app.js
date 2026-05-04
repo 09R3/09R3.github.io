@@ -8341,7 +8341,7 @@ function buildGaugeForm(pond, dateInput, timeInput, cardEl) {
       <input type="number" class="rr-input pg-gauge-level" step="0.01" placeholder="—" inputmode="decimal">
       <span class="pg-gauge-delta live-delta"></span>
     </div>
-    <div class="rr-notes-wrap" style="align-items:center">
+    <div class="rr-notes-wrap" style="align-items:flex-start;padding-top:18px">
       <textarea class="rr-notes-input pg-gauge-notes" rows="1" placeholder="Notes…"></textarea>
       <button class="btn btn-secondary btn-sm" title="History" style="flex-shrink:0">${icon('history')}</button>
       <button class="btn btn-save btn-sm pg-gauge-save" style="flex-shrink:0">Save</button>
@@ -8441,21 +8441,24 @@ function buildGateRow(gate, dateInput, timeInput, cardEl) {
     <div class="rr-field-group" style="width:62px">
       <span class="rr-col-hd">Head (ft)</span>
       <input type="number" class="rr-input pg-head" step="0.01" placeholder="—" inputmode="decimal">
+      <span class="pg-head-delta live-delta"></span>
     </div>
     <div class="rr-field-group" style="width:72px">
       <span class="rr-col-hd">Opening (in)</span>
       <input type="number" class="rr-input pg-opening" step="0.1" placeholder="—" inputmode="decimal">
+      <span class="pg-opening-delta live-delta"></span>
     </div>` : `
     <div class="rr-field-group" style="width:82px">
       <span class="rr-col-hd">Overpour (in)</span>
       <input type="number" class="rr-input pg-overpour" step="0.01" placeholder="—" inputmode="decimal">
+      <span class="pg-overpour-delta live-delta"></span>
     </div>`}
     <div class="rr-field-group" style="width:84px">
       <span class="rr-col-hd">Flow (cfs)</span>
       <input type="number" class="rr-input pg-flow" step="0.01" placeholder="—" inputmode="decimal">
       <span class="pg-flow-delta live-delta"></span>
     </div>
-    <div class="rr-notes-wrap" style="align-items:center">
+    <div class="rr-notes-wrap" style="align-items:flex-start;padding-top:18px">
       <textarea class="rr-notes-input pg-gate-notes" rows="1" placeholder="Notes…"></textarea>
       <button class="btn btn-secondary btn-sm" title="History" style="flex-shrink:0">${icon('history')}</button>
       <button class="btn btn-save btn-sm pg-gate-save" style="flex-shrink:0">Save</button>
@@ -8475,20 +8478,31 @@ function buildGateRow(gate, dateInput, timeInput, cardEl) {
   const notesInput    = row.querySelector('.pg-gate-notes');
   const saveBtn       = row.querySelector('.pg-gate-save');
 
-  // Track last saved flow for live delta comparisons
+  // Dataset refs for live delta comparisons
+  if (headInput)     headInput.dataset.savedHead         = gate.last_head     ?? '';
+  if (openingInput)  openingInput.dataset.savedOpening   = gate.last_opening  ?? '';
+  if (overpourInput) overpourInput.dataset.savedOverpour = gate.last_overpour ?? '';
   flowInput.dataset.savedFlow = gate.last_flow ?? '';
-  const flowDeltaEl = row.querySelector('.pg-flow-delta');
+
+  const headDeltaEl     = row.querySelector('.pg-head-delta');
+  const openingDeltaEl  = row.querySelector('.pg-opening-delta');
+  const overpourDeltaEl = row.querySelector('.pg-overpour-delta');
+  const flowDeltaEl     = row.querySelector('.pg-flow-delta');
+
+  function liveDelta(el, val, savedKey, inp) {
+    if (!el || !inp) return;
+    const v = parseFloat(val), ref = parseFloat(inp.dataset[savedKey] ?? '');
+    el.innerHTML = (!isNaN(v) && !isNaN(ref)) ? pondDelta(v, ref).trim() : '';
+  }
 
   function updateFlowDelta() {
-    const v   = parseFloat(flowInput.value);
-    const ref = parseFloat(flowInput.dataset.savedFlow);
-    flowDeltaEl.innerHTML = (!isNaN(v) && !isNaN(ref)) ? pondDelta(v, ref).trim() : '';
+    liveDelta(flowDeltaEl, flowInput.value, 'savedFlow', flowInput);
   }
 
   function calcFlow() {
     let q = null;
     if (isWeir) {
-      const ov = parseFloat(overpourInput?.value); // inches
+      const ov = parseFloat(overpourInput?.value);
       if (!isNaN(ov) && ov > 0 && gate.width_in > 0)
         q = 3.996 * (gate.width_in / 12) * Math.pow(ov / 12, 1.5);
     } else {
@@ -8502,9 +8516,18 @@ function buildGateRow(gate, dateInput, timeInput, cardEl) {
     updateFlowDelta();
   }
 
-  headInput?.addEventListener('input', calcFlow);
-  openingInput?.addEventListener('input', calcFlow);
-  overpourInput?.addEventListener('input', calcFlow);
+  headInput?.addEventListener('input', () => {
+    calcFlow();
+    liveDelta(headDeltaEl, headInput.value, 'savedHead', headInput);
+  });
+  openingInput?.addEventListener('input', () => {
+    calcFlow();
+    liveDelta(openingDeltaEl, openingInput.value, 'savedOpening', openingInput);
+  });
+  overpourInput?.addEventListener('input', () => {
+    calcFlow();
+    liveDelta(overpourDeltaEl, overpourInput.value, 'savedOverpour', overpourInput);
+  });
   flowInput?.addEventListener('input', () => { updatePondTotal(cardEl); updateFlowDelta(); });
 
   row.querySelector('.btn-secondary').addEventListener('click', () =>
@@ -8531,8 +8554,14 @@ function buildGateRow(gate, dateInput, timeInput, cardEl) {
       });
       saveBtn.textContent = 'Saved ✓';
       saveBtn.disabled = false;
-      // Update reference flow for live delta; clear delta span (diff now = 0)
+      // Update all saved refs and clear delta spans
+      if (headInput)     headInput.dataset.savedHead         = isNaN(h)  ? '' : h;
+      if (openingInput)  openingInput.dataset.savedOpening   = isNaN(o)  ? '' : o;
+      if (overpourInput) overpourInput.dataset.savedOverpour = isNaN(ov) ? '' : ov;
       flowInput.dataset.savedFlow = isNaN(fl) ? '' : fl;
+      if (headDeltaEl)     headDeltaEl.innerHTML     = '';
+      if (openingDeltaEl)  openingDeltaEl.innerHTML  = '';
+      if (overpourDeltaEl) overpourDeltaEl.innerHTML = '';
       flowDeltaEl.innerHTML = '';
       updatePondTotal(cardEl);
       // Update prev hint in label
