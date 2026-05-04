@@ -8196,7 +8196,6 @@ async function initPondsScreen() {
           pond_id: row.pond_id, name: row.pond_name, sort: row.pond_sort,
           last_gauge_level: row.last_gauge_level,
           last_gauge_date:  row.last_gauge_date,
-          prev_gauge_level: row.prev_gauge_level,
           connections: new Map(),
         });
       }
@@ -8221,7 +8220,6 @@ async function initPondsScreen() {
             last_opening: row.last_opening,
             last_overpour:row.last_overpour,
             last_flow:    row.last_flow,
-            prev_flow:    row.prev_flow,
             last_date:    row.last_gate_date,
           });
         }
@@ -8265,17 +8263,16 @@ function createPondCard(pond, dateInput, timeInput) {
   const badgeClass  = !statusDate ? 'default' : (statusDate === today ? 'ok' : 'due');
   const badgeText   = !statusDate ? 'Not read' : (statusDate === today ? 'Today' : fmtDate(statusDate));
 
-  // Gauge hint — always shown with delta vs previous reading
+  // Gauge hint — always shown; falls back to dash when no reading yet
   const gaugeLevel = pond.last_gauge_level;
   const gaugeDate  = pond.last_gauge_date ? String(pond.last_gauge_date).slice(0, 10) : null;
   const gaugeHint  = gaugeLevel != null
-    ? `Staff: ${Number(gaugeLevel).toFixed(2)} ft${pondDelta(gaugeLevel, pond.prev_gauge_level)} · ${gaugeDate ? fmtDate(gaugeDate) : 'Today'}`
+    ? `Staff: ${Number(gaugeLevel).toFixed(2)} ft · ${gaugeDate ? fmtDate(gaugeDate) : 'Today'}`
     : 'Staff: —';
 
   const div = document.createElement('div');
   div.className = 'list-item';
-  div.dataset.curGaugeLevel  = pond.last_gauge_level  ?? '';
-  div.dataset.prevGaugeLevel = pond.prev_gauge_level ?? '';
+  div.dataset.curGaugeLevel = pond.last_gauge_level ?? '';
   const mapPinSvg = `<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>`;
 
   div.innerHTML = `
@@ -8342,6 +8339,7 @@ function buildGaugeForm(pond, dateInput, timeInput, cardEl) {
     <div class="rr-field-group" style="width:72px">
       <span class="rr-col-hd">Level (ft)</span>
       <input type="number" class="rr-input pg-gauge-level" step="0.01" placeholder="—" inputmode="decimal">
+      <span class="pg-gauge-delta live-delta"></span>
     </div>
     <div class="rr-notes-wrap" style="align-items:center">
       <textarea class="rr-notes-input pg-gauge-notes" rows="1" placeholder="Notes…"></textarea>
@@ -8356,8 +8354,15 @@ function buildGaugeForm(pond, dateInput, timeInput, cardEl) {
   wrap.appendChild(row);
   wrap.appendChild(errDiv);
 
-  const levelInput = row.querySelector('.pg-gauge-level');
-  const notesInput = row.querySelector('.pg-gauge-notes');
+  const levelInput  = row.querySelector('.pg-gauge-level');
+  const gaugeDeltaEl = row.querySelector('.pg-gauge-delta');
+  const notesInput  = row.querySelector('.pg-gauge-notes');
+
+  levelInput.addEventListener('input', () => {
+    const v   = parseFloat(levelInput.value);
+    const ref = parseFloat(cardEl.dataset.curGaugeLevel);
+    gaugeDeltaEl.innerHTML = (!isNaN(v) && !isNaN(ref)) ? pondDelta(v, ref).trim() : '';
+  });
   const saveBtn    = row.querySelector('.pg-gauge-save');
 
   row.querySelector('.btn-secondary').addEventListener('click', () =>
@@ -8383,18 +8388,17 @@ function buildGaugeForm(pond, dateInput, timeInput, cardEl) {
       });
       saveBtn.textContent = 'Saved ✓';
       saveBtn.disabled = false;
-      // Shift tracking: old current becomes prev, new level becomes current
-      const oldLevel = parseFloat(cardEl.dataset.curGaugeLevel);
-      cardEl.dataset.prevGaugeLevel = isNaN(oldLevel) ? '' : oldLevel;
-      cardEl.dataset.curGaugeLevel  = level;
-      // Update gauge hint with new delta
+      // Update reference level for future live-delta comparisons
+      cardEl.dataset.curGaugeLevel = level;
+      gaugeDeltaEl.innerHTML = ''; // delta is 0 after save
+      // Update the gauge hint on the card header
       const hint = cardEl.querySelector('.pond-gauge-hint');
-      const hintHTML = `Staff: ${level.toFixed(2)} ft${pondDelta(level, isNaN(oldLevel) ? null : oldLevel)} · Today`;
-      if (hint) hint.innerHTML = hintHTML;
+      const hintText = `Staff: ${level.toFixed(2)} ft · Today`;
+      if (hint) hint.textContent = hintText;
       else {
         const s = document.createElement('span');
         s.className = 'pond-gauge-hint';
-        s.innerHTML = hintHTML;
+        s.textContent = hintText;
         cardEl.querySelector('.list-item-name').after(s);
       }
       updatePondBadge(cardEl, 'Today');
@@ -8415,9 +8419,8 @@ function buildGateRow(gate, dateInput, timeInput, cardEl) {
   const prevDate = gate.last_date ? String(gate.last_date).slice(0, 10) : null;
   const lastFlow = gate.last_flow != null ? Number(gate.last_flow) : null;
   const isToday  = prevDate === today;
-  const flowDeltaHtml = pondDelta(lastFlow, gate.prev_flow != null ? Number(gate.prev_flow) : null);
   const prevHint = lastFlow != null
-    ? `${lastFlow.toFixed(2)} cfs${flowDeltaHtml} · ${isToday ? 'Today' : (prevDate ? fmtDate(prevDate) : '')}`
+    ? `${lastFlow.toFixed(2)} cfs · ${isToday ? 'Today' : (prevDate ? fmtDate(prevDate) : '')}`
     : (prevDate ? fmtDate(prevDate) : null);
 
   const wrap = document.createElement('div');
@@ -8450,6 +8453,7 @@ function buildGateRow(gate, dateInput, timeInput, cardEl) {
     <div class="rr-field-group" style="width:84px">
       <span class="rr-col-hd">Flow (cfs)</span>
       <input type="number" class="rr-input pg-flow" step="0.01" placeholder="—" inputmode="decimal">
+      <span class="pg-flow-delta live-delta"></span>
     </div>
     <div class="rr-notes-wrap" style="align-items:center">
       <textarea class="rr-notes-input pg-gate-notes" rows="1" placeholder="Notes…"></textarea>
@@ -8471,9 +8475,15 @@ function buildGateRow(gate, dateInput, timeInput, cardEl) {
   const notesInput    = row.querySelector('.pg-gate-notes');
   const saveBtn       = row.querySelector('.pg-gate-save');
 
-  // Track saved vs previous flow for delta display
+  // Track last saved flow for live delta comparisons
   flowInput.dataset.savedFlow = gate.last_flow ?? '';
-  flowInput.dataset.prevFlow  = gate.prev_flow  ?? '';
+  const flowDeltaEl = row.querySelector('.pg-flow-delta');
+
+  function updateFlowDelta() {
+    const v   = parseFloat(flowInput.value);
+    const ref = parseFloat(flowInput.dataset.savedFlow);
+    flowDeltaEl.innerHTML = (!isNaN(v) && !isNaN(ref)) ? pondDelta(v, ref).trim() : '';
+  }
 
   function calcFlow() {
     let q = null;
@@ -8489,12 +8499,13 @@ function buildGateRow(gate, dateInput, timeInput, cardEl) {
     }
     if (q !== null && flowInput) flowInput.value = q.toFixed(2);
     updatePondTotal(cardEl);
+    updateFlowDelta();
   }
 
   headInput?.addEventListener('input', calcFlow);
   openingInput?.addEventListener('input', calcFlow);
   overpourInput?.addEventListener('input', calcFlow);
-  flowInput?.addEventListener('input', () => updatePondTotal(cardEl));
+  flowInput?.addEventListener('input', () => { updatePondTotal(cardEl); updateFlowDelta(); });
 
   row.querySelector('.btn-secondary').addEventListener('click', () =>
     openHistoryModal('pond-gate', gate.gate_id, gate.label));
@@ -8520,18 +8531,16 @@ function buildGateRow(gate, dateInput, timeInput, cardEl) {
       });
       saveBtn.textContent = 'Saved ✓';
       saveBtn.disabled = false;
-      // Shift flow tracking: old saved becomes prev, new saved value = fl
-      const oldSaved = parseFloat(flowInput.dataset.savedFlow);
-      flowInput.dataset.prevFlow  = isNaN(oldSaved) ? '' : oldSaved;
+      // Update reference flow for live delta; clear delta span (diff now = 0)
       flowInput.dataset.savedFlow = isNaN(fl) ? '' : fl;
-      // Update prev hint in label with delta
+      flowDeltaEl.innerHTML = '';
+      updatePondTotal(cardEl);
+      // Update prev hint in label
       const label = row.querySelector('.rr-label');
       const existingDate = label.querySelector('.prev-date:not([style*="italic"])') || label.querySelector('.prev-date');
-      const delta = pondDelta(isNaN(fl) ? null : fl, isNaN(oldSaved) ? null : oldSaved);
-      const flowHTML = fl != null ? `${fl.toFixed(2)} cfs${delta} · Today` : 'Today';
-      if (existingDate) existingDate.innerHTML = flowHTML;
-      else label.insertAdjacentHTML('beforeend', `<div class="prev-date">${flowHTML}</div>`);
-      updatePondTotal(cardEl);
+      const flowText = fl != null ? `${fl.toFixed(2)} cfs · Today` : 'Today';
+      if (existingDate) existingDate.textContent = flowText;
+      else label.insertAdjacentHTML('beforeend', `<div class="prev-date">${flowText}</div>`);
       updatePondBadge(cardEl, 'Today');
       showToast(`${gate.label} saved`, 'success');
     } catch (err) {
@@ -8548,18 +8557,18 @@ function buildGateRow(gate, dateInput, timeInput, cardEl) {
 function updatePondTotal(cardEl) {
   const totalEl = cardEl.querySelector('.pond-total-cfs');
   if (!totalEl) return;
-  let total = 0, savedSum = 0, prevSum = 0;
-  let hasAny = false, hasSaved = false, hasPrev = false;
+  let liveTotal = 0, savedForTyped = 0, hasAny = false, hasSaved = false;
   cardEl.querySelectorAll('.pg-flow').forEach(inp => {
     const v = parseFloat(inp.value);
-    if (!isNaN(v)) { total += v; hasAny = true; }
-    const s = parseFloat(inp.dataset.savedFlow ?? '');
-    const p = parseFloat(inp.dataset.prevFlow  ?? '');
-    if (!isNaN(s)) { savedSum += s; hasSaved = true; }
-    if (!isNaN(p)) { prevSum  += p; hasPrev  = true; }
+    if (!isNaN(v)) {
+      liveTotal += v;
+      hasAny = true;
+      const s = parseFloat(inp.dataset.savedFlow ?? '');
+      if (!isNaN(s)) { savedForTyped += s; hasSaved = true; }
+    }
   });
-  const deltaHtml = (hasSaved && hasPrev) ? pondDelta(savedSum, prevSum) : '';
-  totalEl.innerHTML = (hasAny ? total.toFixed(2) + ' cfs' : '—') + deltaHtml;
+  const deltaHtml = (hasAny && hasSaved) ? pondDelta(liveTotal, savedForTyped).trim() : '';
+  totalEl.innerHTML = hasAny ? `${liveTotal.toFixed(2)} cfs ${deltaHtml}` : '—';
 }
 
 function updatePondBadge(cardEl, text) {
