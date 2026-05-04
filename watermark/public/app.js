@@ -8341,7 +8341,7 @@ function buildGaugeForm(pond, dateInput, timeInput, cardEl) {
       <input type="number" class="rr-input pg-gauge-level" step="0.01" placeholder="—" inputmode="decimal">
       <span class="pg-gauge-delta live-delta"></span>
     </div>
-    <div class="rr-notes-wrap" style="align-items:flex-start;padding-top:18px">
+    <div class="rr-notes-wrap" style="padding-bottom:13px">
       <textarea class="rr-notes-input pg-gauge-notes" rows="1" placeholder="Notes…"></textarea>
       <button class="btn btn-secondary btn-sm" title="History" style="flex-shrink:0">${icon('history')}</button>
       <button class="btn btn-save btn-sm pg-gauge-save" style="flex-shrink:0">Save</button>
@@ -8458,7 +8458,7 @@ function buildGateRow(gate, dateInput, timeInput, cardEl) {
       <input type="number" class="rr-input pg-flow" step="0.01" placeholder="—" inputmode="decimal">
       <span class="pg-flow-delta live-delta"></span>
     </div>
-    <div class="rr-notes-wrap" style="align-items:flex-start;padding-top:18px">
+    <div class="rr-notes-wrap" style="padding-bottom:13px">
       <textarea class="rr-notes-input pg-gate-notes" rows="1" placeholder="Notes…"></textarea>
       <button class="btn btn-secondary btn-sm" title="History" style="flex-shrink:0">${icon('history')}</button>
       <button class="btn btn-save btn-sm pg-gate-save" style="flex-shrink:0">Save</button>
