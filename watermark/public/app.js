@@ -1580,11 +1580,13 @@ function createVehicleItem(v, dateInput, timeInput) {
   const odoField = `<div class="form-group">
     <label>Odometer (mi)${lastOdo ? `<span class="prev-hint"> · Prev: ${lastOdo}</span>` : ''}</label>
     <input type="number" class="ctrl-input v-odo" step="1" placeholder="0">
+    <span class="v-odo-delta" style="display:block;font-size:0.75rem;font-weight:700;min-height:16px;margin-top:2px"></span>
     <div class="v-service-hint hidden"></div>
   </div>`;
   const hrsField = `<div class="form-group">
     <label>Engine Hours${lastHrs ? `<span class="prev-hint"> · Prev: ${lastHrs}</span>` : ''}</label>
     <input type="number" class="ctrl-input v-hrs" step="0.1" placeholder="0.0">
+    <span class="v-hrs-delta" style="display:block;font-size:0.75rem;font-weight:700;min-height:16px;margin-top:2px"></span>
     <div class="v-service-hrs-hint hidden"></div>
   </div>`;
   const fieldsHtml = (showOdo && showHrs)
@@ -1641,6 +1643,31 @@ function createVehicleItem(v, dateInput, timeInput) {
         ? `${Math.round(remaining).toLocaleString()} hrs until service (@ ${Number(v.next_service_hours).toLocaleString()} hrs)`
         : `${Math.abs(Math.round(remaining)).toLocaleString()} hrs overdue for service`;
       hint.className = 'v-service-hrs-hint ' + (remaining > 50 ? 'ok' : remaining >= 0 ? 'due' : 'overdue');
+    });
+  }
+
+  // Live delta: show difference from previous reading while typing
+  if (v.last_odometer != null) {
+    const odoDeltaEl = div.querySelector('.v-odo-delta');
+    div.querySelector('.v-odo')?.addEventListener('input', function() {
+      const cur = parseFloat(this.value), prev = Number(v.last_odometer);
+      if (isNaN(cur)) { odoDeltaEl.innerHTML = ''; return; }
+      const d = cur - prev;
+      if (Math.abs(d) < 0.5) { odoDeltaEl.innerHTML = ''; return; }
+      const up = d > 0;
+      odoDeltaEl.innerHTML = `<span class="${up ? 'delta-up' : 'delta-dn'}">${up ? '▲' : '▼'}${Math.abs(Math.round(d)).toLocaleString()} mi</span>`;
+    });
+  }
+
+  if (v.last_engine_hours != null) {
+    const hrsDeltaEl = div.querySelector('.v-hrs-delta');
+    div.querySelector('.v-hrs')?.addEventListener('input', function() {
+      const cur = parseFloat(this.value), prev = Number(v.last_engine_hours);
+      if (isNaN(cur)) { hrsDeltaEl.innerHTML = ''; return; }
+      const d = cur - prev;
+      if (Math.abs(d) < 0.05) { hrsDeltaEl.innerHTML = ''; return; }
+      const up = d > 0;
+      hrsDeltaEl.innerHTML = `<span class="${up ? 'delta-up' : 'delta-dn'}">${up ? '▲' : '▼'}${Math.abs(d).toFixed(1)} hrs</span>`;
     });
   }
 
