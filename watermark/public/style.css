@@ -2448,6 +2448,91 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
   line-height: 1.4;
 }
 
+/* ── Charts ──────────────────────────────────────────────────────────────── */
+.charts-tabs {
+  display: flex; gap: 0; margin-bottom: 16px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden;
+}
+.charts-tab-btn {
+  flex: 1; padding: 9px 0; border: none;
+  background: var(--surface2); color: var(--text-dim);
+  font-size: 0.9rem; cursor: pointer; transition: var(--transition);
+}
+.charts-tab-btn.active { background: var(--accent); color: #fff; }
+.charts-table-wrap {
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  overflow: auto; max-height: 60vh; -webkit-overflow-scrolling: touch;
+}
+.charts-table {
+  border-collapse: collapse; font-size: 0.75rem; white-space: nowrap;
+  font-variant-numeric: tabular-nums; width: 100%;
+}
+.charts-table th {
+  background: var(--surface2); color: var(--text-dim); font-weight: 600;
+  padding: 5px 8px; text-align: right;
+  border-bottom: 1px solid var(--border); border-right: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 1;
+}
+.charts-table th:first-child {
+  text-align: left; position: sticky; left: 0; z-index: 2;
+}
+.charts-table td {
+  padding: 4px 8px; text-align: right;
+  border-bottom: 1px solid rgba(37,53,72,0.5); border-right: 1px solid rgba(37,53,72,0.5);
+}
+.charts-table td:first-child {
+  font-weight: 600; color: var(--text-dim); text-align: left;
+  background: var(--surface); position: sticky; left: 0; z-index: 1;
+}
+.charts-table tr:nth-child(even) td { background: rgba(255,255,255,0.02); }
+.charts-table tr:nth-child(even) td:first-child { background: var(--surface2); }
+.charts-calc { padding: 4px 0; }
+.charts-field-row {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 14px;
+}
+.charts-field-row label { min-width: 70px; color: var(--text-dim); font-size: 0.85rem; }
+.charts-field-row input { width: 100px; }
+.charts-unit-label { color: var(--text-dim); font-size: 0.85rem; }
+.charts-input-with-unit { display: flex; align-items: center; gap: 6px; }
+.charts-result-area {
+  margin-top: 20px; text-align: center; padding: 16px;
+  background: var(--surface2); border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+}
+.charts-result-label {
+  font-size: 0.68rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--text-dim); margin-bottom: 6px;
+}
+.charts-result-value {
+  font-size: 2rem; font-weight: 700; font-variant-numeric: tabular-nums;
+  color: var(--accent);
+}
+.charts-result-unit { font-size: 0.9rem; color: var(--text-dim); margin-left: 4px; }
+.charts-derived {
+  font-size: 0.85rem; color: var(--text-dim); margin-bottom: 8px; min-height: 1.2em;
+}
+.charts-gate-grid {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 16px;
+}
+.charts-gate-col {
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: 10px 6px; text-align: center;
+}
+.charts-gate-col-header {
+  font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.05em; color: var(--text-dim); margin-bottom: 8px;
+  display: flex; align-items: center; justify-content: center; gap: 2px;
+}
+.charts-gate-col-header input {
+  width: 42px; text-align: center; padding: 2px 4px;
+  font-size: 0.75rem; min-height: 26px;
+}
+.charts-gate-q {
+  font-size: 1.1rem; font-weight: 700; font-variant-numeric: tabular-nums;
+  color: var(--accent); line-height: 1.2;
+}
+.charts-gate-q-unit { font-size: 0.65rem; color: var(--text-dim); margin-top: 2px; }
+
 /* ── Print ───────────────────────────────────────────────────────────────── */
 @media print {
   html, body, #app-shell {

@@ -55,6 +55,36 @@
         zoom: 0.78;
       }
     }
+
+    /* ── Ponds screen ─────────────────────────────────────────────────────── */
+    .pond-gauge-hint {
+      flex: 1;
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      padding: 0 4px;
+      min-width: 0;
+    }
+    .pond-total-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 6px 10px;
+      border-top: 1px solid var(--border);
+      font-size: 0.82rem;
+      color: var(--text-dim);
+      font-weight: 600;
+    }
+    .pond-total-cfs {
+      color: var(--accent);
+      font-variant-numeric: tabular-nums;
+    }
+    .pond-delta { font-size: 0.75rem; font-weight: 700; margin-left: 2px; }
+    .delta-up   { color: #4caf50; }
+    .delta-dn   { color: #ef5350; }
+    .live-delta { display:block; min-height:13px; text-align:center; line-height:13px; }
   </style>
 </head>
 <body>
@@ -83,7 +113,7 @@
         <div id="login-error" class="error-msg hidden"></div>
         <button type="submit" class="btn btn-primary btn-full">Sign In</button>
       </form>
-      <div class="login-version">v 1.45</div>
+      <div class="login-version">v 1.57</div>
     </div>
   </div>
 </div>
@@ -187,6 +217,10 @@
         <span class="nav-btn-icon"><span class="app-icon" style="width:22px;height:22px;-webkit-mask-image:url(/marv-site/icons/icon-well-runs.svg);mask-image:url(/marv-site/icons/icon-well-runs.svg)"></span></span>
         Well Runs
       </button></li>
+      <li><button class="nav-btn" data-screen="ponds">
+        <span class="nav-btn-icon"><span class="app-icon" style="width:22px;height:22px;-webkit-mask-image:url(/marv-site/icons/icon-canal.svg);mask-image:url(/marv-site/icons/icon-canal.svg)"></span></span>
+        Ponds
+      </button></li>
       <li class="drawer-section-hdr">Maintenance</li>
       <li><button class="nav-btn" data-screen="maintenance">
         <span class="nav-btn-icon"><span class="app-icon" style="width:22px;height:22px;-webkit-mask-image:url(/marv-site/icons/icon-maintenance.svg);mask-image:url(/marv-site/icons/icon-maintenance.svg)"></span></span>
@@ -204,6 +238,14 @@
       <li class="nav-item" id="nav-admin-item"><button class="nav-btn" data-screen="admin">
         <span class="nav-btn-icon"><span class="app-icon" style="width:22px;height:22px;-webkit-mask-image:url(/marv-site/icons/icon-settings.svg);mask-image:url(/marv-site/icons/icon-settings.svg)"></span></span>
         Settings
+      </button></li>
+      <li><button class="nav-btn" data-screen="hr">
+        <span class="nav-btn-icon"><span class="app-icon" style="width:22px;height:22px;-webkit-mask-image:url(/marv-site/icons/icon-pm-records.svg);mask-image:url(/marv-site/icons/icon-pm-records.svg)"></span></span>
+        HR
+      </button></li>
+      <li><button class="nav-btn" data-screen="charts">
+        <span class="nav-btn-icon"><span class="app-icon" style="width:22px;height:22px;-webkit-mask-image:url(/marv-site/icons/icon-usage.svg);mask-image:url(/marv-site/icons/icon-usage.svg)"></span></span>
+        Charts
       </button></li>
     </ul>
     <div class="drawer-footer">
@@ -328,6 +370,12 @@
           </div>
           <span class="dash-label">Well Runs</span>
         </button>
+        <button class="dash-tile" data-screen="ponds">
+          <div class="dash-icon-wrap">
+            <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-gauge.svg);mask-image:url(/marv-site/icons/icon-gauge.svg)"></span>
+          </div>
+          <span class="dash-label">Ponds</span>
+        </button>
       </div>
     </div>
 
@@ -364,6 +412,18 @@
             <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-settings.svg);mask-image:url(/marv-site/icons/icon-settings.svg)"></span>
           </div>
           <span class="dash-label">Settings</span>
+        </button>
+        <button class="dash-tile" id="dash-hr-tile" data-screen="hr">
+          <div class="dash-icon-wrap">
+            <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-pm-records.svg);mask-image:url(/marv-site/icons/icon-pm-records.svg)"></span>
+          </div>
+          <span class="dash-label">HR</span>
+        </button>
+        <button class="dash-tile" id="dash-charts-tile" data-screen="charts">
+          <div class="dash-icon-wrap">
+            <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-usage.svg);mask-image:url(/marv-site/icons/icon-usage.svg)"></span>
+          </div>
+          <span class="dash-label">Charts</span>
         </button>
       </div>
     </div>
@@ -407,6 +467,18 @@
       <input type="time" id="canal-time" class="ctrl-input ctrl-input-sm ctrl-time">
     </div>
     <div id="canal-list-body"><div class="placeholder-msg">Loading structures…</div></div>
+  </div>
+
+  <!-- ── Ponds ─────────────────────────────────────────────────────────────── -->
+  <div id="screen-ponds" class="screen-content">
+    <div class="date-bar">
+      <span class="ctrl-label">Date</span>
+      <input type="date" id="ponds-date" class="ctrl-input ctrl-input-sm ctrl-date">
+      <span class="ctrl-label">Time</span>
+      <input type="time" id="ponds-time" class="ctrl-input ctrl-input-sm ctrl-time">
+      <button class="btn btn-secondary btn-sm" id="pond-maps-btn" style="margin-left:auto">Pond Maps</button>
+    </div>
+    <div id="ponds-list-body"><div class="placeholder-msg">Loading…</div></div>
   </div>
 
   <!-- ── Vehicle Monthly ────────────────────────────────────────────────────── -->
@@ -1167,6 +1239,12 @@
         </div>
         <div class="dash-label">Canal Readings</div>
       </div>
+      <div class="dash-tile" data-report-cat="ponds">
+        <div class="dash-icon-wrap">
+          <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-gauge.svg);mask-image:url(/marv-site/icons/icon-gauge.svg)"></span>
+        </div>
+        <div class="dash-label">Pond Report</div>
+      </div>
     </div>
 
     <!-- Vehicles panel -->
@@ -1258,6 +1336,15 @@
         <input type="date" id="canal-report-end-date" class="ctrl-input ctrl-input-sm">
       </div>
       <div id="report-canal-output"></div>
+    </div>
+
+    <!-- Pond Report panel -->
+    <div id="report-panel-ponds" class="maint-panel hidden">
+      <div class="report-toolbar">
+        <input type="date" id="ponds-report-date" class="ctrl-input ctrl-input-sm">
+        <button class="btn btn-secondary btn-sm" id="ponds-report-print-btn" style="margin-left:auto">Print</button>
+      </div>
+      <div id="report-ponds-output"></div>
     </div>
 
   </div><!-- /screen-reports -->
@@ -1392,7 +1479,7 @@
     <div id="settings-panel-appinfo" class="settings-panel hidden">
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 1.45</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 1.57</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>
@@ -1591,6 +1678,331 @@
     </div>
   </div>
 
+  <!-- ── HR ───────────────────────────────────────────────────────────────── -->
+  <div id="screen-hr" class="screen-content">
+
+    <div id="hr-main">
+      <div class="dashboard-grid">
+        <button class="dash-tile" data-hr-panel="time-off">
+          <div class="dash-icon-wrap">
+            <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-annual-pm.svg);mask-image:url(/marv-site/icons/icon-annual-pm.svg)"></span>
+          </div>
+          <span class="dash-label">Time Off Request</span>
+        </button>
+      </div>
+    </div>
+
+    <div id="hr-panel-time-off" class="maint-panel hidden">
+      <div class="settings-section">
+        <div class="settings-card">
+          <div class="settings-pad">
+            <div class="two-col">
+              <div class="form-group">
+                <label>Start Date</label>
+                <input type="date" id="tor-start" class="ctrl-input ctrl-input-sm">
+              </div>
+              <div class="form-group">
+                <label>End Date</label>
+                <input type="date" id="tor-end" class="ctrl-input ctrl-input-sm">
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Hours Requested</label>
+              <input type="number" id="tor-hours" class="ctrl-input" min="0.5" step="0.5" placeholder="8">
+            </div>
+            <div class="form-group">
+              <label>Notes <span style="color:var(--text-dim);font-weight:400">(optional)</span></label>
+              <textarea id="tor-notes" class="ctrl-textarea" rows="3" placeholder="Add any additional details…"></textarea>
+            </div>
+            <div id="tor-error" class="error-msg hidden"></div>
+            <button class="btn btn-save" id="tor-submit-btn">Open in Email App</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /screen-hr -->
+
+  <!-- ── Charts ────────────────────────────────────────────────────────────── -->
+  <div id="screen-charts" class="screen-content">
+
+    <div id="charts-main">
+      <div class="dashboard-grid">
+        <button class="dash-tile" data-charts-panel="overpour">
+          <div class="dash-icon-wrap">
+            <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-weir.svg);mask-image:url(/marv-site/icons/icon-weir.svg)"></span>
+          </div>
+          <span class="dash-label">Overpour</span>
+        </button>
+        <button class="dash-tile" data-charts-panel="pressure">
+          <div class="dash-icon-wrap">
+            <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-pumping-plant.svg);mask-image:url(/marv-site/icons/icon-pumping-plant.svg)"></span>
+          </div>
+          <span class="dash-label">Pressure</span>
+        </button>
+        <button class="dash-tile" data-charts-panel="open-air">
+          <div class="dash-icon-wrap">
+            <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-air-compressor.svg);mask-image:url(/marv-site/icons/icon-air-compressor.svg)"></span>
+          </div>
+          <span class="dash-label">Open Air</span>
+        </button>
+        <button class="dash-tile" data-charts-panel="p11">
+          <div class="dash-icon-wrap">
+            <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-gate.svg);mask-image:url(/marv-site/icons/icon-gate.svg)"></span>
+          </div>
+          <span class="dash-label">P-11</span>
+        </button>
+        <button class="dash-tile" data-charts-panel="gate">
+          <div class="dash-icon-wrap">
+            <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-gate.svg);mask-image:url(/marv-site/icons/icon-gate.svg)"></span>
+          </div>
+          <span class="dash-label">Gate Discharge</span>
+        </button>
+        <button class="dash-tile" data-charts-panel="rrb">
+          <div class="dash-icon-wrap">
+            <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-weir.svg);mask-image:url(/marv-site/icons/icon-weir.svg)"></span>
+          </div>
+          <span class="dash-label">RRB T.O. 1 & 2</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Overpour panel -->
+    <div id="charts-panel-overpour" class="maint-panel hidden">
+      <div class="settings-section">
+        <div class="settings-card">
+          <div class="settings-pad">
+            <div class="charts-tabs">
+              <button class="charts-tab-btn active" id="overpour-tab-btn-table">Table</button>
+              <button class="charts-tab-btn" id="overpour-tab-btn-calc">Calculator</button>
+            </div>
+            <div id="overpour-tab-table">
+              <div class="charts-table-wrap" id="overpour-table-container"></div>
+            </div>
+            <div id="overpour-tab-calc" class="charts-calc" style="display:none">
+              <div class="charts-field-row">
+                <label>Width</label>
+                <input type="number" id="overpour-width" class="ctrl-input" min="1" step="1" placeholder="in">
+                <span class="charts-unit-label">in</span>
+              </div>
+              <div class="charts-field-row">
+                <label>Head</label>
+                <input type="number" id="overpour-head" class="ctrl-input" min="0.1" step="0.5" placeholder="in">
+                <span class="charts-unit-label">in</span>
+              </div>
+              <div class="charts-result-area">
+                <div class="charts-result-label">Flow Rate Q</div>
+                <div><span class="charts-result-value" id="overpour-result">—</span><span class="charts-result-unit">cfs</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Pressure panel -->
+    <div id="charts-panel-pressure" class="maint-panel hidden">
+      <div class="settings-section">
+        <div class="settings-card">
+          <div class="settings-pad">
+            <div class="two-col">
+              <div class="form-group">
+                <label>Head</label>
+                <div class="charts-input-with-unit">
+                  <input type="number" id="pres-head" class="ctrl-input" min="0" step="0.5" placeholder="inches">
+                  <span class="charts-unit-label">in</span>
+                </div>
+              </div>
+              <div class="form-group">
+                <label>Opening</label>
+                <div class="charts-input-with-unit">
+                  <input type="number" id="pres-opening" class="ctrl-input" min="0" step="0.5" placeholder="inches">
+                  <span class="charts-unit-label">in</span>
+                </div>
+              </div>
+            </div>
+            <div class="charts-gate-grid">
+              <div class="charts-gate-col">
+                <div class="charts-gate-col-header">54"</div>
+                <div class="charts-gate-q" id="pres-q0">—</div>
+                <div class="charts-gate-q-unit">cfs</div>
+              </div>
+              <div class="charts-gate-col">
+                <div class="charts-gate-col-header">55"</div>
+                <div class="charts-gate-q" id="pres-q1">—</div>
+                <div class="charts-gate-q-unit">cfs</div>
+              </div>
+              <div class="charts-gate-col">
+                <div class="charts-gate-col-header">56"</div>
+                <div class="charts-gate-q" id="pres-q2">—</div>
+                <div class="charts-gate-q-unit">cfs</div>
+              </div>
+              <div class="charts-gate-col">
+                <div class="charts-gate-col-header">
+                  <input type="number" id="pres-custom-width" class="ctrl-input ctrl-input-sm" min="1" step="1" placeholder="W">"
+                </div>
+                <div class="charts-gate-q" id="pres-qc">—</div>
+                <div class="charts-gate-q-unit">cfs</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Open Air panel -->
+    <div id="charts-panel-open-air" class="maint-panel hidden">
+      <div class="settings-section">
+        <div class="settings-card">
+          <div class="settings-pad">
+            <div class="two-col">
+              <div class="form-group">
+                <label>Head</label>
+                <div class="charts-input-with-unit">
+                  <input type="number" id="oa-head" class="ctrl-input" min="0" step="0.5" placeholder="inches">
+                  <span class="charts-unit-label">in</span>
+                </div>
+              </div>
+              <div class="form-group">
+                <label>Opening</label>
+                <div class="charts-input-with-unit">
+                  <input type="number" id="oa-opening" class="ctrl-input" min="0" step="0.5" placeholder="inches">
+                  <span class="charts-unit-label">in</span>
+                </div>
+              </div>
+            </div>
+            <div class="charts-gate-grid">
+              <div class="charts-gate-col">
+                <div class="charts-gate-col-header">54"</div>
+                <div class="charts-gate-q" id="oa-q0">—</div>
+                <div class="charts-gate-q-unit">cfs</div>
+              </div>
+              <div class="charts-gate-col">
+                <div class="charts-gate-col-header">55"</div>
+                <div class="charts-gate-q" id="oa-q1">—</div>
+                <div class="charts-gate-q-unit">cfs</div>
+              </div>
+              <div class="charts-gate-col">
+                <div class="charts-gate-col-header">56"</div>
+                <div class="charts-gate-q" id="oa-q2">—</div>
+                <div class="charts-gate-q-unit">cfs</div>
+              </div>
+              <div class="charts-gate-col">
+                <div class="charts-gate-col-header">
+                  <input type="number" id="oa-custom-width" class="ctrl-input ctrl-input-sm" min="1" step="1" placeholder="W">"
+                </div>
+                <div class="charts-gate-q" id="oa-qc">—</div>
+                <div class="charts-gate-q-unit">cfs</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- P-11 panel -->
+    <div id="charts-panel-p11" class="maint-panel hidden">
+      <div class="settings-section">
+        <div class="settings-card">
+          <div class="settings-pad">
+            <div class="two-col">
+              <div class="form-group">
+                <label>Head</label>
+                <div class="charts-input-with-unit">
+                  <input type="number" id="p11-head" class="ctrl-input" min="0" step="0.5" placeholder="inches">
+                  <span class="charts-unit-label">in</span>
+                </div>
+              </div>
+              <div class="form-group">
+                <label>% Open</label>
+                <div class="charts-input-with-unit">
+                  <input type="number" id="p11-pct" class="ctrl-input" min="0" max="100" step="1" placeholder="%">
+                  <span class="charts-unit-label">%</span>
+                </div>
+              </div>
+            </div>
+            <div class="charts-derived" id="p11-opening-display"></div>
+            <div class="charts-result-area">
+              <div class="charts-result-label">Width 72" · Flow Rate Q</div>
+              <div><span class="charts-result-value" id="p11-result">—</span><span class="charts-result-unit">cfs</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Gate Discharge panel -->
+    <div id="charts-panel-gate" class="maint-panel hidden">
+      <div class="settings-section">
+        <div class="settings-card">
+          <div class="settings-pad">
+            <div class="charts-tabs">
+              <button class="charts-tab-btn active" id="gate-tab-btn-table">Table</button>
+              <button class="charts-tab-btn" id="gate-tab-btn-calc">Calculator</button>
+            </div>
+            <div class="charts-field-row" style="margin-bottom:14px;margin-top:4px">
+              <label>Gate Size</label>
+              <select id="gate-size-select" class="ctrl-select" style="width:auto">
+                <option value="30">30"</option>
+                <option value="36">36"</option>
+                <option value="42">42"</option>
+                <option value="48">48"</option>
+              </select>
+            </div>
+            <div id="gate-tab-table">
+              <div class="charts-table-wrap" id="gate-table-container"></div>
+            </div>
+            <div id="gate-tab-calc" class="charts-calc" style="display:none">
+              <div class="charts-field-row">
+                <label>Head</label>
+                <input type="number" id="gate-head" class="ctrl-input" min="1" max="40" step="0.25" placeholder="in">
+                <span class="charts-unit-label">in</span>
+              </div>
+              <div class="charts-field-row">
+                <label>Opening</label>
+                <input type="number" id="gate-opening" class="ctrl-input" min="2" max="48" step="0.5" placeholder="in">
+                <span class="charts-unit-label">in</span>
+              </div>
+              <div class="charts-result-area">
+                <div class="charts-result-label">Flow Rate Q</div>
+                <div><span class="charts-result-value" id="gate-result">—</span><span class="charts-result-unit">cfs</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RRB T.O. 1 & 2 panel -->
+    <div id="charts-panel-rrb" class="maint-panel hidden">
+      <div class="settings-section">
+        <div class="settings-card">
+          <div class="settings-pad">
+            <div class="charts-tabs">
+              <button class="charts-tab-btn active" id="rrb-tab-btn-table">Table</button>
+              <button class="charts-tab-btn" id="rrb-tab-btn-calc">Calculator</button>
+            </div>
+            <div id="rrb-tab-table" style="margin-top:12px">
+              <div class="charts-table-wrap" id="rrb-table-container"></div>
+            </div>
+            <div id="rrb-tab-calc" class="charts-calc" style="display:none">
+              <div class="charts-field-row">
+                <label>Head</label>
+                <input type="number" id="rrb-head" class="ctrl-input" min="0" max="3.39" step="0.01" placeholder="ft">
+                <span class="charts-unit-label">ft</span>
+              </div>
+              <div class="charts-result-area">
+                <div class="charts-result-label">Flow Rate Q</div>
+                <div><span class="charts-result-value" id="rrb-result">—</span><span class="charts-result-unit">cfs</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /screen-charts -->
+
 </div><!-- /app-shell -->
 
 
@@ -1619,15 +2031,27 @@
   </div>
 </div>
 
+<!-- Pond Map Modal -->
+<div id="pond-map-modal" class="modal-overlay hidden">
+  <div class="modal-card" style="width:min(96vw,700px);display:flex;flex-direction:column;max-height:90vh">
+    <div class="modal-header">
+      <h2 id="pond-map-title">Pond Map</h2>
+      <button class="modal-close" id="pond-map-close">&times;</button>
+    </div>
+    <div id="pond-map-container" style="flex:1;min-height:420px;border-radius:0 0 var(--radius,8px) var(--radius,8px);overflow:hidden"></div>
+  </div>
+</div>
+
 <!-- Location Modal -->
 <div id="location-modal" class="modal-overlay hidden">
-  <div class="modal-card" style="max-width:300px">
+  <div class="modal-card" style="max-width:400px;width:calc(100vw - 32px)">
     <div class="modal-header">
       <h2 id="location-modal-name">Location</h2>
       <button class="modal-close" id="location-modal-close">&times;</button>
     </div>
-    <div class="modal-body" style="text-align:center">
-      <div id="location-modal-coords" style="font-size:0.85rem;color:var(--text-dim);margin-bottom:16px"></div>
+    <div id="location-modal-map" style="height:220px;border-radius:8px;margin-bottom:10px;overflow:hidden;background:var(--surface2)"></div>
+    <div class="modal-body" style="text-align:center;padding-top:0">
+      <div id="location-modal-coords" style="font-size:0.85rem;color:var(--text-dim);margin-bottom:12px"></div>
       <button class="btn btn-primary btn-full" id="location-modal-open-btn"><span class="app-icon" style="width:16px;height:16px;-webkit-mask-image:url(/marv-site/icons/icon-map-pin.svg);mask-image:url(/marv-site/icons/icon-map-pin.svg)"></span> Open in Maps</button>
     </div>
   </div>
@@ -1662,19 +2086,6 @@
   </div>
 </div>
 
-<!-- Location Modal -->
-<div id="location-modal" class="modal-overlay hidden">
-  <div class="modal-card" style="max-width:300px">
-    <div class="modal-header">
-      <h2 id="location-modal-name">Location</h2>
-      <button class="modal-close" id="location-modal-close">&times;</button>
-    </div>
-    <div class="modal-body" style="text-align:center">
-      <div id="location-modal-coords" style="font-size:0.85rem;color:var(--text-dim);margin-bottom:16px"></div>
-      <a id="location-modal-link" class="btn btn-primary btn-full" target="_blank" rel="noopener"><span class="app-icon" style="width:16px;height:16px;-webkit-mask-image:url(/marv-site/icons/icon-map-pin.svg);mask-image:url(/marv-site/icons/icon-map-pin.svg)"></span> Open in Maps</a>
-    </div>
-  </div>
-</div>
 
 <!-- Maintenance History Modal -->
 <div id="maint-history-modal" class="modal-overlay hidden">
