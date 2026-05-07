@@ -205,15 +205,27 @@ pool.query(`
 `).catch(err => console.error('Migration error (ponds):', err.message));
 
 pool.query(`
+  CREATE TABLE IF NOT EXISTS river_outlets (
+    outlet_id   SERIAL PRIMARY KEY,
+    name        TEXT NOT NULL,
+    sort_order  INT DEFAULT 0,
+    active      BOOLEAN DEFAULT TRUE,
+    notes       TEXT
+  )
+`).catch(err => console.error('Migration error (river_outlets):', err.message));
+
+pool.query(`
   CREATE TABLE IF NOT EXISTS pond_connections (
-    connection_id   SERIAL PRIMARY KEY,
-    pond_id         INT REFERENCES ponds(pond_id),
-    name            TEXT,
-    source_type     TEXT,
-    source_canal_id INT REFERENCES canal_structures(structure_id),
-    sort_order      INT DEFAULT 0,
-    active          BOOLEAN DEFAULT TRUE,
-    notes           TEXT
+    connection_id      SERIAL PRIMARY KEY,
+    destination_pond_id INT REFERENCES ponds(pond_id),
+    name               TEXT,
+    source_type        TEXT CHECK (source_type IN ('canal', 'river', 'pond')),
+    source_canal_id    INT REFERENCES canal_structures(structure_id),
+    source_river_id    INT REFERENCES river_outlets(outlet_id),
+    source_pond_id     INT REFERENCES ponds(pond_id),
+    sort_order         INT DEFAULT 0,
+    active             BOOLEAN DEFAULT TRUE,
+    notes              TEXT
   )
 `).catch(err => console.error('Migration error (pond_connections):', err.message));
 
@@ -1201,7 +1213,7 @@ app.get('/api/ponds', requireAuth, async (req, res) => {
         ORDER BY reading_date DESC, reading_time DESC
         LIMIT 1
       ) sg ON true
-      LEFT JOIN pond_connections pc ON pc.pond_id = p.pond_id AND pc.active = true
+      LEFT JOIN pond_connections pc ON pc.destination_pond_id = p.pond_id AND pc.active = true
       LEFT JOIN pond_gates pg ON pg.connection_id = pc.connection_id AND pg.active = true
       LEFT JOIN LATERAL (
         SELECT reading_id, head_ft, opening_in, overpour_in, flow_cfs, reading_date
