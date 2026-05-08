@@ -4347,13 +4347,223 @@ document.querySelectorAll('.settings-menu-row[data-panel]').forEach(btn => {
 el('settings-panel-tools').addEventListener('click', e => {
   const btn = e.target.closest('[data-tool]');
   if (!btn) return;
-  if (btn.dataset.tool === 'exif')   openExifTool();
-  if (btn.dataset.tool === 'upload') openUploadTool();
+  if (btn.dataset.tool === 'exif')      openExifTool();
+  if (btn.dataset.tool === 'upload')    openUploadTool();
+  if (btn.dataset.tool === 'gpspicker') openGpsPicker();
 });
 
 el('exif-back-btn').addEventListener('click', () => {
   el('exif-tool-overlay').classList.add('hidden');
 });
+
+// ── Pond GPS Picker ───────────────────────────────────────────────────────────
+(function () {
+  let gpsMap = null, points = [], markers = [], fmt = 'latlng', isClosed = false;
+  let gpsMode = 'polygon', updatePoint = null, updateMarker = null;
+
+  function makeIcon(n, color) {
+    color = color || '#1D9E75';
+    return L.divIcon({
+      className: '',
+      html: `<div style="width:22px;height:22px;border-radius:50%;background:${color};border:2px solid #fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:500;color:#fff;box-shadow:0 1px 4px rgba(0,0,0,0.4)">${n}</div>`,
+      iconSize: [22, 22], iconAnchor: [11, 11],
+    });
+  }
+
+  function getPondName() { return el('gps-pond-name').value.trim(); }
+  function getPondId()   { return el('gps-pond-id').value.trim() || '1'; }
+
+  function buildUpdateSQL() {
+    if (!updatePoint) return '';
+    const tbl   = el('gps-update-table').value;
+    const pk    = el('gps-update-pk').value.trim() || '<pk_value>';
+    const pkCol = tbl === 'ponds' ? 'pond_id' : 'connection_id';
+    const latC  = tbl === 'ponds' ? 'gauge_lat' : 'gate_lat';
+    const lonC  = tbl === 'ponds' ? 'gauge_lon' : 'gate_lon';
+    return `UPDATE ${tbl}\nSET ${latC} = ${updatePoint.lat},\n    ${lonC} = ${updatePoint.lng}\nWHERE ${pkCol} = ${pk};`;
+  }
+
+  function buildPolygonOutput() {
+    if (!points.length) return '';
+    const name = getPondName(), id = getPondId();
+    if (fmt === 'single') {
+      const p = points[0];
+      return name ? `${name}\t${p.lat}\t${p.lng}` : `${p.lat}\t${p.lng}`;
+    }
+    if (fmt === 'latlng') {
+      return `Pond ID: ${id} | ${name || 'Unnamed Pond'}\n` +
+        points.map((p, i) => `Point ${i + 1}: ${p.lat}, ${p.lng}`).join('\n');
+    }
+    const label = name || 'Unnamed Pond';
+    const rows = points.map((p, i) =>
+      `  (${id}, '${label}', ${i + 1}, ST_SetSRID(ST_MakePoint(${p.lng}, ${p.lat}), 4326))`
+    ).join(',\n');
+    return `-- ${label} (ID: ${id})\nINSERT INTO pond_points (pond_id, name, point_order, geom) VALUES\n${rows};`;
+  }
+
+  function updateCloseBtn() {
+    const ok = points.length >= 3 && fmt !== 'single' && !isClosed;
+    const btn = el('gps-close-btn');
+    btn.disabled = !ok;
+    btn.style.opacity = ok ? '1' : '0.4';
+    btn.style.cursor = ok ? 'pointer' : 'not-allowed';
+  }
+
+  function renderUpdate() {
+    const tbl = el('gps-update-table').value;
+    el('gps-pk-label').textContent = (tbl === 'ponds' ? 'pond_id' : 'connection_id') + ':';
+    const display = el('gps-update-point-display');
+    const preview = el('gps-preview');
+    const copyBtn = el('gps-copy-btn');
+    if (!updatePoint) {
+      display.textContent = 'No point selected — tap the map';
+      display.style.fontStyle = 'italic';
+      preview.textContent = '';
+      copyBtn.disabled = true; copyBtn.style.opacity = '0.4'; copyBtn.style.cursor = 'not-allowed';
+      return;
+    }
+    display.innerHTML = `<span style="color:var(--text-dim)">Lat</span> <strong>${updatePoint.lat}</strong> &nbsp; <span style="color:var(--text-dim)">Lng</span> <strong>${updatePoint.lng}</strong>`;
+    display.style.fontStyle = 'normal';
+    preview.textContent = buildUpdateSQL();
+    copyBtn.disabled = false; copyBtn.style.opacity = '1'; copyBtn.style.cursor = 'pointer';
+  }
+
+  function renderPolygon() {
+    const isSingle = fmt === 'single';
+    el('gps-name-label').textContent = isSingle ? 'Name:' : 'Pond name:';
+    el('gps-single-hint').style.display = isSingle ? 'block' : 'none';
+    el('gps-close-row').style.display  = isSingle ? 'none' : 'flex';
+    const list    = el('gps-points-list');
+    const preview = el('gps-preview');
+    const copyBtn = el('gps-copy-btn');
+    if (!points.length) {
+      list.innerHTML = '<span style="font-style:italic;color:var(--text-dim)">No points yet — tap the map to add</span>';
+      preview.textContent = ''; copyBtn.disabled = true; copyBtn.style.opacity = '0.4'; copyBtn.style.cursor = 'not-allowed';
+      updateCloseBtn(); return;
+    }
+    if (isSingle) {
+      const p = points[0], name = getPondName();
+      let cols = name ? `<span><span style="color:var(--text-dim)">Name</span> <strong>${name}</strong></span><span style="color:var(--border);margin:0 4px">|</span>` : '';
+      cols += `<span><span style="color:var(--text-dim)">Lat</span> <strong>${p.lat}</strong></span><span style="color:var(--border);margin:0 4px">|</span><span><span style="color:var(--text-dim)">Lng</span> <strong>${p.lng}</strong></span>`;
+      list.innerHTML = `<div style="display:flex;gap:8px;flex-wrap:wrap;">${cols}</div>`;
+    } else {
+      list.innerHTML = points.map((p, i) => {
+        const closing = isClosed && i === points.length - 1;
+        return `<div style="display:flex;align-items:center;gap:8px;">
+          <span style="color:var(--text);min-width:62px;">Point ${i + 1}${closing ? ' ⬡' : ''}</span>
+          <span style="color:var(--text-dim)">${p.lat}, ${p.lng}</span>
+          ${!closing ? `<button onclick="gpsRemovePoint(${i})" class="btn btn-secondary btn-sm" style="font-size:10px;padding:1px 7px;">×</button>` : ''}
+        </div>`;
+      }).join('');
+    }
+    preview.textContent = buildPolygonOutput();
+    copyBtn.disabled = false; copyBtn.style.opacity = '1'; copyBtn.style.cursor = 'pointer';
+    updateCloseBtn();
+  }
+
+  function gpsRender() { gpsMode === 'update' ? renderUpdate() : renderPolygon(); }
+
+  window.gpsRemovePoint = function (i) {
+    markers[i].remove(); markers.splice(i, 1); points.splice(i, 1);
+    markers.forEach((m, j) => {
+      const d = m.getElement()?.querySelector('div');
+      if (d) d.textContent = j + 1;
+    });
+    gpsRender();
+  };
+
+  window.openGpsPicker = function () {
+    el('gpspicker-overlay').classList.remove('hidden');
+    setTimeout(() => {
+      if (!gpsMap) {
+        gpsMap = L.map('gpspicker-map', { zoomControl: true, attributionControl: false })
+          .setView([35.37, -119.02], 14);
+        L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 20 }).addTo(gpsMap);
+        gpsMap.on('click', function (e) {
+          const lat = e.latlng.lat.toFixed(7), lng = e.latlng.lng.toFixed(7);
+          if (gpsMode === 'update') {
+            if (updateMarker) updateMarker.remove();
+            updatePoint = { lat, lng };
+            updateMarker = L.marker([lat, lng], { icon: makeIcon('+', '#378ADD') }).addTo(gpsMap);
+            renderUpdate();
+            return;
+          }
+          if (isClosed) return;
+          if (fmt === 'single') { markers.forEach(m => m.remove()); markers = []; points = []; }
+          points.push({ lat, lng });
+          markers.push(L.marker([lat, lng], { icon: makeIcon(points.length) }).addTo(gpsMap));
+          gpsRender();
+        });
+      }
+      gpsMap.invalidateSize();
+    }, 80);
+  };
+
+  el('gpspicker-back-btn').addEventListener('click', () => {
+    el('gpspicker-overlay').classList.add('hidden');
+  });
+
+  el('gps-close-btn').addEventListener('click', () => {
+    if (points.length < 3 || isClosed) return;
+    const f = points[0];
+    points.push({ lat: f.lat, lng: f.lng });
+    markers.push(L.marker([f.lat, f.lng], { icon: makeIcon(points.length) }).addTo(gpsMap));
+    isClosed = true;
+    el('gps-close-status').textContent = `Closed — point ${points.length} is an exact copy of point 1`;
+    gpsRender();
+  });
+
+  el('gps-clear-btn').addEventListener('click', () => {
+    markers.forEach(m => m.remove()); markers = []; points = []; isClosed = false;
+    el('gps-close-status').textContent = '';
+    gpsRender();
+  });
+
+  el('gps-update-clear-btn').addEventListener('click', () => {
+    if (updateMarker) updateMarker.remove();
+    updateMarker = null; updatePoint = null;
+    el('gps-update-pk').value = '';
+    renderUpdate();
+  });
+
+  el('gps-update-table').addEventListener('change', renderUpdate);
+  el('gps-update-pk').addEventListener('input', renderUpdate);
+  el('gps-pond-name').addEventListener('input', gpsRender);
+  el('gps-pond-id').addEventListener('input', gpsRender);
+
+  document.querySelectorAll('.gps-mode-btn').forEach(btn => {
+    btn.addEventListener('click', function () {
+      gpsMode = this.dataset.gpsmode;
+      document.querySelectorAll('.gps-mode-btn').forEach(b => b.classList.remove('active'));
+      this.classList.add('active');
+      el('gps-polygon-panel').style.display = gpsMode === 'polygon' ? 'block' : 'none';
+      el('gps-update-panel').style.display  = gpsMode === 'update'  ? 'block' : 'none';
+      if (gpsMode === 'update') { markers.forEach(m => m.remove()); markers = []; points = []; isClosed = false; el('gps-close-status').textContent = ''; }
+      else { if (updateMarker) updateMarker.remove(); updateMarker = null; updatePoint = null; }
+      gpsRender();
+    });
+  });
+
+  document.querySelectorAll('.gps-fmt-btn').forEach(btn => {
+    btn.addEventListener('click', function () {
+      fmt = this.dataset.gpsfmt;
+      document.querySelectorAll('.gps-fmt-btn').forEach(b => b.classList.remove('active'));
+      this.classList.add('active');
+      if (fmt === 'single') { markers.forEach(m => m.remove()); markers = []; points = []; isClosed = false; el('gps-close-status').textContent = ''; }
+      gpsRender();
+    });
+  });
+
+  el('gps-copy-btn').addEventListener('click', () => {
+    const txt = gpsMode === 'update' ? buildUpdateSQL() : buildPolygonOutput();
+    if (!txt) return;
+    navigator.clipboard.writeText(txt).then(() => {
+      const fb = el('gps-copy-feedback');
+      fb.style.opacity = '1';
+      setTimeout(() => { fb.style.opacity = '0'; }, 2000);
+    });
+  });
+})();
 
 // ── EXIF Tool ─────────────────────────────────────────────────────────────────
 (function () {
