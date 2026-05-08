@@ -1213,7 +1213,7 @@ app.get('/api/ponds', requireAuth, async (req, res) => {
         ORDER BY reading_date DESC, reading_time DESC
         LIMIT 1
       ) sg ON true
-      LEFT JOIN pond_connections pc ON pc.destination_pond_id = p.pond_id AND pc.active = true
+      LEFT JOIN pond_connections pc ON pc.source_pond_id = p.pond_id AND pc.active = true
       LEFT JOIN pond_gates pg ON pg.connection_id = pc.connection_id AND pg.active = true
       LEFT JOIN LATERAL (
         SELECT reading_id, head_ft, opening_in, overpour_in, flow_cfs, reading_date
