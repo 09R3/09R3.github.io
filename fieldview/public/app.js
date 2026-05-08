@@ -444,7 +444,6 @@ const previewGrid = $('preview-grid');
 const previewDownloadBtns = $('preview-download-btns');
 
 $('preview-close').addEventListener('click', closePreview);
-$('preview-cancel').addEventListener('click', closePreview);
 previewBackdrop.addEventListener('click', e => { if (e.target === previewBackdrop) closePreview(); });
 
 function closePreview() {
