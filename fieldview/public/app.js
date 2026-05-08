@@ -2,7 +2,7 @@
 
 const API = '';  // same origin
 
-// ── State ──────────────────────────────────────────────────────────────────
+// ── State ──────────────────────────────────────────────────────────────────────
 let state = {
   connected: false,
   dbHost: '', dbPort: '', dbName: '', dbUser: '',
@@ -19,7 +19,7 @@ let state = {
   sqlResult: null,
 };
 
-// ── Elements ───────────────────────────────────────────────────────────────
+// ── Elements ───────────────────────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
 const connectOverlay = $('connect-overlay');
 const appEl = $('app');
@@ -45,7 +45,7 @@ const nlStatus = $('nl-status');
 const nlSqlBlock = $('nl-sql-block');
 const nlSqlText = $('nl-sql-text');
 
-// ── Caps Lock warning on DB password field ─────────────────────────────────
+// ── Caps Lock warning on DB password field ───────────────────────────────────────────
 const dbPass = $('db-pass');
 const dbCapsWarn = $('db-caps-warn');
 dbPass.addEventListener('keyup', e => {
@@ -53,7 +53,7 @@ dbPass.addEventListener('keyup', e => {
 });
 dbPass.addEventListener('blur', () => dbCapsWarn.classList.add('hidden'));
 
-// ── Connect ────────────────────────────────────────────────────────────────
+// ── Connect ──────────────────────────────────────────────────────────────────────────
 connectForm.addEventListener('submit', async e => {
   e.preventDefault();
   setConnecting(true);
@@ -111,8 +111,7 @@ $('sign-out-btn').addEventListener('click', async () => {
 });
 
 function setConnecting(on) {
-  connectBtn.querySelector('.btn-text').classList.toggle('hidden', on);
-  connectBtn.querySelector('.btn-spinner').classList.toggle('hidden', !on);
+  connectBtn.textContent = on ? 'Connecting…' : 'Connect';
   connectBtn.disabled = on;
 }
 
@@ -121,7 +120,7 @@ function showError(msg) {
   connectError.classList.toggle('hidden', !msg);
 }
 
-// ── Tables ─────────────────────────────────────────────────────────────────
+// ── Tables ─────────────────────────────────────────────────────────────────────────
 async function loadTables() {
   tableList.innerHTML = '<div class="loading-tables">Loading tables…</div>';
   try {
@@ -176,7 +175,7 @@ tableSearch.addEventListener('input', () => {
   renderTableList(filtered);
 });
 
-// ── Browse Table ───────────────────────────────────────────────────────────
+// ── Browse Table ─────────────────────────────────────────────────────────────────────
 async function loadTable(schema, table) {
   state.currentSchema = schema;
   state.currentTable = table;
@@ -287,7 +286,7 @@ $('pg-prev').addEventListener('click', () => { state.page--; loadTable(state.cur
 $('pg-next').addEventListener('click', () => { state.page++; loadTable(state.currentSchema, state.currentTable); });
 $('pg-last').addEventListener('click', () => { state.page = state.pages; loadTable(state.currentSchema, state.currentTable); });
 
-// ── Search / Filter ────────────────────────────────────────────────────────
+// ── Search / Filter ────────────────────────────────────────────────────────────────────
 let searchTimer;
 dataSearch.addEventListener('input', () => {
   clearTimeout(searchTimer);
@@ -304,7 +303,7 @@ pageSize.addEventListener('change', () => {
   if (state.currentTable) loadTable(state.currentSchema, state.currentTable);
 });
 
-// ── Exports (table) ────────────────────────────────────────────────────────
+// ── Exports (table) ────────────────────────────────────────────────────────────────────
 $('export-btn').addEventListener('click', () => {
   if (!state.currentTable) return alert('Select a table first.');
   showExportPreview(
@@ -313,7 +312,7 @@ $('export-btn').addEventListener('click', () => {
   );
 });
 
-// ── SQL Editor ─────────────────────────────────────────────────────────────
+// ── SQL Editor ─────────────────────────────────────────────────────────────────────────
 $('sql-editor-btn').addEventListener('click', () => sqlPanel.classList.remove('hidden'));
 $('sql-close-btn').addEventListener('click', () => sqlPanel.classList.add('hidden'));
 
@@ -367,7 +366,7 @@ function renderSQLResult(data) {
   sqlResult.innerHTML = html;
 }
 
-// ── Ask Claude ─────────────────────────────────────────────────────────────
+// ── Ask Claude ─────────────────────────────────────────────────────────────────────────
 $('nl-ask-btn').addEventListener('click', () => {
   nlPanel.classList.remove('hidden');
   $('nl-question').focus();
@@ -429,7 +428,7 @@ $('nl-export-btn').addEventListener('click', () => {
   });
 });
 
-// ── Exports (SQL result) ───────────────────────────────────────────────────
+// ── Exports (SQL result) ───────────────────────────────────────────────────────────────────
 $('sql-export-btn').addEventListener('click', () => {
   const sql = sqlEditor.value.trim();
   if (!sql) return alert('Write and run a SQL query first.');
@@ -437,7 +436,7 @@ $('sql-export-btn').addEventListener('click', () => {
   showExportPreview('Query Result', { sql }, state.sqlResult);
 });
 
-// ── Export Preview ──────────────────────────────────────────────────────────
+// ── Export Preview ──────────────────────────────────────────────────────────────────────
 const previewBackdrop = $('preview-backdrop');
 const previewTitle = $('preview-title');
 const previewMeta = $('preview-meta');
@@ -531,7 +530,7 @@ async function showExportPreview(title, exportBody, cachedResult = null) {
   }
 }
 
-// ── Saved Queries ───────────────────────────────────────────────────────────
+// ── Saved Queries ─────────────────────────────────────────────────────────────────────────
 
 async function renderSavedQueriesList() {
   const list = $('saved-queries-list');
@@ -610,7 +609,7 @@ $('sql-saved-btn').addEventListener('click', () => {
   if (opening) renderSavedQueriesList();
 });
 
-// ── Export Helper ──────────────────────────────────────────────────────────
+// ── Export Helper ────────────────────────────────────────────────────────────────────────
 async function exportData(format, body) {
   try {
     const res = await fetch(`${API}/api/export/${format}`, {
@@ -635,7 +634,7 @@ async function exportData(format, body) {
   }
 }
 
-// ── Import ─────────────────────────────────────────────────────────────────
+// ── Import ─────────────────────────────────────────────────────────────────────────────
 
 const importBackdrop = $('import-backdrop');
 const importTitle = $('import-title');
@@ -865,7 +864,7 @@ function showImportStatus(type, msg) {
   importStatus.innerHTML = esc(msg);
 }
 
-// ── Helpers ────────────────────────────────────────────────────────────────
+// ── Helpers ──────────────────────────────────────────────────────────────────────────
 async function get(url) {
   const res = await fetch(API + url);
   if (!res.ok) { const e = await res.json(); throw new Error(e.error || res.statusText); }
@@ -900,10 +899,10 @@ function loadingGrid() {
   return '<div class="empty-state"><div class="empty-icon loading-row"><img src="/icons/icon-FV.svg" alt="" style="width:48px;height:48px;opacity:0.3;" /></div><p>Loading…</p></div>';
 }
 
-// ── Sidebar Sections ───────────────────────────────────────────────────────
+// ── Sidebar Sections ───────────────────────────────────────────────────────────────────────
 function initSidebarSections() {
   ['tables', 'reports'].forEach(name => {
-    const toggle = $(`${name}-section-toggle`);
+    const toggle = $(`${name}-section-btn`);
     const body   = $(`${name}-section-body`);
     toggle.addEventListener('click', () => {
       const collapsed = body.classList.toggle('collapsed');
@@ -912,19 +911,20 @@ function initSidebarSections() {
   });
   // Default: tables collapsed, reports open
   $('tables-section-body').classList.add('collapsed');
-  $('tables-section-toggle').classList.add('collapsed');
+  $('tables-section-btn').classList.add('collapsed');
 }
 initSidebarSections();
 
-// ── Settings Modal ─────────────────────────────────────────────────────────
+// ── Settings Modal ───────────────────────────────────────────────────────────────────────
 const settingsBackdrop = $('settings-backdrop');
 
 $('settings-btn').addEventListener('click', () => {
-  $('settings-version').textContent = $('app-version').textContent || '—';
-  $('settings-db-host').textContent = state.dbHost
-    ? `${state.dbHost}:${state.dbPort || 5432}` : '—';
-  $('settings-db-name').textContent = state.dbName || '—';
-  $('settings-db-user').textContent = state.dbUser || '—';
+  const hostEl = $('set-host');
+  const dbEl   = $('set-db');
+  const userEl = $('set-user');
+  if (hostEl) hostEl.textContent = state.dbHost ? `${state.dbHost}:${state.dbPort || 5432}` : '—';
+  if (dbEl)   dbEl.textContent   = state.dbName || '—';
+  if (userEl) userEl.textContent = state.dbUser || '—';
   settingsBackdrop.classList.remove('hidden');
 });
 
@@ -933,12 +933,12 @@ settingsBackdrop.addEventListener('click', e => {
   if (e.target === settingsBackdrop) settingsBackdrop.classList.add('hidden');
 });
 
-$('settings-disconnect-btn').addEventListener('click', () => {
+$('disconnect-btn').addEventListener('click', () => {
   settingsBackdrop.classList.add('hidden');
   disconnectDB();
 });
 
-// ── Date range helpers ─────────────────────────────────────────────────────
+// ── Date range helpers ───────────────────────────────────────────────────────────────────
 function todayStr() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -989,17 +989,16 @@ function wireMonthSelect(selectId, startEl, endEl) {
   });
 }
 
-// ── Reports ────────────────────────────────────────────────────────────────
+// ── Reports ────────────────────────────────────────────────────────────────────────────
 const reportPanel   = $('report-panel');
-const rphPlant      = $('rph-plant');
-const rphStart      = $('rph-start');
-const rphEnd        = $('rph-end');
-const rphRunBtn     = $('rph-run-btn');
-const rphExportBtn  = $('rph-export-btn');
+const rphPlant      = $('rph-site');
+const rphStart      = $('rph-from');
+const rphEnd        = $('rph-to');
+const rphRunBtn     = $('rph-run');
+const rphExportBtn  = $('rph-export');
 const rphGrid       = $('rph-grid');
 const rphStatus     = $('rph-status');
 const rphChipsRow   = $('rph-chips-row');
-const rphChips      = $('rph-chips');
 
 let activeReport = null;
 let rphData = [];
@@ -1007,15 +1006,15 @@ let rphSelectedLetters = new Set(); // empty = All
 let rphDelta = { active: false };
 let rwrDelta = { active: false };
 
-// ── Column-select utility (shared by all report grids) ─────────────────────
+// ── Column-select utility (shared by all report grids) ─────────────────────────────────
 // Shared state — only one report grid is visible at a time
 const colSel = { copy: null, clear: null };
 
 // One-time button setup — avoids stacking listeners on re-runs
-for (const pfx of ['rph', 'rwr', 'rcn', 'rch', 'rkf', 'rpge', 'rpwr', 'rdwr', 'rvm', 'rdo']) {
-  $(`${pfx}-col-copy-btn`).addEventListener('click', () => colSel.copy?.());
-  $(`${pfx}-col-copy-clear`).addEventListener('click', () => colSel.clear?.());
-  wireMonthSelect(`${pfx}-month`, $(`${pfx}-start`), $(`${pfx}-end`));
+for (const pfx of ['rph', 'rwr', 'rcr', 'rch', 'rkf', 'rpge', 'rpm', 'rdwr', 'rvm', 'rdo']) {
+  $(`${pfx}-col-copy`)?.addEventListener('click', () => colSel.copy?.());
+  $(`${pfx}-col-clear`)?.addEventListener('click', () => colSel.clear?.());
+  wireMonthSelect(`${pfx}-month`, $(`${pfx}-from`), $(`${pfx}-to`));
 }
 
 document.addEventListener('keydown', e => {
@@ -1068,7 +1067,7 @@ function initColSelect(gridEl, copyBarEl, labelEl) {
       lines.push(cols.map(i => tr.cells[i]?.textContent.trim() ?? '').join('\t'));
     });
     writeToClipboard(lines.join('\n'));
-    const btn = $(`${copyBarEl.id.replace('-col-copy-bar','-col-copy-btn')}`);
+    const btn = $(`${copyBarEl.id.replace('-col-bar','-col-copy')}`);
     const orig = btn.textContent;
     btn.textContent = '✓ Copied!';
     setTimeout(() => { btn.textContent = orig; }, 1500);
@@ -1086,7 +1085,7 @@ function initColSelect(gridEl, copyBarEl, labelEl) {
   colSel.clear = () => { selectedCols.clear(); updateHighlight(); };
 }
 
-// ── Delta Column ───────────────────────────────────────────────────────────
+// ── Delta Column ─────────────────────────────────────────────────────────────────────────
 function formatDelta(val) {
   if (val === null || val === undefined) return '<span class="null-val">—</span>';
   const n = parseFloat(val);
@@ -1204,21 +1203,21 @@ async function rphLoadPumps(siteId) {
   try {
     const letters = await get(`/api/reports/pump-hours/pumps?site_id=${encodeURIComponent(siteId)}`);
     if (!letters.length) return;
-    rphChips.innerHTML =
+    rphChipsRow.innerHTML =
       `<button class="pump-chip active" data-letter="ALL">All</button>` +
       letters.map(l => `<button class="pump-chip" data-letter="${esc(l)}">${esc(l)}</button>`).join('');
     rphChipsRow.classList.remove('hidden');
   } catch { /* ignore — pump filter just won't show */ }
 }
 
-rphChips.addEventListener('click', e => {
+rphChipsRow.addEventListener('click', e => {
   const chip = e.target.closest('.pump-chip');
   if (!chip) return;
   const letter = chip.dataset.letter;
 
   if (letter === 'ALL') {
     rphSelectedLetters.clear();
-    rphChips.querySelectorAll('.pump-chip').forEach(c => c.classList.toggle('active', c.dataset.letter === 'ALL'));
+    rphChipsRow.querySelectorAll('.pump-chip').forEach(c => c.classList.toggle('active', c.dataset.letter === 'ALL'));
     return;
   }
 
@@ -1230,11 +1229,11 @@ rphChips.addEventListener('click', e => {
   }
   // If nothing selected → fall back to All
   if (!rphSelectedLetters.size) {
-    rphChips.querySelectorAll('.pump-chip').forEach(c => c.classList.toggle('active', c.dataset.letter === 'ALL'));
+    rphChipsRow.querySelectorAll('.pump-chip').forEach(c => c.classList.toggle('active', c.dataset.letter === 'ALL'));
     return;
   }
   // Deactivate All chip, update individual chips
-  rphChips.querySelectorAll('.pump-chip').forEach(c => {
+  rphChipsRow.querySelectorAll('.pump-chip').forEach(c => {
     if (c.dataset.letter === 'ALL') {
       c.classList.remove('active');
     } else {
@@ -1246,7 +1245,7 @@ rphChips.addEventListener('click', e => {
 // Open Pump Hours report
 $('report-pump-hours').addEventListener('click', async () => {
   showReport('pump-hours', 'Pump Hours Report');
-  showSubPanel('report-pump-hours-panel');
+  showSubPanel('rph-panel');
   setDefaultDates(rphStart, rphEnd);
   rphStatus.textContent = 'Loading pumping plants…';
   rphGrid.innerHTML = emptyState('Select a pumping plant and date range,\nthen click Run Report');
@@ -1279,7 +1278,7 @@ rphRunBtn.addEventListener('click', async () => {
   rphStatus.textContent = 'Running…';
   rphGrid.innerHTML = loadingGrid();
   rphExportBtn.classList.add('hidden');
-  $('rph-col-copy-bar').classList.add('hidden');
+  $('rph-col-bar').classList.add('hidden');
   rphData = [];
 
   try {
@@ -1297,11 +1296,11 @@ rphRunBtn.addEventListener('click', async () => {
     const headers = ['Pump', 'Reading Date', 'Reading Time', 'Hour Reading'];
 
     rphDelta = { active: false };
-    renderReportTable(rphGrid, rphData, cols, headers, $('rph-col-copy-bar'), $('rph-col-copy-label'));
+    renderReportTable(rphGrid, rphData, cols, headers, $('rph-col-bar'), $('rph-col-label'));
     rphStatus.textContent = `${rphData.length} reading${rphData.length !== 1 ? 's' : ''} found.`;
     rphExportBtn.classList.remove('hidden');
     setupDeltaBar('rph', rphGrid, () => rphData, cols, headers,
-      $('rph-col-copy-bar'), $('rph-col-copy-label'), p => { rphDelta = p; });
+      $('rph-col-bar'), $('rph-col-label'), p => { rphDelta = p; });
   } catch (err) {
     rphGrid.innerHTML = errorState(err.message);
     rphStatus.textContent = 'Error running report.';
@@ -1328,14 +1327,14 @@ rphExportBtn.addEventListener('click', () => {
     { rows: exportRows, columns: hdrs, rowCount: exportRows.length });
 });
 
-// ── Well Readings Report ───────────────────────────────────────────────────
+// ── Well Readings Report ─────────────────────────────────────────────────────────────────────
 const rwrArea        = $('rwr-area');
 const rwrPool        = $('rwr-pool');
 const rwrParticipant = $('rwr-participant');
-const rwrStart       = $('rwr-start');
-const rwrEnd         = $('rwr-end');
-const rwrRunBtn      = $('rwr-run-btn');
-const rwrExportBtn   = $('rwr-export-btn');
+const rwrStart       = $('rwr-from');
+const rwrEnd         = $('rwr-to');
+const rwrRunBtn      = $('rwr-run');
+const rwrExportBtn   = $('rwr-export');
 const rwrGrid        = $('rwr-grid');
 const rwrStatus      = $('rwr-status');
 let rwrData = [];
@@ -1350,7 +1349,7 @@ const RWR_FORMATTERS = {
 
 $('report-well-readings').addEventListener('click', async () => {
   showReport('well-readings', 'Well Readings Report');
-  showSubPanel('report-well-readings-panel');
+  showSubPanel('rwr-panel');
   setDefaultDates(rwrStart, rwrEnd);
   rwrStatus.textContent = 'Loading filters…';
   rwrGrid.innerHTML = emptyState('Select filters and date range,\nthen click Run Report');
@@ -1386,7 +1385,7 @@ rwrRunBtn.addEventListener('click', async () => {
   rwrStatus.textContent = 'Running…';
   rwrGrid.innerHTML = loadingGrid();
   rwrExportBtn.classList.add('hidden');
-  $('rwr-col-copy-bar').classList.add('hidden');
+  $('rwr-col-bar').classList.add('hidden');
   rwrData = [];
 
   try {
@@ -1403,11 +1402,11 @@ rwrRunBtn.addEventListener('click', async () => {
     }
 
     rwrDelta = { active: false };
-    renderReportTable(rwrGrid, rwrData, RWR_COLS, RWR_HDRS, $('rwr-col-copy-bar'), $('rwr-col-copy-label'), null, RWR_FORMATTERS);
+    renderReportTable(rwrGrid, rwrData, RWR_COLS, RWR_HDRS, $('rwr-col-bar'), $('rwr-col-label'), null, RWR_FORMATTERS);
     rwrStatus.textContent = `${rwrData.length} reading${rwrData.length !== 1 ? 's' : ''} found.`;
     rwrExportBtn.classList.remove('hidden');
     setupDeltaBar('rwr', rwrGrid, () => rwrData, RWR_COLS, RWR_HDRS,
-      $('rwr-col-copy-bar'), $('rwr-col-copy-label'), p => { rwrDelta = p; }, RWR_FORMATTERS);
+      $('rwr-col-bar'), $('rwr-col-label'), p => { rwrDelta = p; }, RWR_FORMATTERS);
   } catch (err) {
     rwrGrid.innerHTML = errorState(err.message);
     rwrStatus.textContent = 'Error running report.';
@@ -1437,17 +1436,17 @@ rwrExportBtn.addEventListener('click', () => {
     { rows: exportRows, columns: hdrs, rowCount: exportRows.length });
 });
 
-// ── Generic Report Factory ─────────────────────────────────────────────────
-function makeReport({ sidebarId, panelId, title, prefix, optionsUrl, reportUrl, filterParam, cols, hdrs, colFormatters = {} }) {
-  const sel     = $(prefix + '-select');
-  const startEl = $(prefix + '-start');
-  const endEl   = $(prefix + '-end');
-  const runBtn  = $(prefix + '-run-btn');
-  const expBtn  = $(prefix + '-export-btn');
+// ── Generic Report Factory ───────────────────────────────────────────────────────────────────
+function makeReport({ sidebarId, panelId, title, prefix, selectId, optionsUrl, reportUrl, filterParam, cols, hdrs, colFormatters = {} }) {
+  const sel     = selectId ? $(selectId) : null;
+  const startEl = $(prefix + '-from');
+  const endEl   = $(prefix + '-to');
+  const runBtn  = $(prefix + '-run');
+  const expBtn  = $(prefix + '-export');
   const grid    = $(prefix + '-grid');
   const status  = $(prefix + '-status');
-  const copyBar = $(prefix + '-col-copy-bar');
-  const copyLbl = $(prefix + '-col-copy-label');
+  const copyBar = $(prefix + '-col-bar');
+  const copyLbl = $(prefix + '-col-label');
   let data = [];
   let deltaParams = { active: false };
 
@@ -1457,7 +1456,7 @@ function makeReport({ sidebarId, panelId, title, prefix, optionsUrl, reportUrl, 
     setDefaultDates(startEl, endEl);
     status.textContent = 'Loading options…';
     expBtn.classList.add('hidden');
-    copyBar.classList.add('hidden');
+    copyBar?.classList.add('hidden');
     data = [];
     try {
       const opts = await get(optionsUrl);
@@ -1482,7 +1481,7 @@ function makeReport({ sidebarId, panelId, title, prefix, optionsUrl, reportUrl, 
     status.textContent = 'Running…';
     grid.innerHTML = loadingGrid();
     expBtn.classList.add('hidden');
-    copyBar.classList.add('hidden');
+    copyBar?.classList.add('hidden');
     data = [];
     try {
       const params = new URLSearchParams({ start, end });
@@ -1524,10 +1523,10 @@ function makeReport({ sidebarId, panelId, title, prefix, optionsUrl, reportUrl, 
   });
 }
 
-// ── Report Definitions ─────────────────────────────────────────────────────
+// ── Report Definitions ───────────────────────────────────────────────────────────────────────
 makeReport({
-  sidebarId: 'report-canal', panelId: 'report-canal-panel',
-  title: 'Canal Readings Report', prefix: 'rcn',
+  sidebarId: 'report-canal-readings', panelId: 'rcr-panel',
+  title: 'Canal Readings Report', prefix: 'rcr', selectId: 'rcr-structure',
   optionsUrl: '/api/reports/canal-readings/options',
   reportUrl:  '/api/reports/canal-readings',
   filterParam: 'structure_id',
@@ -1541,8 +1540,8 @@ makeReport({
 });
 
 makeReport({
-  sidebarId: 'report-compressor-hours', panelId: 'report-compressor-hours-panel',
-  title: 'Compressor Hours Report', prefix: 'rch',
+  sidebarId: 'report-compressor-hours', panelId: 'rch-panel',
+  title: 'Compressor Hours Report', prefix: 'rch', selectId: 'rch-compressor',
   optionsUrl: '/api/reports/compressor-hours/options',
   reportUrl:  '/api/reports/compressor-hours',
   filterParam: 'building_id',
@@ -1551,8 +1550,8 @@ makeReport({
 });
 
 makeReport({
-  sidebarId: 'report-kf-monthly', panelId: 'report-kf-monthly-panel',
-  title: 'KF Monthly Report', prefix: 'rkf',
+  sidebarId: 'report-kf-monthly', panelId: 'rkf-panel',
+  title: 'KF Monthly Report', prefix: 'rkf', selectId: 'rkf-set',
   optionsUrl: '/api/reports/kf-monthly/options',
   reportUrl:  '/api/reports/kf-monthly',
   filterParam: 'area',
@@ -1561,8 +1560,8 @@ makeReport({
 });
 
 makeReport({
-  sidebarId: 'report-pge-meters', panelId: 'report-pge-meters-panel',
-  title: 'PGE Meters Report', prefix: 'rpge',
+  sidebarId: 'report-pge-meters', panelId: 'rpge-panel',
+  title: 'PGE Meters Report', prefix: 'rpge', selectId: 'rpge-meter',
   optionsUrl: '/api/reports/pge-meters/options',
   reportUrl:  '/api/reports/pge-meters',
   filterParam: 'building_id',
@@ -1571,8 +1570,8 @@ makeReport({
 });
 
 makeReport({
-  sidebarId: 'report-power-monitors', panelId: 'report-power-monitors-panel',
-  title: 'Power Monitors Report', prefix: 'rpwr',
+  sidebarId: 'report-power-monitors', panelId: 'rpm-panel',
+  title: 'Power Monitors Report', prefix: 'rpm', selectId: 'rpm-monitor',
   optionsUrl: '/api/reports/power-monitors/options',
   reportUrl:  '/api/reports/power-monitors',
   filterParam: 'building_id',
@@ -1581,8 +1580,8 @@ makeReport({
 });
 
 makeReport({
-  sidebarId: 'report-run-dwr', panelId: 'report-run-dwr-panel',
-  title: 'Run DWR Report', prefix: 'rdwr',
+  sidebarId: 'report-run-dwr', panelId: 'rdwr-panel',
+  title: 'Run DWR Report', prefix: 'rdwr', selectId: 'rdwr-area',
   optionsUrl: '/api/reports/run-dwr/options',
   reportUrl:  '/api/reports/run-dwr',
   filterParam: 'area',
@@ -1591,8 +1590,8 @@ makeReport({
 });
 
 makeReport({
-  sidebarId: 'report-dripper-oil', panelId: 'report-dripper-oil-panel',
-  title: 'Dripper Oil Report', prefix: 'rdo',
+  sidebarId: 'report-dripper-oil', panelId: 'rdo-panel',
+  title: 'Dripper Oil Report', prefix: 'rdo', selectId: 'rdo-area',
   optionsUrl: '/api/reports/dripper-oil/areas',
   reportUrl:  '/api/reports/dripper-oil',
   filterParam: 'area',
@@ -1601,8 +1600,8 @@ makeReport({
 });
 
 makeReport({
-  sidebarId: 'report-vehicle-monthly', panelId: 'report-vehicle-monthly-panel',
-  title: 'Vehicle Monthly Report', prefix: 'rvm',
+  sidebarId: 'report-vehicle-monthly', panelId: 'rvm-panel',
+  title: 'Vehicle Monthly Report', prefix: 'rvm', selectId: 'rvm-vehicle',
   optionsUrl: '/api/reports/vehicle-monthly/options',
   reportUrl:  '/api/reports/vehicle-monthly',
   filterParam: 'vehicle_id',
@@ -1610,7 +1609,7 @@ makeReport({
   hdrs: ['Vehicle #','Make','Model','Date','Time','Odometer (mi)','Engine Hours'],
 });
 
-// ── Version ────────────────────────────────────────────────────────────────
+// ── Version ─────────────────────────────────────────────────────────────────────────────
 (async () => {
   try {
     const res = await fetch('/api/version');
@@ -1622,7 +1621,7 @@ makeReport({
   } catch (_) { /* ignore */ }
 })();
 
-// ── Init: skip connect overlay if DB already connected ─────────────────────
+// ── Init: skip connect overlay if DB already connected ───────────────────────────────────────
 (async () => {
   try {
     const res = await fetch('/api/db-status');
