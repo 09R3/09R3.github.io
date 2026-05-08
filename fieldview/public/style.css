@@ -586,6 +586,7 @@ select { cursor: pointer; }
 
 /* ── Import Modal ── */
 .import-modal { width: min(96vw, 800px); }
+.import-body { flex: 1; overflow-y: auto; min-height: 0; }
 .import-divider { width: 1px; height: 20px; background: var(--border); margin: 0 4px; }
 .import-section { padding: 14px 20px; border-bottom: 1px solid var(--border); }
 .import-step-label {
