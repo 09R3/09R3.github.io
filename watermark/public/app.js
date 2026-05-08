@@ -8231,8 +8231,17 @@ async function initPondsScreen() {
       if (row.connection_id) {
         if (!pond.connections.has(row.connection_id)) {
           pond.connections.set(row.connection_id, {
-            id: row.connection_id, name: row.connection_name,
-            sort: row.connection_sort, gates: [],
+            id:                   row.connection_id,
+            name:                 row.connection_name,
+            sort:                 row.connection_sort,
+            source_type:          row.source_type,
+            source_canal_id:      row.source_canal_id,
+            canal_structure_name: row.canal_structure_name,
+            last_canal_flow:      row.last_canal_flow,
+            last_canal_totalizer: row.last_canal_totalizer,
+            last_canal_date:      row.last_canal_date,
+            last_canal_reading_id:row.last_canal_reading_id,
+            gates: [],
           });
         }
         if (row.gate_id) {
@@ -8323,12 +8332,16 @@ function createPondCard(pond, dateInput, timeInput) {
   // Staff gauge section
   form.appendChild(buildGaugeForm(pond, dateInput, timeInput, div));
 
-  // Gate rows grouped by connection
+  // Connection rows — canal gets a special inflow row; river/pond use gate rows
   const sortedConns = [...pond.connections.values()].sort((a, b) => a.sort - b.sort);
   for (const conn of sortedConns) {
-    const sortedGates = [...conn.gates].sort((a, b) => a.sort - b.sort);
-    for (const gate of sortedGates) {
-      form.appendChild(buildGateRow(gate, dateInput, timeInput, div));
+    if (conn.source_type === 'canal' && conn.source_canal_id) {
+      form.appendChild(buildCanalRow(conn, dateInput, timeInput, div));
+    } else {
+      const sortedGates = [...conn.gates].sort((a, b) => a.sort - b.sort);
+      for (const gate of sortedGates) {
+        form.appendChild(buildGateRow(gate, dateInput, timeInput, div));
+      }
     }
   }
 
@@ -8348,6 +8361,105 @@ function createPondCard(pond, dateInput, timeInput) {
   });
 
   return div;
+}
+
+function buildCanalRow(conn, dateInput, timeInput, cardEl) {
+  const today    = todayISO();
+  const prevDate = conn.last_canal_date ? String(conn.last_canal_date).slice(0, 10) : null;
+  const lastFlow = conn.last_canal_flow != null ? Number(conn.last_canal_flow) : null;
+  const prevHint = lastFlow != null
+    ? `${lastFlow.toFixed(2)} cfs · ${prevDate === today ? 'Today' : (prevDate ? fmtDate(prevDate) : '')}`
+    : null;
+
+  const wrap = document.createElement('div');
+  const row  = document.createElement('div');
+  row.className  = 'reading-row';
+  row.style.flexWrap = 'wrap';
+
+  const labelSub = [
+    conn.canal_structure_name ? `<div class="prev-date" style="font-style:italic">${conn.canal_structure_name}</div>` : '',
+    prevHint ? `<div class="prev-date">${prevHint}</div>` : '',
+  ].join('');
+
+  row.innerHTML = `
+    <div class="rr-label">${conn.name}${labelSub}</div>
+    <div class="rr-field-group" style="width:84px">
+      <span class="rr-col-hd">Flow (cfs)</span>
+      <input type="number" class="rr-input pg-canal-flow" step="0.01" placeholder="—" inputmode="decimal">
+      <span class="pg-canal-flow-delta live-delta"></span>
+    </div>
+    <div class="rr-field-group" style="width:92px">
+      <span class="rr-col-hd">Totalizer (af)</span>
+      <input type="number" class="rr-input pg-canal-totalizer" step="0.01" placeholder="—" inputmode="decimal">
+      <span class="live-delta" style="visibility:hidden;pointer-events:none">x</span>
+    </div>
+    <div style="flex:1;min-width:50px;display:flex;flex-direction:column">
+      <span class="rr-col-hd" style="visibility:hidden;pointer-events:none">x</span>
+      <div style="display:flex;gap:4px;align-items:stretch">
+        <textarea class="rr-notes-input pg-canal-notes" rows="1" placeholder="Notes…"></textarea>
+        <button class="btn btn-secondary btn-sm" title="History" style="flex-shrink:0">${icon('history')}</button>
+        <button class="btn btn-save btn-sm pg-canal-save" style="flex-shrink:0">Save</button>
+      </div>
+      <span class="live-delta" style="visibility:hidden;pointer-events:none">x</span>
+    </div>`;
+
+  const errDiv = document.createElement('div');
+  errDiv.className = 'error-msg hidden';
+  errDiv.style.cssText = 'font-size:0.78rem;padding:2px 10px 4px';
+  wrap.appendChild(row);
+  wrap.appendChild(errDiv);
+
+  const flowInput      = row.querySelector('.pg-canal-flow');
+  const totalizerInput = row.querySelector('.pg-canal-totalizer');
+  const notesInput     = row.querySelector('.pg-canal-notes');
+  const saveBtn        = row.querySelector('.pg-canal-save');
+  const flowDeltaEl    = row.querySelector('.pg-canal-flow-delta');
+
+  flowInput.dataset.savedFlow = conn.last_canal_flow ?? '';
+
+  flowInput.addEventListener('input', () => {
+    const v = parseFloat(flowInput.value), ref = parseFloat(flowInput.dataset.savedFlow ?? '');
+    flowDeltaEl.innerHTML = (!isNaN(v) && !isNaN(ref)) ? pondDelta(v, ref).trim() : '';
+  });
+
+  row.querySelector('.btn-secondary').addEventListener('click', () =>
+    openHistoryModal('canal', conn.source_canal_id,
+      `${conn.name}${conn.canal_structure_name ? ' — ' + conn.canal_structure_name : ''}`));
+
+  saveBtn.addEventListener('click', async () => {
+    const flow      = parseFloat(flowInput.value);
+    const totalizer = parseFloat(totalizerInput.value);
+    if (isNaN(flow) && isNaN(totalizer)) {
+      errDiv.textContent = 'Enter flow or totalizer.';
+      errDiv.classList.remove('hidden');
+      return;
+    }
+    errDiv.classList.add('hidden');
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving…';
+    try {
+      await api('POST', '/api/readings/canal', {
+        structure_id:           conn.source_canal_id,
+        reading_date:           dateInput.value,
+        reading_time:           timeInput.value,
+        instantaneous_flow_cfs: isNaN(flow)      ? null : flow,
+        totalizer_reading_af:   isNaN(totalizer) ? null : totalizer,
+        notes:                  notesInput.value || null,
+      });
+      saveBtn.textContent = 'Saved ✓';
+      saveBtn.disabled = false;
+      flowInput.dataset.savedFlow = isNaN(flow) ? '' : String(flow);
+      flowDeltaEl.innerHTML = '';
+      showToast(`${conn.name} saved`, 'success');
+    } catch (err) {
+      errDiv.textContent = err.message;
+      errDiv.classList.remove('hidden');
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Save';
+    }
+  });
+
+  return wrap;
 }
 
 function buildGaugeForm(pond, dateInput, timeInput, cardEl) {
