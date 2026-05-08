@@ -200,6 +200,8 @@ pool.query(`
     location_id INT REFERENCES pond_locations(location_id),
     name        TEXT NOT NULL,
     sort_order  INT DEFAULT 0,
+    gauge_lat   NUMERIC,
+    gauge_lon   NUMERIC,
     notes       TEXT
   )
 `).catch(err => console.error('Migration error (ponds):', err.message));
@@ -223,6 +225,8 @@ pool.query(`
     source_canal_id    INT REFERENCES canal_structures(structure_id),
     source_river_id    INT REFERENCES river_outlets(outlet_id),
     source_pond_id     INT REFERENCES ponds(pond_id),
+    gate_lat           NUMERIC,
+    gate_lon           NUMERIC,
     sort_order         INT DEFAULT 0,
     active             BOOLEAN DEFAULT TRUE,
     notes              TEXT
@@ -1192,6 +1196,13 @@ app.get('/api/ponds', requireAuth, async (req, res) => {
         pc.connection_id,
         pc.name            AS connection_name,
         pc.sort_order      AS connection_sort,
+        pc.source_type,
+        pc.source_canal_id,
+        cs.structure_name  AS canal_structure_name,
+        cr.reading_id      AS last_canal_reading_id,
+        cr.instantaneous_flow_cfs AS last_canal_flow,
+        cr.totalizer_reading_af   AS last_canal_totalizer,
+        cr.reading_date    AS last_canal_date,
         pg.gate_id,
         pg.label           AS gate_label,
         pg.gate_type,
@@ -1213,7 +1224,15 @@ app.get('/api/ponds', requireAuth, async (req, res) => {
         ORDER BY reading_date DESC, reading_time DESC
         LIMIT 1
       ) sg ON true
-      LEFT JOIN pond_connections pc ON pc.source_pond_id = p.pond_id AND pc.active = true
+      LEFT JOIN pond_connections pc ON pc.destination_pond_id = p.pond_id AND pc.active = true
+      LEFT JOIN canal_structures cs ON cs.structure_id = pc.source_canal_id
+      LEFT JOIN LATERAL (
+        SELECT reading_id, instantaneous_flow_cfs, totalizer_reading_af, reading_date
+        FROM readings_canal
+        WHERE structure_id = pc.source_canal_id
+        ORDER BY reading_date DESC, reading_time DESC
+        LIMIT 1
+      ) cr ON pc.source_canal_id IS NOT NULL
       LEFT JOIN pond_gates pg ON pg.connection_id = pc.connection_id AND pg.active = true
       LEFT JOIN LATERAL (
         SELECT reading_id, head_ft, opening_in, overpour_in, flow_cfs, reading_date
