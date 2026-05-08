@@ -1,4 +1,4 @@
-const CACHE = 'watermark-v1.59';
+const CACHE = 'watermark-v1.60';
 const SHELL = ['/', '/app.js', '/style.css', '/manifest.json'];
 
 self.addEventListener('install', e => {
