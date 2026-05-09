@@ -4557,11 +4557,25 @@ el('exif-back-btn').addEventListener('click', () => {
   el('gps-copy-btn').addEventListener('click', () => {
     const txt = gpsMode === 'update' ? buildUpdateSQL() : buildPolygonOutput();
     if (!txt) return;
-    navigator.clipboard.writeText(txt).then(() => {
-      const fb = el('gps-copy-feedback');
+    const fb = el('gps-copy-feedback');
+    function showFeedback() {
       fb.style.opacity = '1';
       setTimeout(() => { fb.style.opacity = '0'; }, 2000);
-    });
+    }
+    function fallbackCopy() {
+      const ta = document.createElement('textarea');
+      ta.value = txt;
+      ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); showFeedback(); } catch (e) {}
+      document.body.removeChild(ta);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(txt).then(showFeedback).catch(fallbackCopy);
+    } else {
+      fallbackCopy();
+    }
   });
 })();
 
