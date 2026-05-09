@@ -212,6 +212,9 @@ pool.query(`
     name        TEXT NOT NULL,
     sort_order  INT DEFAULT 0,
     active      BOOLEAN DEFAULT TRUE,
+    location_id INT REFERENCES pond_locations(location_id),
+    gauge_lat   NUMERIC,
+    gauge_lon   NUMERIC,
     notes       TEXT
   )
 `).catch(err => console.error('Migration error (river_outlets):', err.message));
@@ -250,6 +253,7 @@ pool.query(`
   CREATE TABLE IF NOT EXISTS readings_staff_gauge (
     reading_id   SERIAL PRIMARY KEY,
     pond_id      INT REFERENCES ponds(pond_id),
+    outlet_id    INT REFERENCES river_outlets(outlet_id),
     reading_date DATE NOT NULL,
     reading_time TIME,
     level_ft     NUMERIC NOT NULL,
@@ -1183,11 +1187,14 @@ app.post('/api/readings/canal', requireAuth, async (req, res) => {
 app.get('/api/ponds', requireAuth, async (req, res) => {
   try {
     const { rows } = await pool.query(`
+      -- Pond rows: canal inflows + pond-to-pond outflows only (no river connections)
       SELECT
+        'pond'::text       AS row_type,
         pl.location_id,
         pl.name            AS location_name,
         pl.sort_order      AS location_sort,
         p.pond_id,
+        NULL::int          AS outlet_id,
         p.name             AS pond_name,
         p.sort_order       AS pond_sort,
         sg.reading_id      AS last_gauge_id,
@@ -1225,7 +1232,7 @@ app.get('/api/ponds', requireAuth, async (req, res) => {
         LIMIT 1
       ) sg ON true
       LEFT JOIN pond_connections pc ON (
-        (pc.source_type IN ('canal', 'river') AND pc.destination_pond_id = p.pond_id)
+        (pc.source_type = 'canal' AND pc.destination_pond_id = p.pond_id)
         OR (pc.source_type = 'pond' AND pc.source_pond_id = p.pond_id)
       ) AND pc.active = true
       LEFT JOIN canal_structures cs ON cs.structure_id = pc.source_canal_id
@@ -1244,7 +1251,65 @@ app.get('/api/ponds', requireAuth, async (req, res) => {
         ORDER BY reading_date DESC, reading_time DESC
         LIMIT 1
       ) gr ON pg.gate_id IS NOT NULL
-      ORDER BY pl.sort_order, p.sort_order, pc.sort_order, pg.sort_order
+
+      UNION ALL
+
+      -- River outlet rows: connections where this outlet is the river source
+      SELECT
+        'outlet'::text     AS row_type,
+        pl.location_id,
+        pl.name            AS location_name,
+        pl.sort_order      AS location_sort,
+        NULL::int          AS pond_id,
+        ro.outlet_id,
+        ro.name            AS pond_name,
+        ro.sort_order      AS pond_sort,
+        sg.reading_id      AS last_gauge_id,
+        sg.level_ft        AS last_gauge_level,
+        sg.reading_date    AS last_gauge_date,
+        pc.connection_id,
+        pc.name            AS connection_name,
+        pc.sort_order      AS connection_sort,
+        pc.source_type,
+        NULL::int          AS source_canal_id,
+        NULL::text         AS canal_structure_name,
+        NULL::int          AS last_canal_reading_id,
+        NULL::numeric      AS last_canal_flow,
+        NULL::numeric      AS last_canal_totalizer,
+        NULL::date         AS last_canal_date,
+        pg.gate_id,
+        pg.label           AS gate_label,
+        pg.gate_type,
+        pg.width_in,
+        pg.notes           AS gate_notes,
+        pg.sort_order      AS gate_sort,
+        gr.reading_id      AS last_gate_reading_id,
+        gr.head_ft         AS last_head,
+        gr.opening_in      AS last_opening,
+        gr.overpour_in     AS last_overpour,
+        gr.flow_cfs        AS last_flow,
+        gr.reading_date    AS last_gate_date
+      FROM river_outlets ro
+      JOIN pond_locations pl ON pl.location_id = ro.location_id
+      LEFT JOIN LATERAL (
+        SELECT reading_id, level_ft, reading_date
+        FROM readings_staff_gauge
+        WHERE outlet_id = ro.outlet_id
+        ORDER BY reading_date DESC, reading_time DESC
+        LIMIT 1
+      ) sg ON true
+      LEFT JOIN pond_connections pc ON pc.source_river_id = ro.outlet_id AND pc.active = true
+      LEFT JOIN pond_gates pg ON pg.connection_id = pc.connection_id AND pg.active = true
+      LEFT JOIN LATERAL (
+        SELECT reading_id, head_ft, opening_in, overpour_in, flow_cfs, reading_date
+        FROM readings_pond_gates
+        WHERE gate_id = pg.gate_id
+        ORDER BY reading_date DESC, reading_time DESC
+        LIMIT 1
+      ) gr ON pg.gate_id IS NOT NULL
+      WHERE ro.active = true
+
+      ORDER BY location_sort, pond_sort, connection_sort, gate_sort
     `);
     res.json(rows);
   } catch (err) {
@@ -1253,13 +1318,13 @@ app.get('/api/ponds', requireAuth, async (req, res) => {
 });
 
 app.post('/api/readings/staff-gauge', requireAuth, async (req, res) => {
-  const { pond_id, reading_date, reading_time, level_ft, notes } = req.body;
+  const { pond_id, outlet_id, reading_date, reading_time, level_ft, notes } = req.body;
   try {
     const { rows } = await pool.query(
       `INSERT INTO readings_staff_gauge
-         (pond_id, reading_date, reading_time, level_ft, entered_by, notes)
-       VALUES ($1,$2,$3,$4,$5,$6) RETURNING reading_id`,
-      [pond_id, reading_date, reading_time || null, level_ft,
+         (pond_id, outlet_id, reading_date, reading_time, level_ft, entered_by, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING reading_id`,
+      [pond_id || null, outlet_id || null, reading_date, reading_time || null, level_ft,
        req.user.username, notes || null]
     );
     res.json({ ok: true, reading_id: rows[0].reading_id });
@@ -1420,11 +1485,14 @@ app.get('/api/history', requireAuth, async (req, res) => {
          FROM readings_piezometers WHERE piezometer_id = $1
          ORDER BY reading_date DESC, reading_time DESC LIMIT $2`, [id, LIMIT]));
     } else if (type === 'staff-gauge') {
+      const isOutlet = String(id).startsWith('outlet-');
+      const numId = isOutlet ? parseInt(id.replace('outlet-', '')) : parseInt(id);
+      const col   = isOutlet ? 'outlet_id' : 'pond_id';
       ({ rows } = await pool.query(
         `SELECT reading_id AS id, reading_date, reading_time,
                 level_ft AS value, entered_by, notes
-         FROM readings_staff_gauge WHERE pond_id = $1
-         ORDER BY reading_date DESC, reading_time DESC LIMIT $2`, [id, LIMIT]));
+         FROM readings_staff_gauge WHERE ${col} = $1
+         ORDER BY reading_date DESC, reading_time DESC LIMIT $2`, [numId, LIMIT]));
     } else if (type === 'pond-gate') {
       ({ rows } = await pool.query(
         `SELECT reading_id AS id, reading_date, reading_time,

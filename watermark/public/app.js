@@ -8431,57 +8431,63 @@ async function initPondsScreen() {
       return;
     }
 
-    // Group flat rows → locations → ponds → connections → gates
+    // Group flat rows → locations → (ponds + outlets) → connections → gates
     const locMap = new Map();
+    function addGate(connMap, connId, row) {
+      if (!connMap.has(connId)) {
+        connMap.set(connId, {
+          id: row.connection_id, name: row.connection_name, sort: row.connection_sort,
+          source_type: row.source_type, source_canal_id: row.source_canal_id,
+          canal_structure_name: row.canal_structure_name,
+          last_canal_flow: row.last_canal_flow, last_canal_totalizer: row.last_canal_totalizer,
+          last_canal_date: row.last_canal_date, last_canal_reading_id: row.last_canal_reading_id,
+          gates: [],
+        });
+      }
+      if (row.gate_id) {
+        connMap.get(connId).gates.push({
+          gate_id: row.gate_id, label: row.gate_label, gate_type: row.gate_type,
+          width_in: row.width_in, gate_notes: row.gate_notes, sort: row.gate_sort,
+          last_head: row.last_head, last_opening: row.last_opening,
+          last_overpour: row.last_overpour, last_flow: row.last_flow, last_date: row.last_gate_date,
+        });
+      }
+    }
+
     for (const row of rows) {
+      if (!row.location_id) continue; // outlets without location assigned yet
       if (!locMap.has(row.location_id)) {
         locMap.set(row.location_id, {
           id: row.location_id, name: row.location_name,
-          sort: row.location_sort, ponds: new Map(),
+          sort: row.location_sort, ponds: new Map(), outlets: new Map(),
         });
       }
       const loc = locMap.get(row.location_id);
 
-      if (!loc.ponds.has(row.pond_id)) {
-        loc.ponds.set(row.pond_id, {
-          pond_id: row.pond_id, name: row.pond_name, sort: row.pond_sort,
-          last_gauge_level: row.last_gauge_level,
-          last_gauge_date:  row.last_gauge_date,
-          connections: new Map(),
-        });
-      }
-      const pond = loc.ponds.get(row.pond_id);
-
-      if (row.connection_id) {
-        if (!pond.connections.has(row.connection_id)) {
-          pond.connections.set(row.connection_id, {
-            id:                   row.connection_id,
-            name:                 row.connection_name,
-            sort:                 row.connection_sort,
-            source_type:          row.source_type,
-            source_canal_id:      row.source_canal_id,
-            canal_structure_name: row.canal_structure_name,
-            last_canal_flow:      row.last_canal_flow,
-            last_canal_totalizer: row.last_canal_totalizer,
-            last_canal_date:      row.last_canal_date,
-            last_canal_reading_id:row.last_canal_reading_id,
-            gates: [],
+      if (row.row_type === 'outlet') {
+        if (!loc.outlets.has(row.outlet_id)) {
+          loc.outlets.set(row.outlet_id, {
+            outlet_id: row.outlet_id, name: row.pond_name, sort: row.pond_sort,
+            isOutlet: true,
+            last_gauge_level: row.last_gauge_level,
+            last_gauge_date:  row.last_gauge_date,
+            connections: new Map(),
           });
         }
-        if (row.gate_id) {
-          pond.connections.get(row.connection_id).gates.push({
-            gate_id:      row.gate_id,
-            label:        row.gate_label,
-            gate_type:    row.gate_type,
-            width_in:     row.width_in,
-            gate_notes:   row.gate_notes,
-            sort:         row.gate_sort,
-            last_head:    row.last_head,
-            last_opening: row.last_opening,
-            last_overpour:row.last_overpour,
-            last_flow:    row.last_flow,
-            last_date:    row.last_gate_date,
+        if (row.connection_id) {
+          addGate(loc.outlets.get(row.outlet_id).connections, row.connection_id, row);
+        }
+      } else {
+        if (!loc.ponds.has(row.pond_id)) {
+          loc.ponds.set(row.pond_id, {
+            pond_id: row.pond_id, name: row.pond_name, sort: row.pond_sort,
+            last_gauge_level: row.last_gauge_level,
+            last_gauge_date:  row.last_gauge_date,
+            connections: new Map(),
           });
+        }
+        if (row.connection_id) {
+          addGate(loc.ponds.get(row.pond_id).connections, row.connection_id, row);
         }
       }
     }
@@ -8489,8 +8495,11 @@ async function initPondsScreen() {
     body.innerHTML = '';
     const sortedLocs = [...locMap.values()].sort((a, b) => a.sort - b.sort);
     for (const loc of sortedLocs) {
-      const sortedPonds = [...loc.ponds.values()].sort((a, b) => a.sort - b.sort);
-      const cards = sortedPonds.map(p => createPondCard(p, dateInput, timeInput));
+      const allEntities = [
+        ...[...loc.ponds.values()].map(p => ({ ...p, _fn: createPondCard })),
+        ...[...loc.outlets.values()].map(o => ({ ...o, _fn: createOutletCard })),
+      ].sort((a, b) => a.sort - b.sort);
+      const cards = allEntities.map(e => e._fn(e, dateInput, timeInput));
       body.appendChild(makeCollapsibleSection(loc.name, cards));
     }
   } catch (err) {
@@ -8570,6 +8579,67 @@ function createPondCard(pond, dateInput, timeInput) {
   }
 
   // Total row (only when multiple gates)
+  if (allGates.length > 1) {
+    const totalRow = document.createElement('div');
+    totalRow.className = 'pond-total-row';
+    totalRow.innerHTML = `<span>Total</span><span class="pond-total-cfs">—</span>`;
+    form.appendChild(totalRow);
+  }
+
+  div.querySelector('.list-item-header').addEventListener('click', () => {
+    const open = !div.classList.contains('expanded');
+    div.classList.toggle('expanded', open);
+    form.style.display = open ? '' : 'none';
+    if (open) timeInput.value = nowHHMM();
+  });
+
+  return div;
+}
+
+function createOutletCard(outlet, dateInput, timeInput) {
+  const today    = todayISO();
+  const allGates = [...outlet.connections.values()].flatMap(c => c.gates);
+
+  const lastGateDate = allGates.reduce((best, g) => {
+    const d = g.last_date ? String(g.last_date).slice(0, 10) : null;
+    return (!best || (d && d > best)) ? d : best;
+  }, null);
+  const statusDate = lastGateDate || (outlet.last_gauge_date ? String(outlet.last_gauge_date).slice(0, 10) : null);
+  const badgeClass = !statusDate ? 'default' : (statusDate === today ? 'ok' : 'due');
+  const badgeText  = !statusDate ? 'Not read' : (statusDate === today ? 'Today' : fmtDate(statusDate));
+
+  const gaugeLevel = outlet.last_gauge_level;
+  const gaugeDate  = outlet.last_gauge_date ? String(outlet.last_gauge_date).slice(0, 10) : null;
+  const gaugeHint  = gaugeLevel != null
+    ? `Staff: ${Number(gaugeLevel).toFixed(2)} ft · ${gaugeDate ? fmtDate(gaugeDate) : 'Today'}`
+    : 'Staff: —';
+
+  const div = document.createElement('div');
+  div.className = 'list-item';
+  div.dataset.curGaugeLevel = outlet.last_gauge_level ?? '';
+
+  div.innerHTML = `
+    <div class="list-item-header">
+      <span class="list-item-name">${outlet.name}</span>
+      <span class="pond-gauge-hint">${gaugeHint}</span>
+      <span class="status-badge ${badgeClass}">${badgeText}</span>
+      <span class="expand-chevron">&#9660;</span>
+    </div>
+    <div class="list-item-form"></div>`;
+
+  const form = div.querySelector('.list-item-form');
+  form.style.display = 'none';
+
+  form.appendChild(buildGaugeForm(outlet, dateInput, timeInput, div));
+
+  const sortedConns = [...outlet.connections.values()].sort((a, b) => a.sort - b.sort);
+  for (const conn of sortedConns) {
+    const sortedGates = [...conn.gates].sort((a, b) => a.sort - b.sort);
+    for (const gate of sortedGates) {
+      form.appendChild(buildGateRow(gate, dateInput, timeInput, div));
+    }
+  }
+
   if (allGates.length > 1) {
     const totalRow = document.createElement('div');
     totalRow.className = 'pond-total-row';
@@ -8732,8 +8802,9 @@ function buildGaugeForm(pond, dateInput, timeInput, cardEl) {
   });
   const saveBtn    = row.querySelector('.pg-gauge-save');
 
+  const historyId = pond.outlet_id ? `outlet-${pond.outlet_id}` : pond.pond_id;
   row.querySelector('.btn-secondary').addEventListener('click', () =>
-    openHistoryModal('staff-gauge', pond.pond_id, pond.name + ' — Staff Gauge'));
+    openHistoryModal('staff-gauge', historyId, pond.name + ' — Staff Gauge'));
 
   saveBtn.addEventListener('click', async () => {
     const level = parseFloat(levelInput.value);
@@ -8745,14 +8816,11 @@ function buildGaugeForm(pond, dateInput, timeInput, cardEl) {
     errDiv.classList.add('hidden');
     saveBtn.disabled = true;
     saveBtn.textContent = 'Saving…';
+    const gaugeBody = pond.outlet_id
+      ? { outlet_id: pond.outlet_id, reading_date: dateInput.value, reading_time: timeInput.value, level_ft: level, notes: notesInput.value || null }
+      : { pond_id:   pond.pond_id,   reading_date: dateInput.value, reading_time: timeInput.value, level_ft: level, notes: notesInput.value || null };
     try {
-      await api('POST', '/api/readings/staff-gauge', {
-        pond_id:      pond.pond_id,
-        reading_date: dateInput.value,
-        reading_time: timeInput.value,
-        level_ft:     level,
-        notes:        notesInput.value || null,
-      });
+      await api('POST', '/api/readings/staff-gauge', gaugeBody);
       saveBtn.textContent = 'Saved ✓';
       saveBtn.disabled = false;
       // Update reference level for future live-delta comparisons
