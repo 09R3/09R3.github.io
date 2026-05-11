@@ -358,12 +358,15 @@ function openSetMapModal(setName, wells) {
     if (_setLocationMarker) { _setLocationMarker.remove(); _setLocationMarker = null; }
 
     _setLeafletMarkers = validWells.map(w => {
-      // KF wells carry range_reading_date (null = not read in range); DWR uses session + recency
+      const sessionR = wellReadingsThisSession.get(w.well_id);
+      // KF: use range_reading_date; DWR: session set + recency; operational wells: session map + hours
       const done = 'range_reading_date' in w
         ? w.range_reading_date != null
-        : (dwrDoneThisSession.has(w.well_id) || (w.days_since_reading != null && w.days_since_reading <= 30));
+        : sessionR != null || dwrDoneThisSession.has(w.well_id) ||
+          (w.days_since_reading != null && w.days_since_reading <= 30) ||
+          (w.hours_since_reading != null && w.hours_since_reading <= 8);
       const color = done ? '#22c55e' : '#ef4444';
-      const icon = L.divIcon({
+      const dotIcon = L.divIcon({
         className: '',
         html: `<div style="width:14px;height:14px;border-radius:50%;background:${color};border:2px solid rgba(0,0,0,0.4);box-shadow:0 1px 3px rgba(0,0,0,0.5)"></div>`,
         iconSize: [14, 14],
@@ -371,12 +374,21 @@ function openSetMapModal(setName, wells) {
         popupAnchor: [0, -8],
       });
       const label = [w.state_well_number, w.common_name].filter(Boolean).join(' | ') || 'Well';
-      const readDate = w.range_reading_date || w.last_reading_date;
-      const status = done && readDate
-        ? `<span style="color:#16a34a">✓ Read ${localDateStr(readDate, {month:'short',day:'numeric'})}</span>`
-        : done ? `<span style="color:#16a34a">✓ Read</span>`
-        : `<span style="color:#dc2626">Not read</span>`;
-      const m = L.marker([w.gps_latitude, w.gps_longitude], { icon }).addTo(_setLeafletMap);
+      let status;
+      if (!done) {
+        status = '<span style="color:#dc2626">Not read</span>';
+      } else if (sessionR) {
+        const lines = [`✓ Read ${localDateStr(sessionR.date, {month:'short',day:'numeric'})}`];
+        if (sessionR.time) lines.push(sessionR.time.slice(0, 5));
+        if (sessionR.flow_cfs != null && sessionR.flow_cfs !== '') lines.push(`${Number(sessionR.flow_cfs).toFixed(2)} cfs`);
+        status = `<span style="color:#16a34a">${lines.join('<br>')}</span>`;
+      } else {
+        const readDate = w.range_reading_date || w.last_reading_date;
+        status = readDate
+          ? `<span style="color:#16a34a">✓ Read ${localDateStr(readDate, {month:'short',day:'numeric'})}</span>`
+          : `<span style="color:#16a34a">✓ Read</span>`;
+      }
+      const m = L.marker([w.gps_latitude, w.gps_longitude], { icon: dotIcon }).addTo(_setLeafletMap);
       m.bindPopup(`<strong>${label}</strong><br>${status}`);
       return m;
     });
@@ -903,7 +915,9 @@ async function renderPPBody() {
         building.building_name || (building.building_letter + ' Plant'),
         items
       );
-      section.classList.remove('collapsed'); // auto-expand when viewing a specific plant
+      section.querySelector('.list-section-header').addEventListener('click', () => {
+        if (!section.classList.contains('collapsed')) el('pp-time').value = nowHHMM();
+      });
       body.appendChild(section);
     });
   });
@@ -1122,6 +1136,7 @@ async function savePPReadings() {
 
 /* ── Wells ───────────────────────────────────────────────────────────────── */
 let wellsLoaded = false;
+let wellReadingsThisSession = new Map(); // well_id → { date, time, flow_cfs }
 
 async function initWellsScreen() {
   if (wellsLoaded) return;
@@ -1313,6 +1328,11 @@ function createWellItem(w, dateInput, timeInput) {
     };
     try {
       const r = await api('POST', '/api/readings/well', body, `Well — ${w.common_name}`);
+      if (!r.queued) {
+        wellReadingsThisSession.set(w.well_id, {
+          date: body.reading_date, time: body.reading_time, flow_cfs: body.flow_cfs,
+        });
+      }
       div.querySelector('.status-dot').className = 'status-dot done';
       div.querySelector('.status-badge').textContent = r.queued ? 'Offline' : 'Just saved';
       div.querySelector('.status-badge').className = 'status-badge done';
