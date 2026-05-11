@@ -1356,6 +1356,20 @@ app.delete('/api/readings/staff-gauge/:id', requireAuth, (req, res) =>
 app.delete('/api/readings/pond-gate/:id', requireAuth, (req, res) =>
   deleteReading(req, res, 'readings_pond_gates', 'reading_id'));
 
+app.get('/api/ponds/list', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT pond_id, name FROM ponds ORDER BY name');
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/outlets/list', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT outlet_id, name FROM river_outlets WHERE active = true ORDER BY name');
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.get('/api/ponds/:id/polygon', requireAuth, async (req, res) => {
   const { id } = req.params;
   try {

@@ -4390,35 +4390,63 @@ el('exif-back-btn').addEventListener('click', () => {
     });
   }
 
-  function getPondName() { return el('gps-pond-name').value.trim(); }
-  function getPondId()   { return el('gps-pond-id').value.trim() || '1'; }
+  function getPondName()   { return el('gps-pond-name').value.trim(); }
+  function getEntityType() { return el('gps-entity-type').value; }
+  function getPondId()     { return el('gps-entity-id').value || ''; }
+
+  async function loadEntityDropdown() {
+    const type = getEntityType();
+    const sel = el('gps-entity-id');
+    sel.innerHTML = '<option value="">Loading…</option>';
+    try {
+      const url = type === 'outlet' ? '/api/outlets/list' : '/api/ponds/list';
+      const items = await api('GET', url);
+      sel.innerHTML = items.map(item => {
+        const id = type === 'outlet' ? item.outlet_id : item.pond_id;
+        return `<option value="${id}">${item.name} (${id})</option>`;
+      }).join('');
+      onEntitySelect();
+    } catch (e) {
+      sel.innerHTML = '<option value="">Failed to load</option>';
+    }
+  }
+
+  function onEntitySelect() {
+    const sel = el('gps-entity-id');
+    const opt = sel.options[sel.selectedIndex];
+    if (opt && opt.value) {
+      el('gps-pond-name').value = opt.text.replace(/\s*\(\d+\)$/, '');
+    }
+    gpsRender();
+  }
 
   function buildUpdateSQL() {
     if (!updatePoint) return '';
     const tbl   = el('gps-update-table').value;
     const pk    = el('gps-update-pk').value.trim() || '<pk_value>';
-    const pkCol = tbl === 'ponds' ? 'pond_id' : 'connection_id';
-    const latC  = tbl === 'ponds' ? 'gauge_lat' : 'gate_lat';
-    const lonC  = tbl === 'ponds' ? 'gauge_lon' : 'gate_lon';
+    const pkCol = tbl === 'ponds' ? 'pond_id' : tbl === 'river_outlets' ? 'outlet_id' : 'connection_id';
+    const latC  = tbl === 'pond_connections' ? 'gate_lat' : 'gauge_lat';
+    const lonC  = tbl === 'pond_connections' ? 'gate_lon' : 'gauge_lon';
     return `UPDATE ${tbl}\nSET ${latC} = ${updatePoint.lat},\n    ${lonC} = ${updatePoint.lng}\nWHERE ${pkCol} = ${pk};`;
   }
 
   function buildPolygonOutput() {
     if (!points.length) return '';
+    const idCol = getEntityType() === 'outlet' ? 'outlet_id' : 'pond_id';
     const name = getPondName(), id = getPondId();
     if (fmt === 'single') {
       const p = points[0];
       return name ? `${name}\t${p.lat}\t${p.lng}` : `${p.lat}\t${p.lng}`;
     }
     if (fmt === 'latlng') {
-      return `Pond ID: ${id} | ${name || 'Unnamed Pond'}\n` +
+      return `${idCol}: ${id} | ${name || 'Unnamed'}\n` +
         points.map((p, i) => `Point ${i + 1}: ${p.lat}, ${p.lng}`).join('\n');
     }
-    const label = name || 'Unnamed Pond';
+    const label = name || 'Unnamed';
     const rows = points.map((p, i) =>
       `  (${id}, '${label}', ${i + 1}, ST_SetSRID(ST_MakePoint(${p.lng}, ${p.lat}), 4326))`
     ).join(',\n');
-    return `-- ${label} (ID: ${id})\nINSERT INTO pond_points (pond_id, name, point_order, geom) VALUES\n${rows};`;
+    return `-- ${label} (${idCol}: ${id})\nINSERT INTO pond_points (${idCol}, name, point_order, geom) VALUES\n${rows};`;
   }
 
   function updateCloseBtn() {
@@ -4431,7 +4459,8 @@ el('exif-back-btn').addEventListener('click', () => {
 
   function renderUpdate() {
     const tbl = el('gps-update-table').value;
-    el('gps-pk-label').textContent = (tbl === 'ponds' ? 'pond_id' : 'connection_id') + ':';
+    const pkMap = { ponds: 'pond_id', river_outlets: 'outlet_id', pond_connections: 'connection_id' };
+    el('gps-pk-label').textContent = (pkMap[tbl] || 'id') + ':';
     const display = el('gps-update-point-display');
     const preview = el('gps-preview');
     const copyBtn = el('gps-copy-btn');
@@ -4494,6 +4523,7 @@ el('exif-back-btn').addEventListener('click', () => {
 
   window.openGpsPicker = function () {
     el('gpspicker-overlay').classList.remove('hidden');
+    loadEntityDropdown();
     setTimeout(() => {
       if (!gpsMap) {
         gpsMap = L.map('gpspicker-map', { zoomControl: true, attributionControl: false })
@@ -4549,7 +4579,8 @@ el('exif-back-btn').addEventListener('click', () => {
   el('gps-update-table').addEventListener('change', renderUpdate);
   el('gps-update-pk').addEventListener('input', renderUpdate);
   el('gps-pond-name').addEventListener('input', gpsRender);
-  el('gps-pond-id').addEventListener('input', gpsRender);
+  el('gps-entity-type').addEventListener('change', loadEntityDropdown);
+  el('gps-entity-id').addEventListener('change', onEntitySelect);
 
   document.querySelectorAll('.gps-mode-btn').forEach(btn => {
     btn.addEventListener('click', function () {
