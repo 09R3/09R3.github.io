@@ -358,12 +358,15 @@ function openSetMapModal(setName, wells) {
     if (_setLocationMarker) { _setLocationMarker.remove(); _setLocationMarker = null; }
 
     _setLeafletMarkers = validWells.map(w => {
-      // KF wells carry range_reading_date (null = not read in range); DWR uses session + recency
+      const sessionR = wellReadingsThisSession.get(w.well_id);
+      // KF: use range_reading_date; DWR: session set + recency; operational wells: session map + hours
       const done = 'range_reading_date' in w
         ? w.range_reading_date != null
-        : (dwrDoneThisSession.has(w.well_id) || (w.days_since_reading != null && w.days_since_reading <= 30));
+        : sessionR != null || dwrDoneThisSession.has(w.well_id) ||
+          (w.days_since_reading != null && w.days_since_reading <= 30) ||
+          (w.hours_since_reading != null && w.hours_since_reading <= 8);
       const color = done ? '#22c55e' : '#ef4444';
-      const icon = L.divIcon({
+      const dotIcon = L.divIcon({
         className: '',
         html: `<div style="width:14px;height:14px;border-radius:50%;background:${color};border:2px solid rgba(0,0,0,0.4);box-shadow:0 1px 3px rgba(0,0,0,0.5)"></div>`,
         iconSize: [14, 14],
@@ -371,12 +374,21 @@ function openSetMapModal(setName, wells) {
         popupAnchor: [0, -8],
       });
       const label = [w.state_well_number, w.common_name].filter(Boolean).join(' | ') || 'Well';
-      const readDate = w.range_reading_date || w.last_reading_date;
-      const status = done && readDate
-        ? `<span style="color:#16a34a">✓ Read ${localDateStr(readDate, {month:'short',day:'numeric'})}</span>`
-        : done ? `<span style="color:#16a34a">✓ Read</span>`
-        : `<span style="color:#dc2626">Not read</span>`;
-      const m = L.marker([w.gps_latitude, w.gps_longitude], { icon }).addTo(_setLeafletMap);
+      let status;
+      if (!done) {
+        status = '<span style="color:#dc2626">Not read</span>';
+      } else if (sessionR) {
+        const lines = [`✓ Read ${localDateStr(sessionR.date, {month:'short',day:'numeric'})}`];
+        if (sessionR.time) lines.push(sessionR.time.slice(0, 5));
+        if (sessionR.flow_cfs != null && sessionR.flow_cfs !== '') lines.push(`${Number(sessionR.flow_cfs).toFixed(2)} cfs`);
+        status = `<span style="color:#16a34a">${lines.join('<br>')}</span>`;
+      } else {
+        const readDate = w.range_reading_date || w.last_reading_date;
+        status = readDate
+          ? `<span style="color:#16a34a">✓ Read ${localDateStr(readDate, {month:'short',day:'numeric'})}</span>`
+          : `<span style="color:#16a34a">✓ Read</span>`;
+      }
+      const m = L.marker([w.gps_latitude, w.gps_longitude], { icon: dotIcon }).addTo(_setLeafletMap);
       m.bindPopup(`<strong>${label}</strong><br>${status}`);
       return m;
     });
@@ -903,7 +915,9 @@ async function renderPPBody() {
         building.building_name || (building.building_letter + ' Plant'),
         items
       );
-      section.classList.remove('collapsed'); // auto-expand when viewing a specific plant
+      section.querySelector('.list-section-header').addEventListener('click', () => {
+        if (!section.classList.contains('collapsed')) el('pp-time').value = nowHHMM();
+      });
       body.appendChild(section);
     });
   });
@@ -1122,6 +1136,7 @@ async function savePPReadings() {
 
 /* ── Wells ───────────────────────────────────────────────────────────────── */
 let wellsLoaded = false;
+let wellReadingsThisSession = new Map(); // well_id → { date, time, flow_cfs }
 
 async function initWellsScreen() {
   if (wellsLoaded) return;
@@ -1313,6 +1328,11 @@ function createWellItem(w, dateInput, timeInput) {
     };
     try {
       const r = await api('POST', '/api/readings/well', body, `Well — ${w.common_name}`);
+      if (!r.queued) {
+        wellReadingsThisSession.set(w.well_id, {
+          date: body.reading_date, time: body.reading_time, flow_cfs: body.flow_cfs,
+        });
+      }
       div.querySelector('.status-dot').className = 'status-dot done';
       div.querySelector('.status-badge').textContent = r.queued ? 'Offline' : 'Just saved';
       div.querySelector('.status-badge').className = 'status-badge done';
@@ -4347,13 +4367,269 @@ document.querySelectorAll('.settings-menu-row[data-panel]').forEach(btn => {
 el('settings-panel-tools').addEventListener('click', e => {
   const btn = e.target.closest('[data-tool]');
   if (!btn) return;
-  if (btn.dataset.tool === 'exif')   openExifTool();
-  if (btn.dataset.tool === 'upload') openUploadTool();
+  if (btn.dataset.tool === 'exif')      openExifTool();
+  if (btn.dataset.tool === 'upload')    openUploadTool();
+  if (btn.dataset.tool === 'gpspicker') openGpsPicker();
 });
 
 el('exif-back-btn').addEventListener('click', () => {
   el('exif-tool-overlay').classList.add('hidden');
 });
+
+// ── Pond GPS Picker ───────────────────────────────────────────────────────────
+(function () {
+  let gpsMap = null, points = [], markers = [], fmt = 'latlng', isClosed = false;
+  let gpsMode = 'polygon', updatePoint = null, updateMarker = null;
+
+  function makeIcon(n, color) {
+    color = color || '#1D9E75';
+    return L.divIcon({
+      className: '',
+      html: `<div style="width:22px;height:22px;border-radius:50%;background:${color};border:2px solid #fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:500;color:#fff;box-shadow:0 1px 4px rgba(0,0,0,0.4)">${n}</div>`,
+      iconSize: [22, 22], iconAnchor: [11, 11],
+    });
+  }
+
+  function getPondName()   { return el('gps-pond-name').value.trim(); }
+  function getEntityType() { return el('gps-entity-type').value; }
+  function getPondId()     { return el('gps-entity-id').value || ''; }
+
+  async function loadEntityDropdown() {
+    const type = getEntityType();
+    const sel = el('gps-entity-id');
+    sel.innerHTML = '<option value="">Loading…</option>';
+    try {
+      const url = type === 'outlet' ? '/api/outlets/list' : '/api/ponds/list';
+      const items = await api('GET', url);
+      sel.innerHTML = items.map(item => {
+        const id = type === 'outlet' ? item.outlet_id : item.pond_id;
+        return `<option value="${id}">${item.name} (${id})</option>`;
+      }).join('');
+      onEntitySelect();
+    } catch (e) {
+      sel.innerHTML = '<option value="">Failed to load</option>';
+    }
+  }
+
+  function onEntitySelect() {
+    const sel = el('gps-entity-id');
+    const opt = sel.options[sel.selectedIndex];
+    if (opt && opt.value) {
+      el('gps-pond-name').value = opt.text.replace(/\s*\(\d+\)$/, '');
+    }
+    gpsRender();
+  }
+
+  function buildUpdateSQL() {
+    if (!updatePoint) return '';
+    const tbl   = el('gps-update-table').value;
+    const pk    = el('gps-update-pk').value.trim() || '<pk_value>';
+    const pkCol = tbl === 'ponds' ? 'pond_id' : tbl === 'river_outlets' ? 'outlet_id' : 'connection_id';
+    const latC  = tbl === 'pond_connections' ? 'gate_lat' : 'gauge_lat';
+    const lonC  = tbl === 'pond_connections' ? 'gate_lon' : 'gauge_lon';
+    return `UPDATE ${tbl}\nSET ${latC} = ${updatePoint.lat},\n    ${lonC} = ${updatePoint.lng}\nWHERE ${pkCol} = ${pk};`;
+  }
+
+  function buildPolygonOutput() {
+    if (!points.length) return '';
+    const idCol = getEntityType() === 'outlet' ? 'outlet_id' : 'pond_id';
+    const name = getPondName(), id = getPondId();
+    if (fmt === 'single') {
+      const p = points[0];
+      return name ? `${name}\t${p.lat}\t${p.lng}` : `${p.lat}\t${p.lng}`;
+    }
+    if (fmt === 'latlng') {
+      return `${idCol}: ${id} | ${name || 'Unnamed'}\n` +
+        points.map((p, i) => `Point ${i + 1}: ${p.lat}, ${p.lng}`).join('\n');
+    }
+    const label = name || 'Unnamed';
+    const rows = points.map((p, i) =>
+      `  (${id}, '${label}', ${i + 1}, ST_SetSRID(ST_MakePoint(${p.lng}, ${p.lat}), 4326))`
+    ).join(',\n');
+    return `-- ${label} (${idCol}: ${id})\nINSERT INTO pond_points (${idCol}, name, point_order, geom) VALUES\n${rows};`;
+  }
+
+  function updateCloseBtn() {
+    const ok = points.length >= 3 && fmt !== 'single' && !isClosed;
+    const btn = el('gps-close-btn');
+    btn.disabled = !ok;
+    btn.style.opacity = ok ? '1' : '0.4';
+    btn.style.cursor = ok ? 'pointer' : 'not-allowed';
+  }
+
+  function renderUpdate() {
+    const tbl = el('gps-update-table').value;
+    const pkMap = { ponds: 'pond_id', river_outlets: 'outlet_id', pond_connections: 'connection_id' };
+    el('gps-pk-label').textContent = (pkMap[tbl] || 'id') + ':';
+    const display = el('gps-update-point-display');
+    const preview = el('gps-preview');
+    const copyBtn = el('gps-copy-btn');
+    if (!updatePoint) {
+      display.textContent = 'No point selected — tap the map';
+      display.style.fontStyle = 'italic';
+      preview.textContent = '';
+      copyBtn.disabled = true; copyBtn.style.opacity = '0.4'; copyBtn.style.cursor = 'not-allowed';
+      return;
+    }
+    display.innerHTML = `<span style="color:var(--text-dim)">Lat</span> <strong>${updatePoint.lat}</strong> &nbsp; <span style="color:var(--text-dim)">Lng</span> <strong>${updatePoint.lng}</strong>`;
+    display.style.fontStyle = 'normal';
+    preview.textContent = buildUpdateSQL();
+    copyBtn.disabled = false; copyBtn.style.opacity = '1'; copyBtn.style.cursor = 'pointer';
+  }
+
+  function renderPolygon() {
+    const isSingle = fmt === 'single';
+    el('gps-name-label').textContent = isSingle ? 'Name:' : 'Pond name:';
+    el('gps-single-hint').style.display = isSingle ? 'block' : 'none';
+    el('gps-close-row').style.display  = isSingle ? 'none' : 'flex';
+    const list    = el('gps-points-list');
+    const preview = el('gps-preview');
+    const copyBtn = el('gps-copy-btn');
+    if (!points.length) {
+      list.innerHTML = '<span style="font-style:italic;color:var(--text-dim)">No points yet — tap the map to add</span>';
+      preview.textContent = ''; copyBtn.disabled = true; copyBtn.style.opacity = '0.4'; copyBtn.style.cursor = 'not-allowed';
+      updateCloseBtn(); return;
+    }
+    if (isSingle) {
+      const p = points[0], name = getPondName();
+      let cols = name ? `<span><span style="color:var(--text-dim)">Name</span> <strong>${name}</strong></span><span style="color:var(--border);margin:0 4px">|</span>` : '';
+      cols += `<span><span style="color:var(--text-dim)">Lat</span> <strong>${p.lat}</strong></span><span style="color:var(--border);margin:0 4px">|</span><span><span style="color:var(--text-dim)">Lng</span> <strong>${p.lng}</strong></span>`;
+      list.innerHTML = `<div style="display:flex;gap:8px;flex-wrap:wrap;">${cols}</div>`;
+    } else {
+      list.innerHTML = points.map((p, i) => {
+        const closing = isClosed && i === points.length - 1;
+        return `<div style="display:flex;align-items:center;gap:8px;">
+          <span style="color:var(--text);min-width:62px;">Point ${i + 1}${closing ? ' ⬡' : ''}</span>
+          <span style="color:var(--text-dim)">${p.lat}, ${p.lng}</span>
+          ${!closing ? `<button onclick="gpsRemovePoint(${i})" class="btn btn-secondary btn-sm" style="font-size:10px;padding:1px 7px;">×</button>` : ''}
+        </div>`;
+      }).join('');
+    }
+    preview.textContent = buildPolygonOutput();
+    copyBtn.disabled = false; copyBtn.style.opacity = '1'; copyBtn.style.cursor = 'pointer';
+    updateCloseBtn();
+  }
+
+  function gpsRender() { gpsMode === 'update' ? renderUpdate() : renderPolygon(); }
+
+  window.gpsRemovePoint = function (i) {
+    markers[i].remove(); markers.splice(i, 1); points.splice(i, 1);
+    markers.forEach((m, j) => {
+      const d = m.getElement()?.querySelector('div');
+      if (d) d.textContent = j + 1;
+    });
+    gpsRender();
+  };
+
+  window.openGpsPicker = function () {
+    el('gpspicker-overlay').classList.remove('hidden');
+    loadEntityDropdown();
+    setTimeout(() => {
+      if (!gpsMap) {
+        gpsMap = L.map('gpspicker-map', { zoomControl: true, attributionControl: false })
+          .setView([35.37, -119.02], 14);
+        L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 20 }).addTo(gpsMap);
+        gpsMap.on('click', function (e) {
+          const lat = e.latlng.lat.toFixed(7), lng = e.latlng.lng.toFixed(7);
+          if (gpsMode === 'update') {
+            if (updateMarker) updateMarker.remove();
+            updatePoint = { lat, lng };
+            updateMarker = L.marker([lat, lng], { icon: makeIcon('+', '#378ADD') }).addTo(gpsMap);
+            renderUpdate();
+            return;
+          }
+          if (isClosed) return;
+          if (fmt === 'single') { markers.forEach(m => m.remove()); markers = []; points = []; }
+          points.push({ lat, lng });
+          markers.push(L.marker([lat, lng], { icon: makeIcon(points.length) }).addTo(gpsMap));
+          gpsRender();
+        });
+      }
+      gpsMap.invalidateSize();
+    }, 80);
+  };
+
+  el('gpspicker-back-btn').addEventListener('click', () => {
+    el('gpspicker-overlay').classList.add('hidden');
+    if (gpsMap) { gpsMap.remove(); gpsMap = null; }
+  });
+
+  el('gps-close-btn').addEventListener('click', () => {
+    if (points.length < 3 || isClosed) return;
+    const f = points[0];
+    points.push({ lat: f.lat, lng: f.lng });
+    markers.push(L.marker([f.lat, f.lng], { icon: makeIcon(points.length) }).addTo(gpsMap));
+    isClosed = true;
+    el('gps-close-status').textContent = `Closed — point ${points.length} is an exact copy of point 1`;
+    gpsRender();
+  });
+
+  el('gps-clear-btn').addEventListener('click', () => {
+    markers.forEach(m => m.remove()); markers = []; points = []; isClosed = false;
+    el('gps-close-status').textContent = '';
+    gpsRender();
+  });
+
+  el('gps-update-clear-btn').addEventListener('click', () => {
+    if (updateMarker) updateMarker.remove();
+    updateMarker = null; updatePoint = null;
+    el('gps-update-pk').value = '';
+    renderUpdate();
+  });
+
+  el('gps-update-table').addEventListener('change', renderUpdate);
+  el('gps-update-pk').addEventListener('input', renderUpdate);
+  el('gps-pond-name').addEventListener('input', gpsRender);
+  el('gps-entity-type').addEventListener('change', loadEntityDropdown);
+  el('gps-entity-id').addEventListener('change', onEntitySelect);
+
+  document.querySelectorAll('.gps-mode-btn').forEach(btn => {
+    btn.addEventListener('click', function () {
+      gpsMode = this.dataset.gpsmode;
+      document.querySelectorAll('.gps-mode-btn').forEach(b => b.classList.remove('active'));
+      this.classList.add('active');
+      el('gps-polygon-panel').style.display = gpsMode === 'polygon' ? 'block' : 'none';
+      el('gps-update-panel').style.display  = gpsMode === 'update'  ? 'block' : 'none';
+      if (gpsMode === 'update') { markers.forEach(m => m.remove()); markers = []; points = []; isClosed = false; el('gps-close-status').textContent = ''; }
+      else { if (updateMarker) updateMarker.remove(); updateMarker = null; updatePoint = null; }
+      gpsRender();
+    });
+  });
+
+  document.querySelectorAll('.gps-fmt-btn').forEach(btn => {
+    btn.addEventListener('click', function () {
+      fmt = this.dataset.gpsfmt;
+      document.querySelectorAll('.gps-fmt-btn').forEach(b => b.classList.remove('active'));
+      this.classList.add('active');
+      if (fmt === 'single') { markers.forEach(m => m.remove()); markers = []; points = []; isClosed = false; el('gps-close-status').textContent = ''; }
+      gpsRender();
+    });
+  });
+
+  el('gps-copy-btn').addEventListener('click', () => {
+    const txt = gpsMode === 'update' ? buildUpdateSQL() : buildPolygonOutput();
+    if (!txt) return;
+    const fb = el('gps-copy-feedback');
+    function showFeedback() {
+      fb.style.opacity = '1';
+      setTimeout(() => { fb.style.opacity = '0'; }, 2000);
+    }
+    function fallbackCopy() {
+      const ta = document.createElement('textarea');
+      ta.value = txt;
+      ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); showFeedback(); } catch (e) {}
+      document.body.removeChild(ta);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(txt).then(showFeedback).catch(fallbackCopy);
+    } else {
+      fallbackCopy();
+    }
+  });
+})();
 
 // ── EXIF Tool ─────────────────────────────────────────────────────────────────
 (function () {
@@ -8207,48 +8483,63 @@ async function initPondsScreen() {
       return;
     }
 
-    // Group flat rows → locations → ponds → connections → gates
+    // Group flat rows → locations → (ponds + outlets) → connections → gates
     const locMap = new Map();
+    function addGate(connMap, connId, row) {
+      if (!connMap.has(connId)) {
+        connMap.set(connId, {
+          id: row.connection_id, name: row.connection_name, sort: row.connection_sort,
+          source_type: row.source_type, source_canal_id: row.source_canal_id,
+          canal_structure_name: row.canal_structure_name,
+          last_canal_flow: row.last_canal_flow, last_canal_totalizer: row.last_canal_totalizer,
+          last_canal_date: row.last_canal_date, last_canal_reading_id: row.last_canal_reading_id,
+          gates: [],
+        });
+      }
+      if (row.gate_id) {
+        connMap.get(connId).gates.push({
+          gate_id: row.gate_id, label: row.gate_label, gate_type: row.gate_type,
+          width_in: row.width_in, gate_notes: row.gate_notes, sort: row.gate_sort,
+          last_head: row.last_head, last_opening: row.last_opening,
+          last_overpour: row.last_overpour, last_flow: row.last_flow, last_date: row.last_gate_date,
+        });
+      }
+    }
+
     for (const row of rows) {
+      if (!row.location_id) continue; // outlets without location assigned yet
       if (!locMap.has(row.location_id)) {
         locMap.set(row.location_id, {
           id: row.location_id, name: row.location_name,
-          sort: row.location_sort, ponds: new Map(),
+          sort: row.location_sort, ponds: new Map(), outlets: new Map(),
         });
       }
       const loc = locMap.get(row.location_id);
 
-      if (!loc.ponds.has(row.pond_id)) {
-        loc.ponds.set(row.pond_id, {
-          pond_id: row.pond_id, name: row.pond_name, sort: row.pond_sort,
-          last_gauge_level: row.last_gauge_level,
-          last_gauge_date:  row.last_gauge_date,
-          connections: new Map(),
-        });
-      }
-      const pond = loc.ponds.get(row.pond_id);
-
-      if (row.connection_id) {
-        if (!pond.connections.has(row.connection_id)) {
-          pond.connections.set(row.connection_id, {
-            id: row.connection_id, name: row.connection_name,
-            sort: row.connection_sort, gates: [],
+      if (row.row_type === 'outlet') {
+        if (!loc.outlets.has(row.outlet_id)) {
+          loc.outlets.set(row.outlet_id, {
+            outlet_id: row.outlet_id, name: row.pond_name, sort: row.pond_sort,
+            isOutlet: true,
+            last_gauge_level: row.last_gauge_level,
+            last_gauge_date:  row.last_gauge_date,
+            connections: new Map(),
           });
         }
-        if (row.gate_id) {
-          pond.connections.get(row.connection_id).gates.push({
-            gate_id:      row.gate_id,
-            label:        row.gate_label,
-            gate_type:    row.gate_type,
-            width_in:     row.width_in,
-            gate_notes:   row.gate_notes,
-            sort:         row.gate_sort,
-            last_head:    row.last_head,
-            last_opening: row.last_opening,
-            last_overpour:row.last_overpour,
-            last_flow:    row.last_flow,
-            last_date:    row.last_gate_date,
+        if (row.connection_id) {
+          addGate(loc.outlets.get(row.outlet_id).connections, row.connection_id, row);
+        }
+      } else {
+        if (!loc.ponds.has(row.pond_id)) {
+          loc.ponds.set(row.pond_id, {
+            pond_id: row.pond_id, name: row.pond_name, sort: row.pond_sort,
+            last_gauge_level: row.last_gauge_level,
+            last_gauge_date:  row.last_gauge_date,
+            connections: new Map(),
           });
+        }
+        if (row.connection_id) {
+          addGate(loc.ponds.get(row.pond_id).connections, row.connection_id, row);
         }
       }
     }
@@ -8256,8 +8547,11 @@ async function initPondsScreen() {
     body.innerHTML = '';
     const sortedLocs = [...locMap.values()].sort((a, b) => a.sort - b.sort);
     for (const loc of sortedLocs) {
-      const sortedPonds = [...loc.ponds.values()].sort((a, b) => a.sort - b.sort);
-      const cards = sortedPonds.map(p => createPondCard(p, dateInput, timeInput));
+      const allEntities = [
+        ...[...loc.ponds.values()].map(p => ({ ...p, _fn: createPondCard })),
+        ...[...loc.outlets.values()].map(o => ({ ...o, _fn: createOutletCard })),
+      ].sort((a, b) => a.sort - b.sort);
+      const cards = allEntities.map(e => e._fn(e, dateInput, timeInput));
       body.appendChild(makeCollapsibleSection(loc.name, cards));
     }
   } catch (err) {
@@ -8314,7 +8608,7 @@ function createPondCard(pond, dateInput, timeInput) {
 
   div.querySelector('.pond-map-btn').addEventListener('click', e => {
     e.stopPropagation();
-    openPondMap(pond.pond_id, pond.name);
+    openPondMap('pond', pond.pond_id, pond.name);
   });
 
   const form = div.querySelector('.list-item-form');
@@ -8323,12 +8617,16 @@ function createPondCard(pond, dateInput, timeInput) {
   // Staff gauge section
   form.appendChild(buildGaugeForm(pond, dateInput, timeInput, div));
 
-  // Gate rows grouped by connection
+  // Connection rows — canal gets a special inflow row; river/pond use gate rows
   const sortedConns = [...pond.connections.values()].sort((a, b) => a.sort - b.sort);
   for (const conn of sortedConns) {
-    const sortedGates = [...conn.gates].sort((a, b) => a.sort - b.sort);
-    for (const gate of sortedGates) {
-      form.appendChild(buildGateRow(gate, dateInput, timeInput, div));
+    if (conn.source_type === 'canal' && conn.source_canal_id) {
+      form.appendChild(buildCanalRow(conn, dateInput, timeInput, div));
+    } else {
+      const sortedGates = [...conn.gates].sort((a, b) => a.sort - b.sort);
+      for (const gate of sortedGates) {
+        form.appendChild(buildGateRow(gate, dateInput, timeInput, div));
+      }
     }
   }
 
@@ -8348,6 +8646,173 @@ function createPondCard(pond, dateInput, timeInput) {
   });
 
   return div;
+}
+
+function createOutletCard(outlet, dateInput, timeInput) {
+  const today    = todayISO();
+  const allGates = [...outlet.connections.values()].flatMap(c => c.gates);
+
+  const lastGateDate = allGates.reduce((best, g) => {
+    const d = g.last_date ? String(g.last_date).slice(0, 10) : null;
+    return (!best || (d && d > best)) ? d : best;
+  }, null);
+  const statusDate = lastGateDate || (outlet.last_gauge_date ? String(outlet.last_gauge_date).slice(0, 10) : null);
+  const badgeClass = !statusDate ? 'default' : (statusDate === today ? 'ok' : 'due');
+  const badgeText  = !statusDate ? 'Not read' : (statusDate === today ? 'Today' : fmtDate(statusDate));
+
+  const gaugeLevel = outlet.last_gauge_level;
+  const gaugeDate  = outlet.last_gauge_date ? String(outlet.last_gauge_date).slice(0, 10) : null;
+  const gaugeHint  = gaugeLevel != null
+    ? `Staff: ${Number(gaugeLevel).toFixed(2)} ft · ${gaugeDate ? fmtDate(gaugeDate) : 'Today'}`
+    : 'Staff: —';
+
+  const div = document.createElement('div');
+  div.className = 'list-item';
+  div.dataset.curGaugeLevel = outlet.last_gauge_level ?? '';
+  const mapPinSvg = `<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>`;
+
+  div.innerHTML = `
+    <div class="list-item-header">
+      <span class="list-item-name">${outlet.name}</span>
+      <span class="pond-gauge-hint">${gaugeHint}</span>
+      <button class="pond-map-btn btn btn-secondary btn-sm" title="View map" style="padding:2px 7px;flex-shrink:0">${mapPinSvg}</button>
+      <span class="status-badge ${badgeClass}">${badgeText}</span>
+      <span class="expand-chevron">&#9660;</span>
+    </div>
+    <div class="list-item-form"></div>`;
+
+  div.querySelector('.pond-map-btn').addEventListener('click', e => {
+    e.stopPropagation();
+    openPondMap('outlet', outlet.outlet_id, outlet.name);
+  });
+
+  const form = div.querySelector('.list-item-form');
+  form.style.display = 'none';
+
+  form.appendChild(buildGaugeForm(outlet, dateInput, timeInput, div));
+
+  const sortedConns = [...outlet.connections.values()].sort((a, b) => a.sort - b.sort);
+  for (const conn of sortedConns) {
+    const sortedGates = [...conn.gates].sort((a, b) => a.sort - b.sort);
+    for (const gate of sortedGates) {
+      form.appendChild(buildGateRow(gate, dateInput, timeInput, div));
+    }
+  }
+
+  if (allGates.length > 1) {
+    const totalRow = document.createElement('div');
+    totalRow.className = 'pond-total-row';
+    totalRow.innerHTML = `<span>Total</span><span class="pond-total-cfs">—</span>`;
+    form.appendChild(totalRow);
+  }
+
+  div.querySelector('.list-item-header').addEventListener('click', () => {
+    const open = !div.classList.contains('expanded');
+    div.classList.toggle('expanded', open);
+    form.style.display = open ? '' : 'none';
+    if (open) timeInput.value = nowHHMM();
+  });
+
+  return div;
+}
+
+function buildCanalRow(conn, dateInput, timeInput, cardEl) {
+  const today    = todayISO();
+  const prevDate = conn.last_canal_date ? String(conn.last_canal_date).slice(0, 10) : null;
+  const lastFlow = conn.last_canal_flow != null ? Number(conn.last_canal_flow) : null;
+  const prevHint = lastFlow != null
+    ? `${lastFlow.toFixed(2)} cfs · ${prevDate === today ? 'Today' : (prevDate ? fmtDate(prevDate) : '')}`
+    : null;
+
+  const wrap = document.createElement('div');
+  const row  = document.createElement('div');
+  row.className  = 'reading-row';
+  row.style.flexWrap = 'wrap';
+
+  const labelSub = [
+    conn.canal_structure_name ? `<div class="prev-date" style="font-style:italic">${conn.canal_structure_name}</div>` : '',
+    prevHint ? `<div class="prev-date">${prevHint}</div>` : '',
+  ].join('');
+
+  row.innerHTML = `
+    <div class="rr-label">${conn.name}${labelSub}</div>
+    <div class="rr-field-group" style="width:84px">
+      <span class="rr-col-hd">Flow (cfs)</span>
+      <input type="number" class="rr-input pg-canal-flow" step="0.01" placeholder="—" inputmode="decimal">
+      <span class="pg-canal-flow-delta live-delta"></span>
+    </div>
+    <div class="rr-field-group" style="width:92px">
+      <span class="rr-col-hd">Totalizer (af)</span>
+      <input type="number" class="rr-input pg-canal-totalizer" step="0.01" placeholder="—" inputmode="decimal">
+      <span class="live-delta" style="visibility:hidden;pointer-events:none">x</span>
+    </div>
+    <div style="flex:1;min-width:50px;display:flex;flex-direction:column">
+      <span class="rr-col-hd" style="visibility:hidden;pointer-events:none">x</span>
+      <div style="display:flex;gap:4px;align-items:stretch">
+        <textarea class="rr-notes-input pg-canal-notes" rows="1" placeholder="Notes…"></textarea>
+        <button class="btn btn-secondary btn-sm" title="History" style="flex-shrink:0">${icon('history')}</button>
+        <button class="btn btn-save btn-sm pg-canal-save" style="flex-shrink:0">Save</button>
+      </div>
+      <span class="live-delta" style="visibility:hidden;pointer-events:none">x</span>
+    </div>`;
+
+  const errDiv = document.createElement('div');
+  errDiv.className = 'error-msg hidden';
+  errDiv.style.cssText = 'font-size:0.78rem;padding:2px 10px 4px';
+  wrap.appendChild(row);
+  wrap.appendChild(errDiv);
+
+  const flowInput      = row.querySelector('.pg-canal-flow');
+  const totalizerInput = row.querySelector('.pg-canal-totalizer');
+  const notesInput     = row.querySelector('.pg-canal-notes');
+  const saveBtn        = row.querySelector('.pg-canal-save');
+  const flowDeltaEl    = row.querySelector('.pg-canal-flow-delta');
+
+  flowInput.dataset.savedFlow = conn.last_canal_flow ?? '';
+
+  flowInput.addEventListener('input', () => {
+    const v = parseFloat(flowInput.value), ref = parseFloat(flowInput.dataset.savedFlow ?? '');
+    flowDeltaEl.innerHTML = (!isNaN(v) && !isNaN(ref)) ? pondDelta(v, ref).trim() : '';
+  });
+
+  row.querySelector('.btn-secondary').addEventListener('click', () =>
+    openHistoryModal('canal', conn.source_canal_id,
+      `${conn.name}${conn.canal_structure_name ? ' — ' + conn.canal_structure_name : ''}`));
+
+  saveBtn.addEventListener('click', async () => {
+    const flow      = parseFloat(flowInput.value);
+    const totalizer = parseFloat(totalizerInput.value);
+    if (isNaN(flow) && isNaN(totalizer)) {
+      errDiv.textContent = 'Enter flow or totalizer.';
+      errDiv.classList.remove('hidden');
+      return;
+    }
+    errDiv.classList.add('hidden');
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving…';
+    try {
+      await api('POST', '/api/readings/canal', {
+        structure_id:           conn.source_canal_id,
+        reading_date:           dateInput.value,
+        reading_time:           timeInput.value,
+        instantaneous_flow_cfs: isNaN(flow)      ? null : flow,
+        totalizer_reading_af:   isNaN(totalizer) ? null : totalizer,
+        notes:                  notesInput.value || null,
+      });
+      saveBtn.textContent = 'Saved ✓';
+      saveBtn.disabled = false;
+      flowInput.dataset.savedFlow = isNaN(flow) ? '' : String(flow);
+      flowDeltaEl.innerHTML = '';
+      showToast(`${conn.name} saved`, 'success');
+    } catch (err) {
+      errDiv.textContent = err.message;
+      errDiv.classList.remove('hidden');
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Save';
+    }
+  });
+
+  return wrap;
 }
 
 function buildGaugeForm(pond, dateInput, timeInput, cardEl) {
@@ -8396,8 +8861,9 @@ function buildGaugeForm(pond, dateInput, timeInput, cardEl) {
   });
   const saveBtn    = row.querySelector('.pg-gauge-save');
 
+  const historyId = pond.outlet_id ? `outlet-${pond.outlet_id}` : pond.pond_id;
   row.querySelector('.btn-secondary').addEventListener('click', () =>
-    openHistoryModal('staff-gauge', pond.pond_id, pond.name + ' — Staff Gauge'));
+    openHistoryModal('staff-gauge', historyId, pond.name + ' — Staff Gauge'));
 
   saveBtn.addEventListener('click', async () => {
     const level = parseFloat(levelInput.value);
@@ -8409,14 +8875,11 @@ function buildGaugeForm(pond, dateInput, timeInput, cardEl) {
     errDiv.classList.add('hidden');
     saveBtn.disabled = true;
     saveBtn.textContent = 'Saving…';
+    const gaugeBody = pond.outlet_id
+      ? { outlet_id: pond.outlet_id, reading_date: dateInput.value, reading_time: timeInput.value, level_ft: level, notes: notesInput.value || null }
+      : { pond_id:   pond.pond_id,   reading_date: dateInput.value, reading_time: timeInput.value, level_ft: level, notes: notesInput.value || null };
     try {
-      await api('POST', '/api/readings/staff-gauge', {
-        pond_id:      pond.pond_id,
-        reading_date: dateInput.value,
-        reading_time: timeInput.value,
-        level_ft:     level,
-        notes:        notesInput.value || null,
-      });
+      await api('POST', '/api/readings/staff-gauge', gaugeBody);
       saveBtn.textContent = 'Saved ✓';
       saveBtn.disabled = false;
       // Update reference level for future live-delta comparisons
@@ -8643,8 +9106,8 @@ function updatePondBadge(cardEl, text) {
 /* ── Pond Map ────────────────────────────────────────────────────────────── */
 let _pondMap = null;
 
-async function openPondMap(pondId, pondName) {
-  el('pond-map-title').textContent = pondName;
+async function openPondMap(entityType, entityId, entityName) {
+  el('pond-map-title').textContent = entityName;
   el('pond-map-modal').classList.remove('hidden');
 
   const container = el('pond-map-container');
@@ -8654,7 +9117,10 @@ async function openPondMap(pondId, pondName) {
   if (_pondMap) { _pondMap.remove(); _pondMap = null; }
 
   try {
-    const data = await api('GET', `/api/ponds/${pondId}/polygon`);
+    const url = entityType === 'outlet'
+      ? `/api/outlets/${entityId}/polygon`
+      : `/api/ponds/${entityId}/polygon`;
+    const data = await api('GET', url);
     container.innerHTML = '';
 
     if (!data.has_polygon) {
@@ -8681,11 +9147,35 @@ async function openPondMap(pondId, pondName) {
     L.marker([lat, lon], {
       icon: L.divIcon({
         className: '',
-        html: `<div style="background:rgba(0,0,0,0.62);color:#fff;padding:3px 10px;border-radius:4px;font-size:0.78rem;white-space:nowrap;font-family:sans-serif">${pondName}</div>`,
+        html: `<div style="background:rgba(0,0,0,0.62);color:#fff;padding:3px 10px;border-radius:4px;font-size:0.78rem;white-space:nowrap;font-family:sans-serif">${entityName}</div>`,
         iconAnchor: [-4, 10],
       }),
       interactive: false,
     }).addTo(map);
+
+    // Staff gauge marker
+    if (data.gauge_marker) {
+      L.marker([data.gauge_marker.lat, data.gauge_marker.lon], {
+        icon: L.divIcon({
+          className: '',
+          html: `<div style="background:#1976d2;color:#fff;padding:2px 8px;border-radius:4px;font-size:0.72rem;white-space:nowrap;font-family:sans-serif">Staff Gauge</div>`,
+          iconAnchor: [-4, 10],
+        }),
+        interactive: false,
+      }).addTo(map);
+    }
+
+    // Gate markers
+    for (const gm of (data.gate_markers || [])) {
+      L.marker([gm.lat, gm.lon], {
+        icon: L.divIcon({
+          className: '',
+          html: `<div style="background:#e65100;color:#fff;padding:2px 8px;border-radius:4px;font-size:0.72rem;white-space:nowrap;font-family:sans-serif">${gm.label}</div>`,
+          iconAnchor: [-4, 10],
+        }),
+        interactive: false,
+      }).addTo(map);
+    }
 
     // Leaflet needs a tick after the container is visible to measure size
     setTimeout(() => map.invalidateSize(), 50);
