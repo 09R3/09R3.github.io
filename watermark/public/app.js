@@ -4551,6 +4551,7 @@ el('exif-back-btn').addEventListener('click', () => {
 
   el('gpspicker-back-btn').addEventListener('click', () => {
     el('gpspicker-overlay').classList.add('hidden');
+    if (gpsMap) { gpsMap.remove(); gpsMap = null; }
   });
 
   el('gps-close-btn').addEventListener('click', () => {

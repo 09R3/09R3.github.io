@@ -2291,6 +2291,17 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
 }
 .maint-att-empty { font-size: 0.8rem; color: var(--text-dim); padding: 6px 0; }
 
+/* ── GPS Picker Tool ─────────────────────────────────────────────────────── */
+#gpspicker-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 400;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+}
+#gpspicker-overlay.hidden { display: none; }
+
 /* ── Upload Tool ─────────────────────────────────────────────────────────── */
 #upload-tool-overlay {
   position: fixed; inset: 0; z-index: 300;
