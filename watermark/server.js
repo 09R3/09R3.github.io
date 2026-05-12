@@ -3088,6 +3088,182 @@ app.get('/api/reports/pm-grid', requireAuth, requireRole('supervisor', 'admin'),
   }
 });
 
+// ── Well Readings Report ───────────────────────────────────────────────────────
+
+app.get('/api/reports/wells/list', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT well_id, common_name, area
+      FROM wells
+      WHERE LOWER(well_type) LIKE '%operational%'
+        AND LOWER(COALESCE(status,'')) NOT IN ('inactive','removed')
+      ORDER BY area NULLS LAST, common_name
+    `);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/reports/wells/daily', requireAuth, async (req, res) => {
+  const date = req.query.date || new Date().toISOString().slice(0,10);
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        w.well_id, w.common_name, w.area,
+        r.reading_time, r.on_off,
+        r.flow_cfs, r.totalizer, r.dripper_oil, r.motor_oil,
+        r.pge_kwh, r.hour_reading, r.notes,
+        CASE
+          WHEN r.totalizer IS NULL OR prev.totalizer IS NULL
+            OR prev.elapsed_secs IS NULL OR prev.elapsed_secs <= 0
+          THEN NULL
+          ELSE ROUND(
+            ((r.totalizer - prev.totalizer) * 43560.0 / prev.elapsed_secs)::numeric, 2)
+        END AS totalizer_calc
+      FROM wells w
+      LEFT JOIN LATERAL (
+        SELECT reading_id, reading_date, reading_time, on_off, flow_cfs, totalizer,
+               dripper_oil, motor_oil, pge_kwh, hour_reading, notes
+        FROM readings_well
+        WHERE well_id = w.well_id AND reading_date = $1
+        ORDER BY reading_time DESC NULLS LAST LIMIT 1
+      ) r ON true
+      LEFT JOIN LATERAL (
+        SELECT p.totalizer,
+               EXTRACT(EPOCH FROM (
+                 (r.reading_date + COALESCE(r.reading_time,'00:00:00'::time))::timestamp -
+                 (p.reading_date + COALESCE(p.reading_time,'00:00:00'::time))::timestamp
+               )) AS elapsed_secs
+        FROM readings_well p
+        WHERE p.well_id = w.well_id
+          AND (p.reading_date + COALESCE(p.reading_time,'00:00:00'::time)) <
+              (r.reading_date + COALESCE(r.reading_time,'00:00:00'::time))
+        ORDER BY (p.reading_date + COALESCE(p.reading_time,'00:00:00'::time)) DESC LIMIT 1
+      ) prev ON r.reading_time IS NOT NULL
+      WHERE LOWER(w.well_type) LIKE '%operational%'
+        AND LOWER(COALESCE(w.status,'')) NOT IN ('inactive','removed')
+      ORDER BY w.area NULLS LAST, w.common_name
+    `, [date]);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/reports/wells/daily/export', async (req, res) => {
+  const { date, token } = req.query;
+  const exportDate = date || new Date().toISOString().slice(0,10);
+  if (token) {
+    const t = downloadTokens.get(token);
+    if (!t || Date.now() > t.expires) return res.status(401).json({ error: 'Invalid or expired token' });
+    downloadTokens.delete(token);
+  } else {
+    const sessionUser = getSession(req.cookies?.fo_session);
+    if (!sessionUser) return res.status(401).json({ error: 'Unauthorized' });
+    if (sessionUser.role !== 'admin' && sessionUser.role !== 'supervisor')
+      return res.status(403).json({ error: 'Forbidden' });
+  }
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        w.well_id, w.common_name, w.area,
+        r.reading_time, r.on_off,
+        r.flow_cfs, r.totalizer, r.dripper_oil, r.motor_oil,
+        r.pge_kwh, r.hour_reading, r.notes,
+        CASE
+          WHEN r.totalizer IS NULL OR prev.totalizer IS NULL
+            OR prev.elapsed_secs IS NULL OR prev.elapsed_secs <= 0
+          THEN NULL
+          ELSE ROUND(
+            ((r.totalizer - prev.totalizer) * 43560.0 / prev.elapsed_secs)::numeric, 2)
+        END AS totalizer_calc
+      FROM wells w
+      LEFT JOIN LATERAL (
+        SELECT reading_id, reading_date, reading_time, on_off, flow_cfs, totalizer,
+               dripper_oil, motor_oil, pge_kwh, hour_reading, notes
+        FROM readings_well
+        WHERE well_id = w.well_id AND reading_date = $1
+        ORDER BY reading_time DESC NULLS LAST LIMIT 1
+      ) r ON true
+      LEFT JOIN LATERAL (
+        SELECT p.totalizer,
+               EXTRACT(EPOCH FROM (
+                 (r.reading_date + COALESCE(r.reading_time,'00:00:00'::time))::timestamp -
+                 (p.reading_date + COALESCE(p.reading_time,'00:00:00'::time))::timestamp
+               )) AS elapsed_secs
+        FROM readings_well p
+        WHERE p.well_id = w.well_id
+          AND (p.reading_date + COALESCE(p.reading_time,'00:00:00'::time)) <
+              (r.reading_date + COALESCE(r.reading_time,'00:00:00'::time))
+        ORDER BY (p.reading_date + COALESCE(p.reading_time,'00:00:00'::time)) DESC LIMIT 1
+      ) prev ON r.reading_time IS NOT NULL
+      WHERE LOWER(w.well_type) LIKE '%operational%'
+        AND LOWER(COALESCE(w.status,'')) NOT IN ('inactive','removed')
+      ORDER BY w.area NULLS LAST, w.common_name
+    `, [exportDate]);
+
+    const wb = XLSX.utils.book_new();
+    const data = [
+      ['Well Readings Daily Report', exportDate],
+      [],
+      ['Area', 'Well', 'Time', 'On/Off', 'Flow (cfs)', 'Totalizer (AF)', 'Calc. cfs', 'Dripper Oil', 'Motor Oil', 'kWh', 'Notes'],
+      ...rows.map(r => [
+        r.area || '',
+        r.common_name,
+        r.reading_time ? String(r.reading_time).slice(0,5) : '',
+        r.on_off || '',
+        r.flow_cfs != null ? Number(r.flow_cfs) : '',
+        r.totalizer != null ? Number(r.totalizer) : '',
+        r.totalizer_calc != null ? Number(r.totalizer_calc) : '',
+        r.dripper_oil != null ? Number(r.dripper_oil) : '',
+        r.motor_oil != null ? Number(r.motor_oil) : '',
+        r.pge_kwh != null ? Number(r.pge_kwh) : '',
+        r.notes || '',
+      ]),
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    ws['!cols'] = [{ wch: 16 }, { wch: 24 }, { wch: 8 }, { wch: 8 }, { wch: 10 }, { wch: 14 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 8 }, { wch: 30 }];
+    XLSX.utils.book_append_sheet(wb, ws, 'Well Readings');
+    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="WellReadings_${exportDate}.xlsx"`);
+    return res.send(buf);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/reports/wells/history', requireAuth, async (req, res) => {
+  const { well_id, end_date } = req.query;
+  if (!well_id) return res.status(400).json({ error: 'well_id required' });
+  const endDate = end_date || new Date().toISOString().slice(0,10);
+  try {
+    const [flowRes, dtwRes, infoRes] = await Promise.all([
+      pool.query(`
+        SELECT reading_date, reading_time, flow_cfs, totalizer, hour_reading,
+               dripper_oil, motor_oil, on_off, entered_by, notes
+        FROM readings_well WHERE well_id = $1 AND reading_date <= $2
+        ORDER BY reading_date DESC, reading_time DESC NULLS LAST LIMIT 5
+      `, [well_id, endDate]),
+      pool.query(`
+        SELECT reading_date, reading_time, depth_to_water, method, operator, notes
+        FROM readings_run_dwr WHERE well_id = $1 AND reading_date <= $2
+        ORDER BY reading_date DESC, reading_time DESC NULLS LAST LIMIT 5
+      `, [well_id, endDate]),
+      pool.query(`
+        SELECT common_name, area, state_well_number, pump_hp, total_depth_ft
+        FROM wells WHERE well_id = $1
+      `, [well_id]),
+    ]);
+    res.json({
+      well: infoRes.rows[0] || null,
+      flow_readings: flowRes.rows,
+      dtw_readings:  dtwRes.rows,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Pesticides ────────────────────────────────────────────────────────────────
 
 // List pesticides (active only for operators; all for supervisor/admin)
