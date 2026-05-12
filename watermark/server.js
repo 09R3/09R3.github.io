@@ -3245,8 +3245,8 @@ app.get('/api/reports/wells/history', requireAuth, async (req, res) => {
         ORDER BY reading_date DESC, reading_time DESC NULLS LAST LIMIT 5
       `, [well_id, endDate]),
       pool.query(`
-        SELECT reading_date, reading_time, depth_to_water, method, operator, notes
-        FROM readings_run_dwr WHERE well_id = $1 AND reading_date <= $2
+        SELECT reading_date, reading_time, dtw_reading, plopper_sounder, operator, notes
+        FROM readings_kf_monthly WHERE well_id = $1 AND reading_date <= $2
         ORDER BY reading_date DESC, reading_time DESC NULLS LAST LIMIT 5
       `, [well_id, endDate]),
       pool.query(`

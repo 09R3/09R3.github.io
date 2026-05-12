@@ -9444,8 +9444,10 @@ async function renderWellDailyReport() {
             <td colspan="9" style="color:var(--text-dim);font-style:italic">Not read</td>
           </tr>`;
         } else {
-          const onOff = r.on_off
-            ? `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${String(r.on_off).toLowerCase()==='on'?'var(--green)':'var(--text-dim)'};margin-right:4px"></span>${escHtml(String(r.on_off))}`
+          const _oo = r.on_off != null ? String(r.on_off).toLowerCase() : null;
+          const _onLabel = (_oo === 'on' || _oo === 'true') ? 'On' : 'Off';
+          const onOff = r.on_off != null
+            ? `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${_onLabel==='On'?'var(--green)':'var(--text-dim)'};margin-right:4px"></span>${_onLabel}`
             : '—';
           const calcCell = r.totalizer_calc != null
             ? `<span style="font-style:italic;color:var(--text-dim)" title="Calculated from AF delta">${fmtNum(r.totalizer_calc)}</span>`
@@ -9522,8 +9524,10 @@ async function renderWellDetailReport() {
           <th class="report-num">Mtr Oil</th>
         </tr></thead><tbody>`;
       flow_readings.forEach(r => {
-        const onOff = r.on_off
-          ? `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${String(r.on_off).toLowerCase()==='on'?'var(--green)':'var(--text-dim)'};margin-right:4px"></span>${escHtml(String(r.on_off))}`
+        const _oo2 = r.on_off != null ? String(r.on_off).toLowerCase() : null;
+        const _onLabel2 = (_oo2 === 'on' || _oo2 === 'true') ? 'On' : 'Off';
+        const onOff = r.on_off != null
+          ? `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${_onLabel2==='On'?'var(--green)':'var(--text-dim)'};margin-right:4px"></span>${_onLabel2}`
           : '—';
         html += `<tr>
           <td>${fmtDate(r.reading_date)}</td>
@@ -9541,30 +9545,30 @@ async function renderWellDetailReport() {
       html += '<div class="placeholder-msg">No flow readings found.</div>';
     }
 
-    // Depth-to-water readings
-    html += `<div class="report-section-title" style="margin-top:16px">Depth to Water (last 5 as of ${endDate})</div>`;
+    // Depth-to-water readings (KF Monthly)
+    html += `<div class="report-section-title" style="margin-top:16px">Depth to Water — KF Monthly (last 5 as of ${endDate})</div>`;
     if (dtw_readings.length) {
       const chronoDtw = [...dtw_readings].reverse();
-      html += makeSvgSparkline(chronoDtw.map(r => r.depth_to_water != null ? Number(r.depth_to_water) : null), { width: 200, height: 44, inverted: true, color: '#2196f3' });
+      html += makeSvgSparkline(chronoDtw.map(r => r.dtw_reading != null ? Number(r.dtw_reading) : null), { width: 200, height: 44, inverted: true, color: '#2196f3' });
       html += `<table class="report-table" style="margin-top:8px">
         <thead><tr>
           <th>Date</th><th>Time</th>
           <th class="report-num">DTW (ft)</th>
-          <th>Method</th><th>Operator</th><th>Notes</th>
+          <th>Plopper/Sounder</th><th>Operator</th><th>Notes</th>
         </tr></thead><tbody>`;
       dtw_readings.forEach(r => {
         html += `<tr>
           <td>${fmtDate(r.reading_date)}</td>
           <td>${fmtTime(r.reading_time)}</td>
-          <td class="report-num">${fmtNum(r.depth_to_water)}</td>
-          <td>${escHtml(r.method || '—')}</td>
+          <td class="report-num">${fmtNum(r.dtw_reading)}</td>
+          <td>${escHtml(r.plopper_sounder || '—')}</td>
           <td>${escHtml(r.operator || '—')}</td>
           <td>${escHtml(r.notes || '—')}</td>
         </tr>`;
       });
       html += '</tbody></table>';
     } else {
-      html += '<div class="placeholder-msg">No depth-to-water readings on record.</div>';
+      html += '<div class="placeholder-msg">No KF monthly readings on record.</div>';
     }
 
     html += '</div>';
