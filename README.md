@@ -36,3 +36,53 @@ UPDATE pond_connections SET sort_order = 1 WHERE connection_id = 5;
 -- Reorder gates within a connection
 UPDATE pond_gates SET sort_order = 1 WHERE gate_id = 12;
 ```
+
+---
+
+## WaterMark — Pond Map Locations (`pond_points`)
+
+The polygon map shown when tapping a card's map button is built from points stored in
+`pond_points`. Each row is one corner of the polygon. After migration 016, the table
+supports both regular ponds and river outlets.
+
+### Table structure
+
+```
+pond_points
+  point_id    SERIAL PRIMARY KEY
+  pond_id     INT REFERENCES ponds(pond_id) ON DELETE CASCADE      -- set for pond polygons
+  outlet_id   INT REFERENCES river_outlets(outlet_id) ON DELETE CASCADE  -- set for outlet polygons
+  name        TEXT        -- denormalized entity name (for easy querying)
+  point_order INT         -- 1, 2, 3, … corner order matters for polygon shape
+  geom        GEOMETRY(Point, 4326)  -- lon/lat WGS-84
+```
+
+Exactly one of `pond_id` or `outlet_id` must be set per row (enforced by CHECK constraint).
+
+### Adding polygon points
+
+```sql
+-- Pond polygon (use pond_id)
+INSERT INTO pond_points (pond_id, name, point_order, geom) VALUES
+  (3, 'East Pond', 1, ST_SetSRID(ST_MakePoint(-119.4521, 35.3712), 4326)),
+  (3, 'East Pond', 2, ST_SetSRID(ST_MakePoint(-119.4498, 35.3712), 4326)),
+  (3, 'East Pond', 3, ST_SetSRID(ST_MakePoint(-119.4498, 35.3695), 4326)),
+  (3, 'East Pond', 4, ST_SetSRID(ST_MakePoint(-119.4521, 35.3695), 4326));
+
+-- River outlet polygon (use outlet_id)
+INSERT INTO pond_points (outlet_id, name, point_order, geom) VALUES
+  (2, 'Basin 9', 1, ST_SetSRID(ST_MakePoint(-119.4610, 35.3750), 4326)),
+  (2, 'Basin 9', 2, ST_SetSRID(ST_MakePoint(-119.4585, 35.3750), 4326)),
+  (2, 'Basin 9', 3, ST_SetSRID(ST_MakePoint(-119.4585, 35.3730), 4326)),
+  (2, 'Basin 9', 4, ST_SetSRID(ST_MakePoint(-119.4610, 35.3730), 4326));
+```
+
+Use the **Pond GPS Picker** (Settings → tap version 5× → Pond GPS Picker) to capture
+coordinates on a satellite map and generate the INSERT statements automatically.
+Select `pond_id` or `outlet_id` from the Type dropdown before clicking points.
+
+At least 3 points are required before a polygon is drawn. The map also shows:
+- **Blue label** — staff gauge location (`ponds.gauge_lat/gauge_lon` or `river_outlets.gauge_lat/gauge_lon`)
+- **Orange labels** — gate locations (`pond_connections.gate_lat/gate_lon`)
+
+Use the GPS Picker's **UPDATE existing row** mode to set those lat/lon columns.
