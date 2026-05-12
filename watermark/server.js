@@ -1458,7 +1458,7 @@ app.get('/api/ponds/polygons', requireAuth, async (req, res) => {
   try {
     const { rows } = await pool.query(`
       SELECT
-        p.pond_id,
+        p.pond_id                                                     AS entity_id,
         p.name                                                        AS pond_name,
         pl.location_id,
         pl.name                                                       AS location_name,
@@ -1467,16 +1467,40 @@ app.get('/api/ponds/polygons', requireAuth, async (req, res) => {
         )                                                             AS polygon_geojson,
         ST_AsGeoJSON(
           ST_Centroid(ST_MakePolygon(ST_MakeLine(array_agg(pp.geom ORDER BY pp.point_order))))
-        )                                                             AS centroid_geojson
+        )                                                             AS centroid_geojson,
+        pl.sort_order AS location_sort,
+        p.sort_order  AS entity_sort
       FROM ponds p
       JOIN pond_locations pl ON pl.location_id = p.location_id
       JOIN pond_points pp    ON pp.pond_id = p.pond_id
       GROUP BY p.pond_id, p.name, pl.location_id, pl.name, pl.sort_order, p.sort_order
       HAVING COUNT(*) >= 3
-      ORDER BY pl.sort_order, p.sort_order
+
+      UNION ALL
+
+      SELECT
+        ro.outlet_id                                                  AS entity_id,
+        ro.name                                                       AS pond_name,
+        pl.location_id,
+        pl.name                                                       AS location_name,
+        ST_AsGeoJSON(
+          ST_MakePolygon(ST_MakeLine(array_agg(pp.geom ORDER BY pp.point_order)))
+        )                                                             AS polygon_geojson,
+        ST_AsGeoJSON(
+          ST_Centroid(ST_MakePolygon(ST_MakeLine(array_agg(pp.geom ORDER BY pp.point_order))))
+        )                                                             AS centroid_geojson,
+        pl.sort_order AS location_sort,
+        ro.sort_order AS entity_sort
+      FROM river_outlets ro
+      JOIN pond_locations pl ON pl.location_id = ro.location_id
+      JOIN pond_points pp    ON pp.outlet_id = ro.outlet_id
+      WHERE ro.active = true
+      GROUP BY ro.outlet_id, ro.name, pl.location_id, pl.name, pl.sort_order, ro.sort_order
+      HAVING COUNT(*) >= 3
+
+      ORDER BY location_sort, entity_sort
     `);
     res.json(rows.map(r => ({
-      pond_id:       r.pond_id,
       pond_name:     r.pond_name,
       location_id:   r.location_id,
       location_name: r.location_name,
