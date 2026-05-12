@@ -9445,7 +9445,7 @@ async function renderWellDailyReport() {
           </tr>`;
         } else {
           const onOff = r.on_off
-            ? `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${r.on_off.toLowerCase()==='on'?'var(--green)':'var(--text-dim)'};margin-right:4px"></span>${escHtml(r.on_off)}`
+            ? `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${String(r.on_off).toLowerCase()==='on'?'var(--green)':'var(--text-dim)'};margin-right:4px"></span>${escHtml(String(r.on_off))}`
             : '—';
           const calcCell = r.totalizer_calc != null
             ? `<span style="font-style:italic;color:var(--text-dim)" title="Calculated from AF delta">${fmtNum(r.totalizer_calc)}</span>`
@@ -9523,7 +9523,7 @@ async function renderWellDetailReport() {
         </tr></thead><tbody>`;
       flow_readings.forEach(r => {
         const onOff = r.on_off
-          ? `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${r.on_off.toLowerCase()==='on'?'var(--green)':'var(--text-dim)'};margin-right:4px"></span>${escHtml(r.on_off)}`
+          ? `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${String(r.on_off).toLowerCase()==='on'?'var(--green)':'var(--text-dim)'};margin-right:4px"></span>${escHtml(String(r.on_off))}`
           : '—';
         html += `<tr>
           <td>${fmtDate(r.reading_date)}</td>
