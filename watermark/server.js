@@ -3264,6 +3264,59 @@ app.get('/api/reports/wells/history', requireAuth, async (req, res) => {
   }
 });
 
+app.get('/api/reports/wells/dripper/export', async (req, res) => {
+  const { fill_to, token } = req.query;
+  const fillTo = parseFloat(fill_to) || 12;
+  if (token) {
+    const t = downloadTokens.get(token);
+    if (!t || Date.now() > t.expires) return res.status(401).json({ error: 'Invalid or expired token' });
+    downloadTokens.delete(token);
+  } else {
+    const sessionUser = getSession(req.cookies?.fo_session);
+    if (!sessionUser) return res.status(401).json({ error: 'Unauthorized' });
+    if (sessionUser.role !== 'admin' && sessionUser.role !== 'supervisor')
+      return res.status(403).json({ error: 'Forbidden' });
+  }
+  try {
+    const { rows } = await pool.query(`
+      SELECT w.well_id, w.common_name, w.area, r.dripper_oil, r.reading_date
+      FROM wells w
+      LEFT JOIN LATERAL (
+        SELECT dripper_oil, reading_date FROM readings_well
+        WHERE well_id = w.well_id AND dripper_oil IS NOT NULL
+        ORDER BY reading_date DESC, reading_time DESC NULLS LAST LIMIT 1
+      ) r ON true
+      WHERE LOWER(w.well_type) LIKE '%operational%'
+        AND LOWER(COALESCE(w.status,'')) NOT IN ('inactive','removed')
+      ORDER BY w.area NULLS LAST, w.common_name
+    `);
+    const wb = XLSX.utils.book_new();
+    const data = [
+      ['Dripper Oil Levels', `Fill target: ${fillTo} gal`],
+      [],
+      ['Area', 'Well', 'Dripper Oil (gal)', 'Amt to Full (gal)', 'Last Read'],
+      ...rows.map(r => {
+        const dripper = r.dripper_oil != null ? Number(r.dripper_oil) : null;
+        const atf = dripper != null ? Math.max(0, fillTo - dripper) : '';
+        return [
+          r.area || '',
+          r.common_name,
+          dripper != null ? dripper : '',
+          atf,
+          r.reading_date ? r.reading_date.toISOString().slice(0,10) : '',
+        ];
+      }),
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    ws['!cols'] = [{ wch: 16 }, { wch: 26 }, { wch: 16 }, { wch: 16 }, { wch: 12 }];
+    XLSX.utils.book_append_sheet(wb, ws, 'Dripper Oil');
+    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="DripperOil.xlsx"`);
+    return res.send(buf);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.get('/api/reports/wells/dripper', requireAuth, async (req, res) => {
   try {
     const { rows } = await pool.query(`
