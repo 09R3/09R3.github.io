@@ -100,6 +100,7 @@
           <button class="report-item" id="report-run-dwr">💧 Run DWR</button>
           <button class="report-item" id="report-vehicle-monthly">🚗 Vehicle Monthly</button>
           <button class="report-item" id="report-dripper-oil">🛢️ Dripper Oil</button>
+          <button class="report-item" id="report-pond-summary">🏞️ Pond Summary</button>
         </div>
       </div>
     </nav>
@@ -434,6 +435,28 @@
         </div>
         <div class="report-status" id="rdo-status"></div>
         <div class="report-grid-wrap" id="rdo-grid"></div>
+      </div>
+
+      <!-- Pond Summary -->
+      <div class="hidden" id="rpond-panel">
+        <div class="report-controls">
+          <div class="report-control-group">
+            <span class="report-label">Location</span>
+            <select class="report-select" id="rpond-location"></select>
+          </div>
+          <div class="report-control-group">
+            <span class="report-label">From</span>
+            <input type="date" class="report-date" id="rpond-from" />
+          </div>
+          <div class="report-control-group">
+            <span class="report-label">To</span>
+            <input type="date" class="report-date" id="rpond-to" />
+          </div>
+          <button class="btn btn-primary btn-sm" id="rpond-run">▶ Run</button>
+          <button class="btn btn-ghost btn-sm hidden" id="rpond-export">↓ Export</button>
+        </div>
+        <div class="report-status" id="rpond-status"></div>
+        <div class="report-grid-wrap" id="rpond-grid"></div>
       </div>
 
     </div><!-- end #report-panel -->
