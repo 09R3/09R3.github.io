@@ -3264,6 +3264,29 @@ app.get('/api/reports/wells/history', requireAuth, async (req, res) => {
   }
 });
 
+app.get('/api/reports/wells/dripper', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        w.well_id, w.common_name, w.area,
+        r.dripper_oil, r.reading_date
+      FROM wells w
+      LEFT JOIN LATERAL (
+        SELECT dripper_oil, reading_date
+        FROM readings_well
+        WHERE well_id = w.well_id AND dripper_oil IS NOT NULL
+        ORDER BY reading_date DESC, reading_time DESC NULLS LAST LIMIT 1
+      ) r ON true
+      WHERE LOWER(w.well_type) LIKE '%operational%'
+        AND LOWER(COALESCE(w.status,'')) NOT IN ('inactive','removed')
+      ORDER BY w.area NULLS LAST, w.common_name
+    `);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Pesticides ────────────────────────────────────────────────────────────────
 
 // List pesticides (active only for operators; all for supervisor/admin)

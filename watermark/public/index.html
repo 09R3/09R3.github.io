@@ -1360,6 +1360,7 @@
         <div class="seg-group" id="well-report-seg">
           <button class="seg-btn active" data-val="daily">Daily Overview</button>
           <button class="seg-btn" data-val="detail">Well Detail</button>
+          <button class="seg-btn" data-val="dripper">Dripper Oil</button>
         </div>
         <button class="btn btn-secondary btn-sm" id="well-export-btn" style="margin-left:auto"><span class="app-icon" style="width:14px;height:14px;-webkit-mask-image:url(/marv-site/icons/icon-download.svg);mask-image:url(/marv-site/icons/icon-download.svg)"></span> Export</button>
       </div>
@@ -1379,6 +1380,19 @@
         <input type="date" id="well-detail-date" class="ctrl-input ctrl-input-sm">
         <button class="btn btn-secondary btn-sm" id="well-detail-next">&#8594;</button>
         <button class="btn btn-secondary btn-sm" id="well-detail-today">Today</button>
+      </div>
+
+      <!-- Tab 3 toolbar: amount to fill selector -->
+      <div id="well-dripper-toolbar" class="report-toolbar" style="display:none">
+        <label style="font-size:0.85rem;color:var(--text-dim);white-space:nowrap">Amount Fill:</label>
+        <select id="well-dripper-amount" class="ctrl-input ctrl-input-sm" style="width:72px">
+          <option value="10">10</option>
+          <option value="11">11</option>
+          <option value="12">12</option>
+          <option value="13">13</option>
+          <option value="14">14</option>
+          <option value="15" selected>15</option>
+        </select>
       </div>
 
       <div id="report-wells-output" style="padding:12px;overflow-x:auto"></div>
