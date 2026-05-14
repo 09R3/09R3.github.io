@@ -113,7 +113,7 @@
         <div id="login-error" class="error-msg hidden"></div>
         <button type="submit" class="btn btn-primary btn-full">Sign In</button>
       </form>
-      <div class="login-version">v 1.68</div>
+      <div class="login-version">v 1.70</div>
     </div>
   </div>
 </div>
@@ -1245,6 +1245,12 @@
         </div>
         <div class="dash-label">Pond Report</div>
       </div>
+      <div class="dash-tile" data-report-cat="wells">
+        <div class="dash-icon-wrap">
+          <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-wells.svg);mask-image:url(/marv-site/icons/icon-wells.svg)"></span>
+        </div>
+        <div class="dash-label">Well Readings</div>
+      </div>
     </div>
 
     <!-- Vehicles panel -->
@@ -1345,6 +1351,51 @@
         <button class="btn btn-secondary btn-sm" id="ponds-report-print-btn" style="margin-left:auto">Print</button>
       </div>
       <div id="report-ponds-output"></div>
+    </div>
+
+    <!-- Well Readings panel -->
+    <div id="report-panel-wells" class="maint-panel hidden">
+      <!-- Tab selector -->
+      <div class="report-toolbar">
+        <div class="seg-group" id="well-report-seg">
+          <button class="seg-btn active" data-val="daily">Daily Overview</button>
+          <button class="seg-btn" data-val="detail">Well Detail</button>
+          <button class="seg-btn" data-val="dripper">Dripper Oil</button>
+        </div>
+        <button class="btn btn-secondary btn-sm" id="well-export-btn" style="margin-left:auto"><span class="app-icon" style="width:14px;height:14px;-webkit-mask-image:url(/marv-site/icons/icon-download.svg);mask-image:url(/marv-site/icons/icon-download.svg)"></span> Export</button>
+      </div>
+
+      <!-- Tab 1 toolbar: date picker -->
+      <div id="well-daily-toolbar" class="report-toolbar">
+        <button class="btn btn-secondary btn-sm" id="well-report-prev">&#8592;</button>
+        <input type="date" id="well-report-date" class="ctrl-input ctrl-input-sm">
+        <button class="btn btn-secondary btn-sm" id="well-report-next">&#8594;</button>
+        <button class="btn btn-secondary btn-sm" id="well-report-today" style="margin-left:4px">Today</button>
+      </div>
+
+      <!-- Tab 2 toolbar: well selector + date picker -->
+      <div id="well-detail-toolbar" class="report-toolbar" style="display:none">
+        <select id="well-report-select" class="ctrl-input ctrl-input-sm" style="flex:1;max-width:240px"></select>
+        <button class="btn btn-secondary btn-sm" id="well-detail-prev">&#8592;</button>
+        <input type="date" id="well-detail-date" class="ctrl-input ctrl-input-sm">
+        <button class="btn btn-secondary btn-sm" id="well-detail-next">&#8594;</button>
+        <button class="btn btn-secondary btn-sm" id="well-detail-today">Today</button>
+      </div>
+
+      <!-- Tab 3 toolbar: amount to fill selector -->
+      <div id="well-dripper-toolbar" class="report-toolbar" style="display:none">
+        <label style="font-size:0.85rem;color:var(--text-dim);white-space:nowrap">Amount Fill:</label>
+        <select id="well-dripper-amount" class="ctrl-input ctrl-input-sm" style="width:72px">
+          <option value="10">10</option>
+          <option value="11">11</option>
+          <option value="12" selected>12</option>
+          <option value="13">13</option>
+          <option value="14">14</option>
+          <option value="15">15</option>
+        </select>
+      </div>
+
+      <div id="report-wells-output" style="padding:12px;overflow-x:auto"></div>
     </div>
 
   </div><!-- /screen-reports -->
@@ -1479,7 +1530,7 @@
     <div id="settings-panel-appinfo" class="settings-panel hidden">
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 1.68</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 1.70</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>

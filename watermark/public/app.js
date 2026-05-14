@@ -6468,7 +6468,7 @@ let vehicleReportType = 'mileage';
 let lastReportRows  = [];
 
 // ── Navigation ────────────────────────────────────────────────────────────────
-const ALL_REPORT_PANELS = ['vehicles','kf','maintenance','pms','piezometers','canal','ponds'];
+const ALL_REPORT_PANELS = ['vehicles','kf','maintenance','pms','piezometers','canal','ponds','wells'];
 
 function initReportsScreen() {
   el('report-main').classList.remove('hidden');
@@ -6483,6 +6483,7 @@ const REPORT_PANEL_NAMES = {
   piezometers:  'Piezometers',
   canal:        'Canal Readings',
   ponds:        'Pond Report',
+  wells:        'Well Readings',
 };
 function openReportPanel(cat) {
   el('report-main').classList.add('hidden');
@@ -6496,6 +6497,7 @@ function openReportPanel(cat) {
   if (cat === 'piezometers') initPiezReportPanel();
   if (cat === 'canal')       initCanalReportPanel();
   if (cat === 'ponds')       initPondsReportPanel();
+  if (cat === 'wells')       initWellReportPanel();
 }
 
 function closeReportPanel() {
@@ -7169,7 +7171,7 @@ async function renderPondsReport() {
 }
 
 /* ── Export Modal ────────────────────────────────────────────────────────── */
-let exportContext = 'vehicles'; // 'vehicles' | 'piezometers-status' | 'piezometers-compare'
+let exportContext = 'vehicles'; // 'vehicles' | 'piezometers-status' | 'piezometers-compare' | 'wells-daily'
 
 el('report-export-btn').addEventListener('click', () => {
   if (!lastReportRows.length) return showToast('No report data to export', 'error');
@@ -7238,6 +7240,34 @@ el('export-csv-btn').addEventListener('click', () => {
     return;
   }
 
+  if (exportContext === 'wells-daily') {
+    const csvEsc = v => (v == null || v === '') ? '' : /[,"\n]/.test(String(v)) ? `"${String(v).replace(/"/g,'""')}"` : String(v);
+    const date = el('well-report-date').value;
+    const lines = [`Well Readings,${date}`, '', 'Area,Well,Time,On/Off,Flow (cfs),Totalizer (AF),Calc. cfs,Dripper Oil (gal),Motor Oil,kWh,Notes'];
+    lastWellDailyRows.forEach(r => {
+      lines.push([
+        r.area||'', r.common_name, r.reading_time ? String(r.reading_time).slice(0,5) : '',
+        r.on_off||'', r.flow_cfs??'', r.totalizer??'', r.totalizer_calc??'',
+        r.dripper_oil??'', r.motor_oil??'', r.pge_kwh??'', r.notes||'',
+      ].map(csvEsc).join(','));
+    });
+    triggerBlobDownload(new Blob([lines.join('\r\n')], { type: 'text/csv' }), `WellReadings_${date}.csv`);
+    return;
+  }
+
+  if (exportContext === 'wells-dripper') {
+    const csvEsc = v => (v == null || v === '') ? '' : /[,"\n]/.test(String(v)) ? `"${String(v).replace(/"/g,'""')}"` : String(v);
+    const fillTo = parseInt(el('well-dripper-amount').value) || 12;
+    const lines = [`Dripper Oil Levels,Fill target: ${fillTo} gal`, '', 'Area,Well,Dripper Oil (gal),Amt to Full (gal),Last Read'];
+    lastWellDripperRows.forEach(r => {
+      const dripper = r.dripper_oil != null ? Number(r.dripper_oil) : null;
+      const atf = dripper != null ? Math.max(0, fillTo - dripper).toFixed(2) : '';
+      lines.push([r.area||'', r.common_name, dripper != null ? dripper.toFixed(2) : '', atf, r.reading_date ? String(r.reading_date).slice(0,10) : ''].map(csvEsc).join(','));
+    });
+    triggerBlobDownload(new Blob([lines.join('\r\n')], { type: 'text/csv' }), `DripperOil.csv`);
+    return;
+  }
+
   // vehicles (default)
   const ac = v => (v.assigned_user && v.assigned_user.trim().toLowerCase() !== 'ops & maint') ? v.assigned_user : '';
   const trucks = lastReportRows.filter(r => !r.reading_type || r.reading_type === 'odometer');
@@ -7269,6 +7299,24 @@ el('export-xlsx-btn').addEventListener('click', async () => {
       const res = await fetch(url);
       if (!res.ok) throw new Error('Export failed');
       triggerBlobDownload(await res.blob(), `Piezometers_Compare_${s1}_${s2}.xlsx`);
+      return;
+    }
+    if (exportContext === 'wells-daily') {
+      const date = el('well-report-date').value;
+      const { token } = await api('POST', '/api/reports/download-token', {});
+      const url = `/api/reports/wells/daily/export?date=${date}&token=${token}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('Export failed');
+      triggerBlobDownload(await res.blob(), `WellReadings_${date}.xlsx`);
+      return;
+    }
+    if (exportContext === 'wells-dripper') {
+      const fillTo = el('well-dripper-amount').value || 12;
+      const { token } = await api('POST', '/api/reports/download-token', {});
+      const url = `/api/reports/wells/dripper/export?fill_to=${fillTo}&token=${token}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('Export failed');
+      triggerBlobDownload(await res.blob(), `DripperOil.xlsx`);
       return;
     }
     // vehicles
@@ -7509,7 +7557,18 @@ el('export-pdf-btn').addEventListener('click', () => {
     document.body.appendChild(printArea);
   }
 
-  if (exportContext === 'piezometers-status' || exportContext === 'piezometers-compare') {
+  if (exportContext === 'wells-dripper') {
+    el('export-modal').classList.add('hidden');
+    const card = el('report-wells-output').querySelector('.report-card');
+    if (card) printReportPortrait(card.outerHTML);
+    return;
+  }
+
+  if (exportContext === 'wells-daily') {
+    delete printArea.dataset.printType;
+    const card = el('report-wells-output').querySelector('.report-card');
+    printArea.innerHTML = card ? card.outerHTML : '';
+  } else if (exportContext === 'piezometers-status' || exportContext === 'piezometers-compare') {
     delete printArea.dataset.printType;
     const rendered = el('report-piez-output').querySelector('.report-card');
     printArea.innerHTML = rendered ? rendered.outerHTML : '';
@@ -9251,6 +9310,442 @@ async function openAllPondsMap() {
 }
 
 el('pond-maps-btn').addEventListener('click', openAllPondsMap);
+
+// ── Well Readings Report Panel ─────────────────────────────────────────────────
+
+let lastWellDailyRows = [];
+
+function makeSvgSparkline(values, { width=160, height=40, inverted=false, color='#4caf50' } = {}) {
+  const valid = values.map((v,i) => ({v: Number(v), i})).filter(x => !isNaN(x.v) && x.v != null);
+  if (valid.length < 2) return '<span style="color:var(--text-dim);font-size:11px">—</span>';
+  const min = Math.min(...valid.map(x=>x.v));
+  const max = Math.max(...valid.map(x=>x.v));
+  const range = max - min || 1;
+  const pad = 4;
+  const pts = valid.map(({v,i}) => {
+    const x = pad + (i / (values.length - 1)) * (width - pad*2);
+    const norm = (v - min) / range;
+    const y = inverted ? pad + norm*(height-pad*2) : pad + (1-norm)*(height-pad*2);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+  const dotPts = valid.map(({v,i}) => {
+    const x = pad + (i / (values.length - 1)) * (width - pad*2);
+    const norm = (v - min) / range;
+    const y = inverted ? pad + norm*(height-pad*2) : pad + (1-norm)*(height-pad*2);
+    return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="2.5" fill="${color}"/>`;
+  }).join('');
+  return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" style="display:block">
+    <polyline points="${pts.join(' ')}" fill="none" stroke="${color}" stroke-width="1.8" stroke-linejoin="round"/>
+    ${dotPts}
+  </svg>`;
+}
+
+function wellStepDate(inputId, days, callback) {
+  const inp = el(inputId);
+  if (!inp.value) return;
+  const d = new Date(inp.value + 'T00:00:00');
+  d.setDate(d.getDate() + days);
+  inp.value = d.toISOString().slice(0,10);
+  callback();
+}
+
+let wellReportInitialized = false;
+
+function initWellReportPanel() {
+  const today = todayISO();
+  el('well-report-date').value = today;
+  el('well-detail-date').value = today;
+
+  if (!wellReportInitialized) {
+    wellReportInitialized = true;
+
+    // Seg group tabs
+    el('well-report-seg').addEventListener('click', e => {
+      const btn = e.target.closest('.seg-btn');
+      if (!btn) return;
+      el('well-report-seg').querySelectorAll('.seg-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const tab = btn.dataset.val;
+      el('well-daily-toolbar').style.display   = tab === 'daily'   ? '' : 'none';
+      el('well-detail-toolbar').style.display  = tab === 'detail'  ? '' : 'none';
+      el('well-dripper-toolbar').style.display = tab === 'dripper' ? '' : 'none';
+      el('report-wells-output').innerHTML = '';
+      if (tab === 'daily')   renderWellDailyReport();
+      else if (tab === 'detail')  renderWellDetailReport();
+      else if (tab === 'dripper') renderWellDripperReport();
+    });
+
+    el('well-dripper-amount').addEventListener('change', recalcDripper);
+
+    // Daily date nav
+    el('well-report-prev').addEventListener('click', () => wellStepDate('well-report-date', -1, renderWellDailyReport));
+    el('well-report-next').addEventListener('click', () => wellStepDate('well-report-date', 1, renderWellDailyReport));
+    el('well-report-today').addEventListener('click', () => { el('well-report-date').value = todayISO(); renderWellDailyReport(); });
+    el('well-report-date').addEventListener('change', renderWellDailyReport);
+
+    // Detail date nav
+    el('well-detail-prev').addEventListener('click', () => wellStepDate('well-detail-date', -1, renderWellDetailReport));
+    el('well-detail-next').addEventListener('click', () => wellStepDate('well-detail-date', 1, renderWellDetailReport));
+    el('well-detail-today').addEventListener('click', () => { el('well-detail-date').value = todayISO(); renderWellDetailReport(); });
+    el('well-detail-date').addEventListener('change', renderWellDetailReport);
+
+    el('well-report-select').addEventListener('change', renderWellDetailReport);
+
+    // Export button — routes to the active tab's export
+    el('well-export-btn').addEventListener('click', () => {
+      const activeTab = el('well-report-seg').querySelector('.seg-btn.active')?.dataset.val || 'daily';
+      if (activeTab === 'daily') {
+        if (!lastWellDailyRows.length) return showToast('No report data to export', 'error');
+        exportContext = 'wells-daily';
+        el('export-modal-subtitle').textContent = `Well Readings — ${el('well-report-date').value}`;
+      } else if (activeTab === 'dripper') {
+        if (!lastWellDripperRows.length) return showToast('No report data to export', 'error');
+        exportContext = 'wells-dripper';
+        el('export-modal-subtitle').textContent = `Dripper Oil Levels (fill target: ${el('well-dripper-amount').value} gal)`;
+      } else {
+        return showToast('Export available on Daily Overview and Dripper Oil tabs', 'info');
+      }
+      el('export-modal').classList.remove('hidden');
+    });
+
+    // Reset active tab to daily when re-entering
+    el('well-report-seg').querySelectorAll('.seg-btn').forEach((b,i) => b.classList.toggle('active', i===0));
+    el('well-daily-toolbar').style.display   = '';
+    el('well-detail-toolbar').style.display  = 'none';
+    el('well-dripper-toolbar').style.display = 'none';
+  }
+
+  // Load well dropdown every open (may have changed)
+  api('GET', '/api/reports/wells/list').then(wells => {
+    const sel = el('well-report-select');
+    const prevVal = sel.value;
+    sel.innerHTML = '';
+    const groups = {};
+    wells.forEach(w => {
+      const area = w.area || 'Other';
+      if (!groups[area]) groups[area] = [];
+      groups[area].push(w);
+    });
+    Object.keys(groups).sort().forEach(area => {
+      const og = document.createElement('optgroup');
+      og.label = area;
+      groups[area].forEach(w => {
+        const opt = document.createElement('option');
+        opt.value = w.well_id;
+        opt.textContent = w.common_name;
+        og.appendChild(opt);
+      });
+      sel.appendChild(og);
+    });
+    if (prevVal) sel.value = prevVal;
+  }).catch(() => {});
+
+  renderWellDailyReport();
+}
+
+async function renderWellDailyReport() {
+  const date = el('well-report-date').value;
+  if (!date) return;
+  const out = el('report-wells-output');
+  out.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const rows = await api('GET', `/api/reports/wells/daily?date=${date}`);
+    lastWellDailyRows = rows;
+
+    const readCount = rows.filter(r => r.reading_time != null).length;
+    const fmtNum = (v, dec=2) => v != null ? Number(v).toFixed(dec) : '—';
+    const fmtTime = t => t ? String(t).slice(0,5) : '—';
+
+    // Group by area
+    const areas = [];
+    const areaMap = {};
+    rows.forEach(r => {
+      const area = r.area || 'Other';
+      if (!areaMap[area]) { areaMap[area] = []; areas.push(area); }
+      areaMap[area].push(r);
+    });
+
+    let html = `<div class="report-card">
+      <div class="report-title">Well Readings</div>
+      <div class="report-subtitle">${localDateStr(date)}</div>
+      <div class="report-subtitle" style="font-size:0.85rem;color:var(--text-dim)">${readCount} / ${rows.length} wells read</div>`;
+
+    areas.forEach(area => {
+      html += `<div class="report-section-title">${escHtml(area)}</div>
+        <table class="report-table">
+          <thead><tr>
+            <th>Well</th><th>Time</th><th>On/Off</th>
+            <th class="report-num">Flow<br>(cfs)</th>
+            <th class="report-num">Tot.<br>(AF)</th>
+            <th class="report-num" title="Calculated from AF delta">Calc.<br>cfs</th>
+            <th class="report-num">Drip<br>Oil</th>
+            <th class="report-num">Mtr<br>Oil</th>
+            <th class="report-num">kWh</th>
+            <th>Notes</th>
+          </tr></thead><tbody>`;
+
+      areaMap[area].forEach(r => {
+        if (r.reading_time == null) {
+          html += `<tr style="opacity:0.45">
+            <td>${escHtml(r.common_name)}</td>
+            <td colspan="9" style="color:var(--text-dim);font-style:italic">Not read</td>
+          </tr>`;
+        } else {
+          const _oo = r.on_off != null ? String(r.on_off).toLowerCase() : null;
+          const _onLabel = (_oo === 'on' || _oo === 'true') ? 'On' : 'Off';
+          const onOff = r.on_off != null
+            ? `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${_onLabel==='On'?'var(--green)':'var(--text-dim)'};margin-right:4px"></span>${_onLabel}`
+            : '—';
+          const calcCell = r.totalizer_calc != null
+            ? `<span style="font-style:italic;color:var(--text-dim)" title="Calculated from AF delta">${fmtNum(r.totalizer_calc)}</span>`
+            : '<span style="color:var(--text-dim)">—</span>';
+          const notesTrunc = r.notes
+            ? `<span title="${escHtml(r.notes)}">${escHtml(r.notes.length > 40 ? r.notes.slice(0,40)+'…' : r.notes)}</span>`
+            : '—';
+          html += `<tr>
+            <td>${escHtml(r.common_name)}</td>
+            <td>${fmtTime(r.reading_time)}</td>
+            <td>${onOff}</td>
+            <td class="report-num">${fmtNum(r.flow_cfs)}</td>
+            <td class="report-num">${fmtNum(r.totalizer)}</td>
+            <td class="report-num">${calcCell}</td>
+            <td class="report-num">${fmtNum(r.dripper_oil,1)}</td>
+            <td class="report-num">${fmtNum(r.motor_oil,1)}</td>
+            <td class="report-num">${r.pge_kwh != null ? Number(r.pge_kwh).toLocaleString() : '—'}</td>
+            <td>${notesTrunc}</td>
+          </tr>`;
+        }
+      });
+
+      html += '</tbody></table>';
+    });
+
+    if (!rows.length) {
+      html += '<div class="placeholder-msg">No operational wells found.</div>';
+    }
+
+    html += '</div>';
+    out.innerHTML = html;
+  } catch (err) {
+    out.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
+  }
+}
+
+async function renderWellDetailReport() {
+  const wellId = el('well-report-select').value;
+  const endDate = el('well-detail-date').value;
+  if (!wellId) return;
+  const out = el('report-wells-output');
+  out.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const { well, flow_readings, dtw_readings } = await api('GET', `/api/reports/wells/history?well_id=${wellId}&end_date=${endDate}`);
+    const fmtNum = (v, dec=2) => v != null ? Number(v).toFixed(dec) : '—';
+    const fmtDate = s => s ? localDateStr(s, { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
+    const fmtTime = t => t ? String(t).slice(0,5) : '—';
+
+    let html = '<div class="report-card">';
+
+    // Well info header
+    if (well) {
+      html += `<div class="report-title">${escHtml(well.common_name)}</div>
+        <div class="report-subtitle" style="display:flex;gap:16px;flex-wrap:wrap;font-size:0.85rem;color:var(--text-dim)">
+          ${well.area ? `<span>Area: ${escHtml(well.area)}</span>` : ''}
+          ${well.state_well_number ? `<span>State #: ${escHtml(well.state_well_number)}</span>` : ''}
+          ${well.pump_hp != null ? `<span>Pump HP: ${well.pump_hp}</span>` : ''}
+          ${well.total_depth_ft != null ? `<span>Total Depth: ${well.total_depth_ft} ft</span>` : ''}
+        </div>`;
+    }
+
+    // Flow readings
+    html += `<div class="report-section-title">Flow Readings (last 5 as of ${endDate})</div>`;
+    if (flow_readings.length) {
+      const chronoFlow = [...flow_readings].reverse();
+      html += makeSvgSparkline(chronoFlow.map(r => r.flow_cfs != null ? Number(r.flow_cfs) : null), { width: 200, height: 44, color: 'var(--green)' });
+      html += `<table class="report-table" style="margin-top:8px">
+        <thead><tr>
+          <th>Date</th><th>Time</th><th>On/Off</th>
+          <th class="report-num">Flow (cfs)</th>
+          <th class="report-num">Totalizer (AF)</th>
+          <th class="report-num">Hours</th>
+          <th class="report-num">Drip Oil</th>
+          <th class="report-num">Mtr Oil</th>
+        </tr></thead><tbody>`;
+      flow_readings.forEach(r => {
+        const _oo2 = r.on_off != null ? String(r.on_off).toLowerCase() : null;
+        const _onLabel2 = (_oo2 === 'on' || _oo2 === 'true') ? 'On' : 'Off';
+        const onOff = r.on_off != null
+          ? `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${_onLabel2==='On'?'var(--green)':'var(--text-dim)'};margin-right:4px"></span>${_onLabel2}`
+          : '—';
+        html += `<tr>
+          <td>${fmtDate(r.reading_date)}</td>
+          <td>${fmtTime(r.reading_time)}</td>
+          <td>${onOff}</td>
+          <td class="report-num">${fmtNum(r.flow_cfs)}</td>
+          <td class="report-num">${fmtNum(r.totalizer)}</td>
+          <td class="report-num">${r.hour_reading != null ? r.hour_reading : '—'}</td>
+          <td class="report-num">${fmtNum(r.dripper_oil,1)}</td>
+          <td class="report-num">${fmtNum(r.motor_oil,1)}</td>
+        </tr>`;
+      });
+      html += '</tbody></table>';
+    } else {
+      html += '<div class="placeholder-msg">No flow readings found.</div>';
+    }
+
+    // Depth-to-water readings (KF Monthly)
+    html += `<div class="report-section-title" style="margin-top:16px">Depth to Water — KF Monthly (last 5 as of ${endDate})</div>`;
+    if (dtw_readings.length) {
+      const chronoDtw = [...dtw_readings].reverse();
+      html += makeSvgSparkline(chronoDtw.map(r => r.dtw_reading != null ? Number(r.dtw_reading) : null), { width: 200, height: 44, inverted: true, color: '#2196f3' });
+      html += `<table class="report-table" style="margin-top:8px">
+        <thead><tr>
+          <th>Date</th><th>Time</th>
+          <th class="report-num">DTW (ft)</th>
+          <th>Plopper/Sounder</th><th>Operator</th><th>Notes</th>
+        </tr></thead><tbody>`;
+      dtw_readings.forEach(r => {
+        html += `<tr>
+          <td>${fmtDate(r.reading_date)}</td>
+          <td>${fmtTime(r.reading_time)}</td>
+          <td class="report-num">${fmtNum(r.dtw_reading)}</td>
+          <td>${escHtml(r.plopper_sounder || '—')}</td>
+          <td>${escHtml(r.operator || '—')}</td>
+          <td>${escHtml(r.notes || '—')}</td>
+        </tr>`;
+      });
+      html += '</tbody></table>';
+    } else {
+      html += '<div class="placeholder-msg">No KF monthly readings on record.</div>';
+    }
+
+    html += '</div>';
+    out.innerHTML = html;
+  } catch (err) {
+    out.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
+  }
+}
+
+let lastWellDripperRows = [];
+
+async function renderWellDripperReport() {
+  const out = el('report-wells-output');
+  out.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const rows = await api('GET', '/api/reports/wells/dripper');
+    lastWellDripperRows = rows;
+    const fillTo = parseInt(el('well-dripper-amount').value) || 12;
+    const fmtDate = s => s ? localDateStr(s, { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
+
+    const areas = [];
+    const areaMap = {};
+    rows.forEach(r => {
+      const area = r.area || 'Other';
+      if (!areaMap[area]) { areaMap[area] = []; areas.push(area); }
+      areaMap[area].push(r);
+    });
+
+    let html = `<div class="report-card">
+      <div class="report-title">Dripper Oil Levels</div>
+      <div class="report-subtitle" style="font-size:0.85rem;color:var(--text-dim)">Most recent reading per well · Check wells to include in total</div>`;
+
+    areas.forEach((area, areaIdx) => {
+      html += `<div class="report-section-title">${escHtml(area)}</div>
+        <table class="report-table" data-area-idx="${areaIdx}">
+          <thead><tr>
+            <th style="width:28px"><input type="checkbox" class="dripper-area-all" data-area-idx="${areaIdx}" title="Select all in this area" style="width:16px;height:16px;cursor:pointer;accent-color:var(--green)"></th>
+            <th>Well</th>
+            <th class="report-num">Dripper Oil (gal)</th>
+            <th class="report-num">Amt to Full (gal)</th>
+            <th>Last Read</th>
+          </tr></thead><tbody>`;
+
+      areaMap[area].forEach(r => {
+        const dripper = r.dripper_oil != null ? Number(r.dripper_oil) : null;
+        const atf = dripper != null ? Math.max(0, fillTo - dripper).toFixed(2) : '—';
+        const dripCell = dripper != null
+          ? dripper.toFixed(2) + ' gal'
+          : `<span style="color:var(--text-dim)">No reading</span>`;
+        html += `<tr class="dripper-row" data-dripper-oil="${dripper != null ? dripper : ''}">
+          <td><input type="checkbox" class="dripper-check" style="width:18px;height:18px;cursor:pointer;accent-color:var(--green)" ${dripper == null ? 'disabled' : ''}></td>
+          <td>${escHtml(r.common_name)}</td>
+          <td class="report-num">${dripCell}</td>
+          <td class="report-num dripper-atf">${atf !== '—' ? atf + ' gal' : '—'}</td>
+          <td>${fmtDate(r.reading_date)}</td>
+        </tr>`;
+      });
+
+      html += '</tbody></table>';
+    });
+
+    if (!rows.length) html += '<div class="placeholder-msg">No operational wells found.</div>';
+
+    html += `<div style="padding:14px 4px 4px;display:flex;align-items:center;gap:10px;border-top:2px solid var(--border);margin-top:12px">
+      <span style="font-weight:600">Total oil needed (checked wells):</span>
+      <span id="dripper-total" style="font-size:1.15rem;font-weight:700;color:var(--green)">0.00</span>
+      <span style="color:var(--text-dim);font-size:0.85rem">gal</span>
+    </div></div>`;
+
+    out.innerHTML = html;
+
+    out.addEventListener('change', e => {
+      if (e.target.classList.contains('dripper-area-all')) {
+        const table = e.target.closest('table');
+        table.querySelectorAll('.dripper-check:not(:disabled)').forEach(cb => { cb.checked = e.target.checked; });
+        recalcDripper();
+      } else if (e.target.classList.contains('dripper-check')) {
+        // Sync area-all checkbox state
+        const table = e.target.closest('table');
+        const allCbs = table.querySelectorAll('.dripper-check:not(:disabled)');
+        const checkedCount = table.querySelectorAll('.dripper-check:not(:disabled):checked').length;
+        const areaAll = table.querySelector('.dripper-area-all');
+        if (areaAll) {
+          areaAll.indeterminate = checkedCount > 0 && checkedCount < allCbs.length;
+          areaAll.checked = checkedCount === allCbs.length && allCbs.length > 0;
+        }
+        recalcDripper();
+      }
+    });
+  } catch (err) {
+    out.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
+  }
+}
+
+function recalcDripper() {
+  const fillTo = parseInt(el('well-dripper-amount').value) || 12;
+  let total = 0;
+  document.querySelectorAll('.dripper-row').forEach(row => {
+    const raw = row.dataset.dripperOil;
+    const dripper = raw !== '' ? parseFloat(raw) : null;
+    const atf = dripper != null ? Math.max(0, fillTo - dripper) : null;
+    row.querySelector('.dripper-atf').textContent = atf != null ? atf.toFixed(2) + ' gal' : '—';
+    if (row.querySelector('.dripper-check').checked && atf != null) total += atf;
+  });
+  const totalEl = document.getElementById('dripper-total');
+  if (totalEl) totalEl.textContent = total.toFixed(2);
+}
+
+function printReportPortrait(htmlContent) {
+  const w = window.open('', '_blank');
+  if (!w) { showToast('Allow pop-ups to print', 'error'); return; }
+  w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8">
+    <style>
+      @page { size: letter portrait; margin: 0.4in 0.5in; }
+      body { font-family: Arial, sans-serif; color: #000; font-size: 10pt; }
+      .report-title { font-size: 14pt; font-weight: 700; text-align: center; margin: 0 0 3px; }
+      .report-subtitle { font-size: 9pt; text-align: center; color: #444; margin: 0 0 10px; }
+      .report-section-title { font-size: 8pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; margin: 10px 0 3px; border-bottom: 1px solid #000; padding-bottom: 2px; }
+      table { width: 100%; border-collapse: collapse; font-size: 9.5pt; margin-bottom: 4px; }
+      th { text-align: left; padding: 2px 5px; font-size: 8pt; font-weight: 700; text-transform: uppercase; border-bottom: 1.5px solid #000; }
+      td { padding: 2px 5px; border-bottom: 0.5px solid #ddd; }
+      .report-num { text-align: right; }
+      .dripper-check, .dripper-area-all { display: none !important; }
+      [style*="border-top:2px"] { border-top: 2px solid #000 !important; padding-top: 10px; }
+      @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+    </style>
+  </head><body>${htmlContent}</body></html>`);
+  w.document.close();
+  setTimeout(() => { w.print(); w.close(); }, 300);
+}
 
 /* ── Init ────────────────────────────────────────────────────────────────── */
 checkDBStatus();
