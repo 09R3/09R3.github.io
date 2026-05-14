@@ -1394,6 +1394,38 @@ app.get('/api/reports/dripper-oil', requireDB, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── Pond Summary ────────────────────────────────────────────────────────────
+app.get('/api/reports/pond-summary/options', requireDB, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT DISTINCT pl.location_id::text AS value, pl.name AS label
+       FROM readings_staff_gauge r
+       JOIN ponds p ON p.pond_id = r.pond_id
+       JOIN pond_locations pl ON pl.location_id = p.location_id
+       ORDER BY pl.name`
+    );
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+app.get('/api/reports/pond-summary', requireDB, async (req, res) => {
+  const { location_id, start, end } = req.query;
+  if (!start || !end) return res.status(400).json({ error: 'start and end required.' });
+  try {
+    const { clause, param } = optIntFilter(location_id, 'pl.location_id', 3);
+    const params = [start, end, ...(param != null ? [param] : [])];
+    const { rows } = await pool.query(
+      `SELECT pl.name AS location_name, p.name AS pond_name,
+              r.reading_date, r.reading_time, r.level_ft, r.entered_by, r.notes
+       FROM readings_staff_gauge r
+       JOIN ponds p ON p.pond_id = r.pond_id
+       JOIN pond_locations pl ON pl.location_id = p.location_id
+       WHERE r.reading_date >= $1 AND r.reading_date <= $2${clause}
+       ORDER BY r.reading_date, r.reading_time, pl.name, p.sort_order`, params
+    );
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ─── Start Server ─────────────────────────────────────────────────────────────
 
 const PORT = process.env.PORT || 3000;

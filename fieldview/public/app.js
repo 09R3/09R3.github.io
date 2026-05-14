@@ -1608,6 +1608,16 @@ makeReport({
   hdrs: ['Vehicle #','Make','Model','Date','Time','Odometer (mi)','Engine Hours'],
 });
 
+makeReport({
+  sidebarId: 'report-pond-summary', panelId: 'rpond-panel',
+  title: 'Pond Summary', prefix: 'rpond', selectId: 'rpond-location',
+  optionsUrl: '/api/reports/pond-summary/options',
+  reportUrl:  '/api/reports/pond-summary',
+  filterParam: 'location_id',
+  cols: ['location_name', 'pond_name', 'reading_date', 'reading_time', 'level_ft', 'entered_by'],
+  hdrs: ['Location', 'Pond', 'Date', 'Time', 'Level (ft)', 'Entered By'],
+});
+
 // ── Version ─────────────────────────────────────────────────────────────────────────────
 (async () => {
   try {
