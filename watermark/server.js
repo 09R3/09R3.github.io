@@ -2898,7 +2898,7 @@ app.get('/api/reports/ponds/gates', requireAuth, async (req, res) => {
         ORDER BY reading_time DESC NULLS LAST LIMIT 1
       ) sg ON true
       LEFT JOIN pond_connections pc
-        ON pc.pond_id = p.pond_id AND (pc.active IS NULL OR pc.active = true)
+        ON pc.destination_pond_id = p.pond_id AND (pc.active IS NULL OR pc.active = true)
       LEFT JOIN pond_gates pg
         ON pg.connection_id = pc.connection_id AND (pg.active IS NULL OR pg.active = true)
       LEFT JOIN LATERAL (
