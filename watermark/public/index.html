@@ -1346,11 +1346,22 @@
 
     <!-- Pond Report panel -->
     <div id="report-panel-ponds" class="maint-panel hidden">
+      <!-- Tabs + print -->
       <div class="report-toolbar">
-        <input type="date" id="ponds-report-date" class="ctrl-input ctrl-input-sm">
+        <div class="seg-group" id="ponds-report-seg">
+          <button class="seg-btn active" data-val="gauges">Staff Gauges</button>
+          <button class="seg-btn" data-val="gates">Gate Readings</button>
+        </div>
         <button class="btn btn-secondary btn-sm" id="ponds-report-print-btn" style="margin-left:auto">Print</button>
       </div>
-      <div id="report-ponds-output"></div>
+      <!-- Date nav -->
+      <div class="report-toolbar">
+        <button class="btn btn-secondary btn-sm" id="ponds-report-prev">&#8592;</button>
+        <input type="date" id="ponds-report-date" class="ctrl-input ctrl-input-sm">
+        <button class="btn btn-secondary btn-sm" id="ponds-report-next">&#8594;</button>
+        <button class="btn btn-secondary btn-sm" id="ponds-report-today" style="margin-left:4px">Today</button>
+      </div>
+      <div id="report-ponds-output" style="overflow-x:auto"></div>
     </div>
 
     <!-- Well Readings panel -->

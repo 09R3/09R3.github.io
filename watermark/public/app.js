@@ -7101,29 +7101,59 @@ async function renderCanalReport() {
 }
 
 // ── Pond Report Panel ─────────────────────────────────────────────────────────
-function initPondsReportPanel() {
-  if (!el('ponds-report-date').value) {
-    el('ponds-report-date').value = todayISO();
-  }
-  renderPondsReport();
+let pondsReportInitialized = false;
+
+function pondsReportActiveTab() {
+  return el('ponds-report-seg').querySelector('.seg-btn.active')?.dataset.val || 'gauges';
 }
 
-el('ponds-report-date').addEventListener('change', renderPondsReport);
-el('ponds-report-print-btn').addEventListener('click', () => {
-  const card = el('report-ponds-output').querySelector('.report-card');
-  if (!card) return showToast('No report to print', 'error');
-  let printArea = document.getElementById('print-area');
-  if (!printArea) {
-    printArea = document.createElement('div');
-    printArea.id = 'print-area';
-    document.body.appendChild(printArea);
+function renderPondsActiveTab() {
+  if (pondsReportActiveTab() === 'gauges') renderPondsReport();
+  else renderPondGateReport();
+}
+
+function initPondsReportPanel() {
+  el('ponds-report-date').value = todayISO();
+
+  if (!pondsReportInitialized) {
+    pondsReportInitialized = true;
+
+    el('ponds-report-seg').addEventListener('click', e => {
+      const btn = e.target.closest('.seg-btn');
+      if (!btn) return;
+      el('ponds-report-seg').querySelectorAll('.seg-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      renderPondsActiveTab();
+    });
+
+    el('ponds-report-prev').addEventListener('click', () => wellStepDate('ponds-report-date', -1, renderPondsActiveTab));
+    el('ponds-report-next').addEventListener('click', () => wellStepDate('ponds-report-date', 1, renderPondsActiveTab));
+    el('ponds-report-today').addEventListener('click', () => { el('ponds-report-date').value = todayISO(); renderPondsActiveTab(); });
+    el('ponds-report-date').addEventListener('change', renderPondsActiveTab);
+
+    el('ponds-report-print-btn').addEventListener('click', () => {
+      const card = el('report-ponds-output').querySelector('.report-card');
+      if (!card) return showToast('No report to print', 'error');
+      let printArea = document.getElementById('print-area');
+      if (!printArea) {
+        printArea = document.createElement('div');
+        printArea.id = 'print-area';
+        document.body.appendChild(printArea);
+      }
+      delete printArea.dataset.printType;
+      printArea.innerHTML = card.outerHTML;
+      setTimeout(() => {
+        window.print();
+        window.addEventListener('afterprint', () => { printArea.innerHTML = ''; }, { once: true });
+      }, 100);
+    });
+
+    // Reset to gauges tab on re-open
+    el('ponds-report-seg').querySelectorAll('.seg-btn').forEach((b,i) => b.classList.toggle('active', i===0));
   }
-  printArea.innerHTML = card.outerHTML;
-  setTimeout(() => {
-    window.print();
-    window.addEventListener('afterprint', () => { printArea.innerHTML = ''; }, { once: true });
-  }, 100);
-});
+
+  renderPondsReport();
+}
 
 async function renderPondsReport() {
   const date = el('ponds-report-date').value;
@@ -7164,6 +7194,128 @@ async function renderPondsReport() {
     });
 
     html += '</tbody></table></div>';
+    out.innerHTML = html;
+  } catch (err) {
+    out.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
+  }
+}
+
+async function renderPondGateReport() {
+  const date = el('ponds-report-date').value;
+  if (!date) return;
+  const out = el('report-ponds-output');
+  out.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const rows = await api('GET', `/api/reports/ponds/gates?date=${date}`);
+    const fmtNum  = (v, dec=2) => v != null ? Number(v).toFixed(dec) : '—';
+    const fmtTime = t => t ? String(t).slice(0,5) : '';
+
+    // Build hierarchy: locations → ponds → connections → gates
+    const locOrder = [], locMap = {};
+    rows.forEach(r => {
+      if (!locMap[r.location_id]) {
+        locMap[r.location_id] = { name: r.location_name, sort: r.location_sort, ponds: {}, pondOrder: [] };
+        locOrder.push(r.location_id);
+      }
+      const loc = locMap[r.location_id];
+      if (r.pond_id && !loc.ponds[r.pond_id]) {
+        loc.ponds[r.pond_id] = {
+          name: r.pond_name, sort: r.pond_sort,
+          gauge_level: r.gauge_level, gauge_time: r.gauge_time,
+          connections: {}, connOrder: [],
+        };
+        loc.pondOrder.push(r.pond_id);
+      }
+      if (!r.connection_id) return;
+      const pond = loc.ponds[r.pond_id];
+      if (!pond.connections[r.connection_id]) {
+        pond.connections[r.connection_id] = { name: r.connection_name, sort: r.connection_sort, gates: [] };
+        pond.connOrder.push(r.connection_id);
+      }
+      if (!r.gate_id) return;
+      pond.connections[r.connection_id].gates.push({
+        gate_id: r.gate_id, label: r.gate_label, width_in: r.width_in,
+        head_ft: r.head_ft, opening_in: r.opening_in, overpour_in: r.overpour_in,
+        flow_cfs: r.flow_cfs, notes: r.gate_notes,
+      });
+    });
+
+    const fmtDate = s => s ? localDateStr(s, { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
+    let html = `<div class="report-card">
+      <div class="report-title">Pond Gate Readings</div>
+      <div class="report-subtitle">${fmtDate(date)}</div>`;
+
+    locOrder.forEach(lid => {
+      const loc = locMap[lid];
+      html += `<div class="report-section-title" style="margin-top:14px">${escHtml(loc.name)}</div>`;
+
+      loc.pondOrder.forEach(pid => {
+        const pond = loc.ponds[pid];
+        const gaugeStr = pond.gauge_level != null
+          ? `<span style="font-weight:600">${fmtNum(pond.gauge_level)} ft</span>${pond.gauge_time ? ` <span style="color:var(--text-dim);font-size:0.8rem">@ ${fmtTime(pond.gauge_time)}</span>` : ''}`
+          : `<span style="color:var(--text-dim)">no gauge reading</span>`;
+
+        html += `<div style="margin:8px 0 2px;font-weight:600;font-size:0.9rem">
+          ${escHtml(pond.name)} — Gauge: ${gaugeStr}
+        </div>`;
+
+        if (pond.connOrder.length === 0) {
+          html += `<div style="color:var(--text-dim);font-size:0.82rem;padding-left:8px;margin-bottom:4px">No connections configured</div>`;
+          return;
+        }
+
+        pond.connOrder.forEach(cid => {
+          const conn = pond.connections[cid];
+          html += `<div style="font-size:0.8rem;text-transform:uppercase;letter-spacing:0.04em;color:var(--text-dim);margin:6px 0 2px 8px">${escHtml(conn.name)}</div>`;
+
+          if (conn.gates.length === 0) {
+            html += `<div style="color:var(--text-dim);font-size:0.82rem;padding-left:8px;margin-bottom:4px">No gates configured</div>`;
+            return;
+          }
+
+          html += `<table class="report-table" style="margin-left:8px;margin-bottom:4px">
+            <thead><tr>
+              <th>Gate</th>
+              <th class="report-num">Width (in)</th>
+              <th class="report-num">Head (ft)</th>
+              <th class="report-num">Opening (in)</th>
+              <th class="report-num">Overpour (in)</th>
+              <th class="report-num">Flow (cfs)</th>
+              <th>Notes</th>
+            </tr></thead><tbody>`;
+
+          conn.gates.forEach(g => {
+            const hasReading = g.head_ft != null || g.opening_in != null || g.flow_cfs != null;
+            const rowStyle = hasReading ? '' : ' style="opacity:0.5"';
+            html += `<tr${rowStyle}>
+              <td>${escHtml(g.label || '—')}</td>
+              <td class="report-num">${g.width_in != null ? g.width_in : '—'}</td>
+              <td class="report-num">${fmtNum(g.head_ft)}</td>
+              <td class="report-num">${fmtNum(g.opening_in)}</td>
+              <td class="report-num">${g.overpour_in != null ? fmtNum(g.overpour_in) : '—'}</td>
+              <td class="report-num">${fmtNum(g.flow_cfs)}</td>
+              <td>${escHtml(g.notes || '')}</td>
+            </tr>`;
+          });
+
+          // Connection flow total (sum of gates with readings)
+          const totalCfs = conn.gates.reduce((s, g) => s + (g.flow_cfs != null ? Number(g.flow_cfs) : 0), 0);
+          const hasAny = conn.gates.some(g => g.flow_cfs != null);
+          if (hasAny) {
+            html += `<tr style="font-weight:700;border-top:1.5px solid var(--border)">
+              <td colspan="5" style="text-align:right;font-size:0.82rem;color:var(--text-dim)">Connection Total:</td>
+              <td class="report-num">${totalCfs.toFixed(2)}</td>
+              <td></td>
+            </tr>`;
+          }
+
+          html += '</tbody></table>';
+        });
+      });
+    });
+
+    if (locOrder.length === 0) html += '<div class="placeholder-msg">No pond locations configured.</div>';
+    html += '</div>';
     out.innerHTML = html;
   } catch (err) {
     out.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;

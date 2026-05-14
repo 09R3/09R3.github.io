@@ -2877,6 +2877,43 @@ app.get('/api/reports/ponds', requireAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+app.get('/api/reports/ponds/gates', requireAuth, async (req, res) => {
+  const date = req.query.date || new Date().toISOString().slice(0,10);
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        pl.location_id, pl.name AS location_name, pl.sort_order AS location_sort,
+        p.pond_id, p.name AS pond_name, p.sort_order AS pond_sort,
+        sg.level_ft AS gauge_level, sg.reading_time AS gauge_time,
+        pc.connection_id, pc.name AS connection_name, pc.sort_order AS connection_sort,
+        pg.gate_id, pg.label AS gate_label, pg.width_in, pg.gate_type,
+        pg.sort_order AS gate_sort,
+        gr.head_ft, gr.opening_in, gr.overpour_in, gr.flow_cfs,
+        gr.notes AS gate_notes
+      FROM pond_locations pl
+      JOIN ponds p ON p.location_id = pl.location_id
+      LEFT JOIN LATERAL (
+        SELECT level_ft, reading_time FROM readings_staff_gauge
+        WHERE pond_id = p.pond_id AND reading_date = $1
+        ORDER BY reading_time DESC NULLS LAST LIMIT 1
+      ) sg ON true
+      LEFT JOIN pond_connections pc
+        ON pc.pond_id = p.pond_id AND (pc.active IS NULL OR pc.active = true)
+      LEFT JOIN pond_gates pg
+        ON pg.connection_id = pc.connection_id AND (pg.active IS NULL OR pg.active = true)
+      LEFT JOIN LATERAL (
+        SELECT head_ft, opening_in, overpour_in, flow_cfs, notes
+        FROM readings_pond_gates
+        WHERE gate_id = pg.gate_id AND reading_date = $1
+        ORDER BY reading_time DESC NULLS LAST LIMIT 1
+      ) gr ON pg.gate_id IS NOT NULL
+      ORDER BY pl.sort_order, pl.name, p.sort_order, p.name,
+               pc.sort_order, pc.name, pg.sort_order, pg.label
+    `, [date]);
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // Piezometer status/compare XLSX export (token-authenticated)
 app.get('/api/reports/piezometers/export', async (req, res) => {
   const { start_date, end_date, token } = req.query;
