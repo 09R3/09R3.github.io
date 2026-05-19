@@ -8,6 +8,24 @@ const path         = require('path');
 const fs           = require('fs');
 const multer       = require('multer');
 const XLSX         = require('xlsx');
+const msal         = require('@azure/msal-node');
+
+// ── Microsoft Entra ID (Azure AD) ────────────────────────────────────────────
+const msalEnabled = !!(
+  process.env.AZURE_CLIENT_ID &&
+  process.env.AZURE_TENANT_ID &&
+  process.env.AZURE_CLIENT_SECRET
+);
+let msalCca = null;
+if (msalEnabled) {
+  msalCca = new msal.ConfidentialClientApplication({
+    auth: {
+      clientId:     process.env.AZURE_CLIENT_ID,
+      authority:    `https://login.microsoftonline.com/${process.env.AZURE_TENANT_ID}`,
+      clientSecret: process.env.AZURE_CLIENT_SECRET,
+    }
+  });
+}
 
 const app = express();
 app.use(express.json());
@@ -397,6 +415,46 @@ app.post('/auth/logout', (req, res) => {
 });
 
 app.get('/auth/me', requireAuth, (req, res) => res.json({ user: req.user }));
+
+// ── Microsoft Entra ID OAuth routes ──────────────────────────────────────────
+app.get('/auth/microsoft/status', (req, res) => res.json({ enabled: msalEnabled }));
+
+app.get('/auth/microsoft', (req, res) => {
+  if (!msalCca) return res.status(404).send('Microsoft login not configured');
+  msalCca.getAuthCodeUrl({
+    scopes: ['openid', 'profile', 'email'],
+    redirectUri: process.env.AZURE_REDIRECT_URI,
+  })
+    .then(url => res.redirect(url))
+    .catch(() => res.redirect('/?ms_error=auth_failed'));
+});
+
+app.get('/auth/microsoft/callback', async (req, res) => {
+  if (!msalCca) return res.status(404).send('Microsoft login not configured');
+  try {
+    const result = await msalCca.acquireTokenByCode({
+      code: req.query.code,
+      scopes: ['openid', 'profile', 'email'],
+      redirectUri: process.env.AZURE_REDIRECT_URI,
+    });
+    const email = result.account?.username;
+    if (!email) return res.redirect('/?ms_error=no_email');
+
+    const { rows } = await pool.query(
+      `SELECT user_id, username, full_name, role, initials
+       FROM users WHERE LOWER(email) = LOWER($1) AND is_active = true LIMIT 1`,
+      [email]
+    );
+    if (!rows.length) return res.redirect('/?ms_error=no_account');
+
+    const token = createSession(rows[0]);
+    res.cookie('fo_session', token, { httpOnly: true, maxAge: SESSION_TTL });
+    res.redirect('/');
+  } catch (err) {
+    console.error('MS auth error:', err.message);
+    res.redirect('/?ms_error=auth_failed');
+  }
+});
 
 // ── Public: DB status + test (no auth — needed before login) ─────────────────
 app.get('/api/db-status', async (req, res) => {

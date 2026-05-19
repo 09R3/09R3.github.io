@@ -88,6 +88,41 @@ html, body {
   opacity: 0.6;
 }
 
+/* Microsoft 365 login button */
+.btn-ms365 {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 10px 16px;
+  background: #fff;
+  color: #000;
+  border: 1px solid #8c8c8c;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+  box-sizing: border-box;
+  margin-top: 4px;
+}
+.btn-ms365:hover { background: #f5f5f5; border-color: #444; }
+
+/* "or" divider between login methods */
+.login-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 0 10px;
+  color: var(--text-dim);
+  font-size: 0.82rem;
+}
+.login-divider::before, .login-divider::after {
+  content: '';
+  flex: 1;
+  border-top: 1px solid var(--border);
+}
+
 /* DB status row on login page */
 .db-status-row {
   display: flex;

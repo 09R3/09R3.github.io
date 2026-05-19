@@ -9903,3 +9903,31 @@ function printReportPortrait(htmlContent) {
 checkDBStatus();
 loadLoginUserList();
 checkAuth();
+
+// Show any Microsoft login error passed back via ?ms_error= query param
+(function checkMsError() {
+  const params = new URLSearchParams(window.location.search);
+  const err = params.get('ms_error');
+  if (!err) return;
+  const msgs = {
+    no_account:  'No WaterMark account is linked to that Microsoft identity. Contact your administrator.',
+    no_email:    'Could not retrieve your email from Microsoft. Contact your administrator.',
+    auth_failed: 'Microsoft sign-in failed. Please try again.',
+  };
+  history.replaceState({}, '', window.location.pathname);
+  const errEl = el('ms-login-error');
+  if (errEl) { errEl.textContent = msgs[err] || 'Sign-in error.'; errEl.classList.remove('hidden'); }
+})();
+
+// Hide MS login button if Entra ID is not configured on the server
+fetch('/auth/microsoft/status')
+  .then(r => r.json())
+  .then(({ enabled }) => {
+    if (enabled) return;
+    const btn = el('ms-login-btn');
+    if (!btn) return;
+    const divider = btn.previousElementSibling;
+    if (divider && divider.classList.contains('login-divider')) divider.remove();
+    btn.remove();
+  })
+  .catch(() => {});
