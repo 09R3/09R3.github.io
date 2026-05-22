@@ -2001,6 +2001,103 @@ input[type="date"].ctrl-input { min-height: 44px; }
   box-shadow: 0 0 0 2px #2196f3, 0 2px 6px rgba(0,0,0,0.4);
 }
 
+/* ── Issue Report Preview ───────────────────────────────────────────────── */
+.report-preview-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--bg);
+  z-index: 3000;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.report-preview-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.report-preview-bar-title {
+  flex: 1;
+  font-weight: 600;
+  font-size: 0.9rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.report-preview-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 12px;
+}
+/* Report content (white page on dark bg) */
+.ir-content {
+  max-width: 680px;
+  margin: 0 auto;
+  background: #fff;
+  color: #111;
+  padding: 24px 28px;
+  border-radius: 6px;
+  font-family: sans-serif;
+  font-size: 0.87rem;
+  line-height: 1.5;
+}
+.ir-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 14px;
+  padding-bottom: 10px;
+  border-bottom: 2px solid #333;
+}
+.ir-title { font-size: 1.15rem; font-weight: 700; color: #111; }
+.ir-meta  { font-size: 0.74rem; color: #666; white-space: nowrap; padding-top: 2px; }
+.ir-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 14px;
+  font-size: 0.84rem;
+}
+.ir-table th {
+  text-align: left;
+  width: 130px;
+  padding: 4px 10px 4px 0;
+  color: #555;
+  font-weight: 600;
+  vertical-align: top;
+}
+.ir-table td { padding: 4px 0; color: #111; }
+.ir-section {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid #ddd;
+}
+.ir-section-label {
+  font-weight: 700;
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #555;
+  margin-bottom: 6px;
+}
+.ir-text  { font-size: 0.87rem; color: #222; white-space: pre-wrap; }
+.ir-map   { width: 100%; max-width: 620px; border-radius: 4px; display: block; margin-bottom: 4px; }
+.ir-coords { font-size: 0.73rem; color: #666; }
+.ir-photos { display: flex; flex-direction: column; gap: 12px; }
+.ir-photo  { width: 100%; max-width: 620px; border-radius: 4px; display: block; }
+/* Print: hide everything except the report */
+@media print {
+  body > *:not(#issue-report-modal) { display: none !important; }
+  #issue-report-modal { position: static !important; background: #fff !important; }
+  .report-preview-bar { display: none !important; }
+  .report-preview-scroll { overflow: visible !important; padding: 0 !important; }
+  .ir-content { max-width: 100% !important; padding: 0 !important; border-radius: 0 !important; box-shadow: none !important; }
+  .ir-photo { page-break-inside: avoid; }
+}
+
 /* ── Bug Report ──────────────────────────────────────────────────────────── */
 .nav-bug-report { color: var(--text-dim); font-size: 0.9rem; }
 

@@ -2612,7 +2612,10 @@ function renderCanalIssues() {
             <div class="maint-hist-attach-area issue-files-area hidden"></div>
           </div>
           <div class="error-msg hidden issue-update-error"></div>
-          <button class="btn btn-save btn-full issue-save-btn" data-table="canal_issues">Save Changes</button>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-save issue-save-btn" style="flex:1" data-table="canal_issues">Save Changes</button>
+            <button class="btn btn-secondary issue-share-btn">&#8679; Share</button>
+          </div>
         </div>
       </div>`;
   }).join('');
@@ -2754,6 +2757,9 @@ el('canal-issue-list').addEventListener('click', async e => {
   if (e.target.classList.contains('canal-map-btn')) {
     openGPSMap(parseFloat(e.target.dataset.lat), parseFloat(e.target.dataset.lon)); return;
   }
+  if (e.target.classList.contains('issue-share-btn')) {
+    shareIssueReport(item.dataset.issueId, item); return;
+  }
   if (e.target.classList.contains('issue-files-btn')) {
     const area = item.querySelector('.issue-files-area');
     if (!area.classList.contains('hidden')) { area.classList.add('hidden'); return; }
@@ -2803,6 +2809,158 @@ el('canal-issue-list').addEventListener('click', async e => {
     }
   }
 });
+
+// ── Issue Share / Report ──────────────────────────────────────────────────────
+
+function blobToDataUri(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload  = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function shareIssueReport(issueId, item) {
+  const btn = item.querySelector('.issue-share-btn');
+  btn.disabled = true;
+  btn.textContent = 'Preparing…';
+  try {
+    const issue = canalIssues.find(i => String(i.issue_id) === String(issueId));
+    if (!issue) throw new Error('Issue data not found');
+
+    // Fetch attachments and filter to photos only
+    const atts   = await api('GET', `/api/maintenance/attachments?table_name=canal_issues&record_id=${issueId}`);
+    const photos  = atts.filter(a => a.file_type === 'photo' && !a.mime_type?.includes('pdf'));
+
+    // Convert photos to data URIs so html2canvas has no cross-origin issues
+    const photoUris = (await Promise.all(photos.map(async a => {
+      try {
+        const url = `/uploads/${a.rel_path.split('/').map(encodeURIComponent).join('/')}`;
+        return await blobToDataUri(await (await fetch(url)).blob());
+      } catch { return null; }
+    }))).filter(Boolean);
+
+    // Static satellite map from Esri (try as data URI; fall back to direct URL if CORS fails)
+    let mapSrc = null;
+    if (issue.gps_lat != null && issue.gps_lon != null) {
+      const pad = 0.0015;
+      const bbox = `${issue.gps_lon-pad},${issue.gps_lat-pad},${issue.gps_lon+pad},${issue.gps_lat+pad}`;
+      const esriUrl = `https://server.arcgisonline.com/arcgis/rest/services/World_Imagery/MapServer/export?bbox=${bbox}&bboxSR=4326&size=600,300&imageSR=96&f=image`;
+      try {
+        const resp = await fetch(esriUrl);
+        if (resp.ok) mapSrc = await blobToDataUri(await resp.blob());
+        else mapSrc = esriUrl;
+      } catch { mapSrc = esriUrl; }
+    }
+
+    const title = issue.pool ? `Pool ${issue.pool}` : 'Canal';
+    showIssueReportPreview(issue, title, photoUris, mapSrc, `canal-issue-${issueId}`);
+  } catch (err) {
+    showToast('Failed to prepare report: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '↑ Share';
+  }
+}
+
+function buildIssueReportHtml(issue, title, photoUris, mapSrc) {
+  const rows = [
+    ['Pool',       issue.pool ? `Pool ${escHtml(issue.pool)}` : '—'],
+    ['Status',     issue.status.replace('_', ' ')],
+    ['Reported',   issue.reported_date?.slice(0, 10) || '—'],
+    ['Entered By', escHtml(issue.entered_by || '—')],
+  ];
+  if (issue.action_taken)    rows.push(['Action Taken',      escHtml(issue.action_taken)]);
+  if (issue.resolution_notes) rows.push(['Resolution Notes', escHtml(issue.resolution_notes)]);
+  if (issue.po_number)       rows.push(['PO Number',         escHtml(issue.po_number)]);
+  if (issue.cost != null)    rows.push(['Cost',              `$${Number(issue.cost).toFixed(2)}`]);
+  if (issue.notes)           rows.push(['Notes',             escHtml(issue.notes)]);
+
+  return `
+    <div class="ir-header">
+      <div class="ir-title">Canal Issue — ${escHtml(title)}</div>
+      <div class="ir-meta">Generated ${new Date().toLocaleDateString()}</div>
+    </div>
+    <table class="ir-table">
+      ${rows.map(([k,v]) => `<tr><th>${k}</th><td>${v}</td></tr>`).join('')}
+    </table>
+    <div class="ir-section">
+      <div class="ir-section-label">Description</div>
+      <div class="ir-text">${escHtml(issue.description || '').replace(/\n/g,'<br>')}</div>
+    </div>
+    ${mapSrc ? `
+    <div class="ir-section">
+      <div class="ir-section-label">Location</div>
+      <img src="${mapSrc}" class="ir-map" alt="Location map" crossorigin="anonymous">
+      <div class="ir-coords">${Number(issue.gps_lat).toFixed(6)}, ${Number(issue.gps_lon).toFixed(6)}</div>
+    </div>` : ''}
+    ${photoUris.length ? `
+    <div class="ir-section">
+      <div class="ir-section-label">Photos (${photoUris.length})</div>
+      <div class="ir-photos">
+        ${photoUris.map(uri => `<img src="${uri}" class="ir-photo" alt="Photo">`).join('')}
+      </div>
+    </div>` : ''}`;
+}
+
+function showIssueReportPreview(issue, title, photoUris, mapSrc, filename) {
+  document.getElementById('issue-report-modal')?.remove();
+
+  const modal = document.createElement('div');
+  modal.id = 'issue-report-modal';
+  modal.className = 'report-preview-overlay';
+  modal.innerHTML = `
+    <div class="report-preview-bar">
+      <button class="btn btn-secondary btn-sm" id="rp-close">&times; Close</button>
+      <span class="report-preview-bar-title">${escHtml(title)}</span>
+      <div style="display:flex;gap:8px;flex-shrink:0">
+        <button class="btn btn-secondary btn-sm" id="rp-print">&#128424; Print</button>
+        <button class="btn btn-save btn-sm" id="rp-share">&#8679; Share</button>
+      </div>
+    </div>
+    <div class="report-preview-scroll">
+      <div class="ir-content" id="ir-body">
+        ${buildIssueReportHtml(issue, title, photoUris, mapSrc)}
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+
+  modal.querySelector('#rp-close').addEventListener('click', () => modal.remove());
+
+  modal.querySelector('#rp-print').addEventListener('click', () => window.print());
+
+  modal.querySelector('#rp-share').addEventListener('click', async () => {
+    const shareBtn = modal.querySelector('#rp-share');
+    shareBtn.disabled = true;
+    shareBtn.textContent = 'Generating…';
+    try {
+      const blob = await html2pdf()
+        .set({
+          margin: 8,
+          filename: `${filename}.pdf`,
+          image: { type: 'jpeg', quality: 0.92 },
+          html2canvas: { scale: 2, useCORS: true, logging: false },
+          jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+        })
+        .from(modal.querySelector('#ir-body'))
+        .outputPdf('blob');
+      const file = new File([blob], `${filename}.pdf`, { type: 'application/pdf' });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: `Canal Issue — ${title}` });
+      } else {
+        const url = URL.createObjectURL(blob);
+        Object.assign(document.createElement('a'), { href: url, download: `${filename}.pdf` }).click();
+        URL.revokeObjectURL(url);
+      }
+    } catch (err) {
+      if (err.name !== 'AbortError') showToast('Share failed: ' + err.message, 'error');
+    } finally {
+      shareBtn.disabled = false;
+      shareBtn.textContent = '↑ Share';
+    }
+  });
+}
 
 // ── EXIF GPS reader ───────────────────────────────────────────────────────────
 async function readExifGPS(file) {
