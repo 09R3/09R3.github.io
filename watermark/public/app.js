@@ -2925,7 +2925,7 @@ function buildIssueReportHtml(issue, title, photoUris, mapSrc) {
     <div class="ir-section">
       <div class="ir-section-label">Location</div>
       <img src="${mapSrc}" class="ir-map" alt="Location map" crossorigin="anonymous">
-      <a href="geo:${lat},${lon}" class="ir-coords">${lat}, ${lon}</a>
+      <a href="#" class="ir-coords" data-lat="${lat}" data-lon="${lon}">${lat}, ${lon}</a>
     </div>` : ''}
     ${photoUris.length ? `
     <div class="ir-section">
@@ -2959,6 +2959,17 @@ function showIssueReportPreview(issue, title, photoUris, mapSrc, filename) {
   document.body.appendChild(modal);
 
   modal.querySelector('#rp-close').addEventListener('click', () => modal.remove());
+
+  modal.querySelector('.ir-coords')?.addEventListener('click', e => {
+    e.preventDefault();
+    const { lat, lon } = e.currentTarget.dataset;
+    const ua = navigator.userAgent;
+    const isApple = /iPhone|iPad|iPod|Macintosh/.test(ua) && !ua.includes('Windows');
+    const url = isApple
+      ? `https://maps.apple.com/?ll=${lat},${lon}&t=k&z=17&q=Canal+Issue`
+      : `https://www.google.com/maps/search/?api=1&query=${lat},${lon}`;
+    window.open(url, '_blank');
+  });
 
   modal.querySelector('#rp-print').addEventListener('click', () => window.print());
 
