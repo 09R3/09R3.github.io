@@ -995,6 +995,7 @@ function createReadingRow({ type, id, label, prev, prevDate, prevNotes, unit, de
       <input type="text" class="rr-input prev rr-prev" readonly value="${prevDisp}">
     </div>
     <div class="rr-notes-wrap">
+      ${prevNotes ? `<div class="prev-note-hint">${escHtml(prevNotes)}</div>` : ''}
       <textarea class="rr-notes-input rr-notes" rows="1" placeholder="Notes…"></textarea>
       <button class="hist-btn" title="View history">${icon('history')}</button>
     </div>
@@ -1018,7 +1019,6 @@ function createReadingRow({ type, id, label, prev, prevDate, prevNotes, unit, de
 
   // Notes textarea
   const notesInput = row.querySelector('.rr-notes');
-  if (prevNotes) notesInput.value = prevNotes;
   row.querySelector('.hist-btn').addEventListener('click', () => {
     openHistoryModal(type, id, label);
   });
@@ -1246,6 +1246,7 @@ function createWellItem(w, dateInput, timeInput) {
       </div>
       <div class="form-group">
         <label>Notes</label>
+        ${w.last_notes ? `<div class="prev-note-hint">${escHtml(w.last_notes)}</div>` : ''}
         <textarea class="ctrl-textarea w-notes" rows="2" placeholder="Optional notes…"></textarea>
       </div>
       <div class="lif-error error-msg hidden"></div>
@@ -1255,8 +1256,6 @@ function createWellItem(w, dateInput, timeInput) {
         <button class="btn btn-save w-save-btn">Save Well Reading</button>
       </div>
     </div>`;
-
-  if (w.last_notes) div.querySelector('.w-notes').value = w.last_notes;
   div.querySelector('.w-hist-btn').addEventListener('click', e => {
     e.stopPropagation();
     openHistoryModal('well', w.well_id, w.common_name);
@@ -1436,6 +1435,7 @@ function createCanalItem(s, dateInput, timeInput) {
       ${f.derived ? `<div class="form-group"><label>Derived Flow (cfs)</label>
         <input type="number" class="ctrl-input c-derived" step="0.01" placeholder="0.00"></div>` : ''}
       <div class="form-group"><label>Notes</label>
+        ${s.last_notes ? `<div class="prev-note-hint">${escHtml(s.last_notes)}</div>` : ''}
         <textarea class="ctrl-textarea c-notes" rows="2" placeholder="Optional notes…"></textarea></div>
       <div class="lif-error error-msg hidden"></div>
       <div class="lif-footer">
@@ -1443,8 +1443,6 @@ function createCanalItem(s, dateInput, timeInput) {
         <button class="btn btn-save c-save-btn">Save Reading</button>
       </div>
     </div>`;
-
-  if (s.last_notes) div.querySelector('.c-notes').value = s.last_notes;
 
   // Prev + live Δ for flow, gate, head/overpour, derived
   const cFlow = div.querySelector('.c-flow');
@@ -1629,6 +1627,7 @@ function createVehicleItem(v, dateInput, timeInput) {
       ${fieldsHtml}
       <div class="form-group">
         <label>Notes</label>
+        ${v.last_notes ? `<div class="prev-note-hint">${escHtml(v.last_notes)}</div>` : ''}
         <textarea class="ctrl-textarea v-notes" rows="2" placeholder="Optional notes…"></textarea>
       </div>
       <div class="lif-error error-msg hidden"></div>
@@ -1637,8 +1636,6 @@ function createVehicleItem(v, dateInput, timeInput) {
         <button class="btn btn-save v-save-btn">Save Reading</button>
       </div>
     </div>`;
-
-  if (v.last_notes) div.querySelector('.v-notes').value = v.last_notes;
 
   if (v.next_service_miles) {
     const hint = div.querySelector('.v-service-hint');
@@ -3899,6 +3896,7 @@ function createKFItem(w, dateInput, timeInput) {
       </div>
       <div class="form-group">
         <label>Notes</label>
+        ${w.last_notes ? `<div class="prev-note-hint">${escHtml(w.last_notes)}</div>` : ''}
         <textarea class="ctrl-textarea kf-notes" rows="2" placeholder="Optional notes…"></textarea>
       </div>
       <div class="lif-error error-msg hidden"></div>
@@ -3909,11 +3907,10 @@ function createKFItem(w, dateInput, timeInput) {
       </div>
     </div>`;
 
-  // Auto-fill operator and pre-populate last notes
+  // Auto-fill operator
   if (currentUser) {
     div.querySelector('.kf-op').value = currentUser.initials || currentUser.username;
   }
-  if (w.last_notes) div.querySelector('.kf-notes').value = w.last_notes;
 
   const mapBtn = div.querySelector('.kf-map-btn');
   if (mapBtn) {
@@ -4152,6 +4149,7 @@ function createPiezItem(p, dateInput, timeInput) {
       </div>
       <div class="form-group">
         <label>Notes</label>
+        ${p.last_reading_notes ? `<div class="prev-note-hint">${escHtml(p.last_reading_notes)}</div>` : ''}
         <textarea class="ctrl-textarea piez-notes" rows="2" placeholder="Optional notes…"></textarea>
       </div>
       <div class="lif-error error-msg hidden"></div>
@@ -8007,6 +8005,7 @@ function createDWRItem(w, dateInput, timeInput) {
       </div>
       <div class="form-group">
         <label>Notes</label>
+        ${w.last_notes ? `<div class="prev-note-hint">${escHtml(w.last_notes)}</div>` : ''}
         <textarea class="ctrl-textarea dwr-notes" rows="2" placeholder="Optional notes…"></textarea>
       </div>
       <div class="lif-error error-msg hidden"></div>
@@ -8041,7 +8040,6 @@ function createDWRItem(w, dateInput, timeInput) {
 
   // Auto-fill operator
   if (currentUser) div.querySelector('.dwr-op').value = currentUser.initials || currentUser.username;
-  if (w.last_notes) div.querySelector('.dwr-notes').value = w.last_notes;
 
   // Map button (individual well)
   div.querySelector('.dwr-map-item-btn')?.addEventListener('click', e => {
@@ -8704,6 +8702,7 @@ async function initPondsScreen() {
           canal_structure_name: row.canal_structure_name,
           last_canal_flow: row.last_canal_flow, last_canal_totalizer: row.last_canal_totalizer,
           last_canal_date: row.last_canal_date, last_canal_reading_id: row.last_canal_reading_id,
+          last_canal_notes: row.last_canal_notes,
           gates: [],
         });
       }
@@ -8713,6 +8712,7 @@ async function initPondsScreen() {
           width_in: row.width_in, gate_notes: row.gate_notes, sort: row.gate_sort,
           last_head: row.last_head, last_opening: row.last_opening,
           last_overpour: row.last_overpour, last_flow: row.last_flow, last_date: row.last_gate_date,
+          last_notes: row.last_gate_notes,
         });
       }
     }
@@ -8734,6 +8734,7 @@ async function initPondsScreen() {
             isOutlet: true,
             last_gauge_level: row.last_gauge_level,
             last_gauge_date:  row.last_gauge_date,
+            last_gauge_notes: row.last_gauge_notes,
             connections: new Map(),
           });
         }
@@ -8746,6 +8747,7 @@ async function initPondsScreen() {
             pond_id: row.pond_id, name: row.pond_name, sort: row.pond_sort,
             last_gauge_level: row.last_gauge_level,
             last_gauge_date:  row.last_gauge_date,
+            last_gauge_notes: row.last_gauge_notes,
             connections: new Map(),
           });
         }
@@ -8959,6 +8961,7 @@ function buildCanalRow(conn, dateInput, timeInput, cardEl) {
     </div>
     <div style="flex:1;min-width:50px;display:flex;flex-direction:column">
       <span class="rr-col-hd" style="visibility:hidden;pointer-events:none">x</span>
+      ${conn.last_canal_notes ? `<div class="prev-note-hint">${escHtml(conn.last_canal_notes)}</div>` : ''}
       <div style="display:flex;gap:4px;align-items:stretch">
         <textarea class="rr-notes-input pg-canal-notes" rows="1" placeholder="Notes…"></textarea>
         <button class="btn btn-secondary btn-sm" title="History" style="flex-shrink:0">${icon('history')}</button>
@@ -9046,6 +9049,7 @@ function buildGaugeForm(pond, dateInput, timeInput, cardEl) {
     </div>
     <div style="flex:1;min-width:50px;display:flex;flex-direction:column">
       <span class="rr-col-hd" style="visibility:hidden;pointer-events:none">x</span>
+      ${pond.last_gauge_notes ? `<div class="prev-note-hint">${escHtml(pond.last_gauge_notes)}</div>` : ''}
       <div style="display:flex;gap:4px;align-items:stretch">
         <textarea class="rr-notes-input pg-gauge-notes" rows="1" placeholder="Notes…"></textarea>
         <button class="btn btn-secondary btn-sm" title="History" style="flex-shrink:0">${icon('history')}</button>
@@ -9165,6 +9169,7 @@ function buildGateRow(gate, dateInput, timeInput, cardEl) {
     </div>
     <div style="flex:1;min-width:50px;display:flex;flex-direction:column">
       <span class="rr-col-hd" style="visibility:hidden;pointer-events:none">x</span>
+      ${gate.last_notes ? `<div class="prev-note-hint">${escHtml(gate.last_notes)}</div>` : ''}
       <div style="display:flex;gap:4px;align-items:stretch">
         <textarea class="rr-notes-input pg-gate-notes" rows="1" placeholder="Notes…"></textarea>
         <button class="btn btn-secondary btn-sm" title="History" style="flex-shrink:0">${icon('history')}</button>

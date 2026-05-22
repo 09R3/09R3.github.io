@@ -544,11 +544,13 @@ app.get('/api/pump-positions', requireAuth, async (req, res) => {
         r.hour_reading  AS last_reading,
         r.reading_date  AS last_reading_date,
         r.entered_by    AS last_entered_by,
-        r.notes         AS last_notes
+        (SELECT notes FROM readings_pump_hours
+         WHERE position_id = pp.position_id AND notes IS NOT NULL AND notes != ''
+         ORDER BY reading_date DESC, reading_time DESC LIMIT 1) AS last_notes
       FROM pump_positions pp
       LEFT JOIN pump_units pu ON pu.pump_unit_id = pp.current_pump_unit_id
       LEFT JOIN LATERAL (
-        SELECT reading_id, hour_reading, reading_date, entered_by, notes
+        SELECT reading_id, hour_reading, reading_date, entered_by
         FROM readings_pump_hours
         WHERE position_id = pp.position_id
         ORDER BY reading_date DESC, reading_time DESC
@@ -597,10 +599,12 @@ app.get('/api/air-compressors', requireAuth, async (req, res) => {
         r.reading_id    AS last_reading_id,
         r.hour_reading  AS last_reading,
         r.reading_date  AS last_reading_date,
-        r.notes         AS last_notes
+        (SELECT notes FROM readings_compressor_hours
+         WHERE compressor_id = ac.compressor_id AND notes IS NOT NULL AND notes != ''
+         ORDER BY reading_date DESC, reading_time DESC LIMIT 1) AS last_notes
       FROM air_compressors ac
       LEFT JOIN LATERAL (
-        SELECT reading_id, hour_reading, reading_date, notes
+        SELECT reading_id, hour_reading, reading_date
         FROM readings_compressor_hours
         WHERE compressor_id = ac.compressor_id
         ORDER BY reading_date DESC, reading_time DESC
@@ -625,10 +629,12 @@ app.get('/api/pge-meters', requireAuth, async (req, res) => {
         r.reading_id   AS last_reading_id,
         r.kwh_reading  AS last_reading,
         r.reading_date AS last_reading_date,
-        r.notes        AS last_notes
+        (SELECT notes FROM readings_pge_meters
+         WHERE pge_meter_id = pm.pge_meter_id AND notes IS NOT NULL AND notes != ''
+         ORDER BY reading_date DESC, reading_time DESC LIMIT 1) AS last_notes
       FROM pge_meters pm
       LEFT JOIN LATERAL (
-        SELECT reading_id, kwh_reading, reading_date, notes
+        SELECT reading_id, kwh_reading, reading_date
         FROM readings_pge_meters
         WHERE pge_meter_id = pm.pge_meter_id
         ORDER BY reading_date DESC, reading_time DESC
@@ -653,10 +659,12 @@ app.get('/api/power-monitors', requireAuth, async (req, res) => {
         r.reading_id   AS last_reading_id,
         r.kwh_reading  AS last_reading,
         r.reading_date AS last_reading_date,
-        r.notes        AS last_notes
+        (SELECT notes FROM readings_power_monitors
+         WHERE monitor_id = pm.monitor_id AND notes IS NOT NULL AND notes != ''
+         ORDER BY reading_date DESC, reading_time DESC LIMIT 1) AS last_notes
       FROM power_monitors pm
       LEFT JOIN LATERAL (
-        SELECT reading_id, kwh_reading, reading_date, notes
+        SELECT reading_id, kwh_reading, reading_date
         FROM readings_power_monitors
         WHERE monitor_id = pm.monitor_id
         ORDER BY reading_date DESC, reading_time DESC
@@ -688,10 +696,12 @@ app.get('/api/pp-site-data', requireAuth, async (req, res) => {
               r.hour_reading AS last_reading,
               r.reading_date AS last_reading_date,
               r.entered_by   AS last_entered_by,
-              r.notes        AS last_notes
+              (SELECT notes FROM readings_pump_hours
+               WHERE position_id = pp.position_id AND notes IS NOT NULL AND notes != ''
+               ORDER BY reading_date DESC, reading_time DESC LIMIT 1) AS last_notes
             FROM pump_positions pp
             LEFT JOIN LATERAL (
-              SELECT reading_id, hour_reading, reading_date, entered_by, notes
+              SELECT reading_id, hour_reading, reading_date, entered_by
               FROM readings_pump_hours
               WHERE position_id = pp.position_id
               ORDER BY reading_date DESC, reading_time DESC
@@ -708,10 +718,12 @@ app.get('/api/pp-site-data', requireAuth, async (req, res) => {
               r.reading_id   AS last_reading_id,
               r.hour_reading AS last_reading,
               r.reading_date AS last_reading_date,
-              r.notes        AS last_notes
+              (SELECT notes FROM readings_compressor_hours
+               WHERE compressor_id = ac.compressor_id AND notes IS NOT NULL AND notes != ''
+               ORDER BY reading_date DESC, reading_time DESC LIMIT 1) AS last_notes
             FROM air_compressors ac
             LEFT JOIN LATERAL (
-              SELECT reading_id, hour_reading, reading_date, notes
+              SELECT reading_id, hour_reading, reading_date
               FROM readings_compressor_hours
               WHERE compressor_id = ac.compressor_id
               ORDER BY reading_date DESC, reading_time DESC
@@ -728,10 +740,12 @@ app.get('/api/pp-site-data', requireAuth, async (req, res) => {
               r.reading_id   AS last_reading_id,
               r.kwh_reading  AS last_reading,
               r.reading_date AS last_reading_date,
-              r.notes        AS last_notes
+              (SELECT notes FROM readings_pge_meters
+               WHERE pge_meter_id = pm.pge_meter_id AND notes IS NOT NULL AND notes != ''
+               ORDER BY reading_date DESC, reading_time DESC LIMIT 1) AS last_notes
             FROM pge_meters pm
             LEFT JOIN LATERAL (
-              SELECT reading_id, kwh_reading, reading_date, notes
+              SELECT reading_id, kwh_reading, reading_date
               FROM readings_pge_meters
               WHERE pge_meter_id = pm.pge_meter_id
               ORDER BY reading_date DESC, reading_time DESC
@@ -748,10 +762,12 @@ app.get('/api/pp-site-data', requireAuth, async (req, res) => {
               r.reading_id   AS last_reading_id,
               r.kwh_reading  AS last_reading,
               r.reading_date AS last_reading_date,
-              r.notes        AS last_notes
+              (SELECT notes FROM readings_power_monitors
+               WHERE monitor_id = pw.monitor_id AND notes IS NOT NULL AND notes != ''
+               ORDER BY reading_date DESC, reading_time DESC LIMIT 1) AS last_notes
             FROM power_monitors pw
             LEFT JOIN LATERAL (
-              SELECT reading_id, kwh_reading, reading_date, notes
+              SELECT reading_id, kwh_reading, reading_date
               FROM readings_power_monitors
               WHERE monitor_id = pw.monitor_id
               ORDER BY reading_date DESC, reading_time DESC
@@ -935,14 +951,16 @@ app.get('/api/wells/kf', requireAuth, async (req, res) => {
         prev.reading_date    AS last_reading_date,
         prev.dtw_reading     AS last_dtw,
         prev.plopper_sounder AS last_method,
-        prev.notes           AS last_notes,
+        (SELECT notes FROM readings_kf_monthly
+         WHERE well_id = w.well_id AND notes IS NOT NULL AND notes != ''
+         ORDER BY reading_date DESC, reading_time DESC LIMIT 1) AS last_notes,
         (CURRENT_DATE - prev.reading_date)::int AS days_since_reading,
         -- Reading within widget date range (for done/not-read status only)
         rng.reading_date     AS range_reading_date
       FROM wells w
       LEFT JOIN well_sets ws ON w.kf_set_id = ws.set_id
       LEFT JOIN LATERAL (
-        SELECT kf_reading_id, reading_date, dtw_reading, plopper_sounder, notes
+        SELECT kf_reading_id, reading_date, dtw_reading, plopper_sounder
         FROM readings_kf_monthly
         WHERE well_id = w.well_id
         ORDER BY reading_date DESC, reading_time DESC
@@ -981,12 +999,14 @@ app.get('/api/wells/operational', requireAuth, async (req, res) => {
         r.totalizer         AS last_totalizer,
         r.dripper_oil       AS last_dripper_oil,
         r.pge_kwh           AS last_pge_kwh,
-        r.notes             AS last_notes,
+        (SELECT notes FROM readings_well
+         WHERE well_id = w.well_id AND notes IS NOT NULL AND notes != ''
+         ORDER BY reading_date DESC, reading_time DESC LIMIT 1) AS last_notes,
         EXTRACT(EPOCH FROM (NOW() - (r.reading_date + COALESCE(r.reading_time, '00:00'::time))))::int / 3600
                             AS hours_since_reading
       FROM wells w
       LEFT JOIN LATERAL (
-        SELECT reading_id, reading_date, reading_time, hour_reading, flow_cfs, totalizer, dripper_oil, pge_kwh, notes
+        SELECT reading_id, reading_date, reading_time, hour_reading, flow_cfs, totalizer, dripper_oil, pge_kwh
         FROM readings_well
         WHERE well_id = w.well_id
         ORDER BY reading_date DESC, reading_time DESC
@@ -1042,10 +1062,12 @@ app.get('/api/piezometers', requireAuth, async (req, res) => {
         prev.dtw_reading           AS last_dtw,
         prev.plopper_sounder       AS last_method,
         prev.wet_dry_moist         AS last_wet_dry_moist,
-        prev.notes                 AS last_reading_notes
+        (SELECT notes FROM readings_piezometers
+         WHERE piezometer_id = p.piezometer_id AND notes IS NOT NULL AND notes != ''
+         ORDER BY reading_date DESC, reading_time DESC LIMIT 1) AS last_reading_notes
       FROM piezometers p
       LEFT JOIN LATERAL (
-        SELECT piezometer_reading_id, reading_date, dtw_reading, plopper_sounder, wet_dry_moist, notes
+        SELECT piezometer_reading_id, reading_date, dtw_reading, plopper_sounder, wet_dry_moist
         FROM readings_piezometers
         WHERE piezometer_id = p.piezometer_id
         ORDER BY reading_date DESC, reading_time DESC
@@ -1094,12 +1116,14 @@ app.get('/api/wells/dwr', requireAuth, async (req, res) => {
         prev.reading_date    AS last_reading_date,
         prev.depth_to_water  AS last_dtw,
         prev.method          AS last_method,
-        prev.notes           AS last_notes,
+        (SELECT notes FROM readings_run_dwr
+         WHERE well_id = w.well_id AND notes IS NOT NULL AND notes != ''
+         ORDER BY reading_date DESC, reading_time DESC LIMIT 1) AS last_notes,
         prev.no_measurement  AS last_no_measurement,
         (CURRENT_DATE - prev.reading_date)::int AS days_since_reading
       FROM wells w
       LEFT JOIN LATERAL (
-        SELECT reading_id, reading_date, depth_to_water, method, notes, no_measurement
+        SELECT reading_id, reading_date, depth_to_water, method, no_measurement
         FROM readings_run_dwr
         WHERE well_id = w.well_id
         ORDER BY reading_date DESC, reading_time DESC
@@ -1201,11 +1225,13 @@ app.get('/api/canal-structures', requireAuth, async (req, res) => {
         r.derived_flow_cfs       AS last_derived,
         r.reading_date           AS last_reading_date,
         r.reading_time           AS last_reading_time,
-        r.notes                  AS last_notes
+        (SELECT notes FROM readings_canal
+         WHERE structure_id = cs.structure_id AND notes IS NOT NULL AND notes != ''
+         ORDER BY reading_date DESC, reading_time DESC LIMIT 1) AS last_notes
       FROM canal_structures cs
       LEFT JOIN LATERAL (
         SELECT instantaneous_flow_cfs, totalizer_reading_af, gate_setting,
-               head_reading_ft, derived_flow_cfs, reading_date, reading_time, notes
+               head_reading_ft, derived_flow_cfs, reading_date, reading_time
         FROM readings_canal
         WHERE structure_id = cs.structure_id
         ORDER BY reading_date DESC, reading_time DESC
@@ -1259,6 +1285,9 @@ app.get('/api/ponds', requireAuth, async (req, res) => {
         sg.reading_id      AS last_gauge_id,
         sg.level_ft        AS last_gauge_level,
         sg.reading_date    AS last_gauge_date,
+        (SELECT notes FROM readings_staff_gauge
+         WHERE pond_id = p.pond_id AND notes IS NOT NULL AND notes != ''
+         ORDER BY reading_date DESC, reading_time DESC LIMIT 1) AS last_gauge_notes,
         pc.connection_id,
         pc.name            AS connection_name,
         pc.sort_order      AS connection_sort,
@@ -1269,6 +1298,9 @@ app.get('/api/ponds', requireAuth, async (req, res) => {
         cr.instantaneous_flow_cfs AS last_canal_flow,
         cr.totalizer_reading_af   AS last_canal_totalizer,
         cr.reading_date    AS last_canal_date,
+        (SELECT notes FROM readings_canal
+         WHERE structure_id = pc.source_canal_id AND notes IS NOT NULL AND notes != ''
+         ORDER BY reading_date DESC, reading_time DESC LIMIT 1) AS last_canal_notes,
         pg.gate_id,
         pg.label           AS gate_label,
         pg.gate_type,
@@ -1280,7 +1312,10 @@ app.get('/api/ponds', requireAuth, async (req, res) => {
         gr.opening_in      AS last_opening,
         gr.overpour_in     AS last_overpour,
         gr.flow_cfs        AS last_flow,
-        gr.reading_date    AS last_gate_date
+        gr.reading_date    AS last_gate_date,
+        (SELECT notes FROM readings_pond_gates
+         WHERE gate_id = pg.gate_id AND notes IS NOT NULL AND notes != ''
+         ORDER BY reading_date DESC, reading_time DESC LIMIT 1) AS last_gate_notes
       FROM pond_locations pl
       JOIN ponds p ON p.location_id = pl.location_id
       LEFT JOIN LATERAL (
@@ -1326,6 +1361,9 @@ app.get('/api/ponds', requireAuth, async (req, res) => {
         sg.reading_id      AS last_gauge_id,
         sg.level_ft        AS last_gauge_level,
         sg.reading_date    AS last_gauge_date,
+        (SELECT notes FROM readings_staff_gauge
+         WHERE outlet_id = ro.outlet_id AND notes IS NOT NULL AND notes != ''
+         ORDER BY reading_date DESC, reading_time DESC LIMIT 1) AS last_gauge_notes,
         pc.connection_id,
         pc.name            AS connection_name,
         pc.sort_order      AS connection_sort,
@@ -1336,6 +1374,7 @@ app.get('/api/ponds', requireAuth, async (req, res) => {
         NULL::numeric      AS last_canal_flow,
         NULL::numeric      AS last_canal_totalizer,
         NULL::date         AS last_canal_date,
+        NULL::text         AS last_canal_notes,
         pg.gate_id,
         pg.label           AS gate_label,
         pg.gate_type,
@@ -1347,7 +1386,10 @@ app.get('/api/ponds', requireAuth, async (req, res) => {
         gr.opening_in      AS last_opening,
         gr.overpour_in     AS last_overpour,
         gr.flow_cfs        AS last_flow,
-        gr.reading_date    AS last_gate_date
+        gr.reading_date    AS last_gate_date,
+        (SELECT notes FROM readings_pond_gates
+         WHERE gate_id = pg.gate_id AND notes IS NOT NULL AND notes != ''
+         ORDER BY reading_date DESC, reading_time DESC LIMIT 1) AS last_gate_notes
       FROM river_outlets ro
       JOIN pond_locations pl ON pl.location_id = ro.location_id
       LEFT JOIN LATERAL (
@@ -1727,12 +1769,14 @@ app.get('/api/vehicles', requireAuth, async (req, res) => {
         r.odometer_miles  AS last_odometer,
         r.engine_hours    AS last_engine_hours,
         r.reading_date    AS last_reading_date,
-        r.notes           AS last_notes,
+        (SELECT notes FROM readings_vehicle_monthly
+         WHERE vehicle_id = v.vehicle_id AND notes IS NOT NULL AND notes != ''
+         ORDER BY reading_date DESC, reading_time DESC LIMIT 1) AS last_notes,
         m.next_service_miles,
         m.next_service_hours
       FROM vehicles v
       LEFT JOIN LATERAL (
-        SELECT odometer_miles, engine_hours, reading_date, notes
+        SELECT odometer_miles, engine_hours, reading_date
         FROM readings_vehicle_monthly
         WHERE vehicle_id = v.vehicle_id
         ORDER BY reading_date DESC, reading_time DESC
