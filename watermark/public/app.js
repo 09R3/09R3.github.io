@@ -9405,6 +9405,22 @@ async function openPondMap(entityType, entityId, entityName) {
       }).addTo(map);
     }
 
+    // Operator location dot (HTTPS / secure context only)
+    if (window.isSecureContext && navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(pos => {
+        const { latitude, longitude } = pos.coords;
+        L.marker([latitude, longitude], {
+          icon: L.divIcon({
+            className: '',
+            html: '<div class="map-my-location"></div>',
+            iconSize: [18, 18],
+            iconAnchor: [9, 9],
+          }),
+          zIndexOffset: 1000,
+        }).bindPopup('<strong>You are here</strong>').addTo(map);
+      }, () => { /* permission denied or unavailable — silent */ });
+    }
+
     // Leaflet needs a tick after the container is visible to measure size
     setTimeout(() => map.invalidateSize(), 50);
   } catch (err) {
