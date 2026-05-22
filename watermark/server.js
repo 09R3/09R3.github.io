@@ -1605,7 +1605,8 @@ app.get('/api/history', requireAuth, async (req, res) => {
          ORDER BY reading_date DESC, reading_time DESC LIMIT $2`, [id, LIMIT]));
     } else if (type === 'kf') {
       ({ rows } = await pool.query(
-        `SELECT kf_reading_id AS id, reading_date, reading_time, dtw_reading AS value, plopper_sounder AS method, operator AS entered_by, notes
+        `SELECT kf_reading_id AS id, reading_date, reading_time, dtw_reading AS value, plopper_sounder AS method, operator AS entered_by,
+                CASE WHEN well_on_off = true THEN 'On' ELSE 'Off' END AS on_off, notes
          FROM readings_kf_monthly WHERE well_id = $1
          ORDER BY reading_date DESC, reading_time DESC LIMIT $2`, [id, LIMIT]));
     } else if (type === 'canal') {
