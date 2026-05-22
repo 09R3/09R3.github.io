@@ -400,7 +400,7 @@ app.post('/auth/login', async (req, res) => {
       initials: user.initials || user.username.slice(0, 2).toUpperCase(),
     };
     const token = createSession(sessionUser);
-    res.cookie('fo_session', token, { httpOnly: true, secure: true, maxAge: SESSION_TTL });
+    res.cookie('fo_session', token, { httpOnly: true, secure: req.secure, maxAge: SESSION_TTL });
     res.json({ user: sessionUser });
   } catch (err) {
     console.error('Login error:', err);
@@ -449,7 +449,7 @@ app.get('/auth/microsoft/callback', async (req, res) => {
     if (!rows.length) return res.redirect('/?ms_error=no_account');
 
     const token = createSession(rows[0]);
-    res.cookie('fo_session', token, { httpOnly: true, secure: true, maxAge: SESSION_TTL });
+    res.cookie('fo_session', token, { httpOnly: true, secure: req.secure, maxAge: SESSION_TTL });
     res.redirect('/');
   } catch (err) {
     console.error('MS auth error:', err.message);
