@@ -2137,9 +2137,11 @@ app.get('/api/canal-issues', requireAuth, async (req, res) => {
   try {
     const { rows } = await pool.query(`
       SELECT ci.*,
+             u.full_name AS entered_by_full_name,
              (SELECT COUNT(*) FROM maintenance_attachments
               WHERE table_name = 'canal_issues' AND record_id = ci.issue_id) AS attachment_count
       FROM canal_issues ci
+      LEFT JOIN users u ON u.username = ci.entered_by
       WHERE $1 OR ci.status != 'resolved'
       ORDER BY
         CASE ci.status WHEN 'open' THEN 0 WHEN 'in_progress' THEN 1 ELSE 2 END,

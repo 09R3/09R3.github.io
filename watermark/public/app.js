@@ -2821,6 +2821,32 @@ function blobToDataUri(blob) {
   });
 }
 
+function addPinToMapImage(dataUri, w, h) {
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, w, h);
+      const cx = w / 2, cy = h / 2;
+      // shadow
+      ctx.beginPath(); ctx.arc(cx + 1, cy + 1, 9, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fill();
+      // red circle
+      ctx.beginPath(); ctx.arc(cx, cy, 8, 0, Math.PI * 2);
+      ctx.fillStyle = '#e53935'; ctx.fill();
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 2.5; ctx.stroke();
+      // white centre dot
+      ctx.beginPath(); ctx.arc(cx, cy, 2.5, 0, Math.PI * 2);
+      ctx.fillStyle = '#fff'; ctx.fill();
+      resolve(canvas.toDataURL('image/jpeg', 0.92));
+    };
+    img.onerror = () => resolve(dataUri);
+    img.src = dataUri;
+  });
+}
+
 async function shareIssueReport(issueId, item) {
   const btn = item.querySelector('.issue-share-btn');
   btn.disabled = true;
@@ -2841,7 +2867,7 @@ async function shareIssueReport(issueId, item) {
       } catch { return null; }
     }))).filter(Boolean);
 
-    // Static satellite map from Esri (try as data URI; fall back to direct URL if CORS fails)
+    // Static satellite map from Esri with pin overlay
     let mapSrc = null;
     if (issue.gps_lat != null && issue.gps_lon != null) {
       const pad = 0.0015;
@@ -2849,8 +2875,10 @@ async function shareIssueReport(issueId, item) {
       const esriUrl = `https://server.arcgisonline.com/arcgis/rest/services/World_Imagery/MapServer/export?bbox=${bbox}&bboxSR=4326&size=600,300&imageSR=96&f=image`;
       try {
         const resp = await fetch(esriUrl);
-        if (resp.ok) mapSrc = await blobToDataUri(await resp.blob());
-        else mapSrc = esriUrl;
+        if (resp.ok) {
+          const dataUri = await blobToDataUri(await resp.blob());
+          mapSrc = await addPinToMapImage(dataUri, 600, 300);
+        } else { mapSrc = esriUrl; }
       } catch { mapSrc = esriUrl; }
     }
 
@@ -2865,22 +2893,26 @@ async function shareIssueReport(issueId, item) {
 }
 
 function buildIssueReportHtml(issue, title, photoUris, mapSrc) {
+  const enteredBy = escHtml(issue.entered_by_full_name || issue.entered_by || '—');
   const rows = [
     ['Pool',       issue.pool ? `Pool ${escHtml(issue.pool)}` : '—'],
     ['Status',     issue.status.replace('_', ' ')],
     ['Reported',   issue.reported_date?.slice(0, 10) || '—'],
-    ['Entered By', escHtml(issue.entered_by || '—')],
+    ['Entered By', enteredBy],
   ];
-  if (issue.action_taken)    rows.push(['Action Taken',      escHtml(issue.action_taken)]);
-  if (issue.resolution_notes) rows.push(['Resolution Notes', escHtml(issue.resolution_notes)]);
-  if (issue.po_number)       rows.push(['PO Number',         escHtml(issue.po_number)]);
-  if (issue.cost != null)    rows.push(['Cost',              `$${Number(issue.cost).toFixed(2)}`]);
-  if (issue.notes)           rows.push(['Notes',             escHtml(issue.notes)]);
+  if (issue.action_taken)     rows.push(['Action Taken',      escHtml(issue.action_taken)]);
+  if (issue.resolution_notes) rows.push(['Resolution Notes',  escHtml(issue.resolution_notes)]);
+  if (issue.po_number)        rows.push(['PO Number',         escHtml(issue.po_number)]);
+  if (issue.cost != null)     rows.push(['Cost',              `$${Number(issue.cost).toFixed(2)}`]);
+  if (issue.notes)            rows.push(['Notes',             escHtml(issue.notes)]);
+
+  const lat = Number(issue.gps_lat).toFixed(6);
+  const lon = Number(issue.gps_lon).toFixed(6);
 
   return `
     <div class="ir-header">
-      <div class="ir-title">Canal Issue — ${escHtml(title)}</div>
-      <div class="ir-meta">Generated ${new Date().toLocaleDateString()}</div>
+      <div class="ir-title">Canal Report — ${escHtml(title)}</div>
+      <div class="ir-meta">${new Date().toLocaleDateString()}</div>
     </div>
     <table class="ir-table">
       ${rows.map(([k,v]) => `<tr><th>${k}</th><td>${v}</td></tr>`).join('')}
@@ -2893,7 +2925,7 @@ function buildIssueReportHtml(issue, title, photoUris, mapSrc) {
     <div class="ir-section">
       <div class="ir-section-label">Location</div>
       <img src="${mapSrc}" class="ir-map" alt="Location map" crossorigin="anonymous">
-      <div class="ir-coords">${Number(issue.gps_lat).toFixed(6)}, ${Number(issue.gps_lon).toFixed(6)}</div>
+      <a href="geo:${lat},${lon}" class="ir-coords">${lat}, ${lon}</a>
     </div>` : ''}
     ${photoUris.length ? `
     <div class="ir-section">

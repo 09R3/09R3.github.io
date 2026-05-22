@@ -2085,7 +2085,7 @@ input[type="date"].ctrl-input { min-height: 44px; }
 }
 .ir-text  { font-size: 0.87rem; color: #222; white-space: pre-wrap; }
 .ir-map   { width: 100%; max-width: 620px; border-radius: 4px; display: block; margin-bottom: 4px; }
-.ir-coords { font-size: 0.73rem; color: #666; }
+.ir-coords { font-size: 0.73rem; color: #1a73e8; text-decoration: underline; }
 .ir-photos { display: flex; flex-direction: column; gap: 12px; }
 .ir-photo  { width: 100%; max-width: 620px; border-radius: 4px; display: block; }
 /* Print: hide everything except the report */
