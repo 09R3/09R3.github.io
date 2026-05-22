@@ -1043,12 +1043,24 @@ async function savePPReadings() {
   const monitor_readings    = [];
 
   document.querySelectorAll('.reading-row').forEach(row => {
-    const cur = row.querySelector('.rr-current').value.trim();
-    if (cur === '') return; // skip empty
-
+    const curInput = row.querySelector('.rr-current');
+    let cur = curInput.value.trim();
     const notes = row.querySelector('.rr-notes').value.trim();
     const type  = row.dataset.type;
     const id    = row.dataset.id;
+
+    if (type === 'pump' && cur === '') {
+      // Auto-fill pump hours with previous reading if left blank
+      const prevDisp = row.querySelector('.rr-prev').value.trim();
+      if (prevDisp && prevDisp !== '—') {
+        cur = prevDisp;
+        curInput.value = cur;
+      } else {
+        return; // no previous to fall back on — skip
+      }
+    } else if (cur === '') {
+      return; // PGE / compressor / monitor: skip if blank
+    }
 
     if (type === 'pump')       pump_readings.push({ position_id: id, hour_reading: parseFloat(cur), notes });
     if (type === 'compressor') compressor_readings.push({ compressor_id: parseInt(id), hour_reading: parseFloat(cur), notes });
