@@ -1042,7 +1042,7 @@ async function savePPReadings() {
   const pge_readings        = [];
   const monitor_readings    = [];
 
-  document.querySelectorAll('.reading-row').forEach(row => {
+  document.querySelectorAll('.list-section:not(.collapsed) .reading-row').forEach(row => {
     const curInput = row.querySelector('.rr-current');
     let cur = curInput.value.trim();
     const notes = row.querySelector('.rr-notes').value.trim();
@@ -1093,8 +1093,8 @@ async function savePPReadings() {
       status.textContent = '⏳ Saved offline — will sync when connected';
       status.className = 'save-status warn';
       showToast(`Pumping Plant queued offline`, 'warn');
-      // Clear all filled inputs so they can't be re-submitted
-      document.querySelectorAll('.reading-row').forEach(row => {
+      // Clear expanded section inputs so they can't be re-submitted
+      document.querySelectorAll('.list-section:not(.collapsed) .reading-row').forEach(row => {
         row.querySelector('.rr-current').value = '';
         row.querySelector('.rr-notes').value = '';
         row.classList.add('saved');
