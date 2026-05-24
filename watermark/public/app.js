@@ -7,6 +7,30 @@ function icon(name, sz = 16) {
   return `<span class="app-icon" style="width:${sz}px;height:${sz}px;-webkit-mask-image:url(${u});mask-image:url(${u})" aria-hidden="true"></span>`;
 }
 
+/* ── Theme ───────────────────────────────────────────────────────────────── */
+function applyTheme(theme) {
+  if (theme === 'light') {
+    document.documentElement.setAttribute('data-theme', 'light');
+  } else {
+    document.documentElement.removeAttribute('data-theme');
+  }
+  const btn = document.getElementById('theme-toggle-btn');
+  if (btn) {
+    btn.textContent = theme === 'light' ? '🌙' : '☀';
+    btn.title = theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode';
+  }
+  localStorage.setItem('watermark-theme', theme);
+}
+
+document.getElementById('theme-toggle-btn').addEventListener('click', () => {
+  const current = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+  applyTheme(current === 'light' ? 'dark' : 'light');
+});
+
+// Init from saved preference (anti-FOUC script in <head> already set the attribute;
+// this just syncs the button icon on first load)
+applyTheme(localStorage.getItem('watermark-theme') || 'dark');
+
 /* ── State ───────────────────────────────────────────────────────────────── */
 let currentUser   = null;
 let currentScreen = null;

@@ -26,6 +26,41 @@
   --transition:  0.15s ease;
 }
 
+/* ── Light Theme ─────────────────────────────────────────────────────────── */
+[data-theme="light"] {
+  --bg:         #eef3f8;
+  --surface:    #ffffff;
+  --surface2:   #e4ecf5;
+  --surface3:   #d4e0ed;
+  --border:     #b8cad8;
+  --icon-bg:    #d0e3f5;
+  --green-bg:   #e6f4ea;
+  --text:       #0c1b2a;
+  --text-dim:   #38526a;
+  --text-muted: #688098;
+}
+
+/* Toasts */
+[data-theme="light"] .toast.success { background: #e6f4ea; border-color: #43a047; color: #1b5e20; }
+[data-theme="light"] .toast.error   { background: #fdecea; border-color: #e53935; color: #b71c1c; }
+[data-theme="light"] .toast.warn    { background: #fff8e1; border-color: #fb8c00; color: #bf360c; }
+
+/* Status badges */
+[data-theme="light"] .status-badge.done    { background: #e6f4ea; color: #2e7d32; border-color: #81c784; }
+[data-theme="light"] .status-badge.due     { background: #fff8e1; color: #c45000; border-color: #ffa000; }
+[data-theme="light"] .status-badge.overdue { background: #fdecea; color: #c62828; border-color: #e57373; }
+[data-theme="light"] .status-badge.wr-recent { background: rgba(46,125,50,0.12);  color: #2e7d32; }
+[data-theme="light"] .status-badge.wr-none   { background: rgba(230,81,0,0.10);   color: #c45000; }
+[data-theme="light"] .status-badge.wr-old    { background: rgba(198,40,40,0.10);  color: #c62828; }
+
+/* Role badges */
+[data-theme="light"] .role-admin      { background: #f3e5f5; color: #6a1b9a; }
+[data-theme="light"] .role-supervisor { background: #e1f5fe; color: #01579b; }
+[data-theme="light"] .role-operator   { background: #e6f4ea; color: #1b5e20; }
+
+/* Important well name (#f5c542 is unreadable on light bg) */
+[data-theme="light"] .list-item-name.well-important { color: #b07800; }
+
 html { font-size: 16px; }
 
 html, body {
@@ -201,7 +236,7 @@ html, body {
   top: 0;
   z-index: 100;
 }
-.hamburger, .header-refresh-btn {
+.hamburger, .header-refresh-btn, .header-theme-btn {
   background: var(--surface2);
   border: 1px solid var(--border);
   border-radius: 50%;
@@ -213,10 +248,11 @@ html, body {
   font-size: 1rem;
   padding: 0;
 }
-.hamburger:hover, .header-refresh-btn:hover {
+.hamburger:hover, .header-refresh-btn:hover, .header-theme-btn:hover {
   background: var(--surface3);
   border-color: var(--accent);
 }
+.header-theme-btn { font-size: 1.1rem; line-height: 1; }
 .app-title {
   flex: 1;
   font-size: 1.1rem;
