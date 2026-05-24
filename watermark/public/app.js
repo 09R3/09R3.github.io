@@ -1881,7 +1881,10 @@ function renderWellIssues() {
             <div class="maint-hist-attach-area issue-files-area hidden"></div>
           </div>
           <div class="error-msg hidden issue-update-error"></div>
-          <button class="btn btn-save btn-full issue-save-btn" data-table="well_issues">Save Changes</button>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-save issue-save-btn" style="flex:1" data-table="well_issues">Save Changes</button>
+            <button class="btn btn-secondary issue-share-btn">&#8679; Share</button>
+          </div>
         </div>
       </div>`;
   }).join('');
@@ -1987,7 +1990,26 @@ el('well-issue-list').addEventListener('click', async e => {
     } catch (err) { area.innerHTML = `<div class="maint-att-empty" style="color:var(--red-light)">${err.message}</div>`; }
     return;
   }
-
+  if (e.target.classList.contains('issue-share-btn')) {
+    shareMaintenanceReport(item.dataset.issueId, item, {
+      issueArray:  wellIssues,
+      tableName:   'well_issues',
+      reportLabel: 'Well Issue Report',
+      getTitle:    i => i.well_area ? `${i.well_name} (${i.well_area})` : (i.well_name || 'Unknown Well'),
+      getRows:     i => [
+        ['Well',       escHtml(i.well_name || '—')],
+        i.well_area ? ['Area', escHtml(i.well_area)] : null,
+        ['Status',     i.status.replace('_',' ')],
+        ['Reported',   i.reported_date?.slice(0,10) || '—'],
+        ['Entered By', escHtml(i.entered_by_full_name || i.entered_by || '—')],
+        i.assigned_to     ? ['Assigned To',     escHtml(i.assigned_to)]      : null,
+        i.action_taken     ? ['Action Taken',     escHtml(i.action_taken)]     : null,
+        i.resolution_notes ? ['Resolution Notes', escHtml(i.resolution_notes)] : null,
+        i.po_number        ? ['PO Number',        escHtml(i.po_number)]        : null,
+        i.cost != null     ? ['Cost',             `$${Number(i.cost).toFixed(2)}`] : null,
+      ].filter(Boolean),
+    }); return;
+  }
   if (e.target.classList.contains('issue-save-btn')) {
     const issueId     = item.dataset.issueId;
     const status      = item.querySelector('.issue-status-select').value;
@@ -2005,6 +2027,7 @@ el('well-issue-list').addEventListener('click', async e => {
       const pending = issueCardFiles.get(issueId);
       if (pending?.length) { await doUploadIssueAttachments(issueId, 'well_issues', pending, item.dataset.entityName); issueCardFiles.delete(issueId); }
       wellIssuesLoaded = false;
+
       await loadWellIssues();
       showToast('Issue updated', 'success');
       refreshMaintenanceBadges();
@@ -2123,7 +2146,10 @@ function renderBldgIssues() {
             <div class="maint-hist-attach-area issue-files-area hidden"></div>
           </div>
           <div class="error-msg hidden issue-update-error"></div>
-          <button class="btn btn-save btn-full issue-save-btn" data-table="building_issues">Save Changes</button>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-save issue-save-btn" style="flex:1" data-table="building_issues">Save Changes</button>
+            <button class="btn btn-secondary issue-share-btn">&#8679; Share</button>
+          </div>
         </div>
       </div>`;
   }).join('');
@@ -2240,7 +2266,26 @@ el('bldg-issue-list').addEventListener('click', async e => {
     } catch (err) { area.innerHTML = `<div class="maint-att-empty" style="color:var(--red-light)">${err.message}</div>`; }
     return;
   }
-
+  if (e.target.classList.contains('issue-share-btn')) {
+    shareMaintenanceReport(item.dataset.issueId, item, {
+      issueArray:  bldgIssues,
+      tableName:   'building_issues',
+      reportLabel: 'Building Issue Report',
+      getTitle:    i => [i.site_name, i.building_name].filter(Boolean).join(' — ') || 'Unknown Building',
+      getRows:     i => [
+        ['Site',       escHtml(i.site_name || '—')],
+        ['Building',   escHtml(i.building_name || '—')],
+        ['Status',     i.status.replace('_',' ')],
+        ['Reported',   i.reported_date?.slice(0,10) || '—'],
+        ['Entered By', escHtml(i.entered_by_full_name || i.entered_by || '—')],
+        i.assigned_to     ? ['Assigned To',     escHtml(i.assigned_to)]      : null,
+        i.action_taken     ? ['Action Taken',     escHtml(i.action_taken)]     : null,
+        i.resolution_notes ? ['Resolution Notes', escHtml(i.resolution_notes)] : null,
+        i.po_number        ? ['PO Number',        escHtml(i.po_number)]        : null,
+        i.cost != null     ? ['Cost',             `$${Number(i.cost).toFixed(2)}`] : null,
+      ].filter(Boolean),
+    }); return;
+  }
   if (e.target.classList.contains('issue-save-btn')) {
     const issueId     = item.dataset.issueId;
     const status      = item.querySelector('.issue-status-select').value;
@@ -2366,7 +2411,10 @@ function renderEquipIssues() {
             <div class="maint-hist-attach-area issue-files-area hidden"></div>
           </div>
           <div class="error-msg hidden issue-update-error"></div>
-          <button class="btn btn-save btn-full issue-save-btn" data-table="equipment_issues">Save Changes</button>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-save issue-save-btn" style="flex:1" data-table="equipment_issues">Save Changes</button>
+            <button class="btn btn-secondary issue-share-btn">&#8679; Share</button>
+          </div>
         </div>
       </div>`;
   }).join('');
@@ -2503,7 +2551,26 @@ el('equip-issue-list').addEventListener('click', async e => {
     } catch (err) { area.innerHTML = `<div class="maint-att-empty" style="color:var(--red-light)">${err.message}</div>`; }
     return;
   }
-
+  if (e.target.classList.contains('issue-share-btn')) {
+    shareMaintenanceReport(item.dataset.issueId, item, {
+      issueArray:  equipIssues,
+      tableName:   'equipment_issues',
+      reportLabel: 'Equipment Issue Report',
+      getTitle:    i => i.equipment_name || i.equipment_type || 'Unknown Equipment',
+      getRows:     i => [
+        ['Equipment',  escHtml(i.equipment_name || i.equipment_type || '—')],
+        i.equipment_name && i.equipment_type ? ['Type', escHtml(i.equipment_type)] : null,
+        ['Status',     i.status.replace('_',' ')],
+        ['Reported',   i.reported_date?.slice(0,10) || '—'],
+        ['Entered By', escHtml(i.entered_by_full_name || i.entered_by || '—')],
+        i.assigned_to     ? ['Assigned To',     escHtml(i.assigned_to)]      : null,
+        i.action_taken     ? ['Action Taken',     escHtml(i.action_taken)]     : null,
+        i.resolution_notes ? ['Resolution Notes', escHtml(i.resolution_notes)] : null,
+        i.po_number        ? ['PO Number',        escHtml(i.po_number)]        : null,
+        i.cost != null     ? ['Cost',             `$${Number(i.cost).toFixed(2)}`] : null,
+      ].filter(Boolean),
+    }); return;
+  }
   // Save changes
   if (e.target.classList.contains('issue-save-btn')) {
     const issueId     = item.dataset.issueId;
@@ -2782,7 +2849,24 @@ el('canal-issue-list').addEventListener('click', async e => {
     openGPSMap(parseFloat(e.target.dataset.lat), parseFloat(e.target.dataset.lon)); return;
   }
   if (e.target.classList.contains('issue-share-btn')) {
-    shareIssueReport(item.dataset.issueId, item); return;
+    shareMaintenanceReport(item.dataset.issueId, item, {
+      issueArray:  canalIssues,
+      tableName:   'canal_issues',
+      reportLabel: 'Canal Report',
+      getTitle:    i => i.pool ? `Pool ${i.pool}` : 'Canal',
+      getGPS:      i => i.gps_lat != null ? { lat: i.gps_lat, lon: i.gps_lon } : null,
+      getRows:     i => [
+        ['Pool',       i.pool ? `Pool ${escHtml(i.pool)}` : '—'],
+        ['Status',     i.status.replace('_',' ')],
+        ['Reported',   i.reported_date?.slice(0,10) || '—'],
+        ['Entered By', escHtml(i.entered_by_full_name || i.entered_by || '—')],
+        i.action_taken     ? ['Action Taken',     escHtml(i.action_taken)]     : null,
+        i.resolution_notes ? ['Resolution Notes', escHtml(i.resolution_notes)] : null,
+        i.po_number        ? ['PO Number',        escHtml(i.po_number)]        : null,
+        i.cost != null     ? ['Cost',             `$${Number(i.cost).toFixed(2)}`] : null,
+        i.notes            ? ['Notes',            escHtml(i.notes)]            : null,
+      ].filter(Boolean),
+    }); return;
   }
   if (e.target.classList.contains('issue-files-btn')) {
     const area = item.querySelector('.issue-files-area');
@@ -2871,19 +2955,19 @@ function addPinToMapImage(dataUri, w, h) {
   });
 }
 
-async function shareIssueReport(issueId, item) {
+// ── Generic maintenance report (used by all issue sections) ──────────────────
+// cfg: { issueArray, tableName, reportLabel, getTitle(i), getRows(i), getGPS?(i) }
+async function shareMaintenanceReport(issueId, item, cfg) {
   const btn = item.querySelector('.issue-share-btn');
   btn.disabled = true;
   btn.textContent = 'Preparing…';
   try {
-    const issue = canalIssues.find(i => String(i.issue_id) === String(issueId));
-    if (!issue) throw new Error('Issue data not found');
+    const issue = cfg.issueArray.find(i => String(i.issue_id) === String(issueId));
+    if (!issue) throw new Error('Issue not found');
 
-    // Fetch attachments and filter to photos only
-    const atts   = await api('GET', `/api/maintenance/attachments?table_name=canal_issues&record_id=${issueId}`);
-    const photos  = atts.filter(a => a.file_type === 'photo' && !a.mime_type?.includes('pdf'));
-
-    // Convert photos to data URIs so html2canvas has no cross-origin issues
+    // Fetch photos and convert to data URIs (no cross-origin issues for html2canvas)
+    const atts = await api('GET', `/api/maintenance/attachments?table_name=${cfg.tableName}&record_id=${issueId}`);
+    const photos = atts.filter(a => a.file_type === 'photo' && !a.mime_type?.includes('pdf'));
     const photoUris = (await Promise.all(photos.map(async a => {
       try {
         const url = `/uploads/${a.rel_path.split('/').map(encodeURIComponent).join('/')}`;
@@ -2891,23 +2975,28 @@ async function shareIssueReport(issueId, item) {
       } catch { return null; }
     }))).filter(Boolean);
 
-    // Static satellite map from Esri with pin overlay
+    // Optional GPS map with pin
     let mapSrc = null;
-    if (issue.gps_lat != null && issue.gps_lon != null) {
+    const gps = cfg.getGPS ? cfg.getGPS(issue) : null;
+    if (gps) {
       const pad = 0.0015;
-      const bbox = `${issue.gps_lon-pad},${issue.gps_lat-pad},${issue.gps_lon+pad},${issue.gps_lat+pad}`;
+      const bbox = `${gps.lon-pad},${gps.lat-pad},${gps.lon+pad},${gps.lat+pad}`;
       const esriUrl = `https://server.arcgisonline.com/arcgis/rest/services/World_Imagery/MapServer/export?bbox=${bbox}&bboxSR=4326&size=600,300&imageSR=96&f=image`;
       try {
         const resp = await fetch(esriUrl);
-        if (resp.ok) {
-          const dataUri = await blobToDataUri(await resp.blob());
-          mapSrc = await addPinToMapImage(dataUri, 600, 300);
-        } else { mapSrc = esriUrl; }
+        if (resp.ok) mapSrc = await addPinToMapImage(await blobToDataUri(await resp.blob()), 600, 300);
+        else mapSrc = esriUrl;
       } catch { mapSrc = esriUrl; }
     }
 
-    const title = issue.pool ? `Pool ${issue.pool}` : 'Canal';
-    showIssueReportPreview(issue, title, photoUris, mapSrc, `canal-issue-${issueId}`);
+    showMaintenanceReportPreview({
+      reportLabel: cfg.reportLabel,
+      title:       cfg.getTitle(issue),
+      rows:        cfg.getRows(issue),
+      description: issue.description || '',
+      mapSrc, gps, photoUris,
+      filename:    `${cfg.tableName}-${issueId}`,
+    });
   } catch (err) {
     showToast('Failed to prepare report: ' + err.message, 'error');
   } finally {
@@ -2916,34 +3005,20 @@ async function shareIssueReport(issueId, item) {
   }
 }
 
-function buildIssueReportHtml(issue, title, photoUris, mapSrc) {
-  const enteredBy = escHtml(issue.entered_by_full_name || issue.entered_by || '—');
-  const rows = [
-    ['Pool',       issue.pool ? `Pool ${escHtml(issue.pool)}` : '—'],
-    ['Status',     issue.status.replace('_', ' ')],
-    ['Reported',   issue.reported_date?.slice(0, 10) || '—'],
-    ['Entered By', enteredBy],
-  ];
-  if (issue.action_taken)     rows.push(['Action Taken',      escHtml(issue.action_taken)]);
-  if (issue.resolution_notes) rows.push(['Resolution Notes',  escHtml(issue.resolution_notes)]);
-  if (issue.po_number)        rows.push(['PO Number',         escHtml(issue.po_number)]);
-  if (issue.cost != null)     rows.push(['Cost',              `$${Number(issue.cost).toFixed(2)}`]);
-  if (issue.notes)            rows.push(['Notes',             escHtml(issue.notes)]);
-
-  const lat = Number(issue.gps_lat).toFixed(6);
-  const lon = Number(issue.gps_lon).toFixed(6);
-
+function buildMaintenanceReportHtml({ reportLabel, title, rows, description, mapSrc, gps, photoUris }) {
+  const lat = gps ? Number(gps.lat).toFixed(6) : null;
+  const lon = gps ? Number(gps.lon).toFixed(6) : null;
   return `
     <div class="ir-header">
-      <div class="ir-title">Canal Report — ${escHtml(title)}</div>
+      <div class="ir-title">${escHtml(reportLabel)} — ${escHtml(title)}</div>
       <div class="ir-meta">${new Date().toLocaleDateString()}</div>
     </div>
     <table class="ir-table">
-      ${rows.map(([k,v]) => `<tr><th>${k}</th><td>${v}</td></tr>`).join('')}
+      ${rows.map(([k,v]) => `<tr><th>${escHtml(k)}</th><td>${v}</td></tr>`).join('')}
     </table>
     <div class="ir-section">
       <div class="ir-section-label">Description</div>
-      <div class="ir-text">${escHtml(issue.description || '').replace(/\n/g,'<br>')}</div>
+      <div class="ir-text">${escHtml(description).replace(/\n/g,'<br>')}</div>
     </div>
     ${mapSrc ? `
     <div class="ir-section">
@@ -2955,12 +3030,12 @@ function buildIssueReportHtml(issue, title, photoUris, mapSrc) {
     <div class="ir-section">
       <div class="ir-section-label">Photos (${photoUris.length})</div>
       <div class="ir-photos">
-        ${photoUris.map(uri => `<img src="${uri}" class="ir-photo" alt="Photo">`).join('')}
+        ${photoUris.map(uri => `<img src="${uri}" class="ir-photo" alt="">`).join('')}
       </div>
     </div>` : ''}`;
 }
 
-function showIssueReportPreview(issue, title, photoUris, mapSrc, filename) {
+function showMaintenanceReportPreview({ reportLabel, title, rows, description, mapSrc, gps, photoUris, filename }) {
   document.getElementById('issue-report-modal')?.remove();
 
   const modal = document.createElement('div');
@@ -2977,7 +3052,7 @@ function showIssueReportPreview(issue, title, photoUris, mapSrc, filename) {
     </div>
     <div class="report-preview-scroll">
       <div class="ir-content" id="ir-body">
-        ${buildIssueReportHtml(issue, title, photoUris, mapSrc)}
+        ${buildMaintenanceReportHtml({ reportLabel, title, rows, description, mapSrc, gps, photoUris })}
       </div>
     </div>`;
   document.body.appendChild(modal);
@@ -2989,10 +3064,11 @@ function showIssueReportPreview(issue, title, photoUris, mapSrc, filename) {
     const { lat, lon } = e.currentTarget.dataset;
     const ua = navigator.userAgent;
     const isApple = /iPhone|iPad|iPod|Macintosh/.test(ua) && !ua.includes('Windows');
-    const url = isApple
-      ? `https://maps.apple.com/?ll=${lat},${lon}&t=k&z=17&q=Canal+Issue`
-      : `https://www.google.com/maps/search/?api=1&query=${lat},${lon}`;
-    window.open(url, '_blank');
+    window.open(
+      isApple ? `https://maps.apple.com/?ll=${lat},${lon}&t=k&z=17&q=Issue+Location`
+              : `https://www.google.com/maps/search/?api=1&query=${lat},${lon}`,
+      '_blank'
+    );
   });
 
   modal.querySelector('#rp-print').addEventListener('click', () => window.print());
@@ -3014,7 +3090,7 @@ function showIssueReportPreview(issue, title, photoUris, mapSrc, filename) {
         .outputPdf('blob');
       const file = new File([blob], `${filename}.pdf`, { type: 'application/pdf' });
       if (navigator.canShare && navigator.canShare({ files: [file] })) {
-        await navigator.share({ files: [file], title: `Canal Issue — ${title}` });
+        await navigator.share({ files: [file], title: `${reportLabel} — ${title}` });
       } else {
         const url = URL.createObjectURL(blob);
         Object.assign(document.createElement('a'), { href: url, download: `${filename}.pdf` }).click();

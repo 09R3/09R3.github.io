@@ -1930,9 +1930,11 @@ app.get('/api/well-issues', requireAuth, async (req, res) => {
              wi.status, wi.description, wi.reported_date, wi.resolved_date,
              wi.action_taken, wi.resolution_notes, wi.po_number, wi.cost,
              wi.entered_by, wi.assigned_to, wi.notes, wi.created_at,
+             u.full_name AS entered_by_full_name,
              (SELECT COUNT(*) FROM maintenance_attachments
               WHERE table_name = 'well_issues' AND record_id = wi.issue_id) AS attachment_count
       FROM well_issues wi
+      LEFT JOIN users u ON u.username = wi.entered_by
       WHERE $1 OR wi.status != 'resolved'
       ORDER BY
         CASE wi.status WHEN 'open' THEN 1 WHEN 'in_progress' THEN 2 ELSE 3 END,
@@ -2000,9 +2002,11 @@ app.get('/api/building-issues', requireAuth, async (req, res) => {
              bi.status, bi.description, bi.reported_date, bi.resolved_date,
              bi.action_taken, bi.resolution_notes, bi.po_number, bi.cost,
              bi.entered_by, bi.assigned_to, bi.notes, bi.created_at,
+             u.full_name AS entered_by_full_name,
              (SELECT COUNT(*) FROM maintenance_attachments
               WHERE table_name = 'building_issues' AND record_id = bi.issue_id) AS attachment_count
       FROM building_issues bi
+      LEFT JOIN users u ON u.username = bi.entered_by
       WHERE $1 OR bi.status != 'resolved'
       ORDER BY
         CASE bi.status WHEN 'open' THEN 1 WHEN 'in_progress' THEN 2 ELSE 3 END,
@@ -2070,9 +2074,11 @@ app.get('/api/equipment-issues', requireAuth, async (req, res) => {
              ei.status, ei.description, ei.reported_date, ei.resolved_date,
              ei.action_taken, ei.resolution_notes, ei.po_number, ei.cost,
              ei.entered_by, ei.assigned_to, ei.notes, ei.created_at,
+             u.full_name AS entered_by_full_name,
              (SELECT COUNT(*) FROM maintenance_attachments
               WHERE table_name = 'equipment_issues' AND record_id = ei.issue_id) AS attachment_count
       FROM equipment_issues ei
+      LEFT JOIN users u ON u.username = ei.entered_by
       WHERE $1 OR ei.status != 'resolved'
       ORDER BY
         CASE ei.status WHEN 'open' THEN 1 WHEN 'in_progress' THEN 2 ELSE 3 END,
