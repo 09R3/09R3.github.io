@@ -2558,6 +2558,7 @@ el('equip-issue-list').addEventListener('click', async e => {
       tableName:   'equipment_issues',
       reportLabel: 'Equipment Issue Report',
       getTitle:    i => i.equipment_name || i.equipment_type || 'Unknown Equipment',
+      resolveGPS:  resolveGPSFromBlobs,
       getRows:     i => [
         ['Equipment',  escHtml(i.equipment_name || i.equipment_type || '—')],
         i.equipment_name && i.equipment_type ? ['Type', escHtml(i.equipment_type)] : null,
@@ -2956,8 +2957,16 @@ function addPinToMapImage(dataUri, w, h) {
   });
 }
 
+async function resolveGPSFromBlobs(blobs) {
+  for (const blob of blobs) {
+    const gps = await readExifGPS(blob);
+    if (gps) return gps;
+  }
+  return null;
+}
+
 // ── Generic maintenance report (used by all issue sections) ──────────────────
-// cfg: { issueArray, tableName, reportLabel, getTitle(i), getRows(i), getGPS?(i) }
+// cfg: { issueArray, tableName, reportLabel, getTitle(i), getRows(i), getGPS?(i), resolveGPS?(blobs) }
 async function shareMaintenanceReport(issueId, item, cfg) {
   const btn = item.querySelector('.issue-share-btn');
   btn.disabled = true;
@@ -2966,19 +2975,23 @@ async function shareMaintenanceReport(issueId, item, cfg) {
     const issue = cfg.issueArray.find(i => String(i.issue_id) === String(issueId));
     if (!issue) throw new Error('Issue not found');
 
-    // Fetch photos and convert to data URIs (no cross-origin issues for html2canvas)
+    // Fetch photo blobs; keep blobs available for EXIF GPS extraction before converting
     const atts = await api('GET', `/api/maintenance/attachments?table_name=${cfg.tableName}&record_id=${issueId}`);
     const photos = atts.filter(a => a.file_type === 'photo' && !a.mime_type?.includes('pdf'));
-    const photoUris = (await Promise.all(photos.map(async a => {
+    const photoBlobs = (await Promise.all(photos.map(async a => {
       try {
         const url = `/uploads/${a.rel_path.split('/').map(encodeURIComponent).join('/')}`;
-        return await blobToDataUri(await (await fetch(url)).blob());
+        return await (await fetch(url)).blob();
       } catch { return null; }
     }))).filter(Boolean);
+    const photoUris = await Promise.all(photoBlobs.map(b => blobToDataUri(b)));
+
+    // GPS: from issue record (getGPS) or scanned from photo EXIF (resolveGPS)
+    let gps = cfg.getGPS ? cfg.getGPS(issue) : null;
+    if (!gps && cfg.resolveGPS) gps = await cfg.resolveGPS(photoBlobs);
 
     // Optional GPS map with pin
     let mapSrc = null;
-    const gps = cfg.getGPS ? cfg.getGPS(issue) : null;
     if (gps) {
       const pad = 0.0015;
       const bbox = `${gps.lon-pad},${gps.lat-pad},${gps.lon+pad},${gps.lat+pad}`;
