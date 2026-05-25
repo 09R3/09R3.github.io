@@ -1996,6 +1996,7 @@ el('well-issue-list').addEventListener('click', async e => {
       tableName:   'well_issues',
       reportLabel: 'Well Issue Report',
       getTitle:    i => i.well_area ? `${i.well_name} (${i.well_area})` : (i.well_name || 'Unknown Well'),
+      getGPS:      i => i.gps_latitude != null ? { lat: i.gps_latitude, lon: i.gps_longitude } : null,
       getRows:     i => [
         ['Well',       escHtml(i.well_name || '—')],
         i.well_area ? ['Area', escHtml(i.well_area)] : null,

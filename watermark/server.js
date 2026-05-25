@@ -1931,10 +1931,12 @@ app.get('/api/well-issues', requireAuth, async (req, res) => {
              wi.action_taken, wi.resolution_notes, wi.po_number, wi.cost,
              wi.entered_by, wi.assigned_to, wi.notes, wi.created_at,
              u.full_name AS entered_by_full_name,
+             w.gps_latitude, w.gps_longitude,
              (SELECT COUNT(*) FROM maintenance_attachments
               WHERE table_name = 'well_issues' AND record_id = wi.issue_id) AS attachment_count
       FROM well_issues wi
       LEFT JOIN users u ON u.username = wi.entered_by
+      LEFT JOIN wells w ON w.well_id = wi.well_id
       WHERE $1 OR wi.status != 'resolved'
       ORDER BY
         CASE wi.status WHEN 'open' THEN 1 WHEN 'in_progress' THEN 2 ELSE 3 END,
