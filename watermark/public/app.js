@@ -16,7 +16,7 @@ function applyTheme(theme) {
   }
   const btn = document.getElementById('theme-toggle-btn');
   if (btn) {
-    btn.textContent = theme === 'light' ? '🌙' : '☀';
+    btn.innerHTML = icon(theme === 'light' ? 'light' : 'moon', 20);
     btn.title = theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode';
   }
   localStorage.setItem('watermark-theme', theme);

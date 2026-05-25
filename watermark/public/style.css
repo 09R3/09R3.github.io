@@ -251,9 +251,7 @@ html, body {
 .hamburger:hover, .header-refresh-btn:hover, .header-theme-btn:hover {
   background: var(--surface3);
   border-color: var(--accent);
-}
-.header-theme-btn { font-size: 1.1rem; line-height: 1; }
-.app-title {
+}.app-title {
   flex: 1;
   font-size: 1.1rem;
   font-weight: 600;
