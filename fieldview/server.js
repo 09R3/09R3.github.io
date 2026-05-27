@@ -127,7 +127,7 @@ app.get('/api/users/active', async (req, res) => {
   if (!pool) return res.status(503).json({ error: 'No database connected.' });
   try {
     const { rows } = await pool.query(
-      `SELECT username, full_name FROM users WHERE is_active = true ORDER BY full_name ASC`
+      `SELECT username, full_name FROM users WHERE is_active = true AND role IN ('supervisor', 'admin') ORDER BY full_name ASC`
     );
     res.json(rows);
   } catch (err) {
@@ -167,6 +167,10 @@ app.post('/auth/login', async (req, res) => {
     }
 
     if (!valid) return res.status(401).json({ error: 'Invalid username or password.' });
+
+    if (!['supervisor', 'admin'].includes(user.role)) {
+      return res.status(403).json({ error: 'Access denied. FieldView is restricted to supervisors and admins.' });
+    }
 
     const sessionUser = {
       user_id: user.user_id,
