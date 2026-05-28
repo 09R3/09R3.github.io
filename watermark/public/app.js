@@ -5321,6 +5321,13 @@ async function openRunningWellsModal() {
           <span class="rw-modal-cfs">${cfs}</span>
         </div>`;
       });
+      const poolCfs = poolWells
+        .filter(w => w.read_today && w.on_off && w.flow_cfs != null)
+        .reduce((sum, w) => sum + (parseFloat(w.flow_cfs) || 0), 0);
+      html += `<div class="rw-modal-subtotal">
+        <span>Pool Total</span>
+        <span>${poolCfs.toFixed(2)} cfs</span>
+      </div>`;
     });
 
     html += `<div class="rw-modal-total">

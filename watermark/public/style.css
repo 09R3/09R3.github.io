@@ -2771,6 +2771,12 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
 }
 .rw-dot-read    { background: var(--green, #4caf50); }
 .rw-dot-unread  { background: var(--yellow, #ffc107); }
+.rw-modal-subtotal {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 16px 8px;
+  font-size: 0.8rem; font-weight: 600; color: var(--text-dim);
+  border-top: 1px solid var(--border);
+}
 .rw-modal-total {
   display: flex; align-items: center; justify-content: space-between;
   padding: 12px 16px; margin-top: 4px;
