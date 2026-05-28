@@ -398,9 +398,11 @@ function openSetMapModal(setName, wells) {
         popupAnchor: [0, -8],
       });
       const label = [w.state_well_number, w.common_name].filter(Boolean).join(' | ') || 'Well';
+      const fmtFlow = v => v == null ? null : Number(v) === 0 ? 'Off' : `${Number(v).toFixed(2)} cfs`;
       let status;
       if (!done) {
-        status = '<span style="color:#dc2626">Not read</span>';
+        const flowStr = fmtFlow(w.last_flow_cfs);
+        status = `<span style="color:#dc2626">Not read</span>${flowStr ? `<br><span style="color:#888">Last: ${flowStr}</span>` : ''}`;
       } else if (sessionR) {
         const lines = [`✓ Read ${localDateStr(sessionR.date, {month:'short',day:'numeric'})}`];
         if (sessionR.time) lines.push(sessionR.time.slice(0, 5));
@@ -408,9 +410,9 @@ function openSetMapModal(setName, wells) {
         status = `<span style="color:#16a34a">${lines.join('<br>')}</span>`;
       } else {
         const readDate = w.range_reading_date || w.last_reading_date;
-        status = readDate
-          ? `<span style="color:#16a34a">✓ Read ${localDateStr(readDate, {month:'short',day:'numeric'})}</span>`
-          : `<span style="color:#16a34a">✓ Read</span>`;
+        const flowStr = fmtFlow(w.last_flow_cfs);
+        const dateStr = readDate ? `✓ Read ${localDateStr(readDate, {month:'short',day:'numeric'})}` : '✓ Read';
+        status = `<span style="color:#16a34a">${dateStr}${flowStr ? `<br>${flowStr}` : ''}</span>`;
       }
       const m = L.marker([w.gps_latitude, w.gps_longitude], { icon: dotIcon }).addTo(_setLeafletMap);
       m.bindPopup(`<strong>${label}</strong><br>${status}`);
@@ -821,41 +823,67 @@ async function openHistoryModal(type, id, label) {
     table.innerHTML = `<thead><tr><th>Date</th>${headCells}<th>Notes</th><th></th></tr></thead><tbody></tbody>`;
     const tbody = table.querySelector('tbody');
 
-    rows.forEach(r => {
-      const d = fmtDate(r.reading_date);
-      const t = r.reading_time ? r.reading_time.slice(0, 5) : '';
-      const valCells = cols.map(c => `<td>${r[c.key] != null ? r[c.key] : '—'}</td>`).join('');
+    function renderHistoryRows(rowList) {
+      tbody.innerHTML = '';
+      rowList.forEach(r => {
+        const d = fmtDate(r.reading_date);
+        const t = r.reading_time ? r.reading_time.slice(0, 5) : '';
+        const valCells = cols.map(c => `<td>${r[c.key] != null ? r[c.key] : '—'}</td>`).join('');
 
-      const showDel = canDeleteAll ||
-        (role === 'supervisor' && isWithin24h(r.reading_date, r.reading_time)) ||
-        (r.entered_by === username && isWithin24h(r.reading_date, r.reading_time));
+        const showDel = canDeleteAll ||
+          (role === 'supervisor' && isWithin24h(r.reading_date, r.reading_time)) ||
+          (r.entered_by === username && isWithin24h(r.reading_date, r.reading_time));
 
-      const tr = document.createElement('tr');
-      tr.innerHTML = `
-        <td>${d}${t ? `<div class="hist-time">${t}</div>` : ''}</td>
-        ${valCells}
-        <td class="hist-notes">${r.notes || ''}</td>
-        <td>${showDel ? `<button class="hist-del-btn" data-id="${r.id}">${icon('delete')}</button>` : ''}</td>`;
-      tbody.appendChild(tr);
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${d}${t ? `<div class="hist-time">${t}</div>` : ''}</td>
+          ${valCells}
+          <td class="hist-notes">${r.notes || ''}</td>
+          <td>${showDel ? `<button class="hist-del-btn" data-id="${r.id}">${icon('delete')}</button>` : ''}</td>`;
+        tbody.appendChild(tr);
 
-      if (showDel) {
-        tr.querySelector('.hist-del-btn').addEventListener('click', async () => {
-          if (!confirm('Delete this reading?')) return;
-          try {
-            await api('DELETE', `/api/history/${type}/${r.id}`);
-            tr.remove();
-            if (!tbody.children.length) {
-              body.innerHTML = '<div class="placeholder-msg" style="padding:16px">No history found.</div>';
+        if (showDel) {
+          tr.querySelector('.hist-del-btn').addEventListener('click', async () => {
+            if (!confirm('Delete this reading?')) return;
+            try {
+              await api('DELETE', `/api/history/${type}/${r.id}`);
+              tr.remove();
+              if (!tbody.children.length) {
+                body.innerHTML = '<div class="placeholder-msg" style="padding:16px">No history found.</div>';
+              }
+            } catch (err) {
+              alert('Delete failed: ' + err.message);
             }
-          } catch (err) {
-            alert('Delete failed: ' + err.message);
-          }
-        });
-      }
-    });
+          });
+        }
+      });
+    }
+
+    renderHistoryRows(rows);
 
     body.innerHTML = '';
     body.appendChild(table);
+
+    if (type === 'well') {
+      const showAllBtn = document.createElement('button');
+      showAllBtn.className = 'btn btn-secondary';
+      showAllBtn.style.cssText = 'width:100%;margin-top:12px';
+      showAllBtn.textContent = 'Show All';
+      showAllBtn.addEventListener('click', async () => {
+        showAllBtn.disabled = true;
+        showAllBtn.textContent = 'Loading…';
+        try {
+          const allRows = await api('GET', `/api/history-all?type=well&id=${encodeURIComponent(id)}`);
+          renderHistoryRows(allRows);
+          showAllBtn.remove();
+        } catch (err) {
+          showAllBtn.disabled = false;
+          showAllBtn.textContent = 'Show All';
+          alert('Failed to load: ' + err.message);
+        }
+      });
+      body.appendChild(showAllBtn);
+    }
   } catch (err) {
     body.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light);padding:16px">${err.message}</div>`;
   }
@@ -1246,7 +1274,10 @@ function createWellItem(w, dateInput, timeInput) {
 
   const hrs = w.hours_since_reading;
   const sc = hrs == null ? 'due' : hrs <= 8 ? 'done' : 'overdue';
-  const badge = hrs == null ? 'Not read' : hrs < 1 ? 'Just read' : `${Math.round(hrs)}h ago`;
+  const badge = hrs == null ? 'Not read'
+    : hrs < 1   ? 'Just read'
+    : hrs >= 48 ? `${Math.round(hrs / 24)}d ago`
+    : `${Math.round(hrs)}h ago`;
 
   div.innerHTML = `
     <div class="list-item-header">
@@ -1258,13 +1289,14 @@ function createWellItem(w, dateInput, timeInput) {
     <div class="list-item-form">
       <div class="lif-row">
         <div class="toggle-group">
-          <button class="toggle-btn active" data-role="on">ON</button>
+          <span class="lif-label">Well Status</span>
+          <button class="toggle-btn" data-role="on">ON</button>
           <button class="toggle-btn" data-role="off">OFF</button>
         </div>
         <div class="toggle-group">
-          <span class="lif-label">Motor Oil</span>
-          <button class="toggle-btn active" data-role="oil-y">Y</button>
-          <button class="toggle-btn" data-role="oil-n">N</button>
+          <span class="lif-label">Motor Oil Needed?</span>
+          <button class="toggle-btn" data-role="oil-y">Yes</button>
+          <button class="toggle-btn" data-role="oil-n">No</button>
         </div>
       </div>
       <div class="two-col">
@@ -1326,7 +1358,11 @@ function createWellItem(w, dateInput, timeInput) {
     dateInput, timeInput
   );
 
-  let onOff = true, motorOil = true;
+  let onOff    = w.last_on_off    ?? true;
+  let motorOil = w.last_motor_oil ?? true;
+
+  div.querySelector(`[data-role="${onOff ? 'on' : 'off'}"]`).classList.add('active');
+  div.querySelector(`[data-role="${motorOil ? 'oil-y' : 'oil-n'}"]`).classList.add('active');
 
   div.querySelector('[data-role="on"]').addEventListener('click', e => {
     onOff = true;

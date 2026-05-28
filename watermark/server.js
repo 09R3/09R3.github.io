@@ -999,6 +999,8 @@ app.get('/api/wells/operational', requireAuth, async (req, res) => {
         r.totalizer         AS last_totalizer,
         r.dripper_oil       AS last_dripper_oil,
         r.pge_kwh           AS last_pge_kwh,
+        r.on_off            AS last_on_off,
+        r.motor_oil         AS last_motor_oil,
         (SELECT notes FROM readings_well
          WHERE well_id = w.well_id AND notes IS NOT NULL AND notes != ''
          ORDER BY reading_date DESC, reading_time DESC LIMIT 1) AS last_notes,
@@ -1006,7 +1008,7 @@ app.get('/api/wells/operational', requireAuth, async (req, res) => {
                             AS hours_since_reading
       FROM wells w
       LEFT JOIN LATERAL (
-        SELECT reading_id, reading_date, reading_time, hour_reading, flow_cfs, totalizer, dripper_oil, pge_kwh
+        SELECT reading_id, reading_date, reading_time, hour_reading, flow_cfs, totalizer, dripper_oil, pge_kwh, on_off, motor_oil
         FROM readings_well
         WHERE well_id = w.well_id
         ORDER BY reading_date DESC, reading_time DESC
@@ -1694,6 +1696,23 @@ app.get('/api/history', requireAuth, async (req, res) => {
     } else {
       return res.status(400).json({ error: 'unknown type' });
     }
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── History All (no limit) — currently wells only ─────────────────────────────
+app.get('/api/history-all', requireAuth, async (req, res) => {
+  const { type, id } = req.query;
+  if (type !== 'well') return res.status(400).json({ error: 'Only type=well supported' });
+  try {
+    const { rows } = await pool.query(
+      `SELECT reading_id AS id, reading_date, reading_time, hour_reading, flow_cfs, totalizer, entered_by, notes
+       FROM readings_well WHERE well_id = $1
+       ORDER BY reading_date DESC, reading_time DESC`,
+      [id]
+    );
     res.json(rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
