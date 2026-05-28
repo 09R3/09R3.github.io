@@ -604,7 +604,10 @@ el('export-pending-btn').addEventListener('click', async () => {
 /* ── Dashboard Stats ─────────────────────────────────────────────────────── */
 async function loadDashboardStats() {
   try {
-    const s = await api('GET', '/api/dashboard/stats');
+    const [s, rw] = await Promise.all([
+      api('GET', '/api/dashboard/stats'),
+      api('GET', '/api/dashboard/running-wells').catch(() => null),
+    ]);
     const fmtDate = str => {
       if (!str) return '';
       const [y, m, d] = str.split('-');
@@ -617,6 +620,12 @@ async function loadDashboardStats() {
       : 'This Month';
     const pct = s.kf_total > 0 ? Math.round((s.kf_done / s.kf_total) * 100) : 0;
     const grid = el('dashboard-stats');
+    const rwCard = rw && rw.total_count > 0 ? `
+      <div class="stat-card rw-stat-card" id="running-wells-stat" style="cursor:pointer">
+        <div class="stat-value">${rw.read_today_count}<span style="font-size:1rem;color:var(--text-dim)">/${rw.total_count}</span></div>
+        <div class="stat-label">Running Wells Read</div>
+        <div class="stat-sublabel">Today</div>
+      </div>` : '';
     grid.innerHTML = `
       <div class="stat-card stat-accent">
         <div class="stat-value">${s.kf_done}<span style="font-size:1rem;color:var(--text-dim)">/${s.kf_total}</span></div>
@@ -633,7 +642,12 @@ async function loadDashboardStats() {
         <div class="stat-value">${s.wells_read_today}<span style="font-size:1rem;color:var(--text-dim)">/${s.wells_total}</span></div>
         <div class="stat-label">Wells Read Today</div>
       </div>
+      ${rwCard}
     `;
+    if (rw && rw.total_count > 0) {
+      const rwStatCard = el('running-wells-stat');
+      if (rwStatCard) rwStatCard.addEventListener('click', openRunningWellsModal);
+    }
   } catch { /* non-critical */ }
 }
 
@@ -4636,15 +4650,16 @@ document.querySelectorAll('.text-size-btn').forEach(btn => {
 
 // Settings panel navigation
 const SETTINGS_PANEL_NAMES = {
-  account:     'Account',
-  password:    'Change Password',
-  textsize:    'Text Size',
-  readings:    "Today's Readings",
-  'kf-widget': 'KF Widget',
-  appinfo:     'App Info',
-  tools:       'Tools',
-  bugreports:  'Bug Reports',
-  usermgmt:    'User Management',
+  account:          'Account',
+  password:         'Change Password',
+  textsize:         'Text Size',
+  readings:         "Today's Readings",
+  'kf-widget':      'KF Widget',
+  'running-wells':  'Running Wells',
+  appinfo:          'App Info',
+  tools:            'Tools',
+  bugreports:       'Bug Reports',
+  usermgmt:         'User Management',
 };
 function openSettingsPanel(panelId) {
   el('settings-main').classList.add('hidden');
@@ -4652,9 +4667,10 @@ function openSettingsPanel(panelId) {
   el('settings-panel-' + panelId).classList.remove('hidden');
   setPanelNav(el('screen-admin'), closeSettingsPanel,
     'Settings - ' + (SETTINGS_PANEL_NAMES[panelId] || panelId));
-  if (panelId === 'readings')   loadTodayReadings();
-  if (panelId === 'bugreports') loadBugReports();
-  if (panelId === 'kf-widget')  initKFWidgetPanel();
+  if (panelId === 'readings')       loadTodayReadings();
+  if (panelId === 'bugreports')     loadBugReports();
+  if (panelId === 'kf-widget')      initKFWidgetPanel();
+  if (panelId === 'running-wells')  initRunningWellsPanel();
   if (panelId === 'appinfo') {
     const ls = localStorage.getItem('watermark-last-sync');
     el('settings-last-sync').textContent = ls ? new Date(ls).toLocaleString() : 'Never';
@@ -5188,6 +5204,140 @@ el('kf-widget-save-btn').addEventListener('click', async () => {
   } catch (err) {
     showToast(err.message, 'error');
   }
+});
+
+// ── Running Wells Settings ────────────────────────────────────────────────────
+async function initRunningWellsPanel() {
+  const list = el('rw-settings-list');
+  list.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const [{ well_ids }, wells] = await Promise.all([
+      api('GET', '/api/settings/running-wells'),
+      api('GET', '/api/wells/operational'),
+    ]);
+    const savedSet = new Set(well_ids.map(Number));
+
+    // Group by area
+    const byArea = {};
+    wells.forEach(w => {
+      const area = w.area || 'Other';
+      if (!byArea[area]) byArea[area] = [];
+      byArea[area].push(w);
+    });
+
+    let html = '';
+    Object.entries(byArea).forEach(([area, areaWells]) => {
+      html += `<div class="rw-area-row">
+        <label class="rw-area-label">
+          <input type="checkbox" class="rw-area-cb" data-area="${area}">
+          <span>${area}</span>
+        </label>
+      </div>`;
+      areaWells.forEach(w => {
+        const checked = savedSet.has(Number(w.well_id)) ? 'checked' : '';
+        html += `<div class="rw-well-row">
+          <label class="rw-well-label">
+            <input type="checkbox" class="rw-well-cb" data-area="${area}" data-id="${w.well_id}" ${checked}>
+            <span>${w.common_name}</span>
+          </label>
+        </div>`;
+      });
+    });
+    list.innerHTML = html;
+
+    function syncAreaCheckbox(area) {
+      const wellCbs = list.querySelectorAll(`.rw-well-cb[data-area="${area}"]`);
+      const areaCb = list.querySelector(`.rw-area-cb[data-area="${area}"]`);
+      if (!areaCb) return;
+      const total = wellCbs.length;
+      const checked = [...wellCbs].filter(c => c.checked).length;
+      areaCb.checked = checked === total;
+      areaCb.indeterminate = checked > 0 && checked < total;
+    }
+
+    // Set initial area checkbox states
+    Object.keys(byArea).forEach(syncAreaCheckbox);
+
+    // Area checkbox toggles all wells in that area
+    list.querySelectorAll('.rw-area-cb').forEach(areaCb => {
+      areaCb.addEventListener('change', () => {
+        list.querySelectorAll(`.rw-well-cb[data-area="${areaCb.dataset.area}"]`)
+          .forEach(cb => { cb.checked = areaCb.checked; });
+      });
+    });
+
+    // Well checkbox updates its area checkbox state
+    list.querySelectorAll('.rw-well-cb').forEach(wellCb => {
+      wellCb.addEventListener('change', () => syncAreaCheckbox(wellCb.dataset.area));
+    });
+  } catch (err) {
+    list.innerHTML = `<div class="placeholder-msg">Failed to load.</div>`;
+  }
+}
+
+el('rw-settings-save-btn').addEventListener('click', async () => {
+  const checked = [...document.querySelectorAll('.rw-well-cb:checked')].map(cb => Number(cb.dataset.id));
+  try {
+    await api('PUT', '/api/settings/running-wells', { well_ids: checked });
+    showToast('Running wells saved');
+    loadDashboardStats();
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+});
+
+async function openRunningWellsModal() {
+  const body = el('rw-modal-body');
+  body.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  el('running-wells-modal').classList.remove('hidden');
+  try {
+    const { wells, total_cfs, total_count } = await api('GET', '/api/dashboard/running-wells');
+    if (!total_count) {
+      body.innerHTML = '<div class="placeholder-msg">No running wells configured.</div>';
+      return;
+    }
+
+    // Group by area
+    const byArea = {};
+    wells.forEach(w => {
+      const area = w.area || 'Other';
+      if (!byArea[area]) byArea[area] = [];
+      byArea[area].push(w);
+    });
+
+    let html = '';
+    Object.entries(byArea).forEach(([area, areaWells]) => {
+      html += `<div class="rw-modal-area">${area}</div>`;
+      areaWells.forEach(w => {
+        const dot = w.read_today
+          ? '<span class="rw-modal-dot rw-dot-read"></span>'
+          : '<span class="rw-modal-dot rw-dot-unread"></span>';
+        const cfs = w.read_today && w.on_off && w.flow_cfs != null
+          ? `${parseFloat(w.flow_cfs).toFixed(2)} cfs`
+          : '—';
+        html += `<div class="rw-modal-row">
+          <span class="rw-modal-well-name">${dot}${w.common_name}</span>
+          <span class="rw-modal-cfs">${cfs}</span>
+        </div>`;
+      });
+    });
+
+    html += `<div class="rw-modal-total">
+      <span>Total CFS (On)</span>
+      <span>${total_cfs.toFixed(2)} cfs</span>
+    </div>`;
+
+    body.innerHTML = html;
+  } catch (err) {
+    body.innerHTML = `<div class="placeholder-msg">Failed to load.</div>`;
+  }
+}
+
+el('rw-modal-close').addEventListener('click', () => {
+  el('running-wells-modal').classList.add('hidden');
+});
+el('running-wells-modal').addEventListener('click', e => {
+  if (e.target === el('running-wells-modal')) el('running-wells-modal').classList.add('hidden');
 });
 
 async function loadTodayReadings() {

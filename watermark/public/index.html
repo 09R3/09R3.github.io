@@ -129,7 +129,7 @@
         Sign in with Microsoft 365
       </a>
       <div id="ms-login-error" class="error-msg hidden"></div>
-      <div class="login-version">v 1.87</div>
+      <div class="login-version">v 1.88</div>
     </div>
   </div>
 </div>
@@ -1455,6 +1455,9 @@
         <button class="settings-menu-row" data-panel="kf-widget">
           <span>KF Widget</span><span class="settings-chevron">›</span>
         </button>
+        <button class="settings-menu-row" data-panel="running-wells">
+          <span>Running Wells</span><span class="settings-chevron">›</span>
+        </button>
       </div>
       <div class="settings-menu-card hidden" id="settings-admin-section">
         <button class="settings-menu-row" data-panel="bugreports">
@@ -1554,11 +1557,24 @@
       </div>
     </div>
 
+    <!-- Running Wells panel -->
+    <div id="settings-panel-running-wells" class="settings-panel hidden">
+      <div class="settings-section">
+        <p style="font-size:0.85rem;color:var(--text-dim);margin:0 0 12px">
+          Select wells that are currently running. These appear on the dashboard widget so operators know which wells need to be read each day.
+        </p>
+        <div id="rw-settings-list" class="settings-card" style="padding:4px 0">
+          <div class="placeholder-msg">Loading…</div>
+        </div>
+        <button class="btn btn-save" id="rw-settings-save-btn" style="margin-top:12px;width:100%">Save</button>
+      </div>
+    </div>
+
     <!-- App Info panel -->
     <div id="settings-panel-appinfo" class="settings-panel hidden">
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 1.87</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 1.88</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>
@@ -2192,6 +2208,17 @@
       <button class="modal-close" id="history-modal-close">&times;</button>
     </div>
     <div class="modal-body" id="history-modal-body"></div>
+  </div>
+</div>
+
+<!-- Running Wells Modal -->
+<div id="running-wells-modal" class="modal-overlay hidden">
+  <div class="modal-card" style="max-width:420px;width:calc(100vw - 32px)">
+    <div class="modal-header">
+      <h2>Running Wells — Today</h2>
+      <button class="modal-close" id="rw-modal-close">&times;</button>
+    </div>
+    <div class="modal-body" id="rw-modal-body" style="padding:0"></div>
   </div>
 </div>
 

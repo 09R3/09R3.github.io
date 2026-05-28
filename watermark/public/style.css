@@ -2720,6 +2720,59 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
 }
 .charts-gate-q-unit { font-size: 0.65rem; color: var(--text-dim); margin-top: 2px; }
 
+/* ── Running Wells ───────────────────────────────────────────────────────── */
+.rw-area-row {
+  padding: 10px 14px 4px;
+  border-top: 1px solid var(--border);
+}
+.rw-area-row:first-child { border-top: none; }
+.rw-area-label {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 0.82rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.05em; color: var(--text-dim);
+  cursor: pointer;
+}
+.rw-well-row { padding: 6px 14px 6px 36px; }
+.rw-well-label {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 0.95rem; color: var(--text); cursor: pointer;
+}
+.rw-area-label input[type="checkbox"],
+.rw-well-label input[type="checkbox"] {
+  width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; flex-shrink: 0;
+}
+
+/* Running wells modal */
+.rw-modal-area {
+  padding: 10px 16px 4px;
+  font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--text-dim);
+  border-top: 1px solid var(--border);
+}
+.rw-modal-area:first-child { border-top: none; }
+.rw-modal-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 16px; gap: 8px;
+}
+.rw-modal-well-name {
+  display: flex; align-items: center; gap: 8px; font-size: 0.95rem;
+}
+.rw-modal-cfs {
+  font-size: 0.9rem; color: var(--text-dim); font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+.rw-modal-dot {
+  width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex-shrink: 0;
+}
+.rw-dot-read    { background: var(--green, #4caf50); }
+.rw-dot-unread  { background: var(--yellow, #ffc107); }
+.rw-modal-total {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px; margin-top: 4px;
+  border-top: 2px solid var(--border);
+  font-weight: 700; font-size: 0.95rem;
+}
+
 /* ── Print ───────────────────────────────────────────────────────────────── */
 @media print {
   html, body, #app-shell {

@@ -3898,6 +3898,71 @@ app.put('/api/users/:id/password', requireAuth, async (req, res) => {
   }
 });
 
+// ── Running Wells Settings ────────────────────────────────────────────────────
+app.get('/api/settings/running-wells', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`SELECT value FROM app_settings WHERE key = 'running_wells'`);
+    const ids = rows.length ? JSON.parse(rows[0].value) : [];
+    res.json({ well_ids: ids });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/settings/running-wells', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+  const { well_ids } = req.body;
+  if (!Array.isArray(well_ids)) return res.status(400).json({ error: 'well_ids must be an array' });
+  try {
+    await pool.query(
+      `INSERT INTO app_settings (key, value, updated_at) VALUES ('running_wells', $1, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+      [JSON.stringify(well_ids)]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/dashboard/running-wells', requireAuth, async (req, res) => {
+  try {
+    const settingsRes = await pool.query(`SELECT value FROM app_settings WHERE key = 'running_wells'`);
+    const ids = settingsRes.rows.length ? JSON.parse(settingsRes.rows[0].value) : [];
+    if (!ids.length) return res.json({ wells: [], total_cfs: 0, read_today_count: 0, total_count: 0 });
+
+    const { rows } = await pool.query(
+      `WITH today_rdg AS (
+         SELECT DISTINCT ON (well_id) well_id, on_off, flow_cfs
+         FROM readings_well
+         WHERE reading_date = CURRENT_DATE
+         ORDER BY well_id, reading_time DESC NULLS LAST
+       )
+       SELECT w.well_id, w.common_name, w.area,
+              (tr.well_id IS NOT NULL) AS read_today,
+              tr.on_off, tr.flow_cfs
+       FROM wells w
+       JOIN (SELECT unnest($1::int[]) AS wid) r ON r.wid = w.well_id
+       LEFT JOIN today_rdg tr ON tr.well_id = w.well_id
+       ORDER BY w.area, w.common_name`,
+      [ids]
+    );
+
+    const read_today_count = rows.filter(r => r.read_today).length;
+    const total_cfs = rows
+      .filter(r => r.read_today && r.on_off)
+      .reduce((sum, r) => sum + (parseFloat(r.flow_cfs) || 0), 0);
+
+    res.json({
+      wells: rows,
+      total_cfs: Math.round(total_cfs * 100) / 100,
+      read_today_count,
+      total_count: rows.length,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Start ─────────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
