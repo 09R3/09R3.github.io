@@ -4497,9 +4497,7 @@ function createPiezItem(p, dateInput, timeInput) {
   const div = document.createElement('div');
   div.className = 'list-item';
 
-  const daysSince  = p.last_reading_date != null
-    ? Math.floor((Date.now() - new Date(p.last_reading_date + 'T00:00:00')) / 86400000)
-    : null;
+  const daysSince  = daysSinceDate(p.last_reading_date);
   const sc    = daysSince == null ? 'due' : daysSince > 7 ? 'overdue' : 'done';
   const badge = daysSince == null
     ? 'No reading'
