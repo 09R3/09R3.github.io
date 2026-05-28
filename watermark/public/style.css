@@ -2720,6 +2720,16 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
 }
 .charts-gate-q-unit { font-size: 0.65rem; color: var(--text-dim); margin-top: 2px; }
 
+/* ── Work Outside Hours Form ─────────────────────────────────────────────── */
+.woh-radio-group { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+.woh-radio { display: flex; align-items: center; gap: 8px; font-size: 0.95rem; cursor: pointer; }
+.woh-radio input[type="radio"] { width: 18px; height: 18px; accent-color: var(--accent); flex-shrink: 0; }
+.woh-radio-other { flex-wrap: wrap; gap: 6px; }
+.woh-other-input { display: inline-block; width: 140px !important; min-height: 32px !important; padding: 4px 8px !important; }
+.woh-type-label { display: flex; align-items: flex-start; gap: 10px; cursor: pointer; }
+.woh-type-label input[type="checkbox"] { width: 20px; height: 20px; accent-color: var(--accent); flex-shrink: 0; margin-top: 2px; }
+.woh-type-hint { font-size: 0.78rem; color: var(--text-muted); font-weight: 400; }
+
 /* ── KF Sets Modal ───────────────────────────────────────────────────────── */
 .kf-set-row {
   display: flex; align-items: center; gap: 10px;

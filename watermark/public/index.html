@@ -129,7 +129,7 @@
         Sign in with Microsoft 365
       </a>
       <div id="ms-login-error" class="error-msg hidden"></div>
-      <div class="login-version">v 1.92</div>
+      <div class="login-version">v 1.93</div>
     </div>
   </div>
 </div>
@@ -1574,7 +1574,7 @@
     <div id="settings-panel-appinfo" class="settings-panel hidden">
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 1.92</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 1.93</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>
@@ -1869,6 +1869,12 @@
           </div>
           <span class="dash-label">Time Off Request</span>
         </button>
+        <button class="dash-tile" data-hr-panel="work-outside">
+          <div class="dash-icon-wrap">
+            <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-print.svg);mask-image:url(/marv-site/icons/icon-print.svg)"></span>
+          </div>
+          <span class="dash-label">Work Outside Hours</span>
+        </button>
       </div>
     </div>
 
@@ -1898,6 +1904,113 @@
             <button class="btn btn-save" id="tor-submit-btn">Open in Email App</button>
           </div>
         </div>
+      </div>
+    </div>
+
+    <div id="hr-panel-work-outside" class="maint-panel hidden">
+      <div class="settings-section">
+        <div class="settings-card">
+          <div class="settings-pad">
+            <div class="form-group">
+              <label>Employee Name</label>
+              <input type="text" id="woh-name" class="ctrl-input" readonly style="color:var(--text-dim)">
+            </div>
+            <div class="form-group">
+              <label>Requested Date(s) / Time(s)</label>
+              <input type="text" id="woh-dates" class="ctrl-input" placeholder="e.g. 06/01/2026, 8:00 AM – 12:00 PM">
+            </div>
+            <div class="form-group">
+              <label>General Location</label>
+              <input type="text" id="woh-location" class="ctrl-input">
+            </div>
+            <div class="form-group">
+              <label>Requested By</label>
+              <div class="woh-radio-group">
+                <label class="woh-radio"><input type="radio" name="woh-req-by" value="Supervisor"> Supervisor</label>
+                <label class="woh-radio"><input type="radio" name="woh-req-by" value="Employee" checked> Employee</label>
+                <label class="woh-radio woh-radio-other">
+                  <input type="radio" name="woh-req-by" value="Other"> Other:
+                  <input type="text" id="woh-other-specify" class="ctrl-input woh-other-input" placeholder="Specify">
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Straight Time -->
+        <div class="settings-card woh-type-card">
+          <div class="settings-pad">
+            <label class="woh-type-label">
+              <input type="checkbox" id="woh-straight-cb" class="woh-type-cb">
+              <span><strong>Straight Time</strong> <span class="woh-type-hint">(less than 40 hrs/week combined)</span></span>
+            </label>
+            <div class="two-col" style="margin-top:10px">
+              <div class="form-group">
+                <label>Approx. Hours</label>
+                <input type="number" id="woh-straight-hours" class="ctrl-input" step="0.5" min="0" placeholder="0">
+              </div>
+              <div class="form-group">
+                <label>Key Code</label>
+                <input type="text" id="woh-straight-key" class="ctrl-input">
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Description</label>
+              <textarea id="woh-straight-desc" class="ctrl-textarea" rows="3"></textarea>
+            </div>
+          </div>
+        </div>
+
+        <!-- Overtime -->
+        <div class="settings-card woh-type-card">
+          <div class="settings-pad">
+            <label class="woh-type-label">
+              <input type="checkbox" id="woh-ot-cb" class="woh-type-cb">
+              <span><strong>Overtime</strong> <span class="woh-type-hint">(excess of 8 hrs/day or 40 hrs/week — 1.5× rate)</span></span>
+            </label>
+            <div class="two-col" style="margin-top:10px">
+              <div class="form-group">
+                <label>Approx. Hours</label>
+                <input type="number" id="woh-ot-hours" class="ctrl-input" step="0.5" min="0" placeholder="0">
+              </div>
+              <div class="form-group">
+                <label>Key Code</label>
+                <input type="text" id="woh-ot-key" class="ctrl-input">
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Description</label>
+              <textarea id="woh-ot-desc" class="ctrl-textarea" rows="3"></textarea>
+            </div>
+          </div>
+        </div>
+
+        <!-- Call-Back -->
+        <div class="settings-card woh-type-card">
+          <div class="settings-pad">
+            <label class="woh-type-label">
+              <input type="checkbox" id="woh-cb-cb" class="woh-type-cb">
+              <span><strong>Call-Back</strong> <span class="woh-type-hint">(return after leaving — 1.5× rate, 2 hr minimum)</span></span>
+            </label>
+            <div class="two-col" style="margin-top:10px">
+              <div class="form-group">
+                <label>Approx. Hours</label>
+                <input type="number" id="woh-cb-hours" class="ctrl-input" step="0.5" min="0" placeholder="0">
+              </div>
+              <div class="form-group">
+                <label>Key Code</label>
+                <input type="text" id="woh-cb-key" class="ctrl-input">
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Description</label>
+              <textarea id="woh-cb-desc" class="ctrl-textarea" rows="3"></textarea>
+            </div>
+          </div>
+        </div>
+
+        <div id="woh-error" class="error-msg hidden"></div>
+        <button class="btn btn-save" id="woh-generate-btn" style="width:100%;margin-top:4px">&#8679; Share / Save PDF</button>
       </div>
     </div>
 
