@@ -1108,6 +1108,51 @@ app.post('/api/readings/piezometer', requireAuth, async (req, res) => {
 });
 
 // ── DWR Well Run ──────────────────────────────────────────────────────────────
+// Generic wells-by-run lookup (DWR, Shallow, IWV) — used by GPS Location Selector
+app.get('/api/wells/by-run', requireAuth, async (req, res) => {
+  const { run } = req.query;
+  if (!run) return res.status(400).json({ error: 'run required' });
+  try {
+    const { rows } = await pool.query(
+      `SELECT well_id, common_name, state_well_number, gps_latitude, gps_longitude
+       FROM wells
+       WHERE LOWER(well_run) = LOWER($1)
+         AND (LOWER(status) != 'inactive' OR status IS NULL)
+       ORDER BY state_well_number, common_name`, [run]);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Update GPS coordinates for a well
+app.patch('/api/wells/:id/gps', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+  const { gps_latitude, gps_longitude } = req.body;
+  if (gps_latitude == null || gps_longitude == null) return res.status(400).json({ error: 'gps_latitude and gps_longitude required' });
+  try {
+    await pool.query(
+      `UPDATE wells SET gps_latitude=$1, gps_longitude=$2 WHERE well_id=$3`,
+      [gps_latitude, gps_longitude, req.params.id]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Update GPS coordinates for a piezometer
+app.patch('/api/piezometers/:id/gps', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+  const { gps_latitude, gps_longitude } = req.body;
+  if (gps_latitude == null || gps_longitude == null) return res.status(400).json({ error: 'gps_latitude and gps_longitude required' });
+  try {
+    await pool.query(
+      `UPDATE piezometers SET gps_latitude=$1, gps_longitude=$2 WHERE piezometer_id=$3`,
+      [gps_latitude, gps_longitude, req.params.id]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/wells/dwr', requireAuth, async (req, res) => {
   try {
     const { rows } = await pool.query(`

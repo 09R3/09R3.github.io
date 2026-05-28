@@ -129,7 +129,7 @@
         Sign in with Microsoft 365
       </a>
       <div id="ms-login-error" class="error-msg hidden"></div>
-      <div class="login-version">v 1.99</div>
+      <div class="login-version">v 2.00</div>
     </div>
   </div>
 </div>
@@ -1177,6 +1177,13 @@
       </div>
     </div>
 
+    <!-- GPS Location Selector button (supervisor/admin only — shown by JS) -->
+    <div id="gps-loc-btn-wrap" class="hidden" style="padding:8px 16px 0">
+      <button id="gps-loc-open-btn" class="btn btn-secondary" style="width:100%">
+        <span class="app-icon" style="width:16px;height:16px;margin-right:6px;-webkit-mask-image:url(/marv-site/icons/icon-map-pin.svg);mask-image:url(/marv-site/icons/icon-map-pin.svg)"></span>GPS Location Selector
+      </button>
+    </div>
+
     <!-- Coming Soon panel (shared) -->
     <div id="wr-panel-soon" class="maint-panel hidden">
       <div class="placeholder-msg" style="margin-top:40px">Coming Soon</div>
@@ -1574,7 +1581,7 @@
     <div id="settings-panel-appinfo" class="settings-panel hidden">
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 1.99</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 2.00</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>
@@ -2323,6 +2330,48 @@
     </div>
     <div id="gps-map-container" style="height:min(520px,65vh);width:100%;border-radius:8px;overflow:hidden;margin-top:8px"></div>
     <div id="gps-map-coords" style="font-size:0.75rem;text-align:center;margin-top:6px;color:var(--text-dim)"></div>
+  </div>
+</div>
+
+<!-- GPS Location Selector Modal -->
+<div id="gps-loc-overlay" class="modal-overlay hidden">
+  <div class="modal-card gps-loc-card">
+    <div class="modal-header">
+      <span class="modal-title">GPS Location Selector</span>
+      <button class="modal-close" id="gps-loc-close">&times;</button>
+    </div>
+    <div class="gps-loc-form">
+      <div class="two-col" style="gap:10px">
+        <div class="form-group" style="margin-bottom:0">
+          <label>Category</label>
+          <select id="gps-loc-category" class="ctrl-select">
+            <option value="">— Select —</option>
+            <option value="DWR">DWR</option>
+            <option value="Shallow">Shallow</option>
+            <option value="IWV">IWV</option>
+            <option value="Piezometers">Piezometers</option>
+          </select>
+        </div>
+        <div class="form-group" id="gps-loc-pool-group" style="margin-bottom:0;display:none">
+          <label>Pool</label>
+          <select id="gps-loc-pool" class="ctrl-select">
+            <option value="">— Select pool —</option>
+          </select>
+        </div>
+        <div class="form-group" id="gps-loc-well-group" style="margin-bottom:0">
+          <label>Well / Piezometer</label>
+          <select id="gps-loc-well" class="ctrl-select" disabled>
+            <option value="">— Select category first —</option>
+          </select>
+        </div>
+      </div>
+      <div id="gps-loc-existing" class="gps-loc-existing hidden"></div>
+    </div>
+    <div id="gps-loc-map" class="gps-loc-map"></div>
+    <div class="gps-loc-footer">
+      <div id="gps-loc-coords" class="gps-loc-coords">Tap map to place pin</div>
+      <button id="gps-loc-save" class="btn btn-save" disabled>Save Location</button>
+    </div>
   </div>
 </div>
 

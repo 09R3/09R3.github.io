@@ -2815,6 +2815,45 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
   font-weight: 700; font-size: 0.95rem;
 }
 
+/* ── GPS Location Selector ───────────────────────────────────────────────── */
+.gps-loc-card {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 540px;
+  height: 90vh;
+  overflow: hidden;
+}
+.gps-loc-form {
+  padding: 12px 16px 8px;
+  flex-shrink: 0;
+}
+.gps-loc-map {
+  flex: 1;
+  min-height: 0;
+}
+.gps-loc-footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.gps-loc-coords {
+  flex: 1;
+  font-size: 0.82rem;
+  color: var(--text-dim);
+  font-family: monospace;
+}
+.gps-loc-existing {
+  font-size: 0.82rem;
+  color: var(--text-dim);
+  padding: 4px 0 6px;
+  margin-top: 6px;
+}
+.gps-loc-existing.has-coords { color: var(--yellow); }
+
 /* ── Print ───────────────────────────────────────────────────────────────── */
 @media print {
   html, body, #app-shell {

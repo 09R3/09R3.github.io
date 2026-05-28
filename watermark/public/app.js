@@ -384,6 +384,15 @@ let _setLeafletMap = null;
 let _setLeafletMarkers = [];
 let _setLocationMarker = null;
 
+// GPS Location Selector state
+let _gpsLocMap = null;
+let _gpsLocPinMarker = null;
+let _gpsLocExistingMarker = null;
+let _gpsLocUserMarker = null;
+let _gpsLocPin = null;        // { lat, lng } of tapped point
+let _gpsLocSelected = null;   // { type, id, name, existingLat, existingLng }
+let _gpsLocWellData = [];     // cached well/piez list for current category
+
 function openSetMapModal(setName, wells) {
   const validWells = wells.filter(w => w.gps_latitude && w.gps_longitude);
   if (!validWells.length) { showToast('No GPS coordinates for this set', 'error'); return; }
@@ -8428,11 +8437,248 @@ const DWR_QUEST_MEAS = [
 let dwrWells = [];
 let dwrDoneThisSession = new Set(); // well_ids saved this session
 
+/* ── GPS Location Selector ───────────────────────────────────────────────── */
+function openGPSLocSelector() {
+  el('gps-loc-overlay').classList.remove('hidden');
+  el('gps-loc-category').value = '';
+  el('gps-loc-pool').innerHTML = '<option value="">— Select pool —</option>';
+  el('gps-loc-pool-group').style.display = 'none';
+  el('gps-loc-well').innerHTML = '<option value="">— Select category first —</option>';
+  el('gps-loc-well').disabled = true;
+  el('gps-loc-existing').className = 'gps-loc-existing hidden';
+  el('gps-loc-existing').textContent = '';
+  el('gps-loc-coords').textContent = 'Tap map to place pin';
+  el('gps-loc-save').disabled = true;
+  _gpsLocPin = null;
+  _gpsLocSelected = null;
+  _gpsLocWellData = [];
+
+  setTimeout(() => {
+    if (_gpsLocMap) { _gpsLocMap.remove(); _gpsLocMap = null; }
+    _gpsLocPinMarker = null;
+    _gpsLocExistingMarker = null;
+    _gpsLocUserMarker = null;
+
+    _gpsLocMap = L.map('gps-loc-map', { zoomControl: true, attributionControl: false })
+      .setView([35.37, -119.02], 14);
+    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+      maxZoom: 20
+    }).addTo(_gpsLocMap);
+
+    _gpsLocMap.on('click', e => {
+      const lat = parseFloat(e.latlng.lat.toFixed(7));
+      const lng = parseFloat(e.latlng.lng.toFixed(7));
+      _gpsLocPin = { lat, lng };
+      el('gps-loc-coords').textContent = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+
+      const pinIcon = L.divIcon({
+        className: '',
+        html: '<div style="width:14px;height:14px;border-radius:50%;background:#ef4444;border:3px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,0.5)"></div>',
+        iconSize: [14, 14],
+        iconAnchor: [7, 7],
+      });
+      if (_gpsLocPinMarker) _gpsLocPinMarker.remove();
+      _gpsLocPinMarker = L.marker([lat, lng], { icon: pinIcon }).addTo(_gpsLocMap);
+      _gpsLocPinMarker.bindPopup('New location').openPopup();
+      updateGPSLocSaveBtn();
+    });
+
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(pos => {
+        if (!_gpsLocMap) return;
+        const { latitude, longitude } = pos.coords;
+        const locIcon = L.divIcon({
+          className: '',
+          html: '<div class="map-my-location"></div>',
+          iconSize: [18, 18],
+          iconAnchor: [9, 9],
+        });
+        if (_gpsLocUserMarker) _gpsLocUserMarker.remove();
+        _gpsLocUserMarker = L.marker([latitude, longitude], { icon: locIcon })
+          .addTo(_gpsLocMap)
+          .bindPopup('<strong>You are here</strong>');
+        _gpsLocMap.setView([latitude, longitude], 16);
+      }, () => { /* silent */ });
+    }
+
+    _gpsLocMap.invalidateSize();
+  }, 50);
+}
+
+function closeGPSLocSelector() {
+  el('gps-loc-overlay').classList.add('hidden');
+  if (_gpsLocMap) { _gpsLocMap.remove(); _gpsLocMap = null; }
+  _gpsLocPinMarker = null;
+  _gpsLocExistingMarker = null;
+  _gpsLocUserMarker = null;
+  _gpsLocPin = null;
+  _gpsLocSelected = null;
+  _gpsLocWellData = [];
+}
+
+async function onGPSLocCategoryChange() {
+  const cat = el('gps-loc-category').value;
+  _gpsLocSelected = null;
+  _gpsLocWellData = [];
+  el('gps-loc-well').innerHTML = '<option value="">Loading…</option>';
+  el('gps-loc-well').disabled = true;
+  el('gps-loc-existing').className = 'gps-loc-existing hidden';
+  el('gps-loc-pool-group').style.display = 'none';
+  updateGPSLocSaveBtn();
+
+  if (!cat) {
+    el('gps-loc-well').innerHTML = '<option value="">— Select category first —</option>';
+    return;
+  }
+
+  if (cat === 'Piezometers') {
+    el('gps-loc-pool-group').style.display = '';
+    // Build pool list from piezAllItems if loaded, else fetch
+    let piez = piezAllItems;
+    if (!piez || !piez.length) {
+      try { piez = await api('GET', '/api/piezometers'); } catch { piez = []; }
+    }
+    _gpsLocWellData = piez;
+    const pools = [...new Set(piez.map(p => p.pool).filter(Boolean))].sort((a, b) => {
+      const na = parseInt(a.replace(/\D/g, '')) || 0;
+      const nb = parseInt(b.replace(/\D/g, '')) || 0;
+      return na !== nb ? na - nb : a.localeCompare(b);
+    });
+    el('gps-loc-pool').innerHTML = '<option value="">— Select pool —</option>' +
+      pools.map(p => `<option value="${escHtml(p)}">${escHtml(p)}</option>`).join('');
+    el('gps-loc-well').innerHTML = '<option value="">— Select pool first —</option>';
+  } else {
+    try {
+      const wells = await api('GET', `/api/wells/by-run?run=${encodeURIComponent(cat)}`);
+      _gpsLocWellData = wells;
+      if (!wells.length) {
+        el('gps-loc-well').innerHTML = '<option value="">No wells found</option>';
+      } else {
+        el('gps-loc-well').innerHTML = '<option value="">— Select well —</option>' +
+          wells.map(w => {
+            const label = [w.state_well_number, w.common_name].filter(Boolean).join(' — ');
+            return `<option value="${w.well_id}" data-lat="${w.gps_latitude ?? ''}" data-lng="${w.gps_longitude ?? ''}">${escHtml(label)}</option>`;
+          }).join('');
+        el('gps-loc-well').disabled = false;
+      }
+    } catch {
+      el('gps-loc-well').innerHTML = '<option value="">Failed to load</option>';
+    }
+  }
+}
+
+function onGPSLocPoolChange() {
+  const pool = el('gps-loc-pool').value;
+  _gpsLocSelected = null;
+  el('gps-loc-existing').className = 'gps-loc-existing hidden';
+  updateGPSLocSaveBtn();
+
+  if (!pool) {
+    el('gps-loc-well').innerHTML = '<option value="">— Select pool first —</option>';
+    el('gps-loc-well').disabled = true;
+    return;
+  }
+  const filtered = _gpsLocWellData.filter(p => p.pool === pool);
+  if (!filtered.length) {
+    el('gps-loc-well').innerHTML = '<option value="">No piezometers in this pool</option>';
+    el('gps-loc-well').disabled = true;
+    return;
+  }
+  el('gps-loc-well').innerHTML = '<option value="">— Select piezometer —</option>' +
+    filtered.map(p => `<option value="${p.piezometer_id}" data-lat="${p.gps_latitude ?? ''}" data-lng="${p.gps_longitude ?? ''}">${escHtml(p.piezometer_name)}</option>`).join('');
+  el('gps-loc-well').disabled = false;
+}
+
+function onGPSLocWellChange() {
+  const opt = el('gps-loc-well').selectedOptions[0];
+  if (!opt || !opt.value) {
+    _gpsLocSelected = null;
+    el('gps-loc-existing').className = 'gps-loc-existing hidden';
+    updateGPSLocSaveBtn();
+    return;
+  }
+  const cat = el('gps-loc-category').value;
+  const isPiez = cat === 'Piezometers';
+  const existingLat = opt.dataset.lat ? parseFloat(opt.dataset.lat) : null;
+  const existingLng = opt.dataset.lng ? parseFloat(opt.dataset.lng) : null;
+
+  _gpsLocSelected = {
+    type: isPiez ? 'piezometer' : 'well',
+    id:   opt.value,
+    name: opt.textContent,
+    existingLat,
+    existingLng,
+  };
+
+  const existEl = el('gps-loc-existing');
+  if (existingLat && existingLng) {
+    existEl.className = 'gps-loc-existing has-coords';
+    existEl.textContent = `Existing: ${existingLat.toFixed(6)}, ${existingLng.toFixed(6)}`;
+
+    const greyIcon = L.divIcon({
+      className: '',
+      html: '<div style="width:12px;height:12px;border-radius:50%;background:#9ca3af;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,0.4)"></div>',
+      iconSize: [12, 12],
+      iconAnchor: [6, 6],
+    });
+    if (_gpsLocExistingMarker) _gpsLocExistingMarker.remove();
+    _gpsLocExistingMarker = L.marker([existingLat, existingLng], { icon: greyIcon })
+      .addTo(_gpsLocMap)
+      .bindPopup(`Current: ${existingLat.toFixed(6)}, ${existingLng.toFixed(6)}`);
+    _gpsLocMap.setView([existingLat, existingLng], 16);
+  } else {
+    existEl.className = 'gps-loc-existing';
+    existEl.textContent = 'No coordinates set';
+    if (_gpsLocExistingMarker) { _gpsLocExistingMarker.remove(); _gpsLocExistingMarker = null; }
+  }
+
+  updateGPSLocSaveBtn();
+}
+
+function updateGPSLocSaveBtn() {
+  el('gps-loc-save').disabled = !(_gpsLocSelected && _gpsLocPin);
+}
+
+async function saveGPSLocation() {
+  if (!_gpsLocSelected || !_gpsLocPin) return;
+  if (_gpsLocSelected.existingLat && _gpsLocSelected.existingLng) {
+    if (!confirm(`"${_gpsLocSelected.name}" already has GPS coordinates.\nOverwrite with the new location?`)) return;
+  }
+  const endpoint = _gpsLocSelected.type === 'well'
+    ? `/api/wells/${_gpsLocSelected.id}/gps`
+    : `/api/piezometers/${_gpsLocSelected.id}/gps`;
+  try {
+    el('gps-loc-save').disabled = true;
+    el('gps-loc-save').textContent = 'Saving…';
+    await api('PATCH', endpoint, { gps_latitude: _gpsLocPin.lat, gps_longitude: _gpsLocPin.lng });
+    showToast(`GPS saved for ${_gpsLocSelected.name}`, 'success');
+    closeGPSLocSelector();
+  } catch (err) {
+    showToast('Save failed: ' + err.message, 'error');
+    el('gps-loc-save').disabled = false;
+    el('gps-loc-save').textContent = 'Save Location';
+  }
+}
+
+el('gps-loc-close').addEventListener('click', closeGPSLocSelector);
+el('gps-loc-overlay').addEventListener('click', e => { if (e.target === el('gps-loc-overlay')) closeGPSLocSelector(); });
+el('gps-loc-category').addEventListener('change', onGPSLocCategoryChange);
+el('gps-loc-pool').addEventListener('change', onGPSLocPoolChange);
+el('gps-loc-well').addEventListener('change', onGPSLocWellChange);
+el('gps-loc-save').addEventListener('click', saveGPSLocation);
+
 const WR_PANEL_NAMES = { dwr: 'DWR', kcwa: 'KCWA Piezometers' };
 let wellRunsInited = false;
 function initWellRunsScreen() {
   if (wellRunsInited) return;
   wellRunsInited = true;
+
+  const role = currentUser?.role;
+  if (role === 'admin' || role === 'supervisor') {
+    el('gps-loc-btn-wrap').classList.remove('hidden');
+    el('gps-loc-open-btn').addEventListener('click', openGPSLocSelector);
+  }
+
   document.querySelectorAll('[data-wr-panel]').forEach(tile => {
     tile.addEventListener('click', () => {
       const panel = tile.dataset.wrPanel;
