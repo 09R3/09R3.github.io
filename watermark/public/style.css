@@ -2751,15 +2751,20 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
 }
 .rw-modal-area:first-child { border-top: none; }
 .rw-modal-row {
-  display: flex; align-items: center; justify-content: space-between;
+  display: flex; align-items: center;
   padding: 8px 16px; gap: 8px;
 }
 .rw-modal-well-name {
-  display: flex; align-items: center; gap: 8px; font-size: 0.95rem;
+  display: flex; align-items: center; gap: 8px; font-size: 0.95rem; flex: 1; min-width: 0;
 }
+.rw-modal-status {
+  font-size: 0.78rem; font-weight: 600; flex-shrink: 0; width: 64px; text-align: center;
+}
+.rw-status-read    { color: var(--green, #4caf50); }
+.rw-status-unread  { color: var(--text-muted); }
 .rw-modal-cfs {
   font-size: 0.9rem; color: var(--text-dim); font-variant-numeric: tabular-nums;
-  flex-shrink: 0;
+  flex-shrink: 0; width: 64px; text-align: right;
 }
 .rw-modal-dot {
   width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex-shrink: 0;

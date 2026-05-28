@@ -989,7 +989,7 @@ app.get('/api/wells/operational', requireAuth, async (req, res) => {
   try {
     const { rows } = await pool.query(`
       SELECT
-        w.well_id, w.common_name, w.area, w.well_type, w.status,
+        w.well_id, w.common_name, w.area, w.discharge_pool, w.well_type, w.status,
         w.gps_latitude, w.gps_longitude,
         r.reading_id        AS last_reading_id,
         r.reading_date      AS last_reading_date,
@@ -1014,7 +1014,7 @@ app.get('/api/wells/operational', requireAuth, async (req, res) => {
       ) r ON true
       WHERE LOWER(w.well_type) LIKE '%operational%'
         AND (LOWER(w.status) NOT IN ('inactive','removed') OR w.status IS NULL)
-      ORDER BY w.area, w.common_name
+      ORDER BY w.discharge_pool NULLS LAST, w.common_name
     `);
     res.json(rows);
   } catch (err) {
@@ -3937,13 +3937,13 @@ app.get('/api/dashboard/running-wells', requireAuth, async (req, res) => {
          WHERE reading_date = CURRENT_DATE
          ORDER BY well_id, reading_time DESC NULLS LAST
        )
-       SELECT w.well_id, w.common_name, w.area,
+       SELECT w.well_id, w.common_name, w.discharge_pool,
               (tr.well_id IS NOT NULL) AS read_today,
               tr.on_off, tr.flow_cfs
        FROM wells w
        JOIN (SELECT unnest($1::int[]) AS wid) r ON r.wid = w.well_id
        LEFT JOIN today_rdg tr ON tr.well_id = w.well_id
-       ORDER BY w.area, w.common_name`,
+       ORDER BY w.discharge_pool NULLS LAST, w.common_name`,
       [ids]
     );
 
