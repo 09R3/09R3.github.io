@@ -4497,11 +4497,13 @@ function createPiezItem(p, dateInput, timeInput) {
   const div = document.createElement('div');
   div.className = 'list-item';
 
-  const hasReading = p.last_reading_date != null;
-  const sc         = hasReading ? 'done' : 'due';
-  const badge      = hasReading
-    ? localDateStr(p.last_reading_date, { month: 'short', day: 'numeric' })
-    : 'No reading';
+  const daysSince  = p.last_reading_date != null
+    ? Math.floor((Date.now() - new Date(p.last_reading_date + 'T00:00:00')) / 86400000)
+    : null;
+  const sc    = daysSince == null ? 'due' : daysSince > 7 ? 'overdue' : 'done';
+  const badge = daysSince == null
+    ? 'No reading'
+    : localDateStr(p.last_reading_date, { month: 'short', day: 'numeric' });
   const prevDTW    = p.last_dtw != null ? `${Number(p.last_dtw).toFixed(2)} ft` : null;
   const prevMethod = p.last_method ? p.last_method.charAt(0).toUpperCase() + p.last_method.slice(1) : null;
   const prevCond   = p.last_wet_dry_moist ? p.last_wet_dry_moist.charAt(0).toUpperCase() + p.last_wet_dry_moist.slice(1) : null;
