@@ -3898,6 +3898,42 @@ app.put('/api/users/:id/password', requireAuth, async (req, res) => {
   }
 });
 
+// ── KF By-Set Dashboard ───────────────────────────────────────────────────────
+app.get('/api/dashboard/kf-by-set', requireAuth, async (req, res) => {
+  try {
+    const settingsRes = await pool.query(
+      `SELECT key, value FROM app_settings WHERE key IN ('kf_widget_start','kf_widget_end')`
+    ).catch(() => ({ rows: [] }));
+    const m = Object.fromEntries(settingsRes.rows.map(r => [r.key, r.value]));
+    const now = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    const defaultStart = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-01`;
+    const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    const defaultEnd = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(lastDay)}`;
+    const kfStart = m['kf_widget_start'] || defaultStart;
+    const kfEnd   = m['kf_widget_end']   || defaultEnd;
+
+    const { rows } = await pool.query(`
+      SELECT
+        ws.set_name,
+        COUNT(DISTINCT w.well_id)::int                                          AS total_wells,
+        COUNT(DISTINCT CASE WHEN r.well_id IS NOT NULL THEN r.well_id END)::int AS wells_read
+      FROM well_sets ws
+      JOIN wells w ON w.kf_set_id = ws.set_id
+        AND (LOWER(w.status) != 'inactive' OR w.status IS NULL)
+      LEFT JOIN readings_kf_monthly r
+        ON r.well_id = w.well_id
+        AND r.reading_date BETWEEN $1 AND $2
+      GROUP BY ws.set_id, ws.set_name
+      ORDER BY ws.set_name
+    `, [kfStart, kfEnd]);
+
+    res.json({ sets: rows, kf_start: kfStart, kf_end: kfEnd });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Running Wells Settings ────────────────────────────────────────────────────
 app.get('/api/settings/running-wells', requireAuth, async (req, res) => {
   try {

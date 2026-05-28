@@ -626,7 +626,7 @@ async function loadDashboardStats() {
       : `<span style="font-size:1rem;color:var(--text-muted)">—</span>`;
     const grid = el('dashboard-stats');
     grid.innerHTML = `
-      <div class="stat-card stat-accent">
+      <div class="stat-card stat-accent" id="kf-complete-stat" style="cursor:pointer">
         <div class="stat-value">${s.kf_done}<span style="font-size:1rem;color:var(--text-dim)">/${s.kf_total}</span></div>
         <div class="stat-label">KF Complete</div>
         <div class="stat-sublabel">${rangeLabel}</div>
@@ -644,6 +644,7 @@ async function loadDashboardStats() {
       </div>
     `;
     el('running-wells-stat').addEventListener('click', openRunningWellsModal);
+    el('kf-complete-stat').addEventListener('click', openKFSetsModal);
   } catch { /* non-critical */ }
 }
 
@@ -5281,6 +5282,64 @@ el('rw-settings-save-btn').addEventListener('click', async () => {
   } catch (err) {
     showToast(err.message, 'error');
   }
+});
+
+async function openKFSetsModal() {
+  const body = el('kf-sets-modal-body');
+  body.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  el('kf-sets-modal').classList.remove('hidden');
+  try {
+    const { sets, kf_start, kf_end } = await api('GET', '/api/dashboard/kf-by-set');
+    const fmtDate = str => {
+      if (!str) return '';
+      const [y, m, d] = str.split('-');
+      return new Date(+y, +m - 1, +d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    };
+    el('kf-sets-modal-title').textContent =
+      `KF Complete — ${fmtDate(kf_start)} – ${fmtDate(kf_end)}`;
+
+    if (!sets.length) {
+      body.innerHTML = '<div class="placeholder-msg">No KF sets found.</div>';
+      return;
+    }
+
+    const totalWells = sets.reduce((s, r) => s + r.total_wells, 0);
+    const totalRead  = sets.reduce((s, r) => s + r.wells_read, 0);
+
+    let html = '';
+    sets.forEach(r => {
+      const pct = r.total_wells > 0 ? Math.round((r.wells_read / r.total_wells) * 100) : 0;
+      html += `<div class="kf-set-row">
+        <div class="kf-set-name">${r.set_name}</div>
+        <div class="kf-set-count">${r.wells_read}<span class="kf-set-total">/${r.total_wells}</span></div>
+        <div class="kf-set-bar-wrap">
+          <div class="kf-set-bar"><div class="kf-set-bar-fill" style="width:${pct}%"></div></div>
+          <span class="kf-set-pct">${pct}%</span>
+        </div>
+      </div>`;
+    });
+
+    const totalPct = totalWells > 0 ? Math.round((totalRead / totalWells) * 100) : 0;
+    html += `<div class="kf-set-total-row">
+      <div class="kf-set-name">Total</div>
+      <div class="kf-set-count">${totalRead}<span class="kf-set-total">/${totalWells}</span></div>
+      <div class="kf-set-bar-wrap">
+        <div class="kf-set-bar"><div class="kf-set-bar-fill" style="width:${totalPct}%"></div></div>
+        <span class="kf-set-pct">${totalPct}%</span>
+      </div>
+    </div>`;
+
+    body.innerHTML = html;
+  } catch (err) {
+    body.innerHTML = '<div class="placeholder-msg">Failed to load.</div>';
+  }
+}
+
+el('kf-sets-modal-close').addEventListener('click', () => {
+  el('kf-sets-modal').classList.add('hidden');
+});
+el('kf-sets-modal').addEventListener('click', e => {
+  if (e.target === el('kf-sets-modal')) el('kf-sets-modal').classList.add('hidden');
 });
 
 async function openRunningWellsModal() {
