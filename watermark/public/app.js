@@ -346,6 +346,25 @@ function openLocationModal(lat, lon, name) {
     }).addTo(_locationMap);
     L.marker([lat, lon]).addTo(_locationMap);
     _locationMap.invalidateSize();
+
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(pos => {
+        if (!_locationMap) return;
+        const { latitude, longitude } = pos.coords;
+        const locationIcon = L.divIcon({
+          className: '',
+          html: '<div class="map-my-location"></div>',
+          iconSize: [18, 18],
+          iconAnchor: [9, 9],
+        });
+        L.marker([latitude, longitude], { icon: locationIcon })
+          .addTo(_locationMap)
+          .bindPopup('<strong>You are here</strong>');
+        _locationMap.fitBounds(
+          L.latLngBounds([[lat, lon], [latitude, longitude]]).pad(0.2)
+        );
+      }, () => { /* permission denied or unavailable — silent */ });
+    }
   }, 50);
 }
 function _closeLocationModal() {
