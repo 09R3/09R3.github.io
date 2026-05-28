@@ -189,6 +189,7 @@ async function loadTable(schema, table) {
   rowCount.textContent = '…';
   filterBar.classList.remove('hidden');
   gridContainer.innerHTML = loadingGrid();
+  $('tbl-col-bar').classList.add('hidden');
   pagination.classList.add('hidden');
 
   try {
@@ -232,6 +233,7 @@ function renderGrid(rows, columns) {
   }
   html += '</tbody></table>';
   gridContainer.innerHTML = html;
+  initColSelect(gridContainer, $('tbl-col-bar'), $('tbl-col-label'), { useCtrl: true });
 
   gridContainer.querySelectorAll('th[data-col]').forEach(th => {
     th.addEventListener('click', () => {
@@ -1010,14 +1012,15 @@ let rwrDelta = { active: false };
 const colSel = { copy: null, clear: null };
 
 // One-time button setup — avoids stacking listeners on re-runs
-for (const pfx of ['rph', 'rwr', 'rcr', 'rch', 'rkf', 'rpge', 'rpm', 'rdwr', 'rvm', 'rdo']) {
+for (const pfx of ['rph', 'rwr', 'rcr', 'rch', 'rkf', 'rpge', 'rpm', 'rdwr', 'rvm', 'rdo', 'tbl']) {
   $(`${pfx}-col-copy`)?.addEventListener('click', () => colSel.copy?.());
   $(`${pfx}-col-clear`)?.addEventListener('click', () => colSel.clear?.());
   wireMonthSelect(`${pfx}-month`, $(`${pfx}-from`), $(`${pfx}-to`));
 }
 
 document.addEventListener('keydown', e => {
-  if ((e.ctrlKey || e.metaKey) && e.key === 'c' && colSel.copy && !reportPanel.classList.contains('hidden')) {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'c' && colSel.copy &&
+      (!reportPanel.classList.contains('hidden') || !$('tbl-col-bar').classList.contains('hidden'))) {
     const sel = window.getSelection();
     if (!sel || sel.isCollapsed) { e.preventDefault(); colSel.copy(); }
   }
@@ -1039,7 +1042,7 @@ function writeToClipboard(text) {
   }
 }
 
-function initColSelect(gridEl, copyBarEl, labelEl) {
+function initColSelect(gridEl, copyBarEl, labelEl, { useCtrl = false } = {}) {
   copyBarEl.classList.add('hidden');
   const table = gridEl.querySelector('.data-table');
   if (!table) { colSel.copy = null; colSel.clear = null; return; }
@@ -1074,7 +1077,9 @@ function initColSelect(gridEl, copyBarEl, labelEl) {
 
   headers.forEach((th, idx) => {
     th.classList.add('col-selectable');
-    th.addEventListener('click', () => {
+    if (useCtrl) th.title = 'Ctrl+Click to select column';
+    th.addEventListener('click', e => {
+      if (useCtrl && !e.ctrlKey && !e.metaKey) return;
       selectedCols.has(idx) ? selectedCols.delete(idx) : selectedCols.add(idx);
       updateHighlight();
     });
@@ -1172,6 +1177,7 @@ function showSubPanel(id) {
 
 function showReport(name, title) {
   colSel.copy = null; colSel.clear = null;
+  $('tbl-col-bar').classList.add('hidden');
   gridContainer.classList.add('hidden');
   filterBar.classList.add('hidden');
   pagination.classList.add('hidden');
