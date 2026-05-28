@@ -17,6 +17,10 @@ let state = {
   sort: '',
   sortDir: 'asc',
   sqlResult: null,
+  copyMode: false,
+  sqlCopyMode: false,
+  tableRows: null,
+  tableColumns: null,
 };
 
 // ── Elements ───────────────────────────────────────────────────────────────────
@@ -213,13 +217,15 @@ async function loadTable(schema, table) {
 }
 
 function renderGrid(rows, columns) {
+  state.tableRows = rows;
+  state.tableColumns = columns;
   if (!rows.length) {
     gridContainer.innerHTML = emptyState('No rows found');
     return;
   }
   let html = '<table class="data-table"><thead><tr>';
   for (const col of columns) {
-    const isSorted = state.sort === col;
+    const isSorted = !state.copyMode && state.sort === col;
     const arrow = isSorted ? (state.sortDir === 'asc' ? '▲' : '▼') : '';
     html += `<th class="${isSorted ? 'sorted' : ''}" data-col="${esc(col)}">${esc(col)}<span class="sort-arrow">${arrow}</span></th>`;
   }
@@ -233,21 +239,24 @@ function renderGrid(rows, columns) {
   }
   html += '</tbody></table>';
   gridContainer.innerHTML = html;
-  initColSelect(gridContainer, $('tbl-col-bar'), $('tbl-col-label'), { useCtrl: true });
 
-  gridContainer.querySelectorAll('th[data-col]').forEach(th => {
-    th.addEventListener('click', () => {
-      const col = th.dataset.col;
-      if (state.sort === col) {
-        state.sortDir = state.sortDir === 'asc' ? 'desc' : 'asc';
-      } else {
-        state.sort = col;
-        state.sortDir = 'asc';
-      }
-      state.page = 1;
-      loadTable(state.currentSchema, state.currentTable);
+  if (state.copyMode) {
+    initColSelect(gridContainer, $('tbl-col-bar'), $('tbl-col-label'));
+  } else {
+    gridContainer.querySelectorAll('th[data-col]').forEach(th => {
+      th.addEventListener('click', () => {
+        const col = th.dataset.col;
+        if (state.sort === col) {
+          state.sortDir = state.sortDir === 'asc' ? 'desc' : 'asc';
+        } else {
+          state.sort = col;
+          state.sortDir = 'asc';
+        }
+        state.page = 1;
+        loadTable(state.currentSchema, state.currentTable);
+      });
     });
-  });
+  }
 }
 
 function formatCell(val) {
@@ -305,6 +314,14 @@ pageSize.addEventListener('change', () => {
   if (state.currentTable) loadTable(state.currentSchema, state.currentTable);
 });
 
+// ── Table copy-mode toggle ─────────────────────────────────────────────────────────────
+$('tbl-copy-toggle').addEventListener('click', () => {
+  state.copyMode = !state.copyMode;
+  $('tbl-copy-toggle').classList.toggle('active', state.copyMode);
+  if (state.tableRows) renderGrid(state.tableRows, state.tableColumns);
+  if (!state.copyMode) $('tbl-col-bar').classList.add('hidden');
+});
+
 // ── Exports (table) ────────────────────────────────────────────────────────────────────
 $('export-btn').addEventListener('click', () => {
   if (!state.currentTable) return alert('Select a table first.');
@@ -316,7 +333,21 @@ $('export-btn').addEventListener('click', () => {
 
 // ── SQL Editor ─────────────────────────────────────────────────────────────────────────
 $('sql-editor-btn').addEventListener('click', () => sqlPanel.classList.remove('hidden'));
-$('sql-close-btn').addEventListener('click', () => sqlPanel.classList.add('hidden'));
+$('sql-close-btn').addEventListener('click', () => {
+  sqlPanel.classList.add('hidden');
+  $('sql-col-bar').classList.add('hidden');
+  colSel.copy = null; colSel.clear = null;
+});
+$('sql-copy-toggle').addEventListener('click', () => {
+  state.sqlCopyMode = !state.sqlCopyMode;
+  $('sql-copy-toggle').classList.toggle('active', state.sqlCopyMode);
+  if (state.sqlCopyMode) {
+    if (state.sqlResult) initColSelect(sqlResult, $('sql-col-bar'), $('sql-col-label'));
+  } else {
+    $('sql-col-bar').classList.add('hidden');
+    colSel.copy = null; colSel.clear = null;
+  }
+});
 
 $('sql-run-btn').addEventListener('click', runSQL);
 sqlEditor.addEventListener('keydown', e => {
@@ -366,6 +397,7 @@ function renderSQLResult(data) {
   }
   html += '</tbody></table>';
   sqlResult.innerHTML = html;
+  if (state.sqlCopyMode) initColSelect(sqlResult, $('sql-col-bar'), $('sql-col-label'));
 }
 
 // ── Ask Claude ─────────────────────────────────────────────────────────────────────────
@@ -1012,7 +1044,7 @@ let rwrDelta = { active: false };
 const colSel = { copy: null, clear: null };
 
 // One-time button setup — avoids stacking listeners on re-runs
-for (const pfx of ['rph', 'rwr', 'rcr', 'rch', 'rkf', 'rpge', 'rpm', 'rdwr', 'rvm', 'rdo', 'tbl']) {
+for (const pfx of ['rph', 'rwr', 'rcr', 'rch', 'rkf', 'rpge', 'rpm', 'rdwr', 'rvm', 'rdo', 'tbl', 'sql']) {
   $(`${pfx}-col-copy`)?.addEventListener('click', () => colSel.copy?.());
   $(`${pfx}-col-clear`)?.addEventListener('click', () => colSel.clear?.());
   wireMonthSelect(`${pfx}-month`, $(`${pfx}-from`), $(`${pfx}-to`));
@@ -1020,7 +1052,9 @@ for (const pfx of ['rph', 'rwr', 'rcr', 'rch', 'rkf', 'rpge', 'rpm', 'rdwr', 'rv
 
 document.addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'c' && colSel.copy &&
-      (!reportPanel.classList.contains('hidden') || !$('tbl-col-bar').classList.contains('hidden'))) {
+      (!reportPanel.classList.contains('hidden') ||
+       !$('tbl-col-bar').classList.contains('hidden') ||
+       !$('sql-col-bar').classList.contains('hidden'))) {
     const sel = window.getSelection();
     if (!sel || sel.isCollapsed) { e.preventDefault(); colSel.copy(); }
   }
@@ -1042,7 +1076,7 @@ function writeToClipboard(text) {
   }
 }
 
-function initColSelect(gridEl, copyBarEl, labelEl, { useCtrl = false } = {}) {
+function initColSelect(gridEl, copyBarEl, labelEl) {
   copyBarEl.classList.add('hidden');
   const table = gridEl.querySelector('.data-table');
   if (!table) { colSel.copy = null; colSel.clear = null; return; }
@@ -1077,9 +1111,7 @@ function initColSelect(gridEl, copyBarEl, labelEl, { useCtrl = false } = {}) {
 
   headers.forEach((th, idx) => {
     th.classList.add('col-selectable');
-    if (useCtrl) th.title = 'Ctrl+Click to select column';
-    th.addEventListener('click', e => {
-      if (useCtrl && !e.ctrlKey && !e.metaKey) return;
+    th.addEventListener('click', () => {
       selectedCols.has(idx) ? selectedCols.delete(idx) : selectedCols.add(idx);
       updateHighlight();
     });
@@ -1198,6 +1230,8 @@ function hideReport() {
   gridContainer.classList.remove('hidden');
   if (!state.currentTable) {
     gridContainer.innerHTML = emptyState('Select a table from the sidebar\nor open the SQL Editor');
+  } else if (state.copyMode) {
+    initColSelect(gridContainer, $('tbl-col-bar'), $('tbl-col-label'));
   }
 }
 

@@ -136,6 +136,7 @@
       </select>
       <button class="btn btn-ghost btn-sm" id="export-btn">↓ Export</button>
       <button class="btn btn-ghost btn-sm" id="import-btn">↑ Import</button>
+      <button class="btn btn-ghost btn-sm" id="tbl-copy-toggle" title="Toggle column select mode">📋 Copy mode</button>
     </div>
 
     <!-- Report Panel -->
@@ -487,6 +488,7 @@
     <div class="sql-actions">
       <button class="btn btn-ghost btn-sm" id="sql-saved-btn" title="Saved queries">☰ Saved</button>
       <button class="btn btn-ghost btn-sm" id="sql-export-btn">↓ Export result</button>
+      <button class="btn btn-ghost btn-sm" id="sql-copy-toggle" title="Toggle column select mode">📋 Copy mode</button>
       <button class="btn btn-primary btn-sm" id="sql-run-btn">▶ Run</button>
       <button class="icon-btn" id="sql-close-btn">✕</button>
     </div>
@@ -495,6 +497,11 @@
     <div class="sql-main">
       <div class="sql-editor-wrap">
         <textarea id="sql-editor" spellcheck="false" placeholder="SELECT * FROM my_table LIMIT 100;"></textarea>
+      </div>
+      <div class="col-copy-bar hidden" id="sql-col-bar">
+        <span class="col-copy-label" id="sql-col-label"></span>
+        <button class="btn btn-ghost btn-sm col-copy-btn" id="sql-col-copy">📋 Copy column</button>
+        <button class="col-copy-clear" id="sql-col-clear">×</button>
       </div>
       <div class="sql-result" id="sql-result">
         <div class="empty-state-sm">Run a query to see results</div>
