@@ -119,7 +119,6 @@
         <span class="row-count" id="row-count"></span>
       </div>
       <div class="toolbar-right" id="toolbar-actions">
-        <button class="btn btn-ghost btn-sm" id="nl-ask-btn">✶ Ask Claude</button>
         <button class="btn btn-ghost btn-sm" id="sql-editor-btn">⌨ SQL Editor</button>
         <button class="btn btn-ghost btn-sm" id="sign-out-btn" title="Sign out">⏻ Sign out</button>
       </div>
@@ -517,30 +516,6 @@
     </div>
   </div>
   <div class="sql-status" id="sql-status"></div>
-</div>
-
-<!-- ── Ask Claude Panel ── -->
-<div class="sql-panel hidden" id="nl-panel">
-  <div class="sql-panel-header">
-    <h3>✶ Ask Claude</h3>
-    <div class="sql-actions">
-      <button class="btn btn-ghost btn-sm" id="nl-export-btn" style="display:none">↓ Export result</button>
-      <button class="icon-btn" id="nl-close-btn">✕</button>
-    </div>
-  </div>
-  <div class="nl-input-area">
-    <textarea id="nl-question" class="nl-textarea" rows="3"
-      placeholder="Ask a question about your data… e.g. Which wells had the most flow last month?"></textarea>
-    <button class="btn btn-primary" id="nl-run-btn">Ask</button>
-  </div>
-  <div class="sql-status" id="nl-status"></div>
-  <div id="nl-sql-block" class="nl-sql-block hidden">
-    <div class="nl-sql-label">Generated SQL</div>
-    <pre id="nl-sql-text" class="nl-sql-pre"></pre>
-  </div>
-  <div class="sql-result" id="nl-result">
-    <div class="empty-state-sm">Ask a question to see results</div>
-  </div>
 </div>
 
 <!-- ── Export Preview Modal ── -->
