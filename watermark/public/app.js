@@ -1287,16 +1287,20 @@ function createWellItem(w, dateInput, timeInput) {
       <span class="expand-chevron">&#9660;</span>
     </div>
     <div class="list-item-form">
-      <div class="lif-row">
-        <div class="toggle-group">
-          <span class="lif-label">Well Status</span>
-          <button class="toggle-btn" data-role="on">ON</button>
-          <button class="toggle-btn" data-role="off">OFF</button>
+      <div class="two-col">
+        <div class="form-group">
+          <label>Well Status</label>
+          <div class="toggle-group">
+            <button class="toggle-btn" data-role="on">ON</button>
+            <button class="toggle-btn" data-role="off">OFF</button>
+          </div>
         </div>
-        <div class="toggle-group">
-          <span class="lif-label">Motor Oil Needed?</span>
-          <button class="toggle-btn" data-role="oil-y">Yes</button>
-          <button class="toggle-btn" data-role="oil-n">No</button>
+        <div class="form-group">
+          <label>Motor Oil Needed?</label>
+          <div class="toggle-group">
+            <button class="toggle-btn" data-role="oil-y">Yes</button>
+            <button class="toggle-btn" data-role="oil-n">No</button>
+          </div>
         </div>
       </div>
       <div class="two-col">

@@ -1197,6 +1197,7 @@ input[type="date"].ctrl-input { min-height: 44px; }
   margin-bottom: 14px;
 }
 .lif-row .toggle-group { flex: 1; min-width: 80px; max-width: 180px; }
+.form-group .toggle-group { width: 100%; }
 .lif-label {
   font-size: 0.78rem;
   font-weight: 600;
