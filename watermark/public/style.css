@@ -2816,12 +2816,17 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
 }
 
 /* ── GPS Location Selector ───────────────────────────────────────────────── */
+#gps-loc-overlay {
+  padding: 8px;
+  align-items: stretch;
+}
 .gps-loc-card {
   display: flex;
   flex-direction: column;
   width: 100%;
-  max-width: 540px;
-  height: 90vh;
+  max-width: none;
+  height: 100%;
+  max-height: none;
   overflow: hidden;
 }
 .gps-loc-form {

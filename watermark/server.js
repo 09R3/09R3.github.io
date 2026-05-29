@@ -3998,6 +3998,24 @@ app.get('/api/dashboard/kf-by-set', requireAuth, async (req, res) => {
   }
 });
 
+// ── GPS Selector Access Setting ───────────────────────────────────────────────
+app.get('/api/settings/gps-selector', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`SELECT value FROM app_settings WHERE key = 'gps_selector_public'`);
+    res.json({ public: rows[0]?.value === 'true' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/settings/gps-selector', requireAuth, requireRole('admin'), async (req, res) => {
+  const val = req.body.public ? 'true' : 'false';
+  try {
+    await pool.query(
+      `INSERT INTO app_settings (key, value, updated_at) VALUES ('gps_selector_public', $1, NOW())
+       ON CONFLICT (key) DO UPDATE SET value=$1, updated_at=NOW()`, [val]);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ── Running Wells Settings ────────────────────────────────────────────────────
 app.get('/api/settings/running-wells', requireAuth, async (req, res) => {
   try {

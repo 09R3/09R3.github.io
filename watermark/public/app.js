@@ -4721,6 +4721,7 @@ const SETTINGS_PANEL_NAMES = {
   readings:         "Today's Readings",
   'kf-widget':      'KF Widget',
   'running-wells':  'Running Wells',
+  'gps-selector':   'GPS Location Selector',
   appinfo:          'App Info',
   tools:            'Tools',
   bugreports:       'Bug Reports',
@@ -4736,6 +4737,7 @@ function openSettingsPanel(panelId) {
   if (panelId === 'bugreports')     loadBugReports();
   if (panelId === 'kf-widget')      initKFWidgetPanel();
   if (panelId === 'running-wells')  initRunningWellsPanel();
+  if (panelId === 'gps-selector')   initGPSSelectorSettingsPanel();
   if (panelId === 'appinfo') {
     const ls = localStorage.getItem('watermark-last-sync');
     el('settings-last-sync').textContent = ls ? new Date(ls).toLocaleString() : 'Never';
@@ -5349,6 +5351,33 @@ el('rw-settings-save-btn').addEventListener('click', async () => {
     loadDashboardStats();
   } catch (err) {
     showToast(err.message, 'error');
+  }
+});
+
+async function initGPSSelectorSettingsPanel() {
+  try {
+    const s = await api('GET', '/api/settings/gps-selector');
+    const isPublic = s.public;
+    el('gps-sel-toggle-on').classList.toggle('active', isPublic);
+    el('gps-sel-toggle-off').classList.toggle('active', !isPublic);
+  } catch { /* ignore */ }
+}
+
+el('gps-sel-toggle-on').addEventListener('click', () => {
+  el('gps-sel-toggle-on').classList.add('active');
+  el('gps-sel-toggle-off').classList.remove('active');
+});
+el('gps-sel-toggle-off').addEventListener('click', () => {
+  el('gps-sel-toggle-off').classList.add('active');
+  el('gps-sel-toggle-on').classList.remove('active');
+});
+el('gps-sel-save-btn').addEventListener('click', async () => {
+  const isPublic = el('gps-sel-toggle-on').classList.contains('active');
+  try {
+    await api('PUT', '/api/settings/gps-selector', { public: isPublic });
+    showToast('Setting saved', 'success');
+  } catch (err) {
+    showToast('Failed to save: ' + err.message, 'error');
   }
 });
 
@@ -8449,6 +8478,7 @@ function openGPSLocSelector() {
   el('gps-loc-existing').textContent = '';
   el('gps-loc-coords').textContent = 'Tap map to place pin';
   el('gps-loc-save').disabled = true;
+  el('gps-loc-save').textContent = 'Save Location';
   _gpsLocPin = null;
   _gpsLocSelected = null;
   _gpsLocWellData = [];
@@ -8647,16 +8677,50 @@ async function saveGPSLocation() {
   const endpoint = _gpsLocSelected.type === 'well'
     ? `/api/wells/${_gpsLocSelected.id}/gps`
     : `/api/piezometers/${_gpsLocSelected.id}/gps`;
+  const saveBtn = el('gps-loc-save');
   try {
-    el('gps-loc-save').disabled = true;
-    el('gps-loc-save').textContent = 'Saving…';
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving…';
     await api('PATCH', endpoint, { gps_latitude: _gpsLocPin.lat, gps_longitude: _gpsLocPin.lng });
     showToast(`GPS saved for ${_gpsLocSelected.name}`, 'success');
-    closeGPSLocSelector();
+
+    // Stay on modal — update state to reflect the newly saved coords
+    const savedLat = _gpsLocPin.lat;
+    const savedLng = _gpsLocPin.lng;
+    _gpsLocSelected.existingLat = savedLat;
+    _gpsLocSelected.existingLng = savedLng;
+
+    // Update the dropdown option's data attributes so re-selecting shows new coords
+    const opt = el('gps-loc-well').selectedOptions[0];
+    if (opt) { opt.dataset.lat = savedLat; opt.dataset.lng = savedLng; }
+
+    // Move existing-location marker to saved position (green to indicate saved)
+    const savedIcon = L.divIcon({
+      className: '',
+      html: '<div style="width:12px;height:12px;border-radius:50%;background:#4caf50;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,0.4)"></div>',
+      iconSize: [12, 12], iconAnchor: [6, 6],
+    });
+    if (_gpsLocExistingMarker) _gpsLocExistingMarker.remove();
+    _gpsLocExistingMarker = L.marker([savedLat, savedLng], { icon: savedIcon })
+      .addTo(_gpsLocMap)
+      .bindPopup(`Saved: ${savedLat.toFixed(6)}, ${savedLng.toFixed(6)}`);
+
+    // Remove the tap pin and reset pin state
+    if (_gpsLocPinMarker) { _gpsLocPinMarker.remove(); _gpsLocPinMarker = null; }
+    _gpsLocPin = null;
+
+    // Update footer and existing-coords display
+    el('gps-loc-coords').textContent = 'Tap map to place pin';
+    const existEl = el('gps-loc-existing');
+    existEl.className = 'gps-loc-existing has-coords';
+    existEl.textContent = `Saved: ${savedLat.toFixed(6)}, ${savedLng.toFixed(6)}`;
+
+    saveBtn.textContent = 'Save Location';
+    updateGPSLocSaveBtn();
   } catch (err) {
     showToast('Save failed: ' + err.message, 'error');
-    el('gps-loc-save').disabled = false;
-    el('gps-loc-save').textContent = 'Save Location';
+    saveBtn.disabled = false;
+    saveBtn.textContent = 'Save Location';
   }
 }
 
@@ -8669,12 +8733,18 @@ el('gps-loc-save').addEventListener('click', saveGPSLocation);
 
 const WR_PANEL_NAMES = { dwr: 'DWR', kcwa: 'KCWA Piezometers' };
 let wellRunsInited = false;
-function initWellRunsScreen() {
+async function initWellRunsScreen() {
   if (wellRunsInited) return;
   wellRunsInited = true;
 
   const role = currentUser?.role;
-  if (role === 'admin' || role === 'supervisor') {
+  let showToAll = false;
+  try {
+    const s = await api('GET', '/api/settings/gps-selector');
+    showToAll = s.public;
+  } catch { /* ignore */ }
+
+  if (role === 'admin' || role === 'supervisor' || showToAll) {
     el('gps-loc-btn-wrap').classList.remove('hidden');
     el('gps-loc-open-btn').addEventListener('click', openGPSLocSelector);
   }
