@@ -1125,8 +1125,18 @@ app.get('/api/wells/by-run', requireAuth, async (req, res) => {
   }
 });
 
+// Middleware: allow supervisor/admin always, or any authed user if gps_selector_public is on
+async function requireGPSSelectorAccess(req, res, next) {
+  if (req.user.role === 'admin' || req.user.role === 'supervisor') return next();
+  try {
+    const { rows } = await pool.query(`SELECT value FROM app_settings WHERE key = 'gps_selector_public'`);
+    if (rows[0]?.value === 'true') return next();
+  } catch { /* fall through */ }
+  return res.status(403).json({ error: 'Insufficient permissions' });
+}
+
 // Update GPS coordinates for a well
-app.patch('/api/wells/:id/gps', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+app.patch('/api/wells/:id/gps', requireAuth, requireGPSSelectorAccess, async (req, res) => {
   const { gps_latitude, gps_longitude } = req.body;
   if (gps_latitude == null || gps_longitude == null) return res.status(400).json({ error: 'gps_latitude and gps_longitude required' });
   try {
@@ -1140,7 +1150,7 @@ app.patch('/api/wells/:id/gps', requireAuth, requireRole('supervisor', 'admin'),
 });
 
 // Update GPS coordinates for a piezometer
-app.patch('/api/piezometers/:id/gps', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+app.patch('/api/piezometers/:id/gps', requireAuth, requireGPSSelectorAccess, async (req, res) => {
   const { gps_latitude, gps_longitude } = req.body;
   if (gps_latitude == null || gps_longitude == null) return res.status(400).json({ error: 'gps_latitude and gps_longitude required' });
   try {
