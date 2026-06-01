@@ -8528,6 +8528,13 @@ function openGPSLocSelector() {
           .addTo(_gpsLocMap)
           .bindPopup('<strong>You are here</strong>');
         _gpsLocMap.setView([latitude, longitude], 16);
+
+        // Pre-fill pin with device location if user hasn't tapped the map yet
+        if (!_gpsLocPin) {
+          _gpsLocPin = { lat: parseFloat(latitude.toFixed(7)), lng: parseFloat(longitude.toFixed(7)) };
+          el('gps-loc-coords').textContent = `${_gpsLocPin.lat.toFixed(6)}, ${_gpsLocPin.lng.toFixed(6)} (your location)`;
+          updateGPSLocSaveBtn();
+        }
       }, () => { /* silent */ });
     }
 
