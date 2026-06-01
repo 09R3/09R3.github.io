@@ -8513,33 +8513,40 @@ function openGPSLocSelector() {
       updateGPSLocSaveBtn();
     });
 
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(pos => {
-        if (!_gpsLocMap) return;
-        const { latitude, longitude } = pos.coords;
-        const locIcon = L.divIcon({
-          className: '',
-          html: '<div class="map-my-location"></div>',
-          iconSize: [18, 18],
-          iconAnchor: [9, 9],
-        });
-        if (_gpsLocUserMarker) _gpsLocUserMarker.remove();
-        _gpsLocUserMarker = L.marker([latitude, longitude], { icon: locIcon })
-          .addTo(_gpsLocMap)
-          .bindPopup('<strong>You are here</strong>');
-        _gpsLocMap.setView([latitude, longitude], 16);
-
-        // Pre-fill pin with device location if user hasn't tapped the map yet
-        if (!_gpsLocPin) {
-          _gpsLocPin = { lat: parseFloat(latitude.toFixed(7)), lng: parseFloat(longitude.toFixed(7)) };
-          el('gps-loc-coords').textContent = `${_gpsLocPin.lat.toFixed(6)}, ${_gpsLocPin.lng.toFixed(6)} (your location)`;
-          updateGPSLocSaveBtn();
-        }
-      }, () => { /* silent */ });
-    }
+    refreshGPSLocPosition();
 
     _gpsLocMap.invalidateSize();
   }, 50);
+}
+
+function refreshGPSLocPosition() {
+  if (!navigator.geolocation || !_gpsLocMap) return;
+  const btn = el('gps-loc-refresh-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  navigator.geolocation.getCurrentPosition(pos => {
+    if (!_gpsLocMap) return;
+    const { latitude, longitude } = pos.coords;
+    const locIcon = L.divIcon({
+      className: '',
+      html: '<div class="map-my-location"></div>',
+      iconSize: [18, 18],
+      iconAnchor: [9, 9],
+    });
+    if (_gpsLocUserMarker) _gpsLocUserMarker.remove();
+    _gpsLocUserMarker = L.marker([latitude, longitude], { icon: locIcon })
+      .addTo(_gpsLocMap)
+      .bindPopup('<strong>You are here</strong>');
+    _gpsLocMap.setView([latitude, longitude], 16);
+
+    // Always update pin to current location (overrides previous auto-fill or manual tap)
+    _gpsLocPin = { lat: parseFloat(latitude.toFixed(7)), lng: parseFloat(longitude.toFixed(7)) };
+    el('gps-loc-coords').textContent = `${_gpsLocPin.lat.toFixed(6)}, ${_gpsLocPin.lng.toFixed(6)} (your location)`;
+    if (_gpsLocPinMarker) { _gpsLocPinMarker.remove(); _gpsLocPinMarker = null; }
+    updateGPSLocSaveBtn();
+    if (btn) { btn.disabled = false; btn.textContent = '↻'; }
+  }, () => {
+    if (btn) { btn.disabled = false; btn.textContent = '↻'; }
+  });
 }
 
 function closeGPSLocSelector() {
@@ -8669,6 +8676,10 @@ function onGPSLocWellChange() {
     if (_gpsLocExistingMarker) { _gpsLocExistingMarker.remove(); _gpsLocExistingMarker = null; }
   }
 
+  // Refresh device location for this well so pin is current
+  _gpsLocPin = null;
+  if (_gpsLocPinMarker) { _gpsLocPinMarker.remove(); _gpsLocPinMarker = null; }
+  refreshGPSLocPosition();
   updateGPSLocSaveBtn();
 }
 
@@ -8736,6 +8747,7 @@ el('gps-loc-overlay').addEventListener('click', e => { if (e.target === el('gps-
 el('gps-loc-category').addEventListener('change', onGPSLocCategoryChange);
 el('gps-loc-pool').addEventListener('change', onGPSLocPoolChange);
 el('gps-loc-well').addEventListener('change', onGPSLocWellChange);
+el('gps-loc-refresh-btn').addEventListener('click', refreshGPSLocPosition);
 el('gps-loc-save').addEventListener('click', saveGPSLocation);
 
 const WR_PANEL_NAMES = { dwr: 'DWR', kcwa: 'KCWA Piezometers' };
