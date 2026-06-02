@@ -1053,42 +1053,78 @@ app.get('/api/reports/canal-readings/options', requireDB, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 app.get('/api/reports/canal-readings', requireDB, async (req, res) => {
-  const { structure_id, start, end } = req.query;
-  if (!start || !end) return res.status(400).json({ error: 'start and end required.' });
+  const { structure_id, month } = req.query;
+  if (!structure_id) return res.status(400).json({ error: 'structure_id is required.' });
+  if (!month || !/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ error: 'month must be YYYY-MM.' });
   try {
-    const { clause, param } = optIntFilter(structure_id, 'r.structure_id', 3);
-    const params = [start, end, ...(param != null ? [param] : [])];
     const { rows } = await pool.query(
-      `SELECT cs.structure_name, r.reading_date, r.reading_time,
-              r.instantaneous_flow_cfs, r.totalizer_reading_af,
-              r.gate_setting, r.head_reading_ft, r.derived_flow_cfs,
-              CASE
-                WHEN r.totalizer_reading_af IS NULL
-                  OR prev.totalizer_reading_af IS NULL
-                  OR prev.elapsed_secs IS NULL
-                  OR prev.elapsed_secs <= 0
-                THEN NULL
-                ELSE ROUND(
-                  ((r.totalizer_reading_af - prev.totalizer_reading_af) * 43560.0
-                   / prev.elapsed_secs)::numeric, 2)
-              END AS totalizer_calc
-       FROM readings_canal r
-       JOIN canal_structures cs ON cs.structure_id = r.structure_id
-       LEFT JOIN LATERAL (
-         SELECT p.totalizer_reading_af,
-                EXTRACT(EPOCH FROM (
-                  (r.reading_date + COALESCE(r.reading_time, '00:00:00'::time))::timestamp -
-                  (p.reading_date + COALESCE(p.reading_time, '00:00:00'::time))::timestamp
-                )) AS elapsed_secs
-         FROM readings_canal p
-         WHERE p.structure_id = r.structure_id
-           AND (p.reading_date + COALESCE(p.reading_time, '00:00:00'::time)) <
-               (r.reading_date + COALESCE(r.reading_time, '00:00:00'::time))
-         ORDER BY (p.reading_date + COALESCE(p.reading_time, '00:00:00'::time)) DESC
-         LIMIT 1
-       ) prev ON true
-       WHERE r.reading_date >= $1 AND r.reading_date <= $2${clause}
-       ORDER BY r.reading_date, r.reading_time, cs.structure_name`, params
+      `WITH
+         month_start AS (
+           SELECT date_trunc('month', ($2 || '-01')::date)::date AS d
+         ),
+         days AS (
+           SELECT generate_series(
+             (SELECT d FROM month_start),
+             (SELECT (d + interval '1 month' - interval '1 day')::date FROM month_start),
+             interval '1 day'
+           )::date AS day
+         ),
+         daily AS (
+           SELECT DISTINCT ON (reading_date)
+             reading_date, reading_time, totalizer_reading_af, instantaneous_flow_cfs
+           FROM readings_canal
+           WHERE structure_id = $1
+             AND reading_date >= (SELECT d FROM month_start)
+             AND reading_date < (SELECT (d + interval '1 month')::date FROM month_start)
+           ORDER BY reading_date, reading_time DESC NULLS LAST
+         ),
+         pre_month AS (
+           SELECT reading_date, reading_time, totalizer_reading_af, instantaneous_flow_cfs
+           FROM readings_canal
+           WHERE structure_id = $1
+             AND reading_date < (SELECT d FROM month_start)
+           ORDER BY reading_date DESC, reading_time DESC NULLS LAST
+           LIMIT 1
+         ),
+         all_r AS (
+           SELECT reading_date, reading_time, totalizer_reading_af, instantaneous_flow_cfs, false AS pre
+           FROM daily
+           UNION ALL
+           SELECT reading_date, reading_time, totalizer_reading_af, instantaneous_flow_cfs, true AS pre
+           FROM pre_month
+         ),
+         with_prev AS (
+           SELECT *,
+             LAG(totalizer_reading_af) OVER (ORDER BY reading_date, reading_time NULLS LAST) AS prev_af,
+             LAG(reading_date)         OVER (ORDER BY reading_date, reading_time NULLS LAST) AS prev_date,
+             LAG(reading_time)         OVER (ORDER BY reading_date, reading_time NULLS LAST) AS prev_time
+           FROM all_r
+         )
+       SELECT
+         d.day                                                     AS date,
+         wp.reading_time                                           AS time,
+         wp.totalizer_reading_af                                   AS observed_reading,
+         wp.totalizer_reading_af                                   AS adjusted_reading,
+         CASE
+           WHEN wp.totalizer_reading_af IS NULL OR wp.prev_af IS NULL THEN NULL
+           WHEN wp.totalizer_reading_af = wp.prev_af THEN 0
+           ELSE ROUND(
+             ((wp.totalizer_reading_af - wp.prev_af) * 43560.0 /
+              GREATEST(EXTRACT(EPOCH FROM (
+                (d.day + COALESCE(wp.reading_time, '00:00:00'::time))::timestamp -
+                (wp.prev_date + COALESCE(wp.prev_time, '00:00:00'::time))::timestamp
+              )), 1))::numeric, 4)
+         END                                                       AS cfs_per_day,
+         CASE
+           WHEN wp.totalizer_reading_af IS NULL OR wp.prev_af IS NULL THEN NULL
+           WHEN wp.totalizer_reading_af = wp.prev_af THEN 0
+           ELSE ROUND((wp.totalizer_reading_af - wp.prev_af)::numeric, 4)
+         END                                                       AS af_per_day,
+         wp.instantaneous_flow_cfs                                 AS flow_rate
+       FROM days d
+       LEFT JOIN with_prev wp ON wp.reading_date = d.day AND NOT wp.pre
+       ORDER BY d.day`,
+      [parseInt(structure_id), month]
     );
     res.json(rows);
   } catch (err) { res.status(500).json({ error: err.message }); }

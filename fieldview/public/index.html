@@ -92,7 +92,7 @@
         <div class="sidebar-section-body" id="reports-section-body">
           <button class="report-item" id="report-pump-hours">⏱ Pump Hours</button>
           <button class="report-item" id="report-well-readings">📊 Well Readings</button>
-          <button class="report-item" id="report-canal-readings">🌊 Canal Readings</button>
+          <button class="report-item" id="report-canal-readings">🌊 Monthly Turnout Readings</button>
           <button class="report-item" id="report-compressor-hours">⚙️ Compressor Hours</button>
           <button class="report-item" id="report-kf-monthly">📋 KF Monthly</button>
           <button class="report-item" id="report-pge-meters">⚡ PGE Meters</button>
@@ -226,15 +226,11 @@
             <select class="report-select" id="rcr-structure"></select>
           </div>
           <div class="report-control-group">
-            <span class="report-label">From</span>
-            <input type="date" class="report-date" id="rcr-from" />
-          </div>
-          <div class="report-control-group">
-            <span class="report-label">To</span>
-            <input type="date" class="report-date" id="rcr-to" />
+            <span class="report-label">Month</span>
+            <input type="month" class="report-date" id="rcr-month" />
           </div>
           <button class="btn btn-primary btn-sm" id="rcr-run">▶ Run</button>
-          <button class="btn btn-ghost btn-sm" id="rcr-export">↓ Export</button>
+          <button class="btn btn-ghost btn-sm hidden" id="rcr-export">↓ Export</button>
         </div>
         <div class="col-copy-bar hidden" id="rcr-col-bar">
           <span class="col-copy-label" id="rcr-col-label"></span>

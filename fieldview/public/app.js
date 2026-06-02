@@ -934,7 +934,7 @@ function buildMonthOptions() {
 
 function wireMonthSelect(selectId, startEl, endEl) {
   const sel = $(selectId);
-  if (!sel) return;
+  if (!sel || !startEl || !endEl) return;
   sel.innerHTML = buildMonthOptions();
   sel.addEventListener('change', () => {
     const val = sel.value;
@@ -970,6 +970,7 @@ let rphData = [];
 let rphSelectedLetters = new Set(); // empty = All
 let rphDelta = { active: false };
 let rwrDelta = { active: false };
+let rcrData = [];
 
 // ── Column-select utility (shared by all report grids) ─────────────────────────────────
 // Shared state — only one report grid is visible at a time
@@ -1495,19 +1496,68 @@ function makeReport({ sidebarId, panelId, title, prefix, selectId, optionsUrl, r
 }
 
 // ── Report Definitions ───────────────────────────────────────────────────────────────────────
-makeReport({
-  sidebarId: 'report-canal-readings', panelId: 'rcr-panel',
-  title: 'Canal Readings Report', prefix: 'rcr', selectId: 'rcr-structure',
-  optionsUrl: '/api/reports/canal-readings/options',
-  reportUrl:  '/api/reports/canal-readings',
-  filterParam: 'structure_id',
-  cols: ['structure_name','reading_date','reading_time','instantaneous_flow_cfs','totalizer_reading_af','totalizer_calc','gate_setting','head_reading_ft','derived_flow_cfs'],
-  hdrs: ['Structure','Date','Time','Flow (cfs)','Totalizer (af)','Totalizer CFS','Gate Setting','Head (ft)','Derived Flow (cfs)'],
-  colFormatters: {
-    totalizer_calc: val => val === null || val === undefined
-      ? '<span class="null-val">N/A</span>'
-      : `<span class="num-val">${Number(val).toLocaleString(undefined, { maximumFractionDigits: 4 })}</span>`,
-  },
+// ── Monthly Turnout Readings (Canal) ────────────────────────────────────────────────────
+const RCR_COLS = ['date','time','observed_reading','adjusted_reading','cfs_per_day','af_per_day','flow_rate'];
+const RCR_HDRS = ['Date','Time','Observed (AF)','Adjusted (AF)','CFS / Day','AF / Day','Flow Rate (CFS)'];
+
+$('report-canal-readings').addEventListener('click', async () => {
+  showReport('canal-readings', 'Monthly Turnout Readings');
+  showSubPanel('rcr-panel');
+  const now = new Date();
+  $('rcr-month').value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  $('rcr-export').classList.add('hidden');
+  $('rcr-col-bar').classList.add('hidden');
+  rcrData = [];
+  $('rcr-status').textContent = 'Loading structures…';
+  try {
+    const opts = await get('/api/reports/canal-readings/options');
+    const sel = $('rcr-structure');
+    sel.innerHTML = '<option value="">— Select Structure —</option>' +
+      opts.map(o => `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join('');
+    $('rcr-status').textContent = `${opts.length} structure(s) loaded. Select one and click Run.`;
+  } catch (err) {
+    $('rcr-status').textContent = `Error loading structures: ${err.message}`;
+  }
+});
+
+$('rcr-run').addEventListener('click', async () => {
+  const structureId = $('rcr-structure').value;
+  const month = $('rcr-month').value;
+  if (!structureId) { $('rcr-status').textContent = 'Select a structure.'; return; }
+  if (!month) { $('rcr-status').textContent = 'Select a month.'; return; }
+  $('rcr-status').textContent = 'Running…';
+  $('rcr-grid').innerHTML = loadingGrid();
+  $('rcr-export').classList.add('hidden');
+  $('rcr-col-bar').classList.add('hidden');
+  rcrData = [];
+  try {
+    const params = new URLSearchParams({ structure_id: structureId, month });
+    rcrData = await get(`/api/reports/canal-readings?${params}`);
+    if (!rcrData.length) {
+      $('rcr-grid').innerHTML = emptyState('No data found for this selection.');
+      $('rcr-status').textContent = 'No results.';
+      return;
+    }
+    renderReportTable($('rcr-grid'), rcrData, RCR_COLS, RCR_HDRS, $('rcr-col-bar'), $('rcr-col-label'));
+    $('rcr-status').textContent = `${rcrData.length} day${rcrData.length !== 1 ? 's' : ''} shown.`;
+    $('rcr-export').classList.remove('hidden');
+  } catch (err) {
+    $('rcr-grid').innerHTML = errorState(err.message);
+    $('rcr-status').textContent = 'Error running report.';
+  }
+});
+
+$('rcr-export').addEventListener('click', () => {
+  if (!rcrData.length) return;
+  const structureName = $('rcr-structure').options[$('rcr-structure').selectedIndex]?.text || '';
+  const month = $('rcr-month').value;
+  const colMap = RCR_COLS.map((k, i) => [k, RCR_HDRS[i]]);
+  const exportRows = rcrData.map(r => Object.fromEntries(colMap.map(([k, h]) => [h, r[k] ?? ''])));
+  showExportPreview(
+    `Monthly Turnout Readings — ${structureName} (${month})`,
+    { rows: exportRows, columns: RCR_HDRS, title: `Turnout_${structureName}_${month}`.replace(/\s+/g, '_') },
+    { rows: exportRows, columns: RCR_HDRS, rowCount: exportRows.length }
+  );
 });
 
 makeReport({
