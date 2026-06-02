@@ -8211,6 +8211,7 @@ let _piezRepMap          = null;
 let _piezRepMapMarkers   = [];
 let _piezRepMapGenerated = false;
 let _piezMapPoolsLoaded  = false;
+let _piezLeaderSvg       = null;
 let piezRepYear  = new Date().getFullYear();
 let piezRepMonth = new Date().getMonth() + 1;
 let piezRepStart = '';
@@ -8408,12 +8409,14 @@ async function renderPiezCompareReport() {
         if (dtw1 != null && dtw2 != null) {
           const diff = dtw2 - dtw1;
           const abs  = Math.abs(diff).toFixed(2);
+          // DTW is depth-to-water. A larger reading than before = water level
+          // dropped → down arrow. A smaller reading = water level rose → up arrow.
           if (Math.abs(diff) < 0.005) {
             diffCell = abs;
-          } else if (diff < 0) {
-            diffCell = `<span style="color:var(--green)">↓ ${abs}</span>`;
+          } else if (diff > 0) {
+            diffCell = `<span style="color:var(--yellow)">↓ ${abs}</span>`;
           } else {
-            diffCell = `<span style="color:var(--yellow)">↑ ${abs}</span>`;
+            diffCell = `<span style="color:var(--green)">↑ ${abs}</span>`;
           }
         }
         html += `<tr>
@@ -8491,6 +8494,8 @@ async function renderPiezMapReport(pool, startDate, endDate) {
         attribution: 'Tiles &copy; Esri',
         maxZoom: 19,
       }).addTo(_piezRepMap);
+      // Re-flow labels + leader lines whenever the view changes
+      _piezRepMap.on('moveend zoomend', refreshPiezLabels);
     } else {
       _piezRepMapMarkers.forEach(m => _piezRepMap.removeLayer(m));
       _piezRepMapMarkers = [];
@@ -8501,7 +8506,7 @@ async function renderPiezMapReport(pool, startDate, endDate) {
       const read  = p.reading_date != null;
       const color = read ? '#4caf50' : '#ef5350';
       const m = L.circleMarker([parseFloat(p.gps_latitude), parseFloat(p.gps_longitude)], {
-        radius: 8, fillColor: color, color: '#fff', weight: 2, fillOpacity: 0.9,
+        radius: 7, fillColor: color, color: '#fff', weight: 2, fillOpacity: 0.95,
       }).addTo(_piezRepMap);
 
       const dtwLine = p.dtw_reading != null
@@ -8509,15 +8514,16 @@ async function renderPiezMapReport(pool, startDate, endDate) {
         : (read ? 'Read' : 'Not read');
       m.bindTooltip(
         `<b>${escHtml(p.piezometer_name)}</b><br>${escHtml(dtwLine)}`,
-        { permanent: true, direction: 'top', className: 'piez-map-label', offset: [0, -10] }
+        { permanent: true, direction: 'top', className: 'piez-map-label', offset: [0, -8] }
       );
       _piezRepMapMarkers.push(m);
     });
 
     const group = L.featureGroup(_piezRepMapMarkers);
-    _piezRepMap.fitBounds(group.getBounds().pad(0.2));
+    _piezRepMap.fitBounds(group.getBounds().pad(0.25));
     _piezRepMap.invalidateSize();
     _piezRepMapGenerated = true;
+    setTimeout(refreshPiezLabels, 250);
 
   } catch (err) {
     titleEl.textContent = 'Failed to load';
@@ -8525,36 +8531,128 @@ async function renderPiezMapReport(pool, startDate, endDate) {
   }
 }
 
+// Combined refresh: spread overlapping labels apart, then redraw leader lines.
+function refreshPiezLabels() {
+  declutterPiezLabels();
+  drawPiezLeaders();
+}
+
+// Nudge overlapping permanent tooltips downward so none sit on top of another.
+function declutterPiezLabels() {
+  if (!_piezRepMap) return;
+  const labels = _piezRepMapMarkers
+    .map(m => m.getTooltip() ? m.getTooltip().getElement() : null)
+    .filter(Boolean);
+  // Reset prior offsets, then force a reflow so measurements are accurate
+  labels.forEach(l => { l.style.marginTop = '0px'; });
+  void document.body.offsetHeight;
+
+  const items = labels.map(l => ({ l, r: l.getBoundingClientRect() }))
+    .sort((a, b) => a.r.top - b.r.top);
+  const placed = [];
+  items.forEach(item => {
+    let rect = { top: item.r.top, bottom: item.r.bottom, left: item.r.left, right: item.r.right };
+    let shift = 0, moved = true, guard = 0;
+    while (moved && guard < 60) {
+      moved = false; guard++;
+      for (const p of placed) {
+        const overlapX = rect.left < p.right + 2 && rect.right > p.left - 2;
+        const overlapY = rect.top < p.bottom + 2 && rect.bottom > p.top - 2;
+        if (overlapX && overlapY) {
+          const delta = p.bottom - rect.top + 3;
+          shift += delta; rect.top += delta; rect.bottom += delta;
+          moved = true;
+        }
+      }
+    }
+    item.l.style.marginTop = shift + 'px';
+    placed.push(rect);
+  });
+}
+
+// Draw a thin connector from each marker to its (possibly shifted) label.
+function drawPiezLeaders() {
+  if (!_piezRepMap) return;
+  const container = _piezRepMap.getContainer();
+  if (getComputedStyle(container).position === 'static') container.style.position = 'relative';
+  if (!_piezLeaderSvg) {
+    _piezLeaderSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    _piezLeaderSvg.setAttribute('class', 'piez-leader-svg');
+    // Above tiles/markers (overlayPane ~400) but below tooltip labels (~650)
+    _piezLeaderSvg.style.zIndex = 640;
+    container.appendChild(_piezLeaderSvg);
+  }
+  const size = _piezRepMap.getSize();
+  _piezLeaderSvg.setAttribute('width', size.x);
+  _piezLeaderSvg.setAttribute('height', size.y);
+  _piezLeaderSvg.innerHTML = '';
+  const cRect = container.getBoundingClientRect();
+
+  _piezRepMapMarkers.forEach(m => {
+    const tt = m.getTooltip(); if (!tt) return;
+    const lab = tt.getElement(); if (!lab) return;
+    const mp = _piezRepMap.latLngToContainerPoint(m.getLatLng());
+    const tRect = lab.getBoundingClientRect();
+    const tx = tRect.left - cRect.left + tRect.width / 2;
+    const ty = tRect.bottom - cRect.top;
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    line.setAttribute('x1', mp.x); line.setAttribute('y1', mp.y);
+    line.setAttribute('x2', tx);   line.setAttribute('y2', ty);
+    line.setAttribute('stroke', '#ffffff');
+    line.setAttribute('stroke-width', '1.5');
+    line.setAttribute('opacity', '0.85');
+    _piezLeaderSvg.appendChild(line);
+  });
+}
+
+// Print the map to PDF. Leaflet only renders tiles for its current pixel
+// size, so we size the map to fixed print dimensions ON-SCREEN first, let the
+// tiles load, then print — this keeps the labels and tiles correctly placed.
 function printPiezMap() {
-  // Get or create a direct-body-child container so the print CSS can reach it
   let printContainer = document.getElementById('piez-map-print-container');
   if (!printContainer) {
     printContainer = document.createElement('div');
     printContainer.id = 'piez-map-print-container';
-    printContainer.style.display = 'none';
     document.body.appendChild(printContainer);
   }
 
-  // Temporarily move the map output into the print container
   const mapOutput  = el('piez-map-output');
+  const mapDiv     = el('piez-report-map');
   const origParent = mapOutput.parentElement;
   const origNext   = mapOutput.nextSibling;
+
+  // Fixed letter-landscape-ish canvas at ~96dpi (10.2in × 7.1in)
+  const PRINT_W = 980, PRINT_H = 680;
+
+  printContainer.style.cssText =
+    'position:fixed;inset:0;z-index:99999;background:#fff;display:flex;' +
+    'flex-direction:column;align-items:center;justify-content:flex-start;padding:8px;';
   printContainer.appendChild(mapOutput);
+  mapOutput.style.cssText = 'display:flex;flex-direction:column;width:' + PRINT_W + 'px;';
+  mapDiv.dataset.prevStyle = mapDiv.getAttribute('style') || '';
+  mapDiv.style.cssText = 'width:' + PRINT_W + 'px;height:' + PRINT_H + 'px;';
 
   document.body.classList.add('print-piez-map');
   _piezRepMap.invalidateSize();
+  setTimeout(refreshPiezLabels, 200);
 
+  const cleanup = () => {
+    document.body.classList.remove('print-piez-map');
+    printContainer.style.display = 'none';
+    // Restore the map output to its normal place in the report panel
+    if (origNext) origParent.insertBefore(mapOutput, origNext);
+    else          origParent.appendChild(mapOutput);
+    mapOutput.style.cssText = '';   // shown (map tab is active)
+    mapDiv.setAttribute('style', mapDiv.dataset.prevStyle || '');
+    delete mapDiv.dataset.prevStyle;
+    setTimeout(() => { if (_piezRepMap) { _piezRepMap.invalidateSize(); refreshPiezLabels(); } }, 150);
+  };
+
+  // Wait for tiles to settle at the new size, then print
   setTimeout(() => {
+    window.addEventListener('afterprint', cleanup, { once: true });
     window.print();
-    window.addEventListener('afterprint', () => {
-      // Restore map output to original position
-      if (origNext) origParent.insertBefore(mapOutput, origNext);
-      else          origParent.appendChild(mapOutput);
-      document.body.classList.remove('print-piez-map');
-      // Re-render map in its original container
-      setTimeout(() => _piezRepMap && _piezRepMap.invalidateSize(), 100);
-    }, { once: true });
-  }, 300);
+  }, 900);
 }
 
 el('export-pdf-btn').addEventListener('click', () => {

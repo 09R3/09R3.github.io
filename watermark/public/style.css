@@ -546,7 +546,9 @@ html, body {
   overflow: hidden;
 }
 .seg-btn {
-  flex: 1;
+  flex: 1 1 0;
+  min-width: 0;
+  text-align: center;
   background: var(--surface2);
   border: none;
   color: var(--text-dim);
@@ -556,6 +558,7 @@ html, body {
   cursor: pointer;
   transition: background var(--transition), color var(--transition);
 }
+.seg-btn + .seg-btn { border-left: 1px solid var(--border); }
 .seg-btn.active { background: var(--accent); color: #fff; }
 
 /* ── Non-sticky date/time bar (wells, vehicles, KF) ─────────────────────── */
@@ -2873,19 +2876,20 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
   color: var(--text);
 }
 .leaflet-tooltip.piez-map-label {
-  background: rgba(18,18,18,0.82);
+  background: rgba(18,18,18,0.86);
   color: #fff;
-  border: 1px solid rgba(255,255,255,0.2);
+  border: 1px solid rgba(255,255,255,0.25);
   border-radius: 4px;
   box-shadow: 0 2px 6px rgba(0,0,0,0.55);
-  font-size: 0.76rem;
+  font-size: 0.74rem;
   padding: 3px 7px;
   white-space: nowrap;
-  line-height: 1.4;
+  line-height: 1.35;
 }
-.leaflet-tooltip.piez-map-label.leaflet-tooltip-top::before {
-  border-top-color: rgba(18,18,18,0.82);
-}
+/* Leader-line connectors handle the marker→label link, so suppress the
+   default tooltip pointer arrow (it breaks once labels are decluttered). */
+.leaflet-tooltip.piez-map-label::before { display: none !important; }
+.piez-leader-svg { position: absolute; inset: 0; pointer-events: none; }
 
 /* ── Print ───────────────────────────────────────────────────────────────── */
 @media print {
@@ -2894,12 +2898,16 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
     overflow: visible !important;
     position: static !important;
   }
-  /* Piez map PDF export — bring the map container to foreground */
+  /* Piez map PDF export — the map is pre-sized on-screen in JS so Leaflet
+     loads tiles at the final dimensions; print just isolates the container. */
   body.print-piez-map > *:not(#piez-map-print-container) { display: none !important; }
-  body.print-piez-map #piez-map-print-container { display: block !important; position: fixed; inset: 0; z-index: 9999; }
-  body.print-piez-map #piez-map-output { display: flex !important; flex-direction: column; width: 100vw; height: 100vh; padding: 0; background: white; }
-  body.print-piez-map #piez-map-title { font-size: 12pt !important; font-weight: 700; text-align: center; padding: 6px 0 4px; color: black !important; }
-  body.print-piez-map #piez-report-map { flex: 1 !important; min-height: 0 !important; height: auto !important; }
-  body.print-piez-map .leaflet-tooltip.piez-map-label { background: rgba(0,0,0,0.75) !important; color: #fff !important; border-color: rgba(0,0,0,0.75) !important; }
-  body.print-piez-map .leaflet-tooltip.piez-map-label.leaflet-tooltip-top::before { border-top-color: rgba(0,0,0,0.75) !important; }
+  body.print-piez-map #piez-map-print-container { display: block !important; }
+  body.print-piez-map #piez-map-title { color: black !important; background: white !important; }
+  body.print-piez-map .leaflet-tooltip.piez-map-label {
+    background: rgba(0,0,0,0.8) !important;
+    color: #fff !important;
+    border-color: rgba(0,0,0,0.8) !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
 }
