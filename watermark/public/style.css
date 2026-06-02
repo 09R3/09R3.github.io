@@ -2879,12 +2879,12 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
   background: rgba(18,18,18,0.86);
   color: #fff;
   border: 1px solid rgba(255,255,255,0.25);
-  border-radius: 4px;
-  box-shadow: 0 2px 6px rgba(0,0,0,0.55);
-  font-size: 0.74rem;
-  padding: 3px 7px;
+  border-radius: 3px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.55);
+  font-size: 0.68rem;
+  padding: 2px 5px;
   white-space: nowrap;
-  line-height: 1.35;
+  line-height: 1.25;
 }
 /* Leader-line connectors handle the marker→label link, so suppress the
    default tooltip pointer arrow (it breaks once labels are decluttered). */
@@ -2897,17 +2897,5 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
     height: auto !important;
     overflow: visible !important;
     position: static !important;
-  }
-  /* Piez map PDF export — the map is pre-sized on-screen in JS so Leaflet
-     loads tiles at the final dimensions; print just isolates the container. */
-  body.print-piez-map > *:not(#piez-map-print-container) { display: none !important; }
-  body.print-piez-map #piez-map-print-container { display: block !important; }
-  body.print-piez-map #piez-map-title { color: black !important; background: white !important; }
-  body.print-piez-map .leaflet-tooltip.piez-map-label {
-    background: rgba(0,0,0,0.8) !important;
-    color: #fff !important;
-    border-color: rgba(0,0,0,0.8) !important;
-    -webkit-print-color-adjust: exact;
-    print-color-adjust: exact;
   }
 }

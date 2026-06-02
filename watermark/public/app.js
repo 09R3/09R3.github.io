@@ -8259,6 +8259,10 @@ function updatePiezRepLabel() {
 }
 
 function initPiezReportPanel() {
+  // Clean up any stuck print state from a prior session or failed export
+  document.body.classList.remove('print-piez-map');
+  document.getElementById('piez-map-print-container')?.remove();
+
   if (!piezRepStart) piezRepMonthBounds();
   updatePiezRepLabel();
   runPiezReport();
@@ -8490,8 +8494,9 @@ async function renderPiezMapReport(pool, startDate, endDate) {
     // Init map or clear existing markers
     if (!_piezRepMap) {
       _piezRepMap = L.map('piez-report-map');
-      L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-        attribution: 'Tiles &copy; Esri',
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+        subdomains: 'abcd',
         maxZoom: 19,
       }).addTo(_piezRepMap);
       // Re-flow labels + leader lines whenever the view changes
@@ -8520,10 +8525,10 @@ async function renderPiezMapReport(pool, startDate, endDate) {
     });
 
     const group = L.featureGroup(_piezRepMapMarkers);
-    _piezRepMap.fitBounds(group.getBounds().pad(0.25));
+    _piezRepMap.fitBounds(group.getBounds().pad(0.5));
     _piezRepMap.invalidateSize();
     _piezRepMapGenerated = true;
-    setTimeout(refreshPiezLabels, 250);
+    setTimeout(refreshPiezLabels, 300);
 
   } catch (err) {
     titleEl.textContent = 'Failed to load';
@@ -8537,36 +8542,51 @@ function refreshPiezLabels() {
   drawPiezLeaders();
 }
 
-// Nudge overlapping permanent tooltips downward so none sit on top of another.
+// Nudge overlapping permanent tooltips apart, then clamp all labels inside the map container.
 function declutterPiezLabels() {
   if (!_piezRepMap) return;
   const labels = _piezRepMapMarkers
     .map(m => m.getTooltip() ? m.getTooltip().getElement() : null)
     .filter(Boolean);
   // Reset prior offsets, then force a reflow so measurements are accurate
-  labels.forEach(l => { l.style.marginTop = '0px'; });
+  labels.forEach(l => { l.style.marginTop = '0px'; l.style.marginLeft = '0px'; });
   void document.body.offsetHeight;
+
+  const cRect = _piezRepMap.getContainer().getBoundingClientRect();
+  const PAD = 4;
 
   const items = labels.map(l => ({ l, r: l.getBoundingClientRect() }))
     .sort((a, b) => a.r.top - b.r.top);
   const placed = [];
+
   items.forEach(item => {
-    let rect = { top: item.r.top, bottom: item.r.bottom, left: item.r.left, right: item.r.right };
-    let shift = 0, moved = true, guard = 0;
-    while (moved && guard < 60) {
+    let { top, bottom, left, right } = item.r;
+    let shiftY = 0;
+
+    // Resolve overlaps by nudging down
+    let moved = true, guard = 0;
+    while (moved && guard < 80) {
       moved = false; guard++;
       for (const p of placed) {
-        const overlapX = rect.left < p.right + 2 && rect.right > p.left - 2;
-        const overlapY = rect.top < p.bottom + 2 && rect.bottom > p.top - 2;
-        if (overlapX && overlapY) {
-          const delta = p.bottom - rect.top + 3;
-          shift += delta; rect.top += delta; rect.bottom += delta;
-          moved = true;
+        if (left < p.right + 2 && right > p.left - 2 && top < p.bottom + 2 && bottom > p.top - 2) {
+          const d = p.bottom - top + 3;
+          shiftY += d; top += d; bottom += d; moved = true;
         }
       }
     }
-    item.l.style.marginTop = shift + 'px';
-    placed.push(rect);
+
+    // Clamp: keep label within map container bounds
+    if (bottom > cRect.bottom - PAD) {
+      const over = bottom - (cRect.bottom - PAD);
+      shiftY -= over; top -= over; bottom -= over;
+    }
+    if (top < cRect.top + PAD) {
+      const under = cRect.top + PAD - top;
+      shiftY += under; top += under; bottom += under;
+    }
+
+    item.l.style.marginTop = shiftY + 'px';
+    placed.push({ top, bottom, left, right });
   });
 }
 
@@ -8605,54 +8625,47 @@ function drawPiezLeaders() {
   });
 }
 
-// Print the map to PDF. Leaflet only renders tiles for its current pixel
-// size, so we size the map to fixed print dimensions ON-SCREEN first, let the
-// tiles load, then print — this keeps the labels and tiles correctly placed.
-function printPiezMap() {
-  let printContainer = document.getElementById('piez-map-print-container');
-  if (!printContainer) {
-    printContainer = document.createElement('div');
-    printContainer.id = 'piez-map-print-container';
-    document.body.appendChild(printContainer);
-  }
+// Export the map to PDF by capturing it as an image with html2canvas.
+// The map DOM is never moved, so it stays visible and functional after export.
+async function printPiezMap() {
+  const btn = el('piez-export-btn');
+  const origText = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Capturing…';
 
-  const mapOutput  = el('piez-map-output');
-  const mapDiv     = el('piez-report-map');
-  const origParent = mapOutput.parentElement;
-  const origNext   = mapOutput.nextSibling;
+  // Clean up any stuck state from older versions
+  document.body.classList.remove('print-piez-map');
+  document.getElementById('piez-map-print-container')?.remove();
 
-  // Fixed letter-landscape-ish canvas at ~96dpi (10.2in × 7.1in)
-  const PRINT_W = 980, PRINT_H = 680;
+  try {
+    const mapOutput = el('piez-map-output');
+    // html2canvas with useCORS — works because CARTO tiles serve CORS headers
+    const canvas = await html2canvas(mapOutput, {
+      useCORS: true,
+      allowTaint: false,
+      scale: 1.5,
+      backgroundColor: '#1a1a1a',
+      logging: false,
+    });
 
-  printContainer.style.cssText =
-    'position:fixed;inset:0;z-index:99999;background:#fff;display:flex;' +
-    'flex-direction:column;align-items:center;justify-content:flex-start;padding:8px;';
-  printContainer.appendChild(mapOutput);
-  mapOutput.style.cssText = 'display:flex;flex-direction:column;width:' + PRINT_W + 'px;';
-  mapDiv.dataset.prevStyle = mapDiv.getAttribute('style') || '';
-  mapDiv.style.cssText = 'width:' + PRINT_W + 'px;height:' + PRINT_H + 'px;';
+    const imgData = canvas.toDataURL('image/png');
 
-  document.body.classList.add('print-piez-map');
-  _piezRepMap.invalidateSize();
-  setTimeout(refreshPiezLabels, 200);
+    let printArea = document.getElementById('print-area');
+    if (!printArea) {
+      printArea = document.createElement('div');
+      printArea.id = 'print-area';
+      document.body.appendChild(printArea);
+    }
 
-  const cleanup = () => {
-    document.body.classList.remove('print-piez-map');
-    printContainer.style.display = 'none';
-    // Restore the map output to its normal place in the report panel
-    if (origNext) origParent.insertBefore(mapOutput, origNext);
-    else          origParent.appendChild(mapOutput);
-    mapOutput.style.cssText = '';   // shown (map tab is active)
-    mapDiv.setAttribute('style', mapDiv.dataset.prevStyle || '');
-    delete mapDiv.dataset.prevStyle;
-    setTimeout(() => { if (_piezRepMap) { _piezRepMap.invalidateSize(); refreshPiezLabels(); } }, 150);
-  };
+    printArea.innerHTML = `<img src="${imgData}" style="max-width:100%;height:auto;display:block;">`;
+    delete printArea.dataset.printType;
 
-  // Wait for tiles to settle at the new size, then print
-  setTimeout(() => {
-    window.addEventListener('afterprint', cleanup, { once: true });
     window.print();
-  }, 900);
+    window.addEventListener('afterprint', () => { printArea.innerHTML = ''; }, { once: true });
+  } catch (err) {
+    showToast('Export failed: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = origText;
+  }
 }
 
 el('export-pdf-btn').addEventListener('click', () => {

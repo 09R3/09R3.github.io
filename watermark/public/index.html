@@ -59,11 +59,8 @@
       #print-area[data-print-type="vehicle"] {
         zoom: 0.78;
       }
-      /* Piez map PDF export — the map is pre-sized on-screen in JS so Leaflet
-         loads tiles at the final dimensions; print just isolates it. */
-      body.print-piez-map > *:not(#piez-map-print-container) { display: none !important; }
-      body.print-piez-map #piez-map-print-container { display: block !important; }
-      body.print-piez-map #piez-map-title { color: black !important; background: white !important; }
+      /* Map image export — fill the page */
+      #print-area img { width: 100%; height: auto; display: block; }
     }
 
     /* ── Ponds screen ─────────────────────────────────────────────────────── */
@@ -134,7 +131,7 @@
         Sign in with Microsoft 365
       </a>
       <div id="ms-login-error" class="error-msg hidden"></div>
-      <div class="login-version">v 2.09</div>
+      <div class="login-version">v 2.10</div>
     </div>
   </div>
 </div>
@@ -1616,7 +1613,7 @@
     <div id="settings-panel-appinfo" class="settings-panel hidden">
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 2.09</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 2.10</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>
