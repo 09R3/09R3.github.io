@@ -7,6 +7,30 @@ function icon(name, sz = 16) {
   return `<span class="app-icon" style="width:${sz}px;height:${sz}px;-webkit-mask-image:url(${u});mask-image:url(${u})" aria-hidden="true"></span>`;
 }
 
+/* ── Theme ───────────────────────────────────────────────────────────────── */
+function applyTheme(theme) {
+  if (theme === 'light') {
+    document.documentElement.setAttribute('data-theme', 'light');
+  } else {
+    document.documentElement.removeAttribute('data-theme');
+  }
+  const btn = document.getElementById('theme-toggle-btn');
+  if (btn) {
+    btn.innerHTML = icon(theme === 'light' ? 'light' : 'moon', 20);
+    btn.title = theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode';
+  }
+  localStorage.setItem('watermark-theme', theme);
+}
+
+document.getElementById('theme-toggle-btn').addEventListener('click', () => {
+  const current = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+  applyTheme(current === 'light' ? 'dark' : 'light');
+});
+
+// Init from saved preference (anti-FOUC script in <head> already set the attribute;
+// this just syncs the button icon on first load)
+applyTheme(localStorage.getItem('watermark-theme') || 'dark');
+
 /* ── State ───────────────────────────────────────────────────────────────── */
 let currentUser   = null;
 let currentScreen = null;
@@ -322,6 +346,25 @@ function openLocationModal(lat, lon, name) {
     }).addTo(_locationMap);
     L.marker([lat, lon]).addTo(_locationMap);
     _locationMap.invalidateSize();
+
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(pos => {
+        if (!_locationMap) return;
+        const { latitude, longitude } = pos.coords;
+        const locationIcon = L.divIcon({
+          className: '',
+          html: '<div class="map-my-location"></div>',
+          iconSize: [18, 18],
+          iconAnchor: [9, 9],
+        });
+        L.marker([latitude, longitude], { icon: locationIcon })
+          .addTo(_locationMap)
+          .bindPopup('<strong>You are here</strong>');
+        _locationMap.fitBounds(
+          L.latLngBounds([[lat, lon], [latitude, longitude]]).pad(0.2)
+        );
+      }, () => { /* permission denied or unavailable — silent */ });
+    }
   }, 50);
 }
 function _closeLocationModal() {
@@ -340,6 +383,15 @@ el('location-modal-open-btn').addEventListener('click', () => {
 let _setLeafletMap = null;
 let _setLeafletMarkers = [];
 let _setLocationMarker = null;
+
+// GPS Location Selector state
+let _gpsLocMap = null;
+let _gpsLocPinMarker = null;
+let _gpsLocExistingMarker = null;
+let _gpsLocUserMarker = null;
+let _gpsLocPin = null;        // { lat, lng } of tapped point
+let _gpsLocSelected = null;   // { type, id, name, existingLat, existingLng }
+let _gpsLocWellData = [];     // cached well/piez list for current category
 
 function openSetMapModal(setName, wells) {
   const validWells = wells.filter(w => w.gps_latitude && w.gps_longitude);
@@ -374,9 +426,11 @@ function openSetMapModal(setName, wells) {
         popupAnchor: [0, -8],
       });
       const label = [w.state_well_number, w.common_name].filter(Boolean).join(' | ') || 'Well';
+      const fmtFlow = v => v == null ? null : Number(v) === 0 ? 'Off' : `${Number(v).toFixed(2)} cfs`;
       let status;
       if (!done) {
-        status = '<span style="color:#dc2626">Not read</span>';
+        const flowStr = fmtFlow(w.last_flow_cfs);
+        status = `<span style="color:#dc2626">Not read</span>${flowStr ? `<br><span style="color:#888">Last: ${flowStr}</span>` : ''}`;
       } else if (sessionR) {
         const lines = [`✓ Read ${localDateStr(sessionR.date, {month:'short',day:'numeric'})}`];
         if (sessionR.time) lines.push(sessionR.time.slice(0, 5));
@@ -384,9 +438,9 @@ function openSetMapModal(setName, wells) {
         status = `<span style="color:#16a34a">${lines.join('<br>')}</span>`;
       } else {
         const readDate = w.range_reading_date || w.last_reading_date;
-        status = readDate
-          ? `<span style="color:#16a34a">✓ Read ${localDateStr(readDate, {month:'short',day:'numeric'})}</span>`
-          : `<span style="color:#16a34a">✓ Read</span>`;
+        const flowStr = fmtFlow(w.last_flow_cfs);
+        const dateStr = readDate ? `✓ Read ${localDateStr(readDate, {month:'short',day:'numeric'})}` : '✓ Read';
+        status = `<span style="color:#16a34a">${dateStr}${flowStr ? `<br>${flowStr}` : ''}</span>`;
       }
       const m = L.marker([w.gps_latitude, w.gps_longitude], { icon: dotIcon }).addTo(_setLeafletMap);
       m.bindPopup(`<strong>${label}</strong><br>${status}`);
@@ -580,7 +634,10 @@ el('export-pending-btn').addEventListener('click', async () => {
 /* ── Dashboard Stats ─────────────────────────────────────────────────────── */
 async function loadDashboardStats() {
   try {
-    const s = await api('GET', '/api/dashboard/stats');
+    const [s, rw] = await Promise.all([
+      api('GET', '/api/dashboard/stats'),
+      api('GET', '/api/dashboard/running-wells').catch(() => null),
+    ]);
     const fmtDate = str => {
       if (!str) return '';
       const [y, m, d] = str.split('-');
@@ -592,9 +649,14 @@ async function loadDashboardStats() {
       ? `${fmtDate(s.kf_widget_start)} – ${fmtDate(s.kf_widget_end)}`
       : 'This Month';
     const pct = s.kf_total > 0 ? Math.round((s.kf_done / s.kf_total) * 100) : 0;
+    const rwCount  = rw ? rw.read_today_count : 0;
+    const rwTotal  = rw ? rw.total_count : 0;
+    const rwVal    = rwTotal > 0
+      ? `${rwCount}<span style="font-size:1rem;color:var(--text-dim)">/${rwTotal}</span>`
+      : `<span style="font-size:1rem;color:var(--text-muted)">—</span>`;
     const grid = el('dashboard-stats');
     grid.innerHTML = `
-      <div class="stat-card stat-accent">
+      <div class="stat-card stat-accent" id="kf-complete-stat" style="cursor:pointer">
         <div class="stat-value">${s.kf_done}<span style="font-size:1rem;color:var(--text-dim)">/${s.kf_total}</span></div>
         <div class="stat-label">KF Complete</div>
         <div class="stat-sublabel">${rangeLabel}</div>
@@ -605,11 +667,14 @@ async function loadDashboardStats() {
         <div class="stat-label">KF Remaining</div>
         <div class="stat-sublabel">${rangeLabel}</div>
       </div>
-      <div class="stat-card">
-        <div class="stat-value">${s.wells_read_today}<span style="font-size:1rem;color:var(--text-dim)">/${s.wells_total}</span></div>
-        <div class="stat-label">Wells Read Today</div>
+      <div class="stat-card rw-stat-card" id="running-wells-stat" style="cursor:pointer">
+        <div class="stat-value">${rwVal}</div>
+        <div class="stat-label">Running Wells Read</div>
+        <div class="stat-sublabel">Today</div>
       </div>
     `;
+    el('running-wells-stat').addEventListener('click', openRunningWellsModal);
+    el('kf-complete-stat').addEventListener('click', openKFSetsModal);
   } catch { /* non-critical */ }
 }
 
@@ -710,7 +775,7 @@ const HIST_COLS = {
   pge:         [{ key: 'value',         label: 'kWh' }],
   monitor:     [{ key: 'value',         label: 'kWh' }],
   well:        [{ key: 'hour_reading',  label: 'Hours' }, { key: 'flow_cfs', label: 'Flow (cfs)' }, { key: 'totalizer', label: 'Totalizer' }],
-  kf:          [{ key: 'value',         label: 'DTW (ft)' }, { key: 'method', label: 'Method' }, { key: 'entered_by', label: 'Operator' }],
+  kf:          [{ key: 'value',         label: 'DTW (ft)' }, { key: 'method', label: 'Method' }, { key: 'on_off', label: 'On/Off' }, { key: 'entered_by', label: 'Operator' }],
   piezometer:  [{ key: 'value',         label: 'DTW (ft)' }, { key: 'method', label: 'Method' }, { key: 'wet_dry_moist', label: 'Condition' }, { key: 'entered_by', label: 'Operator' }],
   dwr:         [{ key: 'value',         label: 'DTW (ft)' }, { key: 'method', label: 'Method' }, { key: 'entered_by', label: 'Operator' }],
   canal:       [{ key: 'flow',          label: 'Flow (cfs)' }, { key: 'totalizer', label: 'Totalizer (AF)' }, { key: 'gate_setting', label: 'Gate' }],
@@ -786,41 +851,67 @@ async function openHistoryModal(type, id, label) {
     table.innerHTML = `<thead><tr><th>Date</th>${headCells}<th>Notes</th><th></th></tr></thead><tbody></tbody>`;
     const tbody = table.querySelector('tbody');
 
-    rows.forEach(r => {
-      const d = fmtDate(r.reading_date);
-      const t = r.reading_time ? r.reading_time.slice(0, 5) : '';
-      const valCells = cols.map(c => `<td>${r[c.key] != null ? r[c.key] : '—'}</td>`).join('');
+    function renderHistoryRows(rowList) {
+      tbody.innerHTML = '';
+      rowList.forEach(r => {
+        const d = fmtDate(r.reading_date);
+        const t = r.reading_time ? r.reading_time.slice(0, 5) : '';
+        const valCells = cols.map(c => `<td>${r[c.key] != null ? r[c.key] : '—'}</td>`).join('');
 
-      const showDel = canDeleteAll ||
-        (role === 'supervisor' && isWithin24h(r.reading_date, r.reading_time)) ||
-        (r.entered_by === username && isWithin24h(r.reading_date, r.reading_time));
+        const showDel = canDeleteAll ||
+          (role === 'supervisor' && isWithin24h(r.reading_date, r.reading_time)) ||
+          (r.entered_by === username && isWithin24h(r.reading_date, r.reading_time));
 
-      const tr = document.createElement('tr');
-      tr.innerHTML = `
-        <td>${d}${t ? `<div class="hist-time">${t}</div>` : ''}</td>
-        ${valCells}
-        <td class="hist-notes">${r.notes || ''}</td>
-        <td>${showDel ? `<button class="hist-del-btn" data-id="${r.id}">${icon('delete')}</button>` : ''}</td>`;
-      tbody.appendChild(tr);
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${d}${t ? `<div class="hist-time">${t}</div>` : ''}</td>
+          ${valCells}
+          <td class="hist-notes">${r.notes || ''}</td>
+          <td>${showDel ? `<button class="hist-del-btn" data-id="${r.id}">${icon('delete')}</button>` : ''}</td>`;
+        tbody.appendChild(tr);
 
-      if (showDel) {
-        tr.querySelector('.hist-del-btn').addEventListener('click', async () => {
-          if (!confirm('Delete this reading?')) return;
-          try {
-            await api('DELETE', `/api/history/${type}/${r.id}`);
-            tr.remove();
-            if (!tbody.children.length) {
-              body.innerHTML = '<div class="placeholder-msg" style="padding:16px">No history found.</div>';
+        if (showDel) {
+          tr.querySelector('.hist-del-btn').addEventListener('click', async () => {
+            if (!confirm('Delete this reading?')) return;
+            try {
+              await api('DELETE', `/api/history/${type}/${r.id}`);
+              tr.remove();
+              if (!tbody.children.length) {
+                body.innerHTML = '<div class="placeholder-msg" style="padding:16px">No history found.</div>';
+              }
+            } catch (err) {
+              alert('Delete failed: ' + err.message);
             }
-          } catch (err) {
-            alert('Delete failed: ' + err.message);
-          }
-        });
-      }
-    });
+          });
+        }
+      });
+    }
+
+    renderHistoryRows(rows);
 
     body.innerHTML = '';
     body.appendChild(table);
+
+    if (type === 'well') {
+      const showAllBtn = document.createElement('button');
+      showAllBtn.className = 'btn btn-secondary';
+      showAllBtn.style.cssText = 'width:100%;margin-top:12px';
+      showAllBtn.textContent = 'Show All';
+      showAllBtn.addEventListener('click', async () => {
+        showAllBtn.disabled = true;
+        showAllBtn.textContent = 'Loading…';
+        try {
+          const allRows = await api('GET', `/api/history-all?type=well&id=${encodeURIComponent(id)}`);
+          renderHistoryRows(allRows);
+          showAllBtn.remove();
+        } catch (err) {
+          showAllBtn.disabled = false;
+          showAllBtn.textContent = 'Show All';
+          alert('Failed to load: ' + err.message);
+        }
+      });
+      body.appendChild(showAllBtn);
+    }
   } catch (err) {
     body.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light);padding:16px">${err.message}</div>`;
   }
@@ -995,6 +1086,7 @@ function createReadingRow({ type, id, label, prev, prevDate, prevNotes, unit, de
       <input type="text" class="rr-input prev rr-prev" readonly value="${prevDisp}">
     </div>
     <div class="rr-notes-wrap">
+      ${prevNotes ? `<div class="prev-note-hint">${escHtml(prevNotes)}</div>` : ''}
       <textarea class="rr-notes-input rr-notes" rows="1" placeholder="Notes…"></textarea>
       <button class="hist-btn" title="View history">${icon('history')}</button>
     </div>
@@ -1018,7 +1110,6 @@ function createReadingRow({ type, id, label, prev, prevDate, prevNotes, unit, de
 
   // Notes textarea
   const notesInput = row.querySelector('.rr-notes');
-  if (prevNotes) notesInput.value = prevNotes;
   row.querySelector('.hist-btn').addEventListener('click', () => {
     openHistoryModal(type, id, label);
   });
@@ -1042,13 +1133,25 @@ async function savePPReadings() {
   const pge_readings        = [];
   const monitor_readings    = [];
 
-  document.querySelectorAll('.reading-row').forEach(row => {
-    const cur = row.querySelector('.rr-current').value.trim();
-    if (cur === '') return; // skip empty
-
+  document.querySelectorAll('.list-section:not(.collapsed) .reading-row').forEach(row => {
+    const curInput = row.querySelector('.rr-current');
+    let cur = curInput.value.trim();
     const notes = row.querySelector('.rr-notes').value.trim();
     const type  = row.dataset.type;
     const id    = row.dataset.id;
+
+    if (type === 'pump' && cur === '') {
+      // Auto-fill pump hours with previous reading if left blank
+      const prevDisp = row.querySelector('.rr-prev').value.trim();
+      if (prevDisp && prevDisp !== '—') {
+        cur = prevDisp;
+        curInput.value = cur;
+      } else {
+        return; // no previous to fall back on — skip
+      }
+    } else if (cur === '') {
+      return; // PGE / compressor / monitor: skip if blank
+    }
 
     if (type === 'pump')       pump_readings.push({ position_id: id, hour_reading: parseFloat(cur), notes });
     if (type === 'compressor') compressor_readings.push({ compressor_id: parseInt(id), hour_reading: parseFloat(cur), notes });
@@ -1081,8 +1184,8 @@ async function savePPReadings() {
       status.textContent = '⏳ Saved offline — will sync when connected';
       status.className = 'save-status warn';
       showToast(`Pumping Plant queued offline`, 'warn');
-      // Clear all filled inputs so they can't be re-submitted
-      document.querySelectorAll('.reading-row').forEach(row => {
+      // Clear expanded section inputs so they can't be re-submitted
+      document.querySelectorAll('.list-section:not(.collapsed) .reading-row').forEach(row => {
         row.querySelector('.rr-current').value = '';
         row.querySelector('.rr-notes').value = '';
         row.classList.add('saved');
@@ -1199,7 +1302,10 @@ function createWellItem(w, dateInput, timeInput) {
 
   const hrs = w.hours_since_reading;
   const sc = hrs == null ? 'due' : hrs <= 8 ? 'done' : 'overdue';
-  const badge = hrs == null ? 'Not read' : hrs < 1 ? 'Just read' : `${Math.round(hrs)}h ago`;
+  const badge = hrs == null ? 'Not read'
+    : hrs < 1   ? 'Just read'
+    : hrs >= 48 ? `${Math.round(hrs / 24)}d ago`
+    : `${Math.round(hrs)}h ago`;
 
   div.innerHTML = `
     <div class="list-item-header">
@@ -1209,15 +1315,20 @@ function createWellItem(w, dateInput, timeInput) {
       <span class="expand-chevron">&#9660;</span>
     </div>
     <div class="list-item-form">
-      <div class="lif-row">
-        <div class="toggle-group">
-          <button class="toggle-btn active" data-role="on">ON</button>
-          <button class="toggle-btn" data-role="off">OFF</button>
+      <div class="two-col">
+        <div class="form-group">
+          <label>Well Status</label>
+          <div class="toggle-group">
+            <button class="toggle-btn" data-role="on">ON</button>
+            <button class="toggle-btn" data-role="off">OFF</button>
+          </div>
         </div>
-        <div class="toggle-group">
-          <span class="lif-label">Motor Oil</span>
-          <button class="toggle-btn active" data-role="oil-y">Y</button>
-          <button class="toggle-btn" data-role="oil-n">N</button>
+        <div class="form-group">
+          <label>Motor Oil Needed?</label>
+          <div class="toggle-group">
+            <button class="toggle-btn" data-role="oil-y">Yes</button>
+            <button class="toggle-btn" data-role="oil-n">No</button>
+          </div>
         </div>
       </div>
       <div class="two-col">
@@ -1246,6 +1357,7 @@ function createWellItem(w, dateInput, timeInput) {
       </div>
       <div class="form-group">
         <label>Notes</label>
+        ${w.last_notes ? `<div class="prev-note-hint">${escHtml(w.last_notes)}</div>` : ''}
         <textarea class="ctrl-textarea w-notes" rows="2" placeholder="Optional notes…"></textarea>
       </div>
       <div class="lif-error error-msg hidden"></div>
@@ -1255,8 +1367,6 @@ function createWellItem(w, dateInput, timeInput) {
         <button class="btn btn-save w-save-btn">Save Well Reading</button>
       </div>
     </div>`;
-
-  if (w.last_notes) div.querySelector('.w-notes').value = w.last_notes;
   div.querySelector('.w-hist-btn').addEventListener('click', e => {
     e.stopPropagation();
     openHistoryModal('well', w.well_id, w.common_name);
@@ -1280,7 +1390,11 @@ function createWellItem(w, dateInput, timeInput) {
     dateInput, timeInput
   );
 
-  let onOff = true, motorOil = true;
+  let onOff    = w.last_on_off    ?? true;
+  let motorOil = w.last_motor_oil ?? true;
+
+  div.querySelector(`[data-role="${onOff ? 'on' : 'off'}"]`).classList.add('active');
+  div.querySelector(`[data-role="${motorOil ? 'oil-y' : 'oil-n'}"]`).classList.add('active');
 
   div.querySelector('[data-role="on"]').addEventListener('click', e => {
     onOff = true;
@@ -1436,6 +1550,7 @@ function createCanalItem(s, dateInput, timeInput) {
       ${f.derived ? `<div class="form-group"><label>Derived Flow (cfs)</label>
         <input type="number" class="ctrl-input c-derived" step="0.01" placeholder="0.00"></div>` : ''}
       <div class="form-group"><label>Notes</label>
+        ${s.last_notes ? `<div class="prev-note-hint">${escHtml(s.last_notes)}</div>` : ''}
         <textarea class="ctrl-textarea c-notes" rows="2" placeholder="Optional notes…"></textarea></div>
       <div class="lif-error error-msg hidden"></div>
       <div class="lif-footer">
@@ -1443,8 +1558,6 @@ function createCanalItem(s, dateInput, timeInput) {
         <button class="btn btn-save c-save-btn">Save Reading</button>
       </div>
     </div>`;
-
-  if (s.last_notes) div.querySelector('.c-notes').value = s.last_notes;
 
   // Prev + live Δ for flow, gate, head/overpour, derived
   const cFlow = div.querySelector('.c-flow');
@@ -1629,6 +1742,7 @@ function createVehicleItem(v, dateInput, timeInput) {
       ${fieldsHtml}
       <div class="form-group">
         <label>Notes</label>
+        ${v.last_notes ? `<div class="prev-note-hint">${escHtml(v.last_notes)}</div>` : ''}
         <textarea class="ctrl-textarea v-notes" rows="2" placeholder="Optional notes…"></textarea>
       </div>
       <div class="lif-error error-msg hidden"></div>
@@ -1637,8 +1751,6 @@ function createVehicleItem(v, dateInput, timeInput) {
         <button class="btn btn-save v-save-btn">Save Reading</button>
       </div>
     </div>`;
-
-  if (v.last_notes) div.querySelector('.v-notes').value = v.last_notes;
 
   if (v.next_service_miles) {
     const hint = div.querySelector('.v-service-hint');
@@ -1848,7 +1960,10 @@ function renderWellIssues() {
             <div class="maint-hist-attach-area issue-files-area hidden"></div>
           </div>
           <div class="error-msg hidden issue-update-error"></div>
-          <button class="btn btn-save btn-full issue-save-btn" data-table="well_issues">Save Changes</button>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-save issue-save-btn" style="flex:1" data-table="well_issues">Save Changes</button>
+            <button class="btn btn-secondary issue-share-btn">&#8679; Share</button>
+          </div>
         </div>
       </div>`;
   }).join('');
@@ -1954,7 +2069,27 @@ el('well-issue-list').addEventListener('click', async e => {
     } catch (err) { area.innerHTML = `<div class="maint-att-empty" style="color:var(--red-light)">${err.message}</div>`; }
     return;
   }
-
+  if (e.target.classList.contains('issue-share-btn')) {
+    shareMaintenanceReport(item.dataset.issueId, item, {
+      issueArray:  wellIssues,
+      tableName:   'well_issues',
+      reportLabel: 'Well Issue Report',
+      getTitle:    i => i.well_area ? `${i.well_name} (${i.well_area})` : (i.well_name || 'Unknown Well'),
+      getGPS:      i => i.gps_latitude != null ? { lat: i.gps_latitude, lon: i.gps_longitude } : null,
+      getRows:     i => [
+        ['Well',       escHtml(i.well_name || '—')],
+        i.well_area ? ['Area', escHtml(i.well_area)] : null,
+        ['Status',     i.status.replace('_',' ')],
+        ['Reported',   i.reported_date?.slice(0,10) || '—'],
+        ['Entered By', escHtml(i.entered_by_full_name || i.entered_by || '—')],
+        i.assigned_to     ? ['Assigned To',     escHtml(i.assigned_to)]      : null,
+        i.action_taken     ? ['Action Taken',     escHtml(i.action_taken)]     : null,
+        i.resolution_notes ? ['Resolution Notes', escHtml(i.resolution_notes)] : null,
+        i.po_number        ? ['PO Number',        escHtml(i.po_number)]        : null,
+        i.cost != null     ? ['Cost',             `$${Number(i.cost).toFixed(2)}`] : null,
+      ].filter(Boolean),
+    }); return;
+  }
   if (e.target.classList.contains('issue-save-btn')) {
     const issueId     = item.dataset.issueId;
     const status      = item.querySelector('.issue-status-select').value;
@@ -1972,6 +2107,7 @@ el('well-issue-list').addEventListener('click', async e => {
       const pending = issueCardFiles.get(issueId);
       if (pending?.length) { await doUploadIssueAttachments(issueId, 'well_issues', pending, item.dataset.entityName); issueCardFiles.delete(issueId); }
       wellIssuesLoaded = false;
+
       await loadWellIssues();
       showToast('Issue updated', 'success');
       refreshMaintenanceBadges();
@@ -2090,7 +2226,10 @@ function renderBldgIssues() {
             <div class="maint-hist-attach-area issue-files-area hidden"></div>
           </div>
           <div class="error-msg hidden issue-update-error"></div>
-          <button class="btn btn-save btn-full issue-save-btn" data-table="building_issues">Save Changes</button>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-save issue-save-btn" style="flex:1" data-table="building_issues">Save Changes</button>
+            <button class="btn btn-secondary issue-share-btn">&#8679; Share</button>
+          </div>
         </div>
       </div>`;
   }).join('');
@@ -2207,7 +2346,26 @@ el('bldg-issue-list').addEventListener('click', async e => {
     } catch (err) { area.innerHTML = `<div class="maint-att-empty" style="color:var(--red-light)">${err.message}</div>`; }
     return;
   }
-
+  if (e.target.classList.contains('issue-share-btn')) {
+    shareMaintenanceReport(item.dataset.issueId, item, {
+      issueArray:  bldgIssues,
+      tableName:   'building_issues',
+      reportLabel: 'Building Issue Report',
+      getTitle:    i => [i.site_name, i.building_name].filter(Boolean).join(' — ') || 'Unknown Building',
+      getRows:     i => [
+        ['Site',       escHtml(i.site_name || '—')],
+        ['Building',   escHtml(i.building_name || '—')],
+        ['Status',     i.status.replace('_',' ')],
+        ['Reported',   i.reported_date?.slice(0,10) || '—'],
+        ['Entered By', escHtml(i.entered_by_full_name || i.entered_by || '—')],
+        i.assigned_to     ? ['Assigned To',     escHtml(i.assigned_to)]      : null,
+        i.action_taken     ? ['Action Taken',     escHtml(i.action_taken)]     : null,
+        i.resolution_notes ? ['Resolution Notes', escHtml(i.resolution_notes)] : null,
+        i.po_number        ? ['PO Number',        escHtml(i.po_number)]        : null,
+        i.cost != null     ? ['Cost',             `$${Number(i.cost).toFixed(2)}`] : null,
+      ].filter(Boolean),
+    }); return;
+  }
   if (e.target.classList.contains('issue-save-btn')) {
     const issueId     = item.dataset.issueId;
     const status      = item.querySelector('.issue-status-select').value;
@@ -2333,7 +2491,10 @@ function renderEquipIssues() {
             <div class="maint-hist-attach-area issue-files-area hidden"></div>
           </div>
           <div class="error-msg hidden issue-update-error"></div>
-          <button class="btn btn-save btn-full issue-save-btn" data-table="equipment_issues">Save Changes</button>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-save issue-save-btn" style="flex:1" data-table="equipment_issues">Save Changes</button>
+            <button class="btn btn-secondary issue-share-btn">&#8679; Share</button>
+          </div>
         </div>
       </div>`;
   }).join('');
@@ -2470,7 +2631,27 @@ el('equip-issue-list').addEventListener('click', async e => {
     } catch (err) { area.innerHTML = `<div class="maint-att-empty" style="color:var(--red-light)">${err.message}</div>`; }
     return;
   }
-
+  if (e.target.classList.contains('issue-share-btn')) {
+    shareMaintenanceReport(item.dataset.issueId, item, {
+      issueArray:  equipIssues,
+      tableName:   'equipment_issues',
+      reportLabel: 'Equipment Issue Report',
+      getTitle:    i => i.equipment_name || i.equipment_type || 'Unknown Equipment',
+      resolveGPS:  resolveGPSFromBlobs,
+      getRows:     i => [
+        ['Equipment',  escHtml(i.equipment_name || i.equipment_type || '—')],
+        i.equipment_name && i.equipment_type ? ['Type', escHtml(i.equipment_type)] : null,
+        ['Status',     i.status.replace('_',' ')],
+        ['Reported',   i.reported_date?.slice(0,10) || '—'],
+        ['Entered By', escHtml(i.entered_by_full_name || i.entered_by || '—')],
+        i.assigned_to     ? ['Assigned To',     escHtml(i.assigned_to)]      : null,
+        i.action_taken     ? ['Action Taken',     escHtml(i.action_taken)]     : null,
+        i.resolution_notes ? ['Resolution Notes', escHtml(i.resolution_notes)] : null,
+        i.po_number        ? ['PO Number',        escHtml(i.po_number)]        : null,
+        i.cost != null     ? ['Cost',             `$${Number(i.cost).toFixed(2)}`] : null,
+      ].filter(Boolean),
+    }); return;
+  }
   // Save changes
   if (e.target.classList.contains('issue-save-btn')) {
     const issueId     = item.dataset.issueId;
@@ -2603,7 +2784,10 @@ function renderCanalIssues() {
             <div class="maint-hist-attach-area issue-files-area hidden"></div>
           </div>
           <div class="error-msg hidden issue-update-error"></div>
-          <button class="btn btn-save btn-full issue-save-btn" data-table="canal_issues">Save Changes</button>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-save issue-save-btn" style="flex:1" data-table="canal_issues">Save Changes</button>
+            <button class="btn btn-secondary issue-share-btn">&#8679; Share</button>
+          </div>
         </div>
       </div>`;
   }).join('');
@@ -2745,6 +2929,26 @@ el('canal-issue-list').addEventListener('click', async e => {
   if (e.target.classList.contains('canal-map-btn')) {
     openGPSMap(parseFloat(e.target.dataset.lat), parseFloat(e.target.dataset.lon)); return;
   }
+  if (e.target.classList.contains('issue-share-btn')) {
+    shareMaintenanceReport(item.dataset.issueId, item, {
+      issueArray:  canalIssues,
+      tableName:   'canal_issues',
+      reportLabel: 'Canal Report',
+      getTitle:    i => i.pool ? `Pool ${i.pool}` : 'Canal',
+      getGPS:      i => i.gps_lat != null ? { lat: i.gps_lat, lon: i.gps_lon } : null,
+      getRows:     i => [
+        ['Pool',       i.pool ? `Pool ${escHtml(i.pool)}` : '—'],
+        ['Status',     i.status.replace('_',' ')],
+        ['Reported',   i.reported_date?.slice(0,10) || '—'],
+        ['Entered By', escHtml(i.entered_by_full_name || i.entered_by || '—')],
+        i.action_taken     ? ['Action Taken',     escHtml(i.action_taken)]     : null,
+        i.resolution_notes ? ['Resolution Notes', escHtml(i.resolution_notes)] : null,
+        i.po_number        ? ['PO Number',        escHtml(i.po_number)]        : null,
+        i.cost != null     ? ['Cost',             `$${Number(i.cost).toFixed(2)}`] : null,
+        i.notes            ? ['Notes',            escHtml(i.notes)]            : null,
+      ].filter(Boolean),
+    }); return;
+  }
   if (e.target.classList.contains('issue-files-btn')) {
     const area = item.querySelector('.issue-files-area');
     if (!area.classList.contains('hidden')) { area.classList.add('hidden'); return; }
@@ -2794,6 +2998,205 @@ el('canal-issue-list').addEventListener('click', async e => {
     }
   }
 });
+
+// ── Issue Share / Report ──────────────────────────────────────────────────────
+
+function blobToDataUri(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload  = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+function addPinToMapImage(dataUri, w, h) {
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, w, h);
+      const cx = w / 2, cy = h / 2;
+      // shadow
+      ctx.beginPath(); ctx.arc(cx + 1, cy + 1, 9, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fill();
+      // red circle
+      ctx.beginPath(); ctx.arc(cx, cy, 8, 0, Math.PI * 2);
+      ctx.fillStyle = '#e53935'; ctx.fill();
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 2.5; ctx.stroke();
+      // white centre dot
+      ctx.beginPath(); ctx.arc(cx, cy, 2.5, 0, Math.PI * 2);
+      ctx.fillStyle = '#fff'; ctx.fill();
+      resolve(canvas.toDataURL('image/jpeg', 0.92));
+    };
+    img.onerror = () => resolve(dataUri);
+    img.src = dataUri;
+  });
+}
+
+async function resolveGPSFromBlobs(blobs) {
+  for (const blob of blobs) {
+    const gps = await readExifGPS(blob);
+    if (gps) return gps;
+  }
+  return null;
+}
+
+// ── Generic maintenance report (used by all issue sections) ──────────────────
+// cfg: { issueArray, tableName, reportLabel, getTitle(i), getRows(i), getGPS?(i), resolveGPS?(blobs) }
+async function shareMaintenanceReport(issueId, item, cfg) {
+  const btn = item.querySelector('.issue-share-btn');
+  btn.disabled = true;
+  btn.textContent = 'Preparing…';
+  try {
+    const issue = cfg.issueArray.find(i => String(i.issue_id) === String(issueId));
+    if (!issue) throw new Error('Issue not found');
+
+    // Fetch photo blobs; keep blobs available for EXIF GPS extraction before converting
+    const atts = await api('GET', `/api/maintenance/attachments?table_name=${cfg.tableName}&record_id=${issueId}`);
+    const photos = atts.filter(a => a.file_type === 'photo' && !a.mime_type?.includes('pdf'));
+    const photoBlobs = (await Promise.all(photos.map(async a => {
+      try {
+        const url = `/uploads/${a.rel_path.split('/').map(encodeURIComponent).join('/')}`;
+        return await (await fetch(url)).blob();
+      } catch { return null; }
+    }))).filter(Boolean);
+    const photoUris = await Promise.all(photoBlobs.map(b => blobToDataUri(b)));
+
+    // GPS: from issue record (getGPS) or scanned from photo EXIF (resolveGPS)
+    let gps = cfg.getGPS ? cfg.getGPS(issue) : null;
+    if (!gps && cfg.resolveGPS) gps = await cfg.resolveGPS(photoBlobs);
+
+    // Optional GPS map with pin
+    let mapSrc = null;
+    if (gps) {
+      const pad = 0.0015;
+      const bbox = `${gps.lon-pad},${gps.lat-pad},${gps.lon+pad},${gps.lat+pad}`;
+      const esriUrl = `https://server.arcgisonline.com/arcgis/rest/services/World_Imagery/MapServer/export?bbox=${bbox}&bboxSR=4326&size=600,300&imageSR=96&f=image`;
+      try {
+        const resp = await fetch(esriUrl);
+        if (resp.ok) mapSrc = await addPinToMapImage(await blobToDataUri(await resp.blob()), 600, 300);
+        else mapSrc = esriUrl;
+      } catch { mapSrc = esriUrl; }
+    }
+
+    showMaintenanceReportPreview({
+      reportLabel: cfg.reportLabel,
+      title:       cfg.getTitle(issue),
+      rows:        cfg.getRows(issue),
+      description: issue.description || '',
+      mapSrc, gps, photoUris,
+      filename:    `${cfg.tableName}-${issueId}`,
+    });
+  } catch (err) {
+    showToast('Failed to prepare report: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '↑ Share';
+  }
+}
+
+function buildMaintenanceReportHtml({ reportLabel, title, rows, description, mapSrc, gps, photoUris }) {
+  const lat = gps ? Number(gps.lat).toFixed(6) : null;
+  const lon = gps ? Number(gps.lon).toFixed(6) : null;
+  return `
+    <div class="ir-header">
+      <div class="ir-title">${escHtml(reportLabel)} — ${escHtml(title)}</div>
+      <div class="ir-meta">${new Date().toLocaleDateString()}</div>
+    </div>
+    <table class="ir-table">
+      ${rows.map(([k,v]) => `<tr><th>${escHtml(k)}</th><td>${v}</td></tr>`).join('')}
+    </table>
+    <div class="ir-section">
+      <div class="ir-section-label">Description</div>
+      <div class="ir-text">${escHtml(description).replace(/\n/g,'<br>')}</div>
+    </div>
+    ${mapSrc ? `
+    <div class="ir-section">
+      <div class="ir-section-label">Location</div>
+      <img src="${mapSrc}" class="ir-map" alt="Location map" crossorigin="anonymous">
+      <a href="#" class="ir-coords" data-lat="${lat}" data-lon="${lon}">${lat}, ${lon}</a>
+    </div>` : ''}
+    ${photoUris.length ? `
+    <div class="ir-section">
+      <div class="ir-section-label">Photos (${photoUris.length})</div>
+      <div class="ir-photos">
+        ${photoUris.map(uri => `<img src="${uri}" class="ir-photo" alt="">`).join('')}
+      </div>
+    </div>` : ''}`;
+}
+
+function showMaintenanceReportPreview({ reportLabel, title, rows, description, mapSrc, gps, photoUris, filename }) {
+  document.getElementById('issue-report-modal')?.remove();
+
+  const modal = document.createElement('div');
+  modal.id = 'issue-report-modal';
+  modal.className = 'report-preview-overlay';
+  modal.innerHTML = `
+    <div class="report-preview-bar">
+      <button class="btn btn-secondary btn-sm" id="rp-close">&times; Close</button>
+      <span class="report-preview-bar-title">${escHtml(title)}</span>
+      <div style="display:flex;gap:8px;flex-shrink:0">
+        <button class="btn btn-secondary btn-sm" id="rp-print">&#128424; Print</button>
+        <button class="btn btn-save btn-sm" id="rp-share">&#8679; Share</button>
+      </div>
+    </div>
+    <div class="report-preview-scroll">
+      <div class="ir-content" id="ir-body">
+        ${buildMaintenanceReportHtml({ reportLabel, title, rows, description, mapSrc, gps, photoUris })}
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+
+  modal.querySelector('#rp-close').addEventListener('click', () => modal.remove());
+
+  modal.querySelector('.ir-coords')?.addEventListener('click', e => {
+    e.preventDefault();
+    const { lat, lon } = e.currentTarget.dataset;
+    const ua = navigator.userAgent;
+    const isApple = /iPhone|iPad|iPod|Macintosh/.test(ua) && !ua.includes('Windows');
+    window.open(
+      isApple ? `https://maps.apple.com/?ll=${lat},${lon}&t=k&z=17&q=Issue+Location`
+              : `https://www.google.com/maps/search/?api=1&query=${lat},${lon}`,
+      '_blank'
+    );
+  });
+
+  modal.querySelector('#rp-print').addEventListener('click', () => window.print());
+
+  modal.querySelector('#rp-share').addEventListener('click', async () => {
+    const shareBtn = modal.querySelector('#rp-share');
+    shareBtn.disabled = true;
+    shareBtn.textContent = 'Generating…';
+    try {
+      const blob = await html2pdf()
+        .set({
+          margin: 8,
+          filename: `${filename}.pdf`,
+          image: { type: 'jpeg', quality: 0.92 },
+          html2canvas: { scale: 2, useCORS: true, logging: false },
+          jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+        })
+        .from(modal.querySelector('#ir-body'))
+        .outputPdf('blob');
+      const file = new File([blob], `${filename}.pdf`, { type: 'application/pdf' });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: `${reportLabel} — ${title}` });
+      } else {
+        const url = URL.createObjectURL(blob);
+        Object.assign(document.createElement('a'), { href: url, download: `${filename}.pdf` }).click();
+        URL.revokeObjectURL(url);
+      }
+    } catch (err) {
+      if (err.name !== 'AbortError') showToast('Share failed: ' + err.message, 'error');
+    } finally {
+      shareBtn.disabled = false;
+      shareBtn.textContent = '↑ Share';
+    }
+  });
+}
 
 // ── EXIF GPS reader ───────────────────────────────────────────────────────────
 async function readExifGPS(file) {
@@ -3899,6 +4302,7 @@ function createKFItem(w, dateInput, timeInput) {
       </div>
       <div class="form-group">
         <label>Notes</label>
+        ${w.last_notes ? `<div class="prev-note-hint">${escHtml(w.last_notes)}</div>` : ''}
         <textarea class="ctrl-textarea kf-notes" rows="2" placeholder="Optional notes…"></textarea>
       </div>
       <div class="lif-error error-msg hidden"></div>
@@ -3909,11 +4313,10 @@ function createKFItem(w, dateInput, timeInput) {
       </div>
     </div>`;
 
-  // Auto-fill operator and pre-populate last notes
+  // Auto-fill operator
   if (currentUser) {
     div.querySelector('.kf-op').value = currentUser.initials || currentUser.username;
   }
-  if (w.last_notes) div.querySelector('.kf-notes').value = w.last_notes;
 
   const mapBtn = div.querySelector('.kf-map-btn');
   if (mapBtn) {
@@ -4103,11 +4506,11 @@ function createPiezItem(p, dateInput, timeInput) {
   const div = document.createElement('div');
   div.className = 'list-item';
 
-  const hasReading = p.last_reading_date != null;
-  const sc         = hasReading ? 'done' : 'due';
-  const badge      = hasReading
-    ? localDateStr(p.last_reading_date, { month: 'short', day: 'numeric' })
-    : 'No reading';
+  const daysSince  = daysSinceDate(p.last_reading_date);
+  const sc    = daysSince == null ? 'due' : daysSince > 7 ? 'overdue' : 'done';
+  const badge = daysSince == null
+    ? 'No reading'
+    : localDateStr(p.last_reading_date, { month: 'short', day: 'numeric' });
   const prevDTW    = p.last_dtw != null ? `${Number(p.last_dtw).toFixed(2)} ft` : null;
   const prevMethod = p.last_method ? p.last_method.charAt(0).toUpperCase() + p.last_method.slice(1) : null;
   const prevCond   = p.last_wet_dry_moist ? p.last_wet_dry_moist.charAt(0).toUpperCase() + p.last_wet_dry_moist.slice(1) : null;
@@ -4152,6 +4555,7 @@ function createPiezItem(p, dateInput, timeInput) {
       </div>
       <div class="form-group">
         <label>Notes</label>
+        ${p.last_reading_notes ? `<div class="prev-note-hint">${escHtml(p.last_reading_notes)}</div>` : ''}
         <textarea class="ctrl-textarea piez-notes" rows="2" placeholder="Optional notes…"></textarea>
       </div>
       <div class="lif-error error-msg hidden"></div>
@@ -4311,15 +4715,17 @@ document.querySelectorAll('.text-size-btn').forEach(btn => {
 
 // Settings panel navigation
 const SETTINGS_PANEL_NAMES = {
-  account:     'Account',
-  password:    'Change Password',
-  textsize:    'Text Size',
-  readings:    "Today's Readings",
-  'kf-widget': 'KF Widget',
-  appinfo:     'App Info',
-  tools:       'Tools',
-  bugreports:  'Bug Reports',
-  usermgmt:    'User Management',
+  account:          'Account',
+  password:         'Change Password',
+  textsize:         'Text Size',
+  readings:         "Today's Readings",
+  'kf-widget':      'KF Widget',
+  'running-wells':  'Running Wells',
+  'gps-selector':   'GPS Location Selector',
+  appinfo:          'App Info',
+  tools:            'Tools',
+  bugreports:       'Bug Reports',
+  usermgmt:         'User Management',
 };
 function openSettingsPanel(panelId) {
   el('settings-main').classList.add('hidden');
@@ -4327,9 +4733,11 @@ function openSettingsPanel(panelId) {
   el('settings-panel-' + panelId).classList.remove('hidden');
   setPanelNav(el('screen-admin'), closeSettingsPanel,
     'Settings - ' + (SETTINGS_PANEL_NAMES[panelId] || panelId));
-  if (panelId === 'readings')   loadTodayReadings();
-  if (panelId === 'bugreports') loadBugReports();
-  if (panelId === 'kf-widget')  initKFWidgetPanel();
+  if (panelId === 'readings')       loadTodayReadings();
+  if (panelId === 'bugreports')     loadBugReports();
+  if (panelId === 'kf-widget')      initKFWidgetPanel();
+  if (panelId === 'running-wells')  initRunningWellsPanel();
+  if (panelId === 'gps-selector')   initGPSSelectorSettingsPanel();
   if (panelId === 'appinfo') {
     const ls = localStorage.getItem('watermark-last-sync');
     el('settings-last-sync').textContent = ls ? new Date(ls).toLocaleString() : 'Never';
@@ -4863,6 +5271,237 @@ el('kf-widget-save-btn').addEventListener('click', async () => {
   } catch (err) {
     showToast(err.message, 'error');
   }
+});
+
+// ── Running Wells Settings ────────────────────────────────────────────────────
+async function initRunningWellsPanel() {
+  const list = el('rw-settings-list');
+  list.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const [{ well_ids }, wells] = await Promise.all([
+      api('GET', '/api/settings/running-wells'),
+      api('GET', '/api/wells/operational'),
+    ]);
+    const savedSet = new Set(well_ids.map(Number));
+
+    // Group by discharge_pool
+    const byPool = {};
+    wells.forEach(w => {
+      const pool = w.discharge_pool || 'Other';
+      if (!byPool[pool]) byPool[pool] = [];
+      byPool[pool].push(w);
+    });
+
+    let html = '';
+    Object.entries(byPool).forEach(([pool, poolWells]) => {
+      const safePool = pool.replace(/"/g, '&quot;');
+      html += `<div class="rw-area-row">
+        <label class="rw-area-label">
+          <input type="checkbox" class="rw-area-cb" data-pool="${safePool}">
+          <span>${pool}</span>
+        </label>
+      </div>`;
+      poolWells.forEach(w => {
+        const checked = savedSet.has(Number(w.well_id)) ? 'checked' : '';
+        html += `<div class="rw-well-row">
+          <label class="rw-well-label">
+            <input type="checkbox" class="rw-well-cb" data-pool="${safePool}" data-id="${w.well_id}" ${checked}>
+            <span>${w.common_name}</span>
+          </label>
+        </div>`;
+      });
+    });
+    list.innerHTML = html;
+
+    function syncPoolCheckbox(pool) {
+      const wellCbs = list.querySelectorAll(`.rw-well-cb[data-pool="${pool}"]`);
+      const poolCb  = list.querySelector(`.rw-area-cb[data-pool="${pool}"]`);
+      if (!poolCb) return;
+      const total   = wellCbs.length;
+      const checked = [...wellCbs].filter(c => c.checked).length;
+      poolCb.checked = checked === total;
+      poolCb.indeterminate = checked > 0 && checked < total;
+    }
+
+    // Set initial pool checkbox states
+    Object.keys(byPool).forEach(syncPoolCheckbox);
+
+    // Pool checkbox toggles all wells in that pool
+    list.querySelectorAll('.rw-area-cb').forEach(poolCb => {
+      poolCb.addEventListener('change', () => {
+        list.querySelectorAll(`.rw-well-cb[data-pool="${poolCb.dataset.pool}"]`)
+          .forEach(cb => { cb.checked = poolCb.checked; });
+      });
+    });
+
+    // Well checkbox updates its pool checkbox state
+    list.querySelectorAll('.rw-well-cb').forEach(wellCb => {
+      wellCb.addEventListener('change', () => syncPoolCheckbox(wellCb.dataset.pool));
+    });
+  } catch (err) {
+    list.innerHTML = `<div class="placeholder-msg">Failed to load.</div>`;
+  }
+}
+
+el('rw-settings-save-btn').addEventListener('click', async () => {
+  const checked = [...document.querySelectorAll('.rw-well-cb:checked')].map(cb => Number(cb.dataset.id));
+  try {
+    await api('PUT', '/api/settings/running-wells', { well_ids: checked });
+    showToast('Running wells saved');
+    loadDashboardStats();
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+});
+
+async function initGPSSelectorSettingsPanel() {
+  try {
+    const s = await api('GET', '/api/settings/gps-selector');
+    const isPublic = s.public;
+    el('gps-sel-toggle-on').classList.toggle('active', isPublic);
+    el('gps-sel-toggle-off').classList.toggle('active', !isPublic);
+  } catch { /* ignore */ }
+}
+
+el('gps-sel-toggle-on').addEventListener('click', () => {
+  el('gps-sel-toggle-on').classList.add('active');
+  el('gps-sel-toggle-off').classList.remove('active');
+});
+el('gps-sel-toggle-off').addEventListener('click', () => {
+  el('gps-sel-toggle-off').classList.add('active');
+  el('gps-sel-toggle-on').classList.remove('active');
+});
+el('gps-sel-save-btn').addEventListener('click', async () => {
+  const isPublic = el('gps-sel-toggle-on').classList.contains('active');
+  try {
+    await api('PUT', '/api/settings/gps-selector', { public: isPublic });
+    showToast('Setting saved', 'success');
+  } catch (err) {
+    showToast('Failed to save: ' + err.message, 'error');
+  }
+});
+
+async function openKFSetsModal() {
+  const body = el('kf-sets-modal-body');
+  body.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  el('kf-sets-modal').classList.remove('hidden');
+  try {
+    const { sets, kf_start, kf_end } = await api('GET', '/api/dashboard/kf-by-set');
+    const fmtDate = str => {
+      if (!str) return '';
+      const [y, m, d] = str.split('-');
+      return new Date(+y, +m - 1, +d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    };
+    el('kf-sets-modal-title').textContent =
+      `KF Complete — ${fmtDate(kf_start)} – ${fmtDate(kf_end)}`;
+
+    if (!sets.length) {
+      body.innerHTML = '<div class="placeholder-msg">No KF sets found.</div>';
+      return;
+    }
+
+    const totalWells = sets.reduce((s, r) => s + r.total_wells, 0);
+    const totalRead  = sets.reduce((s, r) => s + r.wells_read, 0);
+
+    let html = '';
+    sets.forEach(r => {
+      const pct = r.total_wells > 0 ? Math.round((r.wells_read / r.total_wells) * 100) : 0;
+      html += `<div class="kf-set-row">
+        <div class="kf-set-name">${r.set_name}</div>
+        <div class="kf-set-count">${r.wells_read}<span class="kf-set-total">/${r.total_wells}</span></div>
+        <div class="kf-set-bar-wrap">
+          <div class="kf-set-bar"><div class="kf-set-bar-fill" style="width:${pct}%"></div></div>
+          <span class="kf-set-pct">${pct}%</span>
+        </div>
+      </div>`;
+    });
+
+    const totalPct = totalWells > 0 ? Math.round((totalRead / totalWells) * 100) : 0;
+    html += `<div class="kf-set-total-row">
+      <div class="kf-set-name">Total</div>
+      <div class="kf-set-count">${totalRead}<span class="kf-set-total">/${totalWells}</span></div>
+      <div class="kf-set-bar-wrap">
+        <div class="kf-set-bar"><div class="kf-set-bar-fill" style="width:${totalPct}%"></div></div>
+        <span class="kf-set-pct">${totalPct}%</span>
+      </div>
+    </div>`;
+
+    body.innerHTML = html;
+  } catch (err) {
+    body.innerHTML = '<div class="placeholder-msg">Failed to load.</div>';
+  }
+}
+
+el('kf-sets-modal-close').addEventListener('click', () => {
+  el('kf-sets-modal').classList.add('hidden');
+});
+el('kf-sets-modal').addEventListener('click', e => {
+  if (e.target === el('kf-sets-modal')) el('kf-sets-modal').classList.add('hidden');
+});
+
+async function openRunningWellsModal() {
+  const body = el('rw-modal-body');
+  body.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  el('running-wells-modal').classList.remove('hidden');
+  try {
+    const { wells, total_cfs, total_count } = await api('GET', '/api/dashboard/running-wells');
+    if (!total_count) {
+      body.innerHTML = '<div class="placeholder-msg">No running wells configured.</div>';
+      return;
+    }
+
+    // Group by discharge_pool
+    const byPool = {};
+    wells.forEach(w => {
+      const pool = w.discharge_pool || 'Other';
+      if (!byPool[pool]) byPool[pool] = [];
+      byPool[pool].push(w);
+    });
+
+    let html = '';
+    Object.entries(byPool).forEach(([pool, poolWells]) => {
+      html += `<div class="rw-modal-area">${pool}</div>`;
+      poolWells.forEach(w => {
+        const dot = w.read_today
+          ? '<span class="rw-modal-dot rw-dot-read"></span>'
+          : '<span class="rw-modal-dot rw-dot-unread"></span>';
+        const status = w.read_today
+          ? '<span class="rw-modal-status rw-status-read">Read</span>'
+          : '<span class="rw-modal-status rw-status-unread">Not Read</span>';
+        const cfs = w.read_today && w.on_off && w.flow_cfs != null
+          ? `${parseFloat(w.flow_cfs).toFixed(2)} cfs`
+          : '—';
+        html += `<div class="rw-modal-row">
+          <span class="rw-modal-well-name">${dot}${w.common_name}</span>
+          ${status}
+          <span class="rw-modal-cfs">${cfs}</span>
+        </div>`;
+      });
+      const poolCfs = poolWells
+        .filter(w => w.read_today && w.on_off && w.flow_cfs != null)
+        .reduce((sum, w) => sum + (parseFloat(w.flow_cfs) || 0), 0);
+      html += `<div class="rw-modal-subtotal">
+        <span>Pool Total</span>
+        <span>${poolCfs.toFixed(2)} cfs</span>
+      </div>`;
+    });
+
+    html += `<div class="rw-modal-total">
+      <span>Total CFS (On)</span>
+      <span>${total_cfs.toFixed(2)} cfs</span>
+    </div>`;
+
+    body.innerHTML = html;
+  } catch (err) {
+    body.innerHTML = `<div class="placeholder-msg">Failed to load.</div>`;
+  }
+}
+
+el('rw-modal-close').addEventListener('click', () => {
+  el('running-wells-modal').classList.add('hidden');
+});
+el('running-wells-modal').addEventListener('click', e => {
+  if (e.target === el('running-wells-modal')) el('running-wells-modal').classList.add('hidden');
 });
 
 async function loadTodayReadings() {
@@ -7101,29 +7740,59 @@ async function renderCanalReport() {
 }
 
 // ── Pond Report Panel ─────────────────────────────────────────────────────────
-function initPondsReportPanel() {
-  if (!el('ponds-report-date').value) {
-    el('ponds-report-date').value = todayISO();
-  }
-  renderPondsReport();
+let pondsReportInitialized = false;
+
+function pondsReportActiveTab() {
+  return el('ponds-report-seg').querySelector('.seg-btn.active')?.dataset.val || 'gauges';
 }
 
-el('ponds-report-date').addEventListener('change', renderPondsReport);
-el('ponds-report-print-btn').addEventListener('click', () => {
-  const card = el('report-ponds-output').querySelector('.report-card');
-  if (!card) return showToast('No report to print', 'error');
-  let printArea = document.getElementById('print-area');
-  if (!printArea) {
-    printArea = document.createElement('div');
-    printArea.id = 'print-area';
-    document.body.appendChild(printArea);
+function renderPondsActiveTab() {
+  if (pondsReportActiveTab() === 'gauges') renderPondsReport();
+  else renderPondGateReport();
+}
+
+function initPondsReportPanel() {
+  el('ponds-report-date').value = todayISO();
+
+  if (!pondsReportInitialized) {
+    pondsReportInitialized = true;
+
+    el('ponds-report-seg').addEventListener('click', e => {
+      const btn = e.target.closest('.seg-btn');
+      if (!btn) return;
+      el('ponds-report-seg').querySelectorAll('.seg-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      renderPondsActiveTab();
+    });
+
+    el('ponds-report-prev').addEventListener('click', () => wellStepDate('ponds-report-date', -1, renderPondsActiveTab));
+    el('ponds-report-next').addEventListener('click', () => wellStepDate('ponds-report-date', 1, renderPondsActiveTab));
+    el('ponds-report-today').addEventListener('click', () => { el('ponds-report-date').value = todayISO(); renderPondsActiveTab(); });
+    el('ponds-report-date').addEventListener('change', renderPondsActiveTab);
+
+    el('ponds-report-print-btn').addEventListener('click', () => {
+      const card = el('report-ponds-output').querySelector('.report-card');
+      if (!card) return showToast('No report to print', 'error');
+      let printArea = document.getElementById('print-area');
+      if (!printArea) {
+        printArea = document.createElement('div');
+        printArea.id = 'print-area';
+        document.body.appendChild(printArea);
+      }
+      delete printArea.dataset.printType;
+      printArea.innerHTML = card.outerHTML;
+      setTimeout(() => {
+        window.print();
+        window.addEventListener('afterprint', () => { printArea.innerHTML = ''; }, { once: true });
+      }, 100);
+    });
+
+    // Reset to gauges tab on re-open
+    el('ponds-report-seg').querySelectorAll('.seg-btn').forEach((b,i) => b.classList.toggle('active', i===0));
   }
-  printArea.innerHTML = card.outerHTML;
-  setTimeout(() => {
-    window.print();
-    window.addEventListener('afterprint', () => { printArea.innerHTML = ''; }, { once: true });
-  }, 100);
-});
+
+  renderPondsReport();
+}
 
 async function renderPondsReport() {
   const date = el('ponds-report-date').value;
@@ -7164,6 +7833,128 @@ async function renderPondsReport() {
     });
 
     html += '</tbody></table></div>';
+    out.innerHTML = html;
+  } catch (err) {
+    out.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
+  }
+}
+
+async function renderPondGateReport() {
+  const date = el('ponds-report-date').value;
+  if (!date) return;
+  const out = el('report-ponds-output');
+  out.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const rows = await api('GET', `/api/reports/ponds/gates?date=${date}`);
+    const fmtNum  = (v, dec=2) => v != null ? Number(v).toFixed(dec) : '—';
+    const fmtTime = t => t ? String(t).slice(0,5) : '';
+
+    // Build hierarchy: locations → ponds → connections → gates
+    const locOrder = [], locMap = {};
+    rows.forEach(r => {
+      if (!locMap[r.location_id]) {
+        locMap[r.location_id] = { name: r.location_name, sort: r.location_sort, ponds: {}, pondOrder: [] };
+        locOrder.push(r.location_id);
+      }
+      const loc = locMap[r.location_id];
+      if (r.pond_id && !loc.ponds[r.pond_id]) {
+        loc.ponds[r.pond_id] = {
+          name: r.pond_name, sort: r.pond_sort,
+          gauge_level: r.gauge_level, gauge_time: r.gauge_time,
+          connections: {}, connOrder: [],
+        };
+        loc.pondOrder.push(r.pond_id);
+      }
+      if (!r.connection_id) return;
+      const pond = loc.ponds[r.pond_id];
+      if (!pond.connections[r.connection_id]) {
+        pond.connections[r.connection_id] = { name: r.connection_name, sort: r.connection_sort, gates: [] };
+        pond.connOrder.push(r.connection_id);
+      }
+      if (!r.gate_id) return;
+      pond.connections[r.connection_id].gates.push({
+        gate_id: r.gate_id, label: r.gate_label, width_in: r.width_in,
+        head_ft: r.head_ft, opening_in: r.opening_in, overpour_in: r.overpour_in,
+        flow_cfs: r.flow_cfs, notes: r.gate_notes,
+      });
+    });
+
+    const fmtDate = s => s ? localDateStr(s, { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
+    let html = `<div class="report-card">
+      <div class="report-title">Pond Gate Readings</div>
+      <div class="report-subtitle">${fmtDate(date)}</div>`;
+
+    locOrder.forEach(lid => {
+      const loc = locMap[lid];
+      html += `<div class="report-section-title" style="margin-top:14px">${escHtml(loc.name)}</div>`;
+
+      loc.pondOrder.forEach(pid => {
+        const pond = loc.ponds[pid];
+        const gaugeStr = pond.gauge_level != null
+          ? `<span style="font-weight:600">${fmtNum(pond.gauge_level)} ft</span>${pond.gauge_time ? ` <span style="color:var(--text-dim);font-size:0.8rem">@ ${fmtTime(pond.gauge_time)}</span>` : ''}`
+          : `<span style="color:var(--text-dim)">no gauge reading</span>`;
+
+        html += `<div style="margin:8px 0 2px;font-weight:600;font-size:0.9rem">
+          ${escHtml(pond.name)} — Gauge: ${gaugeStr}
+        </div>`;
+
+        if (pond.connOrder.length === 0) {
+          html += `<div style="color:var(--text-dim);font-size:0.82rem;padding-left:8px;margin-bottom:4px">No connections configured</div>`;
+          return;
+        }
+
+        pond.connOrder.forEach(cid => {
+          const conn = pond.connections[cid];
+          html += `<div style="font-size:0.8rem;text-transform:uppercase;letter-spacing:0.04em;color:var(--text-dim);margin:6px 0 2px 8px">${escHtml(conn.name)}</div>`;
+
+          if (conn.gates.length === 0) {
+            html += `<div style="color:var(--text-dim);font-size:0.82rem;padding-left:8px;margin-bottom:4px">No gates configured</div>`;
+            return;
+          }
+
+          html += `<table class="report-table" style="margin-left:8px;margin-bottom:4px">
+            <thead><tr>
+              <th>Gate</th>
+              <th class="report-num">Width (in)</th>
+              <th class="report-num">Head (ft)</th>
+              <th class="report-num">Opening (in)</th>
+              <th class="report-num">Overpour (in)</th>
+              <th class="report-num">Flow (cfs)</th>
+              <th>Notes</th>
+            </tr></thead><tbody>`;
+
+          conn.gates.forEach(g => {
+            const hasReading = g.head_ft != null || g.opening_in != null || g.flow_cfs != null;
+            const rowStyle = hasReading ? '' : ' style="opacity:0.5"';
+            html += `<tr${rowStyle}>
+              <td>${escHtml(g.label || '—')}</td>
+              <td class="report-num">${g.width_in != null ? g.width_in : '—'}</td>
+              <td class="report-num">${fmtNum(g.head_ft)}</td>
+              <td class="report-num">${fmtNum(g.opening_in)}</td>
+              <td class="report-num">${g.overpour_in != null ? fmtNum(g.overpour_in) : '—'}</td>
+              <td class="report-num">${fmtNum(g.flow_cfs)}</td>
+              <td>${escHtml(g.notes || '')}</td>
+            </tr>`;
+          });
+
+          // Connection flow total (sum of gates with readings)
+          const totalCfs = conn.gates.reduce((s, g) => s + (g.flow_cfs != null ? Number(g.flow_cfs) : 0), 0);
+          const hasAny = conn.gates.some(g => g.flow_cfs != null);
+          if (hasAny) {
+            html += `<tr style="font-weight:700;border-top:1.5px solid var(--border)">
+              <td colspan="5" style="text-align:right;font-size:0.82rem;color:var(--text-dim)">Connection Total:</td>
+              <td class="report-num">${totalCfs.toFixed(2)}</td>
+              <td></td>
+            </tr>`;
+          }
+
+          html += '</tbody></table>';
+        });
+      });
+    });
+
+    if (locOrder.length === 0) html += '<div class="placeholder-msg">No pond locations configured.</div>';
+    html += '</div>';
     out.innerHTML = html;
   } catch (err) {
     out.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
@@ -7675,11 +8466,308 @@ const DWR_QUEST_MEAS = [
 let dwrWells = [];
 let dwrDoneThisSession = new Set(); // well_ids saved this session
 
+/* ── GPS Location Selector ───────────────────────────────────────────────── */
+function openGPSLocSelector() {
+  el('gps-loc-overlay').classList.remove('hidden');
+  el('gps-loc-category').value = '';
+  el('gps-loc-pool').innerHTML = '<option value="">— Select pool —</option>';
+  el('gps-loc-pool-group').style.display = 'none';
+  el('gps-loc-well').innerHTML = '<option value="">— Select category first —</option>';
+  el('gps-loc-well').disabled = true;
+  el('gps-loc-existing').className = 'gps-loc-existing hidden';
+  el('gps-loc-existing').textContent = '';
+  el('gps-loc-coords').textContent = 'Tap map to place pin';
+  el('gps-loc-save').disabled = true;
+  el('gps-loc-save').textContent = 'Save Location';
+  _gpsLocPin = null;
+  _gpsLocSelected = null;
+  _gpsLocWellData = [];
+
+  setTimeout(() => {
+    if (_gpsLocMap) { _gpsLocMap.remove(); _gpsLocMap = null; }
+    _gpsLocPinMarker = null;
+    _gpsLocExistingMarker = null;
+    _gpsLocUserMarker = null;
+
+    _gpsLocMap = L.map('gps-loc-map', { zoomControl: true, attributionControl: false })
+      .setView([35.37, -119.02], 14);
+    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+      maxZoom: 20
+    }).addTo(_gpsLocMap);
+
+    _gpsLocMap.on('click', e => {
+      const lat = parseFloat(e.latlng.lat.toFixed(7));
+      const lng = parseFloat(e.latlng.lng.toFixed(7));
+      _gpsLocPin = { lat, lng };
+      el('gps-loc-coords').textContent = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+
+      const pinIcon = L.divIcon({
+        className: '',
+        html: '<div style="width:14px;height:14px;border-radius:50%;background:#ef4444;border:3px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,0.5)"></div>',
+        iconSize: [14, 14],
+        iconAnchor: [7, 7],
+      });
+      if (_gpsLocPinMarker) _gpsLocPinMarker.remove();
+      _gpsLocPinMarker = L.marker([lat, lng], { icon: pinIcon }).addTo(_gpsLocMap);
+      _gpsLocPinMarker.bindPopup('New location').openPopup();
+      updateGPSLocSaveBtn();
+    });
+
+    refreshGPSLocPosition();
+
+    _gpsLocMap.invalidateSize();
+  }, 50);
+}
+
+function refreshGPSLocPosition() {
+  if (!navigator.geolocation || !_gpsLocMap) return;
+  const btn = el('gps-loc-refresh-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  navigator.geolocation.getCurrentPosition(pos => {
+    if (!_gpsLocMap) return;
+    const { latitude, longitude } = pos.coords;
+    const locIcon = L.divIcon({
+      className: '',
+      html: '<div class="map-my-location"></div>',
+      iconSize: [18, 18],
+      iconAnchor: [9, 9],
+    });
+    if (_gpsLocUserMarker) _gpsLocUserMarker.remove();
+    _gpsLocUserMarker = L.marker([latitude, longitude], { icon: locIcon })
+      .addTo(_gpsLocMap)
+      .bindPopup('<strong>You are here</strong>');
+    _gpsLocMap.setView([latitude, longitude], 16);
+
+    // Always update pin to current location (overrides previous auto-fill or manual tap)
+    _gpsLocPin = { lat: parseFloat(latitude.toFixed(7)), lng: parseFloat(longitude.toFixed(7)) };
+    el('gps-loc-coords').textContent = `${_gpsLocPin.lat.toFixed(6)}, ${_gpsLocPin.lng.toFixed(6)} (your location)`;
+    if (_gpsLocPinMarker) { _gpsLocPinMarker.remove(); _gpsLocPinMarker = null; }
+    updateGPSLocSaveBtn();
+    if (btn) { btn.disabled = false; btn.textContent = '↻'; }
+  }, () => {
+    if (btn) { btn.disabled = false; btn.textContent = '↻'; }
+  });
+}
+
+function closeGPSLocSelector() {
+  el('gps-loc-overlay').classList.add('hidden');
+  if (_gpsLocMap) { _gpsLocMap.remove(); _gpsLocMap = null; }
+  _gpsLocPinMarker = null;
+  _gpsLocExistingMarker = null;
+  _gpsLocUserMarker = null;
+  _gpsLocPin = null;
+  _gpsLocSelected = null;
+  _gpsLocWellData = [];
+}
+
+async function onGPSLocCategoryChange() {
+  const cat = el('gps-loc-category').value;
+  _gpsLocSelected = null;
+  _gpsLocWellData = [];
+  el('gps-loc-well').innerHTML = '<option value="">Loading…</option>';
+  el('gps-loc-well').disabled = true;
+  el('gps-loc-existing').className = 'gps-loc-existing hidden';
+  el('gps-loc-pool-group').style.display = 'none';
+  updateGPSLocSaveBtn();
+
+  if (!cat) {
+    el('gps-loc-well').innerHTML = '<option value="">— Select category first —</option>';
+    return;
+  }
+
+  if (cat === 'Piezometers') {
+    el('gps-loc-pool-group').style.display = '';
+    // Build pool list from piezAllItems if loaded, else fetch
+    let piez = piezAllItems;
+    if (!piez || !piez.length) {
+      try { piez = await api('GET', '/api/piezometers'); } catch { piez = []; }
+    }
+    _gpsLocWellData = piez;
+    const pools = [...new Set(piez.map(p => p.pool).filter(Boolean))].sort((a, b) => {
+      const na = parseInt(a.replace(/\D/g, '')) || 0;
+      const nb = parseInt(b.replace(/\D/g, '')) || 0;
+      return na !== nb ? na - nb : a.localeCompare(b);
+    });
+    el('gps-loc-pool').innerHTML = '<option value="">— Select pool —</option>' +
+      pools.map(p => `<option value="${escHtml(p)}">${escHtml(p)}</option>`).join('');
+    el('gps-loc-well').innerHTML = '<option value="">— Select pool first —</option>';
+  } else {
+    try {
+      const wells = await api('GET', `/api/wells/by-run?run=${encodeURIComponent(cat)}`);
+      _gpsLocWellData = wells;
+      if (!wells.length) {
+        el('gps-loc-well').innerHTML = '<option value="">No wells found</option>';
+      } else {
+        el('gps-loc-well').innerHTML = '<option value="">— Select well —</option>' +
+          wells.map(w => {
+            const label = [w.state_well_number, w.common_name].filter(Boolean).join(' — ');
+            return `<option value="${w.well_id}" data-lat="${w.gps_latitude ?? ''}" data-lng="${w.gps_longitude ?? ''}">${escHtml(label)}</option>`;
+          }).join('');
+        el('gps-loc-well').disabled = false;
+      }
+    } catch {
+      el('gps-loc-well').innerHTML = '<option value="">Failed to load</option>';
+    }
+  }
+}
+
+function onGPSLocPoolChange() {
+  const pool = el('gps-loc-pool').value;
+  _gpsLocSelected = null;
+  el('gps-loc-existing').className = 'gps-loc-existing hidden';
+  updateGPSLocSaveBtn();
+
+  if (!pool) {
+    el('gps-loc-well').innerHTML = '<option value="">— Select pool first —</option>';
+    el('gps-loc-well').disabled = true;
+    return;
+  }
+  const filtered = _gpsLocWellData.filter(p => p.pool === pool);
+  if (!filtered.length) {
+    el('gps-loc-well').innerHTML = '<option value="">No piezometers in this pool</option>';
+    el('gps-loc-well').disabled = true;
+    return;
+  }
+  el('gps-loc-well').innerHTML = '<option value="">— Select piezometer —</option>' +
+    filtered.map(p => `<option value="${p.piezometer_id}" data-lat="${p.gps_latitude ?? ''}" data-lng="${p.gps_longitude ?? ''}">${escHtml(p.piezometer_name)}</option>`).join('');
+  el('gps-loc-well').disabled = false;
+}
+
+function onGPSLocWellChange() {
+  const opt = el('gps-loc-well').selectedOptions[0];
+  if (!opt || !opt.value) {
+    _gpsLocSelected = null;
+    el('gps-loc-existing').className = 'gps-loc-existing hidden';
+    updateGPSLocSaveBtn();
+    return;
+  }
+  const cat = el('gps-loc-category').value;
+  const isPiez = cat === 'Piezometers';
+  const existingLat = opt.dataset.lat ? parseFloat(opt.dataset.lat) : null;
+  const existingLng = opt.dataset.lng ? parseFloat(opt.dataset.lng) : null;
+
+  _gpsLocSelected = {
+    type: isPiez ? 'piezometer' : 'well',
+    id:   opt.value,
+    name: opt.textContent,
+    existingLat,
+    existingLng,
+  };
+
+  const existEl = el('gps-loc-existing');
+  if (existingLat && existingLng) {
+    existEl.className = 'gps-loc-existing has-coords';
+    existEl.textContent = `Existing: ${existingLat.toFixed(6)}, ${existingLng.toFixed(6)}`;
+
+    const greyIcon = L.divIcon({
+      className: '',
+      html: '<div style="width:12px;height:12px;border-radius:50%;background:#9ca3af;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,0.4)"></div>',
+      iconSize: [12, 12],
+      iconAnchor: [6, 6],
+    });
+    if (_gpsLocExistingMarker) _gpsLocExistingMarker.remove();
+    _gpsLocExistingMarker = L.marker([existingLat, existingLng], { icon: greyIcon })
+      .addTo(_gpsLocMap)
+      .bindPopup(`Current: ${existingLat.toFixed(6)}, ${existingLng.toFixed(6)}`);
+    _gpsLocMap.setView([existingLat, existingLng], 16);
+  } else {
+    existEl.className = 'gps-loc-existing';
+    existEl.textContent = 'No coordinates set';
+    if (_gpsLocExistingMarker) { _gpsLocExistingMarker.remove(); _gpsLocExistingMarker = null; }
+  }
+
+  // Refresh device location for this well so pin is current
+  _gpsLocPin = null;
+  if (_gpsLocPinMarker) { _gpsLocPinMarker.remove(); _gpsLocPinMarker = null; }
+  refreshGPSLocPosition();
+  updateGPSLocSaveBtn();
+}
+
+function updateGPSLocSaveBtn() {
+  el('gps-loc-save').disabled = !(_gpsLocSelected && _gpsLocPin);
+}
+
+async function saveGPSLocation() {
+  if (!_gpsLocSelected || !_gpsLocPin) return;
+  if (_gpsLocSelected.existingLat && _gpsLocSelected.existingLng) {
+    if (!confirm(`"${_gpsLocSelected.name}" already has GPS coordinates.\nOverwrite with the new location?`)) return;
+  }
+  const endpoint = _gpsLocSelected.type === 'well'
+    ? `/api/wells/${_gpsLocSelected.id}/gps`
+    : `/api/piezometers/${_gpsLocSelected.id}/gps`;
+  const saveBtn = el('gps-loc-save');
+  try {
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving…';
+    await api('PATCH', endpoint, { gps_latitude: _gpsLocPin.lat, gps_longitude: _gpsLocPin.lng });
+    showToast(`GPS saved for ${_gpsLocSelected.name}`, 'success');
+
+    // Stay on modal — update state to reflect the newly saved coords
+    const savedLat = _gpsLocPin.lat;
+    const savedLng = _gpsLocPin.lng;
+    _gpsLocSelected.existingLat = savedLat;
+    _gpsLocSelected.existingLng = savedLng;
+
+    // Update the dropdown option's data attributes so re-selecting shows new coords
+    const opt = el('gps-loc-well').selectedOptions[0];
+    if (opt) { opt.dataset.lat = savedLat; opt.dataset.lng = savedLng; }
+
+    // Move existing-location marker to saved position (green to indicate saved)
+    const savedIcon = L.divIcon({
+      className: '',
+      html: '<div style="width:12px;height:12px;border-radius:50%;background:#4caf50;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,0.4)"></div>',
+      iconSize: [12, 12], iconAnchor: [6, 6],
+    });
+    if (_gpsLocExistingMarker) _gpsLocExistingMarker.remove();
+    _gpsLocExistingMarker = L.marker([savedLat, savedLng], { icon: savedIcon })
+      .addTo(_gpsLocMap)
+      .bindPopup(`Saved: ${savedLat.toFixed(6)}, ${savedLng.toFixed(6)}`);
+
+    // Remove the tap pin and reset pin state
+    if (_gpsLocPinMarker) { _gpsLocPinMarker.remove(); _gpsLocPinMarker = null; }
+    _gpsLocPin = null;
+
+    // Update footer and existing-coords display
+    el('gps-loc-coords').textContent = 'Tap map to place pin';
+    const existEl = el('gps-loc-existing');
+    existEl.className = 'gps-loc-existing has-coords';
+    existEl.textContent = `Saved: ${savedLat.toFixed(6)}, ${savedLng.toFixed(6)}`;
+
+    saveBtn.textContent = 'Save Location';
+    updateGPSLocSaveBtn();
+  } catch (err) {
+    showToast('Save failed: ' + err.message, 'error');
+    saveBtn.disabled = false;
+    saveBtn.textContent = 'Save Location';
+  }
+}
+
+el('gps-loc-close').addEventListener('click', closeGPSLocSelector);
+el('gps-loc-overlay').addEventListener('click', e => { if (e.target === el('gps-loc-overlay')) closeGPSLocSelector(); });
+el('gps-loc-category').addEventListener('change', onGPSLocCategoryChange);
+el('gps-loc-pool').addEventListener('change', onGPSLocPoolChange);
+el('gps-loc-well').addEventListener('change', onGPSLocWellChange);
+el('gps-loc-refresh-btn').addEventListener('click', refreshGPSLocPosition);
+el('gps-loc-save').addEventListener('click', saveGPSLocation);
+
 const WR_PANEL_NAMES = { dwr: 'DWR', kcwa: 'KCWA Piezometers' };
 let wellRunsInited = false;
-function initWellRunsScreen() {
+async function initWellRunsScreen() {
   if (wellRunsInited) return;
   wellRunsInited = true;
+
+  const role = currentUser?.role;
+  let showToAll = false;
+  try {
+    const s = await api('GET', '/api/settings/gps-selector');
+    showToAll = s.public;
+  } catch { /* ignore */ }
+
+  if (role === 'admin' || role === 'supervisor' || showToAll) {
+    el('gps-loc-btn-wrap').classList.remove('hidden');
+    el('gps-loc-open-btn').addEventListener('click', openGPSLocSelector);
+  }
+
   document.querySelectorAll('[data-wr-panel]').forEach(tile => {
     tile.addEventListener('click', () => {
       const panel = tile.dataset.wrPanel;
@@ -7855,6 +8943,7 @@ function createDWRItem(w, dateInput, timeInput) {
       </div>
       <div class="form-group">
         <label>Notes</label>
+        ${w.last_notes ? `<div class="prev-note-hint">${escHtml(w.last_notes)}</div>` : ''}
         <textarea class="ctrl-textarea dwr-notes" rows="2" placeholder="Optional notes…"></textarea>
       </div>
       <div class="lif-error error-msg hidden"></div>
@@ -7889,7 +8978,6 @@ function createDWRItem(w, dateInput, timeInput) {
 
   // Auto-fill operator
   if (currentUser) div.querySelector('.dwr-op').value = currentUser.initials || currentUser.username;
-  if (w.last_notes) div.querySelector('.dwr-notes').value = w.last_notes;
 
   // Map button (individual well)
   div.querySelector('.dwr-map-item-btn')?.addEventListener('click', e => {
@@ -8217,7 +9305,7 @@ function openHRPanel(panelId) {
   el(`hr-panel-${panelId}`).classList.remove('hidden');
   const panelTitles = { 'time-off': 'Time Off Request' };
   setPanelNav(el('screen-hr'), closeHRPanel, 'HR – ' + (panelTitles[panelId] || panelId));
-  if (panelId === 'time-off') initTimeOffPanel();
+  if (panelId === 'time-off')     initTimeOffPanel();
 }
 
 function closeHRPanel() {
@@ -8552,6 +9640,7 @@ async function initPondsScreen() {
           canal_structure_name: row.canal_structure_name,
           last_canal_flow: row.last_canal_flow, last_canal_totalizer: row.last_canal_totalizer,
           last_canal_date: row.last_canal_date, last_canal_reading_id: row.last_canal_reading_id,
+          last_canal_notes: row.last_canal_notes,
           gates: [],
         });
       }
@@ -8561,6 +9650,7 @@ async function initPondsScreen() {
           width_in: row.width_in, gate_notes: row.gate_notes, sort: row.gate_sort,
           last_head: row.last_head, last_opening: row.last_opening,
           last_overpour: row.last_overpour, last_flow: row.last_flow, last_date: row.last_gate_date,
+          last_notes: row.last_gate_notes,
         });
       }
     }
@@ -8582,6 +9672,7 @@ async function initPondsScreen() {
             isOutlet: true,
             last_gauge_level: row.last_gauge_level,
             last_gauge_date:  row.last_gauge_date,
+            last_gauge_notes: row.last_gauge_notes,
             connections: new Map(),
           });
         }
@@ -8594,6 +9685,7 @@ async function initPondsScreen() {
             pond_id: row.pond_id, name: row.pond_name, sort: row.pond_sort,
             last_gauge_level: row.last_gauge_level,
             last_gauge_date:  row.last_gauge_date,
+            last_gauge_notes: row.last_gauge_notes,
             connections: new Map(),
           });
         }
@@ -8807,6 +9899,7 @@ function buildCanalRow(conn, dateInput, timeInput, cardEl) {
     </div>
     <div style="flex:1;min-width:50px;display:flex;flex-direction:column">
       <span class="rr-col-hd" style="visibility:hidden;pointer-events:none">x</span>
+      ${conn.last_canal_notes ? `<div class="prev-note-hint">${escHtml(conn.last_canal_notes)}</div>` : ''}
       <div style="display:flex;gap:4px;align-items:stretch">
         <textarea class="rr-notes-input pg-canal-notes" rows="1" placeholder="Notes…"></textarea>
         <button class="btn btn-secondary btn-sm" title="History" style="flex-shrink:0">${icon('history')}</button>
@@ -8894,6 +9987,7 @@ function buildGaugeForm(pond, dateInput, timeInput, cardEl) {
     </div>
     <div style="flex:1;min-width:50px;display:flex;flex-direction:column">
       <span class="rr-col-hd" style="visibility:hidden;pointer-events:none">x</span>
+      ${pond.last_gauge_notes ? `<div class="prev-note-hint">${escHtml(pond.last_gauge_notes)}</div>` : ''}
       <div style="display:flex;gap:4px;align-items:stretch">
         <textarea class="rr-notes-input pg-gauge-notes" rows="1" placeholder="Notes…"></textarea>
         <button class="btn btn-secondary btn-sm" title="History" style="flex-shrink:0">${icon('history')}</button>
@@ -9013,6 +10107,7 @@ function buildGateRow(gate, dateInput, timeInput, cardEl) {
     </div>
     <div style="flex:1;min-width:50px;display:flex;flex-direction:column">
       <span class="rr-col-hd" style="visibility:hidden;pointer-events:none">x</span>
+      ${gate.last_notes ? `<div class="prev-note-hint">${escHtml(gate.last_notes)}</div>` : ''}
       <div style="display:flex;gap:4px;align-items:stretch">
         <textarea class="rr-notes-input pg-gate-notes" rows="1" placeholder="Notes…"></textarea>
         <button class="btn btn-secondary btn-sm" title="History" style="flex-shrink:0">${icon('history')}</button>
@@ -9234,6 +10329,22 @@ async function openPondMap(entityType, entityId, entityName) {
         }),
         interactive: false,
       }).addTo(map);
+    }
+
+    // Operator location dot (HTTPS / secure context only)
+    if (window.isSecureContext && navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(pos => {
+        const { latitude, longitude } = pos.coords;
+        L.marker([latitude, longitude], {
+          icon: L.divIcon({
+            className: '',
+            html: '<div class="map-my-location"></div>',
+            iconSize: [18, 18],
+            iconAnchor: [9, 9],
+          }),
+          zIndexOffset: 1000,
+        }).bindPopup('<strong>You are here</strong>').addTo(map);
+      }, () => { /* permission denied or unavailable — silent */ });
     }
 
     // Leaflet needs a tick after the container is visible to measure size
@@ -9751,3 +10862,31 @@ function printReportPortrait(htmlContent) {
 checkDBStatus();
 loadLoginUserList();
 checkAuth();
+
+// Show any Microsoft login error passed back via ?ms_error= query param
+(function checkMsError() {
+  const params = new URLSearchParams(window.location.search);
+  const err = params.get('ms_error');
+  if (!err) return;
+  const msgs = {
+    no_account:  'No WaterMark account is linked to that Microsoft identity. Contact your administrator.',
+    no_email:    'Could not retrieve your email from Microsoft. Contact your administrator.',
+    auth_failed: 'Microsoft sign-in failed. Please try again.',
+  };
+  history.replaceState({}, '', window.location.pathname);
+  const errEl = el('ms-login-error');
+  if (errEl) { errEl.textContent = msgs[err] || 'Sign-in error.'; errEl.classList.remove('hidden'); }
+})();
+
+// Hide MS login button if Entra ID is not configured on the server
+fetch('/auth/microsoft/status')
+  .then(r => r.json())
+  .then(({ enabled }) => {
+    if (enabled) return;
+    const btn = el('ms-login-btn');
+    if (!btn) return;
+    const divider = btn.previousElementSibling;
+    if (divider && divider.classList.contains('login-divider')) divider.remove();
+    btn.remove();
+  })
+  .catch(() => {});

@@ -8,10 +8,29 @@ const path         = require('path');
 const fs           = require('fs');
 const multer       = require('multer');
 const XLSX         = require('xlsx');
+const msal         = require('@azure/msal-node');
+
+// ── Microsoft Entra ID (Azure AD) ────────────────────────────────────────────
+const msalEnabled = !!(
+  process.env.AZURE_CLIENT_ID &&
+  process.env.AZURE_TENANT_ID &&
+  process.env.AZURE_CLIENT_SECRET
+);
+let msalCca = null;
+if (msalEnabled) {
+  msalCca = new msal.ConfidentialClientApplication({
+    auth: {
+      clientId:     process.env.AZURE_CLIENT_ID,
+      authority:    `https://login.microsoftonline.com/${process.env.AZURE_TENANT_ID}`,
+      clientSecret: process.env.AZURE_CLIENT_SECRET,
+    }
+  });
+}
 
 const app = express();
 app.use(express.json());
 app.use(cookieParser());
+app.set('trust proxy', 1);
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ── File Uploads ──────────────────────────────────────────────────────────────
@@ -381,7 +400,7 @@ app.post('/auth/login', async (req, res) => {
       initials: user.initials || user.username.slice(0, 2).toUpperCase(),
     };
     const token = createSession(sessionUser);
-    res.cookie('fo_session', token, { httpOnly: true, maxAge: SESSION_TTL });
+    res.cookie('fo_session', token, { httpOnly: true, secure: req.secure, maxAge: SESSION_TTL });
     res.json({ user: sessionUser });
   } catch (err) {
     console.error('Login error:', err);
@@ -397,6 +416,46 @@ app.post('/auth/logout', (req, res) => {
 });
 
 app.get('/auth/me', requireAuth, (req, res) => res.json({ user: req.user }));
+
+// ── Microsoft Entra ID OAuth routes ──────────────────────────────────────────
+app.get('/auth/microsoft/status', (req, res) => res.json({ enabled: msalEnabled }));
+
+app.get('/auth/microsoft', (req, res) => {
+  if (!msalCca) return res.status(404).send('Microsoft login not configured');
+  msalCca.getAuthCodeUrl({
+    scopes: ['openid', 'profile', 'email'],
+    redirectUri: process.env.AZURE_REDIRECT_URI,
+  })
+    .then(url => res.redirect(url))
+    .catch(() => res.redirect('/?ms_error=auth_failed'));
+});
+
+app.get('/auth/microsoft/callback', async (req, res) => {
+  if (!msalCca) return res.status(404).send('Microsoft login not configured');
+  try {
+    const result = await msalCca.acquireTokenByCode({
+      code: req.query.code,
+      scopes: ['openid', 'profile', 'email'],
+      redirectUri: process.env.AZURE_REDIRECT_URI,
+    });
+    const email = result.account?.username;
+    if (!email) return res.redirect('/?ms_error=no_email');
+
+    const { rows } = await pool.query(
+      `SELECT user_id, username, full_name, role, initials
+       FROM users WHERE LOWER(email) = LOWER($1) AND is_active = true LIMIT 1`,
+      [email]
+    );
+    if (!rows.length) return res.redirect('/?ms_error=no_account');
+
+    const token = createSession(rows[0]);
+    res.cookie('fo_session', token, { httpOnly: true, secure: req.secure, maxAge: SESSION_TTL });
+    res.redirect('/');
+  } catch (err) {
+    console.error('MS auth error:', err.message);
+    res.redirect('/?ms_error=auth_failed');
+  }
+});
 
 // ── Public: DB status + test (no auth — needed before login) ─────────────────
 app.get('/api/db-status', async (req, res) => {
@@ -485,11 +544,13 @@ app.get('/api/pump-positions', requireAuth, async (req, res) => {
         r.hour_reading  AS last_reading,
         r.reading_date  AS last_reading_date,
         r.entered_by    AS last_entered_by,
-        r.notes         AS last_notes
+        (SELECT notes FROM readings_pump_hours
+         WHERE position_id = pp.position_id AND notes IS NOT NULL AND notes != ''
+         ORDER BY reading_date DESC, reading_time DESC LIMIT 1) AS last_notes
       FROM pump_positions pp
       LEFT JOIN pump_units pu ON pu.pump_unit_id = pp.current_pump_unit_id
       LEFT JOIN LATERAL (
-        SELECT reading_id, hour_reading, reading_date, entered_by, notes
+        SELECT reading_id, hour_reading, reading_date, entered_by
         FROM readings_pump_hours
         WHERE position_id = pp.position_id
         ORDER BY reading_date DESC, reading_time DESC
@@ -538,10 +599,12 @@ app.get('/api/air-compressors', requireAuth, async (req, res) => {
         r.reading_id    AS last_reading_id,
         r.hour_reading  AS last_reading,
         r.reading_date  AS last_reading_date,
-        r.notes         AS last_notes
+        (SELECT notes FROM readings_compressor_hours
+         WHERE compressor_id = ac.compressor_id AND notes IS NOT NULL AND notes != ''
+         ORDER BY reading_date DESC, reading_time DESC LIMIT 1) AS last_notes
       FROM air_compressors ac
       LEFT JOIN LATERAL (
-        SELECT reading_id, hour_reading, reading_date, notes
+        SELECT reading_id, hour_reading, reading_date
         FROM readings_compressor_hours
         WHERE compressor_id = ac.compressor_id
         ORDER BY reading_date DESC, reading_time DESC
@@ -566,10 +629,12 @@ app.get('/api/pge-meters', requireAuth, async (req, res) => {
         r.reading_id   AS last_reading_id,
         r.kwh_reading  AS last_reading,
         r.reading_date AS last_reading_date,
-        r.notes        AS last_notes
+        (SELECT notes FROM readings_pge_meters
+         WHERE pge_meter_id = pm.pge_meter_id AND notes IS NOT NULL AND notes != ''
+         ORDER BY reading_date DESC, reading_time DESC LIMIT 1) AS last_notes
       FROM pge_meters pm
       LEFT JOIN LATERAL (
-        SELECT reading_id, kwh_reading, reading_date, notes
+        SELECT reading_id, kwh_reading, reading_date
         FROM readings_pge_meters
         WHERE pge_meter_id = pm.pge_meter_id
         ORDER BY reading_date DESC, reading_time DESC
@@ -594,10 +659,12 @@ app.get('/api/power-monitors', requireAuth, async (req, res) => {
         r.reading_id   AS last_reading_id,
         r.kwh_reading  AS last_reading,
         r.reading_date AS last_reading_date,
-        r.notes        AS last_notes
+        (SELECT notes FROM readings_power_monitors
+         WHERE monitor_id = pm.monitor_id AND notes IS NOT NULL AND notes != ''
+         ORDER BY reading_date DESC, reading_time DESC LIMIT 1) AS last_notes
       FROM power_monitors pm
       LEFT JOIN LATERAL (
-        SELECT reading_id, kwh_reading, reading_date, notes
+        SELECT reading_id, kwh_reading, reading_date
         FROM readings_power_monitors
         WHERE monitor_id = pm.monitor_id
         ORDER BY reading_date DESC, reading_time DESC
@@ -629,10 +696,12 @@ app.get('/api/pp-site-data', requireAuth, async (req, res) => {
               r.hour_reading AS last_reading,
               r.reading_date AS last_reading_date,
               r.entered_by   AS last_entered_by,
-              r.notes        AS last_notes
+              (SELECT notes FROM readings_pump_hours
+               WHERE position_id = pp.position_id AND notes IS NOT NULL AND notes != ''
+               ORDER BY reading_date DESC, reading_time DESC LIMIT 1) AS last_notes
             FROM pump_positions pp
             LEFT JOIN LATERAL (
-              SELECT reading_id, hour_reading, reading_date, entered_by, notes
+              SELECT reading_id, hour_reading, reading_date, entered_by
               FROM readings_pump_hours
               WHERE position_id = pp.position_id
               ORDER BY reading_date DESC, reading_time DESC
@@ -649,10 +718,12 @@ app.get('/api/pp-site-data', requireAuth, async (req, res) => {
               r.reading_id   AS last_reading_id,
               r.hour_reading AS last_reading,
               r.reading_date AS last_reading_date,
-              r.notes        AS last_notes
+              (SELECT notes FROM readings_compressor_hours
+               WHERE compressor_id = ac.compressor_id AND notes IS NOT NULL AND notes != ''
+               ORDER BY reading_date DESC, reading_time DESC LIMIT 1) AS last_notes
             FROM air_compressors ac
             LEFT JOIN LATERAL (
-              SELECT reading_id, hour_reading, reading_date, notes
+              SELECT reading_id, hour_reading, reading_date
               FROM readings_compressor_hours
               WHERE compressor_id = ac.compressor_id
               ORDER BY reading_date DESC, reading_time DESC
@@ -669,10 +740,12 @@ app.get('/api/pp-site-data', requireAuth, async (req, res) => {
               r.reading_id   AS last_reading_id,
               r.kwh_reading  AS last_reading,
               r.reading_date AS last_reading_date,
-              r.notes        AS last_notes
+              (SELECT notes FROM readings_pge_meters
+               WHERE pge_meter_id = pm.pge_meter_id AND notes IS NOT NULL AND notes != ''
+               ORDER BY reading_date DESC, reading_time DESC LIMIT 1) AS last_notes
             FROM pge_meters pm
             LEFT JOIN LATERAL (
-              SELECT reading_id, kwh_reading, reading_date, notes
+              SELECT reading_id, kwh_reading, reading_date
               FROM readings_pge_meters
               WHERE pge_meter_id = pm.pge_meter_id
               ORDER BY reading_date DESC, reading_time DESC
@@ -689,10 +762,12 @@ app.get('/api/pp-site-data', requireAuth, async (req, res) => {
               r.reading_id   AS last_reading_id,
               r.kwh_reading  AS last_reading,
               r.reading_date AS last_reading_date,
-              r.notes        AS last_notes
+              (SELECT notes FROM readings_power_monitors
+               WHERE monitor_id = pw.monitor_id AND notes IS NOT NULL AND notes != ''
+               ORDER BY reading_date DESC, reading_time DESC LIMIT 1) AS last_notes
             FROM power_monitors pw
             LEFT JOIN LATERAL (
-              SELECT reading_id, kwh_reading, reading_date, notes
+              SELECT reading_id, kwh_reading, reading_date
               FROM readings_power_monitors
               WHERE monitor_id = pw.monitor_id
               ORDER BY reading_date DESC, reading_time DESC
@@ -876,14 +951,16 @@ app.get('/api/wells/kf', requireAuth, async (req, res) => {
         prev.reading_date    AS last_reading_date,
         prev.dtw_reading     AS last_dtw,
         prev.plopper_sounder AS last_method,
-        prev.notes           AS last_notes,
+        (SELECT notes FROM readings_kf_monthly
+         WHERE well_id = w.well_id AND notes IS NOT NULL AND notes != ''
+         ORDER BY reading_date DESC, reading_time DESC LIMIT 1) AS last_notes,
         (CURRENT_DATE - prev.reading_date)::int AS days_since_reading,
         -- Reading within widget date range (for done/not-read status only)
         rng.reading_date     AS range_reading_date
       FROM wells w
       LEFT JOIN well_sets ws ON w.kf_set_id = ws.set_id
       LEFT JOIN LATERAL (
-        SELECT kf_reading_id, reading_date, dtw_reading, plopper_sounder, notes
+        SELECT kf_reading_id, reading_date, dtw_reading, plopper_sounder
         FROM readings_kf_monthly
         WHERE well_id = w.well_id
         ORDER BY reading_date DESC, reading_time DESC
@@ -912,7 +989,7 @@ app.get('/api/wells/operational', requireAuth, async (req, res) => {
   try {
     const { rows } = await pool.query(`
       SELECT
-        w.well_id, w.common_name, w.area, w.well_type, w.status,
+        w.well_id, w.common_name, w.area, w.discharge_pool, w.well_type, w.status,
         w.gps_latitude, w.gps_longitude,
         r.reading_id        AS last_reading_id,
         r.reading_date      AS last_reading_date,
@@ -922,12 +999,16 @@ app.get('/api/wells/operational', requireAuth, async (req, res) => {
         r.totalizer         AS last_totalizer,
         r.dripper_oil       AS last_dripper_oil,
         r.pge_kwh           AS last_pge_kwh,
-        r.notes             AS last_notes,
+        r.on_off            AS last_on_off,
+        r.motor_oil         AS last_motor_oil,
+        (SELECT notes FROM readings_well
+         WHERE well_id = w.well_id AND notes IS NOT NULL AND notes != ''
+         ORDER BY reading_date DESC, reading_time DESC LIMIT 1) AS last_notes,
         EXTRACT(EPOCH FROM (NOW() - (r.reading_date + COALESCE(r.reading_time, '00:00'::time))))::int / 3600
                             AS hours_since_reading
       FROM wells w
       LEFT JOIN LATERAL (
-        SELECT reading_id, reading_date, reading_time, hour_reading, flow_cfs, totalizer, dripper_oil, pge_kwh, notes
+        SELECT reading_id, reading_date, reading_time, hour_reading, flow_cfs, totalizer, dripper_oil, pge_kwh, on_off, motor_oil
         FROM readings_well
         WHERE well_id = w.well_id
         ORDER BY reading_date DESC, reading_time DESC
@@ -935,7 +1016,7 @@ app.get('/api/wells/operational', requireAuth, async (req, res) => {
       ) r ON true
       WHERE LOWER(w.well_type) LIKE '%operational%'
         AND (LOWER(w.status) NOT IN ('inactive','removed') OR w.status IS NULL)
-      ORDER BY w.area, w.common_name
+      ORDER BY w.discharge_pool NULLS LAST, w.common_name
     `);
     res.json(rows);
   } catch (err) {
@@ -983,10 +1064,12 @@ app.get('/api/piezometers', requireAuth, async (req, res) => {
         prev.dtw_reading           AS last_dtw,
         prev.plopper_sounder       AS last_method,
         prev.wet_dry_moist         AS last_wet_dry_moist,
-        prev.notes                 AS last_reading_notes
+        (SELECT notes FROM readings_piezometers
+         WHERE piezometer_id = p.piezometer_id AND notes IS NOT NULL AND notes != ''
+         ORDER BY reading_date DESC, reading_time DESC LIMIT 1) AS last_reading_notes
       FROM piezometers p
       LEFT JOIN LATERAL (
-        SELECT piezometer_reading_id, reading_date, dtw_reading, plopper_sounder, wet_dry_moist, notes
+        SELECT piezometer_reading_id, reading_date, dtw_reading, plopper_sounder, wet_dry_moist
         FROM readings_piezometers
         WHERE piezometer_id = p.piezometer_id
         ORDER BY reading_date DESC, reading_time DESC
@@ -1025,6 +1108,61 @@ app.post('/api/readings/piezometer', requireAuth, async (req, res) => {
 });
 
 // ── DWR Well Run ──────────────────────────────────────────────────────────────
+// Generic wells-by-run lookup (DWR, Shallow, IWV) — used by GPS Location Selector
+app.get('/api/wells/by-run', requireAuth, async (req, res) => {
+  const { run } = req.query;
+  if (!run) return res.status(400).json({ error: 'run required' });
+  try {
+    const { rows } = await pool.query(
+      `SELECT well_id, common_name, state_well_number, gps_latitude, gps_longitude
+       FROM wells
+       WHERE LOWER(well_run) = LOWER($1)
+         AND (LOWER(status) != 'inactive' OR status IS NULL)
+       ORDER BY state_well_number, common_name`, [run]);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Middleware: allow supervisor/admin always, or any authed user if gps_selector_public is on
+async function requireGPSSelectorAccess(req, res, next) {
+  if (req.user.role === 'admin' || req.user.role === 'supervisor') return next();
+  try {
+    const { rows } = await pool.query(`SELECT value FROM app_settings WHERE key = 'gps_selector_public'`);
+    if (rows[0]?.value === 'true') return next();
+  } catch { /* fall through */ }
+  return res.status(403).json({ error: 'Insufficient permissions' });
+}
+
+// Update GPS coordinates for a well
+app.patch('/api/wells/:id/gps', requireAuth, requireGPSSelectorAccess, async (req, res) => {
+  const { gps_latitude, gps_longitude } = req.body;
+  if (gps_latitude == null || gps_longitude == null) return res.status(400).json({ error: 'gps_latitude and gps_longitude required' });
+  try {
+    await pool.query(
+      `UPDATE wells SET gps_latitude=$1, gps_longitude=$2 WHERE well_id=$3`,
+      [gps_latitude, gps_longitude, req.params.id]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Update GPS coordinates for a piezometer
+app.patch('/api/piezometers/:id/gps', requireAuth, requireGPSSelectorAccess, async (req, res) => {
+  const { gps_latitude, gps_longitude } = req.body;
+  if (gps_latitude == null || gps_longitude == null) return res.status(400).json({ error: 'gps_latitude and gps_longitude required' });
+  try {
+    await pool.query(
+      `UPDATE piezometers SET gps_latitude=$1, gps_longitude=$2 WHERE piezometer_id=$3`,
+      [gps_latitude, gps_longitude, req.params.id]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/wells/dwr', requireAuth, async (req, res) => {
   try {
     const { rows } = await pool.query(`
@@ -1035,12 +1173,14 @@ app.get('/api/wells/dwr', requireAuth, async (req, res) => {
         prev.reading_date    AS last_reading_date,
         prev.depth_to_water  AS last_dtw,
         prev.method          AS last_method,
-        prev.notes           AS last_notes,
+        (SELECT notes FROM readings_run_dwr
+         WHERE well_id = w.well_id AND notes IS NOT NULL AND notes != ''
+         ORDER BY reading_date DESC, reading_time DESC LIMIT 1) AS last_notes,
         prev.no_measurement  AS last_no_measurement,
         (CURRENT_DATE - prev.reading_date)::int AS days_since_reading
       FROM wells w
       LEFT JOIN LATERAL (
-        SELECT reading_id, reading_date, depth_to_water, method, notes, no_measurement
+        SELECT reading_id, reading_date, depth_to_water, method, no_measurement
         FROM readings_run_dwr
         WHERE well_id = w.well_id
         ORDER BY reading_date DESC, reading_time DESC
@@ -1142,11 +1282,13 @@ app.get('/api/canal-structures', requireAuth, async (req, res) => {
         r.derived_flow_cfs       AS last_derived,
         r.reading_date           AS last_reading_date,
         r.reading_time           AS last_reading_time,
-        r.notes                  AS last_notes
+        (SELECT notes FROM readings_canal
+         WHERE structure_id = cs.structure_id AND notes IS NOT NULL AND notes != ''
+         ORDER BY reading_date DESC, reading_time DESC LIMIT 1) AS last_notes
       FROM canal_structures cs
       LEFT JOIN LATERAL (
         SELECT instantaneous_flow_cfs, totalizer_reading_af, gate_setting,
-               head_reading_ft, derived_flow_cfs, reading_date, reading_time, notes
+               head_reading_ft, derived_flow_cfs, reading_date, reading_time
         FROM readings_canal
         WHERE structure_id = cs.structure_id
         ORDER BY reading_date DESC, reading_time DESC
@@ -1200,6 +1342,9 @@ app.get('/api/ponds', requireAuth, async (req, res) => {
         sg.reading_id      AS last_gauge_id,
         sg.level_ft        AS last_gauge_level,
         sg.reading_date    AS last_gauge_date,
+        (SELECT notes FROM readings_staff_gauge
+         WHERE pond_id = p.pond_id AND notes IS NOT NULL AND notes != ''
+         ORDER BY reading_date DESC, reading_time DESC LIMIT 1) AS last_gauge_notes,
         pc.connection_id,
         pc.name            AS connection_name,
         pc.sort_order      AS connection_sort,
@@ -1210,6 +1355,9 @@ app.get('/api/ponds', requireAuth, async (req, res) => {
         cr.instantaneous_flow_cfs AS last_canal_flow,
         cr.totalizer_reading_af   AS last_canal_totalizer,
         cr.reading_date    AS last_canal_date,
+        (SELECT notes FROM readings_canal
+         WHERE structure_id = pc.source_canal_id AND notes IS NOT NULL AND notes != ''
+         ORDER BY reading_date DESC, reading_time DESC LIMIT 1) AS last_canal_notes,
         pg.gate_id,
         pg.label           AS gate_label,
         pg.gate_type,
@@ -1221,7 +1369,10 @@ app.get('/api/ponds', requireAuth, async (req, res) => {
         gr.opening_in      AS last_opening,
         gr.overpour_in     AS last_overpour,
         gr.flow_cfs        AS last_flow,
-        gr.reading_date    AS last_gate_date
+        gr.reading_date    AS last_gate_date,
+        (SELECT notes FROM readings_pond_gates
+         WHERE gate_id = pg.gate_id AND notes IS NOT NULL AND notes != ''
+         ORDER BY reading_date DESC, reading_time DESC LIMIT 1) AS last_gate_notes
       FROM pond_locations pl
       JOIN ponds p ON p.location_id = pl.location_id
       LEFT JOIN LATERAL (
@@ -1267,6 +1418,9 @@ app.get('/api/ponds', requireAuth, async (req, res) => {
         sg.reading_id      AS last_gauge_id,
         sg.level_ft        AS last_gauge_level,
         sg.reading_date    AS last_gauge_date,
+        (SELECT notes FROM readings_staff_gauge
+         WHERE outlet_id = ro.outlet_id AND notes IS NOT NULL AND notes != ''
+         ORDER BY reading_date DESC, reading_time DESC LIMIT 1) AS last_gauge_notes,
         pc.connection_id,
         pc.name            AS connection_name,
         pc.sort_order      AS connection_sort,
@@ -1277,6 +1431,7 @@ app.get('/api/ponds', requireAuth, async (req, res) => {
         NULL::numeric      AS last_canal_flow,
         NULL::numeric      AS last_canal_totalizer,
         NULL::date         AS last_canal_date,
+        NULL::text         AS last_canal_notes,
         pg.gate_id,
         pg.label           AS gate_label,
         pg.gate_type,
@@ -1288,7 +1443,10 @@ app.get('/api/ponds', requireAuth, async (req, res) => {
         gr.opening_in      AS last_opening,
         gr.overpour_in     AS last_overpour,
         gr.flow_cfs        AS last_flow,
-        gr.reading_date    AS last_gate_date
+        gr.reading_date    AS last_gate_date,
+        (SELECT notes FROM readings_pond_gates
+         WHERE gate_id = pg.gate_id AND notes IS NOT NULL AND notes != ''
+         ORDER BY reading_date DESC, reading_time DESC LIMIT 1) AS last_gate_notes
       FROM river_outlets ro
       JOIN pond_locations pl ON pl.location_id = ro.location_id
       LEFT JOIN LATERAL (
@@ -1546,7 +1704,8 @@ app.get('/api/history', requireAuth, async (req, res) => {
          ORDER BY reading_date DESC, reading_time DESC LIMIT $2`, [id, LIMIT]));
     } else if (type === 'kf') {
       ({ rows } = await pool.query(
-        `SELECT kf_reading_id AS id, reading_date, reading_time, dtw_reading AS value, plopper_sounder AS method, operator AS entered_by, notes
+        `SELECT kf_reading_id AS id, reading_date, reading_time, dtw_reading AS value, plopper_sounder AS method, operator AS entered_by,
+                CASE WHEN well_on_off = true THEN 'On' ELSE 'Off' END AS on_off, notes
          FROM readings_kf_monthly WHERE well_id = $1
          ORDER BY reading_date DESC, reading_time DESC LIMIT $2`, [id, LIMIT]));
     } else if (type === 'canal') {
@@ -1592,6 +1751,23 @@ app.get('/api/history', requireAuth, async (req, res) => {
     } else {
       return res.status(400).json({ error: 'unknown type' });
     }
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── History All (no limit) — currently wells only ─────────────────────────────
+app.get('/api/history-all', requireAuth, async (req, res) => {
+  const { type, id } = req.query;
+  if (type !== 'well') return res.status(400).json({ error: 'Only type=well supported' });
+  try {
+    const { rows } = await pool.query(
+      `SELECT reading_id AS id, reading_date, reading_time, hour_reading, flow_cfs, totalizer, entered_by, notes
+       FROM readings_well WHERE well_id = $1
+       ORDER BY reading_date DESC, reading_time DESC`,
+      [id]
+    );
     res.json(rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1667,12 +1843,14 @@ app.get('/api/vehicles', requireAuth, async (req, res) => {
         r.odometer_miles  AS last_odometer,
         r.engine_hours    AS last_engine_hours,
         r.reading_date    AS last_reading_date,
-        r.notes           AS last_notes,
+        (SELECT notes FROM readings_vehicle_monthly
+         WHERE vehicle_id = v.vehicle_id AND notes IS NOT NULL AND notes != ''
+         ORDER BY reading_date DESC, reading_time DESC LIMIT 1) AS last_notes,
         m.next_service_miles,
         m.next_service_hours
       FROM vehicles v
       LEFT JOIN LATERAL (
-        SELECT odometer_miles, engine_hours, reading_date, notes
+        SELECT odometer_miles, engine_hours, reading_date
         FROM readings_vehicle_monthly
         WHERE vehicle_id = v.vehicle_id
         ORDER BY reading_date DESC, reading_time DESC
@@ -1826,9 +2004,13 @@ app.get('/api/well-issues', requireAuth, async (req, res) => {
              wi.status, wi.description, wi.reported_date, wi.resolved_date,
              wi.action_taken, wi.resolution_notes, wi.po_number, wi.cost,
              wi.entered_by, wi.assigned_to, wi.notes, wi.created_at,
+             u.full_name AS entered_by_full_name,
+             w.gps_latitude, w.gps_longitude,
              (SELECT COUNT(*) FROM maintenance_attachments
               WHERE table_name = 'well_issues' AND record_id = wi.issue_id) AS attachment_count
       FROM well_issues wi
+      LEFT JOIN users u ON u.username = wi.entered_by
+      LEFT JOIN wells w ON w.well_id = wi.well_id
       WHERE $1 OR wi.status != 'resolved'
       ORDER BY
         CASE wi.status WHEN 'open' THEN 1 WHEN 'in_progress' THEN 2 ELSE 3 END,
@@ -1896,9 +2078,11 @@ app.get('/api/building-issues', requireAuth, async (req, res) => {
              bi.status, bi.description, bi.reported_date, bi.resolved_date,
              bi.action_taken, bi.resolution_notes, bi.po_number, bi.cost,
              bi.entered_by, bi.assigned_to, bi.notes, bi.created_at,
+             u.full_name AS entered_by_full_name,
              (SELECT COUNT(*) FROM maintenance_attachments
               WHERE table_name = 'building_issues' AND record_id = bi.issue_id) AS attachment_count
       FROM building_issues bi
+      LEFT JOIN users u ON u.username = bi.entered_by
       WHERE $1 OR bi.status != 'resolved'
       ORDER BY
         CASE bi.status WHEN 'open' THEN 1 WHEN 'in_progress' THEN 2 ELSE 3 END,
@@ -1966,9 +2150,11 @@ app.get('/api/equipment-issues', requireAuth, async (req, res) => {
              ei.status, ei.description, ei.reported_date, ei.resolved_date,
              ei.action_taken, ei.resolution_notes, ei.po_number, ei.cost,
              ei.entered_by, ei.assigned_to, ei.notes, ei.created_at,
+             u.full_name AS entered_by_full_name,
              (SELECT COUNT(*) FROM maintenance_attachments
               WHERE table_name = 'equipment_issues' AND record_id = ei.issue_id) AS attachment_count
       FROM equipment_issues ei
+      LEFT JOIN users u ON u.username = ei.entered_by
       WHERE $1 OR ei.status != 'resolved'
       ORDER BY
         CASE ei.status WHEN 'open' THEN 1 WHEN 'in_progress' THEN 2 ELSE 3 END,
@@ -2033,9 +2219,11 @@ app.get('/api/canal-issues', requireAuth, async (req, res) => {
   try {
     const { rows } = await pool.query(`
       SELECT ci.*,
+             u.full_name AS entered_by_full_name,
              (SELECT COUNT(*) FROM maintenance_attachments
               WHERE table_name = 'canal_issues' AND record_id = ci.issue_id) AS attachment_count
       FROM canal_issues ci
+      LEFT JOIN users u ON u.username = ci.entered_by
       WHERE $1 OR ci.status != 'resolved'
       ORDER BY
         CASE ci.status WHEN 'open' THEN 0 WHEN 'in_progress' THEN 1 ELSE 2 END,
@@ -2874,6 +3062,43 @@ app.get('/api/reports/ponds', requireAuth, async (req, res) => {
       ORDER BY pl.sort_order, p.sort_order
     `, [date]);
     res.json({ gauges });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/reports/ponds/gates', requireAuth, async (req, res) => {
+  const date = req.query.date || new Date().toISOString().slice(0,10);
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        pl.location_id, pl.name AS location_name, pl.sort_order AS location_sort,
+        p.pond_id, p.name AS pond_name, p.sort_order AS pond_sort,
+        sg.level_ft AS gauge_level, sg.reading_time AS gauge_time,
+        pc.connection_id, pc.name AS connection_name, pc.sort_order AS connection_sort,
+        pg.gate_id, pg.label AS gate_label, pg.width_in, pg.gate_type,
+        pg.sort_order AS gate_sort,
+        gr.head_ft, gr.opening_in, gr.overpour_in, gr.flow_cfs,
+        gr.notes AS gate_notes
+      FROM pond_locations pl
+      JOIN ponds p ON p.location_id = pl.location_id
+      LEFT JOIN LATERAL (
+        SELECT level_ft, reading_time FROM readings_staff_gauge
+        WHERE pond_id = p.pond_id AND reading_date = $1
+        ORDER BY reading_time DESC NULLS LAST LIMIT 1
+      ) sg ON true
+      LEFT JOIN pond_connections pc
+        ON pc.destination_pond_id = p.pond_id AND (pc.active IS NULL OR pc.active = true)
+      LEFT JOIN pond_gates pg
+        ON pg.connection_id = pc.connection_id AND (pg.active IS NULL OR pg.active = true)
+      LEFT JOIN LATERAL (
+        SELECT head_ft, opening_in, overpour_in, flow_cfs, notes
+        FROM readings_pond_gates
+        WHERE gate_id = pg.gate_id AND reading_date = $1
+        ORDER BY reading_time DESC NULLS LAST LIMIT 1
+      ) gr ON pg.gate_id IS NOT NULL
+      ORDER BY pl.sort_order, pl.name, p.sort_order, p.name,
+               pc.sort_order, pc.name, pg.sort_order, pg.label
+    `, [date]);
+    res.json(rows);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -3742,6 +3967,125 @@ app.put('/api/users/:id/password', requireAuth, async (req, res) => {
     const hashed = await bcrypt.hash(password, 10);
     await pool.query('UPDATE users SET password = $1 WHERE user_id = $2', [hashed, targetId]);
     res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── KF By-Set Dashboard ───────────────────────────────────────────────────────
+app.get('/api/dashboard/kf-by-set', requireAuth, async (req, res) => {
+  try {
+    const settingsRes = await pool.query(
+      `SELECT key, value FROM app_settings WHERE key IN ('kf_widget_start','kf_widget_end')`
+    ).catch(() => ({ rows: [] }));
+    const m = Object.fromEntries(settingsRes.rows.map(r => [r.key, r.value]));
+    const now = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    const defaultStart = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-01`;
+    const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    const defaultEnd = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(lastDay)}`;
+    const kfStart = m['kf_widget_start'] || defaultStart;
+    const kfEnd   = m['kf_widget_end']   || defaultEnd;
+
+    const { rows } = await pool.query(`
+      SELECT
+        ws.set_name,
+        COUNT(DISTINCT w.well_id)::int                                          AS total_wells,
+        COUNT(DISTINCT CASE WHEN r.well_id IS NOT NULL THEN r.well_id END)::int AS wells_read
+      FROM well_sets ws
+      JOIN wells w ON w.kf_set_id = ws.set_id
+        AND (LOWER(w.status) != 'inactive' OR w.status IS NULL)
+      LEFT JOIN readings_kf_monthly r
+        ON r.well_id = w.well_id
+        AND r.reading_date BETWEEN $1 AND $2
+      GROUP BY ws.set_id, ws.set_name
+      ORDER BY ws.set_name
+    `, [kfStart, kfEnd]);
+
+    res.json({ sets: rows, kf_start: kfStart, kf_end: kfEnd });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── GPS Selector Access Setting ───────────────────────────────────────────────
+app.get('/api/settings/gps-selector', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`SELECT value FROM app_settings WHERE key = 'gps_selector_public'`);
+    res.json({ public: rows[0]?.value === 'true' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/settings/gps-selector', requireAuth, requireRole('admin'), async (req, res) => {
+  const val = req.body.public ? 'true' : 'false';
+  try {
+    await pool.query(
+      `INSERT INTO app_settings (key, value, updated_at) VALUES ('gps_selector_public', $1, NOW())
+       ON CONFLICT (key) DO UPDATE SET value=$1, updated_at=NOW()`, [val]);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Running Wells Settings ────────────────────────────────────────────────────
+app.get('/api/settings/running-wells', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`SELECT value FROM app_settings WHERE key = 'running_wells'`);
+    const ids = rows.length ? JSON.parse(rows[0].value) : [];
+    res.json({ well_ids: ids });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/settings/running-wells', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+  const { well_ids } = req.body;
+  if (!Array.isArray(well_ids)) return res.status(400).json({ error: 'well_ids must be an array' });
+  try {
+    await pool.query(
+      `INSERT INTO app_settings (key, value, updated_at) VALUES ('running_wells', $1, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+      [JSON.stringify(well_ids)]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/dashboard/running-wells', requireAuth, async (req, res) => {
+  try {
+    const settingsRes = await pool.query(`SELECT value FROM app_settings WHERE key = 'running_wells'`);
+    const ids = settingsRes.rows.length ? JSON.parse(settingsRes.rows[0].value) : [];
+    if (!ids.length) return res.json({ wells: [], total_cfs: 0, read_today_count: 0, total_count: 0 });
+
+    const { rows } = await pool.query(
+      `WITH today_rdg AS (
+         SELECT DISTINCT ON (well_id) well_id, on_off, flow_cfs
+         FROM readings_well
+         WHERE reading_date = CURRENT_DATE
+         ORDER BY well_id, reading_time DESC NULLS LAST
+       )
+       SELECT w.well_id, w.common_name, w.discharge_pool,
+              (tr.well_id IS NOT NULL) AS read_today,
+              tr.on_off, tr.flow_cfs
+       FROM wells w
+       JOIN (SELECT unnest($1::int[]) AS wid) r ON r.wid = w.well_id
+       LEFT JOIN today_rdg tr ON tr.well_id = w.well_id
+       ORDER BY w.discharge_pool NULLS LAST, w.common_name`,
+      [ids]
+    );
+
+    const read_today_count = rows.filter(r => r.read_today).length;
+    const total_cfs = rows
+      .filter(r => r.read_today && r.on_off)
+      .reduce((sum, r) => sum + (parseFloat(r.flow_cfs) || 0), 0);
+
+    res.json({
+      wells: rows,
+      total_cfs: Math.round(total_cfs * 100) / 100,
+      read_today_count,
+      total_count: rows.length,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

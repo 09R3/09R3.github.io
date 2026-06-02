@@ -8,8 +8,13 @@
   <link rel="icon" type="image/png" href="/icons/kcwa-seal-32.png">
   <link rel="apple-touch-icon" href="/icons/kcwa-seal-192.png">
   <link rel="stylesheet" href="style.css">
+  <script>
+    // Apply saved theme before first paint to avoid flash
+    (function(){const t=localStorage.getItem('watermark-theme');if(t==='light')document.documentElement.setAttribute('data-theme','light');})();
+  </script>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
   <style>
     @media print {
       @page { size: letter landscape; margin: 0; }
@@ -113,7 +118,18 @@
         <div id="login-error" class="error-msg hidden"></div>
         <button type="submit" class="btn btn-primary btn-full">Sign In</button>
       </form>
-      <div class="login-version">v 1.70</div>
+      <div class="login-divider"><span>or</span></div>
+      <a href="/auth/microsoft" class="btn btn-ms365" id="ms-login-btn">
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 23 23" style="margin-right:8px;flex-shrink:0">
+          <path fill="#f35325" d="M1 1h10v10H1z"/>
+          <path fill="#81bc06" d="M12 1h10v10H12z"/>
+          <path fill="#05a6f0" d="M1 12h10v10H1z"/>
+          <path fill="#ffba08" d="M12 12h10v10H12z"/>
+        </svg>
+        Sign in with Microsoft 365
+      </a>
+      <div id="ms-login-error" class="error-msg hidden"></div>
+      <div class="login-version">v 2.04</div>
     </div>
   </div>
 </div>
@@ -173,6 +189,7 @@
     </button>
     <h1 class="app-title" id="screen-title">WaterMark</h1>
     <div class="header-right">
+      <button class="header-theme-btn" id="theme-toggle-btn" title="Switch to light mode"><span class="app-icon" style="width:20px;height:20px;-webkit-mask-image:url(/marv-site/icons/icon-moon.svg);mask-image:url(/marv-site/icons/icon-moon.svg)" aria-hidden="true"></span></button>
       <button class="header-refresh-btn" id="header-refresh-btn" title="Refresh">
         <span class="app-icon" style="width:22px;height:22px;-webkit-mask-image:url(/marv-site/icons/icon-refresh.svg);mask-image:url(/marv-site/icons/icon-refresh.svg)"></span>
       </button>
@@ -218,7 +235,7 @@
         Well Runs
       </button></li>
       <li><button class="nav-btn" data-screen="ponds">
-        <span class="nav-btn-icon"><span class="app-icon" style="width:22px;height:22px;-webkit-mask-image:url(/marv-site/icons/icon-canal.svg);mask-image:url(/marv-site/icons/icon-canal.svg)"></span></span>
+        <span class="nav-btn-icon"><span class="app-icon" style="width:22px;height:22px;-webkit-mask-image:url(/marv-site/icons/icon-gauge.svg);mask-image:url(/marv-site/icons/icon-gauge.svg)"></span></span>
         Ponds
       </button></li>
       <li class="drawer-section-hdr">Maintenance</li>
@@ -1160,6 +1177,13 @@
       </div>
     </div>
 
+    <!-- GPS Location Selector button (supervisor/admin only — shown by JS) -->
+    <div id="gps-loc-btn-wrap" class="hidden" style="padding:8px 16px 0">
+      <button id="gps-loc-open-btn" class="btn btn-secondary" style="width:100%">
+        <span class="app-icon" style="width:16px;height:16px;margin-right:6px;-webkit-mask-image:url(/marv-site/icons/icon-map-pin.svg);mask-image:url(/marv-site/icons/icon-map-pin.svg)"></span>GPS Location Selector
+      </button>
+    </div>
+
     <!-- Coming Soon panel (shared) -->
     <div id="wr-panel-soon" class="maint-panel hidden">
       <div class="placeholder-msg" style="margin-top:40px">Coming Soon</div>
@@ -1346,11 +1370,22 @@
 
     <!-- Pond Report panel -->
     <div id="report-panel-ponds" class="maint-panel hidden">
+      <!-- Tabs + print -->
       <div class="report-toolbar">
-        <input type="date" id="ponds-report-date" class="ctrl-input ctrl-input-sm">
+        <div class="seg-group" id="ponds-report-seg">
+          <button class="seg-btn active" data-val="gauges">Staff Gauges</button>
+          <button class="seg-btn" data-val="gates">Gate Readings</button>
+        </div>
         <button class="btn btn-secondary btn-sm" id="ponds-report-print-btn" style="margin-left:auto">Print</button>
       </div>
-      <div id="report-ponds-output"></div>
+      <!-- Date nav -->
+      <div class="report-toolbar">
+        <button class="btn btn-secondary btn-sm" id="ponds-report-prev">&#8592;</button>
+        <input type="date" id="ponds-report-date" class="ctrl-input ctrl-input-sm">
+        <button class="btn btn-secondary btn-sm" id="ponds-report-next">&#8594;</button>
+        <button class="btn btn-secondary btn-sm" id="ponds-report-today" style="margin-left:4px">Today</button>
+      </div>
+      <div id="report-ponds-output" style="overflow-x:auto"></div>
     </div>
 
     <!-- Well Readings panel -->
@@ -1427,8 +1462,16 @@
         <button class="settings-menu-row" data-panel="kf-widget">
           <span>KF Widget</span><span class="settings-chevron">›</span>
         </button>
+        <button class="settings-menu-row" data-panel="running-wells">
+          <span>Running Wells</span><span class="settings-chevron">›</span>
+        </button>
       </div>
       <div class="settings-menu-card hidden" id="settings-admin-section">
+        <div class="settings-menu-label">Tools</div>
+        <button class="settings-menu-row" data-panel="gps-selector">
+          <span>GPS Location Selector</span><span class="settings-chevron">›</span>
+        </button>
+        <div class="settings-menu-label">Admin</div>
         <button class="settings-menu-row" data-panel="bugreports">
           <span>Bug Reports</span><span class="settings-chevron">›</span>
         </button>
@@ -1526,11 +1569,24 @@
       </div>
     </div>
 
+    <!-- Running Wells panel -->
+    <div id="settings-panel-running-wells" class="settings-panel hidden">
+      <div class="settings-section">
+        <p style="font-size:0.85rem;color:var(--text-dim);margin:0 0 12px">
+          Select wells that are currently running. These appear on the dashboard widget so operators know which wells need to be read each day.
+        </p>
+        <div id="rw-settings-list" class="settings-card" style="padding:4px 0">
+          <div class="placeholder-msg">Loading…</div>
+        </div>
+        <button class="btn btn-save" id="rw-settings-save-btn" style="margin-top:12px;width:100%">Save</button>
+      </div>
+    </div>
+
     <!-- App Info panel -->
     <div id="settings-panel-appinfo" class="settings-panel hidden">
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 1.70</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 2.04</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>
@@ -1759,6 +1815,27 @@
     </div>
 
     <!-- User Management panel -->
+    <!-- GPS Selector access settings -->
+    <div id="settings-panel-gps-selector" class="settings-panel hidden">
+      <div class="settings-section">
+        <div class="settings-card">
+          <div class="settings-pad">
+            <p style="font-size:0.85rem;color:var(--text-dim);margin:0 0 14px">
+              By default, GPS Location Selector is only available to supervisors and admins. Enable this to make it available to all users (operators included).
+            </p>
+            <div class="settings-row">
+              <span class="settings-label">Available to all users</span>
+              <div class="toggle-group" style="width:120px">
+                <button class="toggle-btn" id="gps-sel-toggle-on" data-val="true">On</button>
+                <button class="toggle-btn" id="gps-sel-toggle-off" data-val="false">Off</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <button id="gps-sel-save-btn" class="btn btn-save" style="margin:0 16px 16px;width:calc(100% - 32px)">Save</button>
+    </div>
+
     <div id="settings-panel-usermgmt" class="settings-panel hidden">
       <div class="admin-actions">
         <button class="btn btn-primary" id="admin-add-user-btn">+ Add User</button>
@@ -2167,14 +2244,36 @@
   </div>
 </div>
 
+<!-- KF Sets Modal -->
+<div id="kf-sets-modal" class="modal-overlay hidden">
+  <div class="modal-card" style="max-width:420px;width:calc(100vw - 32px)">
+    <div class="modal-header">
+      <h2 id="kf-sets-modal-title">KF Complete by Set</h2>
+      <button class="modal-close" id="kf-sets-modal-close">&times;</button>
+    </div>
+    <div class="modal-body" id="kf-sets-modal-body" style="padding:0"></div>
+  </div>
+</div>
+
+<!-- Running Wells Modal -->
+<div id="running-wells-modal" class="modal-overlay hidden">
+  <div class="modal-card" style="max-width:420px;width:calc(100vw - 32px)">
+    <div class="modal-header">
+      <h2>Running Wells — Today</h2>
+      <button class="modal-close" id="rw-modal-close">&times;</button>
+    </div>
+    <div class="modal-body" id="rw-modal-body" style="padding:0"></div>
+  </div>
+</div>
+
 <!-- Pond Map Modal -->
 <div id="pond-map-modal" class="modal-overlay hidden">
-  <div class="modal-card" style="width:min(96vw,700px);display:flex;flex-direction:column;max-height:90vh">
+  <div class="modal-card" style="width:min(98vw,1400px);display:flex;flex-direction:column;max-height:95vh">
     <div class="modal-header">
       <h2 id="pond-map-title">Pond Map</h2>
       <button class="modal-close" id="pond-map-close">&times;</button>
     </div>
-    <div id="pond-map-container" style="flex:1;min-height:420px;border-radius:0 0 var(--radius,8px) var(--radius,8px);overflow:hidden"></div>
+    <div id="pond-map-container" style="flex:1;min-height:75vh;border-radius:0 0 var(--radius,8px) var(--radius,8px);overflow:hidden"></div>
   </div>
 </div>
 
@@ -2257,6 +2356,50 @@
     </div>
     <div id="gps-map-container" style="height:min(520px,65vh);width:100%;border-radius:8px;overflow:hidden;margin-top:8px"></div>
     <div id="gps-map-coords" style="font-size:0.75rem;text-align:center;margin-top:6px;color:var(--text-dim)"></div>
+  </div>
+</div>
+
+<!-- GPS Location Selector Modal -->
+<div id="gps-loc-overlay" class="modal-overlay hidden">
+  <div class="modal-card gps-loc-card">
+    <div class="modal-header">
+      <span class="modal-title">GPS Location Selector</span>
+      <button class="modal-close" id="gps-loc-close">&times;</button>
+    </div>
+    <div class="gps-loc-form">
+      <div class="two-col" style="gap:10px">
+        <div class="form-group" style="margin-bottom:0">
+          <label>Category</label>
+          <select id="gps-loc-category" class="ctrl-select">
+            <option value="">— Select —</option>
+            <option value="DWR">DWR</option>
+            <option value="Shallow">Shallow</option>
+            <option value="IWV">IWV</option>
+            <option value="Purge">Purge</option>
+            <option value="Piezometers">Piezometers</option>
+          </select>
+        </div>
+        <div class="form-group" id="gps-loc-pool-group" style="margin-bottom:0;display:none">
+          <label>Pool</label>
+          <select id="gps-loc-pool" class="ctrl-select">
+            <option value="">— Select pool —</option>
+          </select>
+        </div>
+        <div class="form-group" id="gps-loc-well-group" style="margin-bottom:0">
+          <label>Well / Piezometer</label>
+          <select id="gps-loc-well" class="ctrl-select" disabled>
+            <option value="">— Select category first —</option>
+          </select>
+        </div>
+      </div>
+      <div id="gps-loc-existing" class="gps-loc-existing hidden"></div>
+    </div>
+    <div id="gps-loc-map" class="gps-loc-map"></div>
+    <div class="gps-loc-footer">
+      <div id="gps-loc-coords" class="gps-loc-coords">Tap map to place pin</div>
+      <button id="gps-loc-refresh-btn" class="btn btn-secondary btn-sm" title="Refresh location">&#8635;</button>
+      <button id="gps-loc-save" class="btn btn-save" disabled>Save Location</button>
+    </div>
   </div>
 </div>
 
