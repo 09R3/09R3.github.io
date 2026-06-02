@@ -129,7 +129,7 @@
         Sign in with Microsoft 365
       </a>
       <div id="ms-login-error" class="error-msg hidden"></div>
-      <div class="login-version">v 2.04</div>
+      <div class="login-version">v 2.05</div>
     </div>
   </div>
 </div>
@@ -286,15 +286,26 @@
           <label>Screen / Area</label>
           <select id="bug-screen" class="ctrl-select">
             <option value="">— Select area —</option>
-            <option value="Dashboard">Dashboard</option>
-            <option value="Pumping Plant">Pumping Plant</option>
-            <option value="Well Readings">Well Readings</option>
-            <option value="Canal Readings">Canal Readings</option>
-            <option value="Vehicle Monthly">Vehicle Monthly</option>
-            <option value="KF Monthly">KF Monthly</option>
-            <option value="Maintenance Log">Maintenance Log</option>
-            <option value="Reports">Reports</option>
-            <option value="Settings">Settings</option>
+            <optgroup label="Readings">
+              <option value="Pumping Plant Readings">Pumping Plant Readings</option>
+              <option value="Well Readings">Well Readings</option>
+              <option value="Canal Readings">Canal Readings</option>
+              <option value="Vehicle Monthly">Vehicle Monthly</option>
+              <option value="KF Monthly Readings">KF Monthly Readings</option>
+              <option value="Well Runs">Well Runs</option>
+              <option value="Ponds">Ponds</option>
+            </optgroup>
+            <optgroup label="Maintenance">
+              <option value="Maintenance Log">Maintenance Log</option>
+              <option value="Pesticides">Pesticides</option>
+            </optgroup>
+            <optgroup label="System">
+              <option value="Reports">Reports</option>
+              <option value="Settings">Settings</option>
+              <option value="HR">HR</option>
+              <option value="Charts">Charts</option>
+              <option value="Dashboard">Dashboard</option>
+            </optgroup>
             <option value="Other">Other</option>
           </select>
         </div>
@@ -1586,7 +1597,7 @@
     <div id="settings-panel-appinfo" class="settings-panel hidden">
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 2.04</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 2.05</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>

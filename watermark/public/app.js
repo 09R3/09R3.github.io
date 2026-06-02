@@ -660,12 +660,8 @@ async function loadDashboardStats() {
         <div class="stat-value">${s.kf_done}<span style="font-size:1rem;color:var(--text-dim)">/${s.kf_total}</span></div>
         <div class="stat-label">KF Complete</div>
         <div class="stat-sublabel">${rangeLabel}</div>
+        <div class="stat-sublabel" style="margin-top:2px">${s.kf_total - s.kf_done} Remaining</div>
         <div class="stat-bar"><div class="stat-bar-fill" style="width:${pct}%"></div></div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value">${s.kf_total - s.kf_done}</div>
-        <div class="stat-label">KF Remaining</div>
-        <div class="stat-sublabel">${rangeLabel}</div>
       </div>
       <div class="stat-card rw-stat-card" id="running-wells-stat" style="cursor:pointer">
         <div class="stat-value">${rwVal}</div>
@@ -5486,10 +5482,22 @@ async function openRunningWellsModal() {
       </div>`;
     });
 
-    html += `<div class="rw-modal-total">
-      <span>Total CFS (On)</span>
-      <span>${total_cfs.toFixed(2)} cfs</span>
-    </div>`;
+    const cvcCfs = wells
+      .filter(w => w.read_today && w.on_off && w.flow_cfs != null && /^Pool\s*[1-8]$/i.test(w.discharge_pool || ''))
+      .reduce((sum, w) => sum + (parseFloat(w.flow_cfs) || 0), 0);
+    const krcCfs = wells
+      .filter(w => w.read_today && w.on_off && w.flow_cfs != null && /kern\s*river\s*canal/i.test(w.discharge_pool || ''))
+      .reduce((sum, w) => sum + (parseFloat(w.flow_cfs) || 0), 0);
+
+    html += `
+      <div class="rw-modal-total">
+        <span>CVC Well Inflow <span style="font-size:0.75rem;font-weight:400;color:var(--text-dim)">(Pools 1–8)</span></span>
+        <span>${cvcCfs.toFixed(2)} cfs</span>
+      </div>
+      <div class="rw-modal-total" style="border-top:1px solid var(--border);margin-top:0">
+        <span>Kern River Canal Inflow</span>
+        <span>${krcCfs.toFixed(2)} cfs</span>
+      </div>`;
 
     body.innerHTML = html;
   } catch (err) {
