@@ -1099,14 +1099,26 @@ app.get('/api/reports/canal-readings', requireDB, async (req, res) => {
              LAG(reading_date)         OVER (ORDER BY reading_date, reading_time NULLS LAST) AS prev_date,
              LAG(reading_time)         OVER (ORDER BY reading_date, reading_time NULLS LAST) AS prev_time
            FROM all_r
+         ),
+         last_af AS (
+           SELECT d.day,
+             (SELECT r2.totalizer_reading_af
+              FROM readings_canal r2
+              WHERE r2.structure_id = $1
+                AND r2.totalizer_reading_af IS NOT NULL
+                AND r2.reading_date <= d.day
+              ORDER BY r2.reading_date DESC, r2.reading_time DESC NULLS LAST
+              LIMIT 1) AS af
+           FROM days d
          )
        SELECT
          d.day                                                     AS date,
          wp.reading_time                                           AS time,
-         wp.totalizer_reading_af                                   AS observed_reading,
-         wp.totalizer_reading_af                                   AS adjusted_reading,
+         COALESCE(wp.totalizer_reading_af, la.af)                 AS observed_reading,
+         COALESCE(wp.totalizer_reading_af, la.af)                 AS adjusted_reading,
          CASE
-           WHEN wp.totalizer_reading_af IS NULL OR wp.prev_af IS NULL THEN NULL
+           WHEN wp.totalizer_reading_af IS NULL THEN 0
+           WHEN wp.prev_af IS NULL THEN NULL
            WHEN wp.totalizer_reading_af = wp.prev_af THEN 0
            ELSE ROUND(
              ((wp.totalizer_reading_af - wp.prev_af) * 43560.0 /
@@ -1116,13 +1128,15 @@ app.get('/api/reports/canal-readings', requireDB, async (req, res) => {
               )), 1))::numeric, 4)
          END                                                       AS cfs_per_day,
          CASE
-           WHEN wp.totalizer_reading_af IS NULL OR wp.prev_af IS NULL THEN NULL
+           WHEN wp.totalizer_reading_af IS NULL THEN 0
+           WHEN wp.prev_af IS NULL THEN NULL
            WHEN wp.totalizer_reading_af = wp.prev_af THEN 0
            ELSE ROUND((wp.totalizer_reading_af - wp.prev_af)::numeric, 4)
          END                                                       AS af_per_day,
          wp.instantaneous_flow_cfs                                 AS flow_rate
        FROM days d
        LEFT JOIN with_prev wp ON wp.reading_date = d.day AND NOT wp.pre
+       LEFT JOIN last_af la ON la.day = d.day
        ORDER BY d.day`,
       [parseInt(structure_id), month]
     );
