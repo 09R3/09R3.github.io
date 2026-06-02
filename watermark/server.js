@@ -945,7 +945,7 @@ app.get('/api/wells/kf', requireAuth, async (req, res) => {
     const { rows } = await pool.query(`
       SELECT
         w.well_id, w.common_name, w.state_well_number, w.area, w.kf_set_id, ws.set_name,
-        w.gps_latitude, w.gps_longitude, w.is_important,
+        w.gps_latitude, w.gps_longitude, w.is_important, w.access,
         -- Most recent reading ever (for pre-fill and hint display)
         prev.kf_reading_id   AS last_reading_id,
         prev.reading_date    AS last_reading_date,
@@ -1028,7 +1028,7 @@ app.get('/api/wells/operational', requireAuth, async (req, res) => {
 app.post('/api/readings/kf-monthly', requireAuth, async (req, res) => {
   const {
     well_id, reading_date, reading_time,
-    dtw_reading, well_on_off, plopper_sounder, operator, notes,
+    dtw_reading, well_on_off, plopper_sounder, operator, notes, access,
   } = req.body;
   if (!well_id || dtw_reading == null) {
     return res.status(400).json({ error: 'well_id and dtw_reading are required' });
@@ -1043,6 +1043,9 @@ app.post('/api/readings/kf-monthly', requireAuth, async (req, res) => {
       [well_id, reading_date, reading_time, dtw_reading,
        well_on_off ?? null, plopper_sounder || null, operator || null, notes || null]
     );
+    if (access === 'Tube' || access === 'Plug') {
+      await pool.query(`UPDATE wells SET access = $1 WHERE well_id = $2`, [access, well_id]);
+    }
     res.json({ ok: true, kf_reading_id: rows[0].kf_reading_id });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1168,7 +1171,7 @@ app.get('/api/wells/dwr', requireAuth, async (req, res) => {
     const { rows } = await pool.query(`
       SELECT
         w.well_id, w.common_name, w.state_well_number, w.area,
-        w.gps_latitude, w.gps_longitude,
+        w.gps_latitude, w.gps_longitude, w.access,
         prev.reading_id      AS last_reading_id,
         prev.reading_date    AS last_reading_date,
         prev.depth_to_water  AS last_dtw,
@@ -1200,7 +1203,7 @@ app.post('/api/readings/run-dwr', requireAuth, async (req, res) => {
   const {
     well_id, reading_date, reading_time,
     depth_to_water, method, operator,
-    no_measurement, questionable_measurement, notes,
+    no_measurement, questionable_measurement, notes, access,
   } = req.body;
   if (!well_id || !reading_date) {
     return res.status(400).json({ error: 'well_id and reading_date are required' });
@@ -1221,6 +1224,9 @@ app.post('/api/readings/run-dwr', requireAuth, async (req, res) => {
         notes || null, req.user.username,
       ]
     );
+    if (access === 'Tube' || access === 'Plug') {
+      await pool.query(`UPDATE wells SET access = $1 WHERE well_id = $2`, [access, well_id]);
+    }
     res.json({ reading_id: rows[0].reading_id });
   } catch (err) {
     res.status(500).json({ error: err.message });

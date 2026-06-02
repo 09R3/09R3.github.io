@@ -4279,6 +4279,13 @@ function createKFItem(w, dateInput, timeInput) {
           <button class="toggle-btn kf-off">OFF</button>
         </div>
       </div>
+      <div class="form-group toggle-row">
+        <label>Access</label>
+        <div class="toggle-group">
+          <button class="toggle-btn kf-access-tube${w.access === 'Tube' ? ' active' : ''}">Tube</button>
+          <button class="toggle-btn kf-access-plug${w.access === 'Plug' ? ' active' : ''}">Plug</button>
+        </div>
+      </div>
       <div class="two-col">
         <div class="form-group">
           <label>Method</label>
@@ -4339,6 +4346,20 @@ function createKFItem(w, dateInput, timeInput) {
     div.querySelector('.kf-on').classList.remove('active');
   });
 
+  let kfAccess = w.access || null;
+  div.querySelector('.kf-access-tube').addEventListener('click', e => {
+    if (kfAccess === 'Tube') { kfAccess = null; e.currentTarget.classList.remove('active'); return; }
+    kfAccess = 'Tube';
+    e.currentTarget.classList.add('active');
+    div.querySelector('.kf-access-plug').classList.remove('active');
+  });
+  div.querySelector('.kf-access-plug').addEventListener('click', e => {
+    if (kfAccess === 'Plug') { kfAccess = null; e.currentTarget.classList.remove('active'); return; }
+    kfAccess = 'Plug';
+    e.currentTarget.classList.add('active');
+    div.querySelector('.kf-access-tube').classList.remove('active');
+  });
+
   div.querySelector('.list-item-header').addEventListener('click', () => {
     const open = div.classList.toggle('expanded');
     div.querySelector('.list-item-form').style.display = open ? '' : 'none';
@@ -4363,6 +4384,7 @@ function createKFItem(w, dateInput, timeInput) {
       plopper_sounder: div.querySelector('.kf-method').value || null,
       operator:        div.querySelector('.kf-op').value || null,
       notes:           div.querySelector('.kf-notes').value || null,
+      access:          kfAccess,
     };
     try {
       const r = await api('POST', '/api/readings/kf-monthly', body, `KF — ${w.common_name}`);
@@ -8945,6 +8967,13 @@ function createDWRItem(w, dateInput, timeInput) {
           <option value="other">Other</option>
         </select>
       </div>
+      <div class="form-group toggle-row">
+        <label>Access</label>
+        <div class="toggle-group">
+          <button class="toggle-btn dwr-access-tube${w.access === 'Tube' ? ' active' : ''}">Tube</button>
+          <button class="toggle-btn dwr-access-plug${w.access === 'Plug' ? ' active' : ''}">Plug</button>
+        </div>
+      </div>
       <div class="form-group">
         <label>Operator</label>
         <input type="text" class="ctrl-input dwr-op" placeholder="Initials" readonly>
@@ -8986,6 +9015,20 @@ function createDWRItem(w, dateInput, timeInput) {
 
   // Auto-fill operator
   if (currentUser) div.querySelector('.dwr-op').value = currentUser.initials || currentUser.username;
+
+  let dwrAccess = w.access || null;
+  div.querySelector('.dwr-access-tube').addEventListener('click', e => {
+    if (dwrAccess === 'Tube') { dwrAccess = null; e.currentTarget.classList.remove('active'); return; }
+    dwrAccess = 'Tube';
+    e.currentTarget.classList.add('active');
+    div.querySelector('.dwr-access-plug').classList.remove('active');
+  });
+  div.querySelector('.dwr-access-plug').addEventListener('click', e => {
+    if (dwrAccess === 'Plug') { dwrAccess = null; e.currentTarget.classList.remove('active'); return; }
+    dwrAccess = 'Plug';
+    e.currentTarget.classList.add('active');
+    div.querySelector('.dwr-access-tube').classList.remove('active');
+  });
 
   // Map button (individual well)
   div.querySelector('.dwr-map-item-btn')?.addEventListener('click', e => {
@@ -9036,6 +9079,7 @@ function createDWRItem(w, dateInput, timeInput) {
       no_measurement:           nmCodes,
       questionable_measurement: qmCodes,
       notes:                    div.querySelector('.dwr-notes').value || null,
+      access:                   dwrAccess,
     };
 
     try {
