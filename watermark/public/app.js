@@ -1416,13 +1416,19 @@ function createWellItem(w, dateInput, timeInput) {
   div.querySelector('.list-item-header').addEventListener('click', () => {
     const open = div.classList.toggle('expanded');
     div.querySelector('.list-item-form').style.display = open ? '' : 'none';
-    if (open) el('well-time').value = nowHHMM();
+    if (open) {
+      const sb = div.querySelector('.w-save-btn');
+      sb.disabled = false; sb.textContent = 'Save Reading';
+      el('well-time').value = nowHHMM();
+    }
   });
 
   div.querySelector('.w-save-btn').addEventListener('click', async e => {
     e.stopPropagation();
     const errEl = div.querySelector('.lif-error');
     errEl.classList.add('hidden');
+    const saveBtn = e.currentTarget;
+    saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
     const body = {
       well_id:      w.well_id,
       reading_date: dateInput.value,
@@ -1448,8 +1454,11 @@ function createWellItem(w, dateInput, timeInput) {
       div.querySelector('.status-badge').className = 'status-badge done';
       div.classList.remove('expanded');
       div.querySelector('.list-item-form').style.display = 'none';
+      ['.w-hours', '.w-flow', '.w-totalizer', '.w-dripperoil', '.w-pge', '.w-notes']
+        .forEach(sel => { const el2 = div.querySelector(sel); if (el2) el2.value = ''; });
       showToast(r.queued ? `${w.common_name} queued offline` : `${w.common_name} saved`, r.queued ? 'warn' : 'success');
     } catch (err) {
+      saveBtn.disabled = false; saveBtn.textContent = 'Save Reading';
       errEl.textContent = err.message;
       errEl.classList.remove('hidden');
     }
@@ -1586,13 +1595,19 @@ function createCanalItem(s, dateInput, timeInput) {
   div.querySelector('.list-item-header').addEventListener('click', () => {
     const open = div.classList.toggle('expanded');
     div.querySelector('.list-item-form').style.display = open ? '' : 'none';
-    if (open) el('canal-time').value = nowHHMM();
+    if (open) {
+      const sb = div.querySelector('.c-save-btn');
+      sb.disabled = false; sb.textContent = 'Save Reading';
+      el('canal-time').value = nowHHMM();
+    }
   });
 
   div.querySelector('.c-save-btn').addEventListener('click', async e => {
     e.stopPropagation();
     const errEl = div.querySelector('.lif-error');
     errEl.classList.add('hidden');
+    const saveBtn = e.currentTarget;
+    saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
 
     const payload = {
       structure_id:           s.structure_id,
@@ -1622,8 +1637,11 @@ function createCanalItem(s, dateInput, timeInput) {
       }
       div.classList.remove('expanded');
       div.querySelector('.list-item-form').style.display = 'none';
+      ['.c-flow', '.c-totalizer', '.c-gate', '.c-head', '.c-derived', '.c-notes']
+        .forEach(sel => { const el2 = div.querySelector(sel); if (el2) el2.value = ''; });
       showToast(r.queued ? `${s.structure_name} queued offline` : `${s.structure_name} saved`, r.queued ? 'warn' : 'success');
     } catch (err) {
+      saveBtn.disabled = false; saveBtn.textContent = 'Save Reading';
       errEl.textContent = err.message;
       errEl.classList.remove('hidden');
     }
@@ -1807,13 +1825,19 @@ function createVehicleItem(v, dateInput, timeInput) {
   div.querySelector('.list-item-header').addEventListener('click', () => {
     const open = div.classList.toggle('expanded');
     div.querySelector('.list-item-form').style.display = open ? '' : 'none';
-    if (open) el('vehicle-time').value = nowHHMM();
+    if (open) {
+      const sb = div.querySelector('.v-save-btn');
+      sb.disabled = false; sb.textContent = 'Save Reading';
+      el('vehicle-time').value = nowHHMM();
+    }
   });
 
   div.querySelector('.v-save-btn').addEventListener('click', async e => {
     e.stopPropagation();
     const errEl = div.querySelector('.lif-error');
     errEl.classList.add('hidden');
+    const saveBtn = e.currentTarget;
+    saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
     const body = {
       vehicle_id:     v.vehicle_id,
       vehicle_number: v.vehicle_number,
@@ -1837,8 +1861,11 @@ function createVehicleItem(v, dateInput, timeInput) {
         const meta = div.querySelector('.list-item-meta span');
         if (meta && newPrev) meta.textContent = `Prev: ${newPrev}`;
       }
+      ['.v-odo', '.v-hrs', '.v-notes']
+        .forEach(sel => { const el2 = div.querySelector(sel); if (el2) el2.value = ''; });
       showToast(r.queued ? `${label} queued offline` : `${label} saved`, r.queued ? 'warn' : 'success');
     } catch (err) {
+      saveBtn.disabled = false; saveBtn.textContent = 'Save Reading';
       errEl.textContent = err.message;
       errEl.classList.remove('hidden');
     }
@@ -4363,7 +4390,11 @@ function createKFItem(w, dateInput, timeInput) {
   div.querySelector('.list-item-header').addEventListener('click', () => {
     const open = div.classList.toggle('expanded');
     div.querySelector('.list-item-form').style.display = open ? '' : 'none';
-    if (open) el('kf-time').value = nowHHMM();
+    if (open) {
+      const sb = div.querySelector('.kf-save');
+      sb.disabled = false; sb.textContent = 'Save Reading';
+      el('kf-time').value = nowHHMM();
+    }
   });
 
   div.querySelector('.kf-save').addEventListener('click', async e => {
@@ -4375,6 +4406,8 @@ function createKFItem(w, dateInput, timeInput) {
     // DTW is optional, but if omitted the notes field is required
     if (!dtw && !notes) { errEl.textContent = 'Enter a DTW reading, or add a note explaining why no reading was taken'; errEl.classList.remove('hidden'); return; }
 
+    const saveBtn = e.currentTarget;
+    saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
     const body = {
       well_id:         w.well_id,
       reading_date:    dateInput.value,
@@ -4407,8 +4440,12 @@ function createKFItem(w, dateInput, timeInput) {
         }
         meta.innerHTML = `<span>Prev: ${newPrev}</span>`;
       }
+      div.querySelector('.kf-dtw').value = '';
+      div.querySelector('.kf-method').value = '';
+      div.querySelector('.kf-notes').value = '';
       showToast(r.queued ? `${w.common_name} queued offline` : `${w.common_name} saved`, r.queued ? 'warn' : 'success');
     } catch (err) {
+      saveBtn.disabled = false; saveBtn.textContent = 'Save Reading';
       errEl.textContent = err.message;
       errEl.classList.remove('hidden');
     }
@@ -4650,7 +4687,11 @@ function createPiezItem(p, dateInput, timeInput) {
   div.querySelector('.list-item-header').addEventListener('click', () => {
     const open = div.classList.toggle('expanded');
     div.querySelector('.list-item-form').style.display = open ? '' : 'none';
-    if (open) el('piez-time').value = nowHHMM();
+    if (open) {
+      const sb = div.querySelector('.piez-save');
+      sb.disabled = false; sb.textContent = 'Save Reading';
+      el('piez-time').value = nowHHMM();
+    }
   });
 
   div.querySelector('.piez-save').addEventListener('click', async e => {
@@ -4660,6 +4701,8 @@ function createPiezItem(p, dateInput, timeInput) {
     const dtw = div.querySelector('.piez-dtw').value;
     if (!dtw) { errEl.textContent = 'Depth to water is required'; errEl.classList.remove('hidden'); return; }
 
+    const saveBtn = e.currentTarget;
+    saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
     const body = {
       piezometer_id:  p.piezometer_id,
       reading_date:   dateInput.value,
@@ -4689,8 +4732,11 @@ function createPiezItem(p, dateInput, timeInput) {
         }
         meta.innerHTML = `<span>Prev: ${newPrev}</span>`;
       }
+      div.querySelector('.piez-dtw').value = '';
+      div.querySelector('.piez-notes').value = '';
       showToast(r.queued ? `${p.piezometer_name} queued offline` : `${p.piezometer_name} saved`, r.queued ? 'warn' : 'success');
     } catch (err) {
+      saveBtn.disabled = false; saveBtn.textContent = 'Save Reading';
       errEl.textContent = err.message;
       errEl.classList.remove('hidden');
     }
@@ -9047,6 +9093,8 @@ function createDWRItem(w, dateInput, timeInput) {
     const open = div.classList.toggle('expanded');
     div.querySelector('.list-item-form').style.display = open ? '' : 'none';
     if (open) {
+      const sb = div.querySelector('.dwr-save-btn');
+      sb.disabled = false; sb.textContent = 'Save Reading';
       dateInput.value = todayISO();
       timeInput.value = nowHHMM();
     }
@@ -9069,6 +9117,8 @@ function createDWRItem(w, dateInput, timeInput) {
       return;
     }
 
+    const saveBtn = e.currentTarget;
+    saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
     const body = {
       well_id:                  w.well_id,
       reading_date:             dateInput.value,
@@ -9112,11 +9162,13 @@ function createDWRItem(w, dateInput, timeInput) {
       dtwInput.value = ''; dtwInput.disabled = false;
       dtwInput.placeholder = '0.00'; dtwInput.classList.remove('dwr-dtw-nm');
       nmWrap.clearAll(); qmWrap.clearAll();
-      div.querySelector('.dwr-notes').value = body.notes || '';
+      div.querySelector('.dwr-method').value = '';
+      div.querySelector('.dwr-notes').value = '';
 
       updateDWRCounter();
       showToast(`${w.common_name} saved`, 'success');
     } catch (err) {
+      saveBtn.disabled = false; saveBtn.textContent = 'Save Reading';
       errEl.textContent = err.message;
       errEl.classList.remove('hidden');
     }
