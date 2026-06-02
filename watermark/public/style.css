@@ -2859,6 +2859,34 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
 }
 .gps-loc-existing.has-coords { color: var(--yellow); }
 
+/* ── Piezometer Map Report ───────────────────────────────────────────────── */
+.piez-report-map {
+  width: 100%;
+  height: 55vh;
+  min-height: 280px;
+}
+.piez-map-title {
+  text-align: center;
+  font-size: 0.95rem;
+  font-weight: 600;
+  padding: 8px 0 4px;
+  color: var(--text);
+}
+.leaflet-tooltip.piez-map-label {
+  background: rgba(18,18,18,0.82);
+  color: #fff;
+  border: 1px solid rgba(255,255,255,0.2);
+  border-radius: 4px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.55);
+  font-size: 0.76rem;
+  padding: 3px 7px;
+  white-space: nowrap;
+  line-height: 1.4;
+}
+.leaflet-tooltip.piez-map-label.leaflet-tooltip-top::before {
+  border-top-color: rgba(18,18,18,0.82);
+}
+
 /* ── Print ───────────────────────────────────────────────────────────────── */
 @media print {
   html, body, #app-shell {
@@ -2866,4 +2894,12 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
     overflow: visible !important;
     position: static !important;
   }
+  /* Piez map PDF export — bring the map container to foreground */
+  body.print-piez-map > *:not(#piez-map-print-container) { display: none !important; }
+  body.print-piez-map #piez-map-print-container { display: block !important; position: fixed; inset: 0; z-index: 9999; }
+  body.print-piez-map #piez-map-output { display: flex !important; flex-direction: column; width: 100vw; height: 100vh; padding: 0; background: white; }
+  body.print-piez-map #piez-map-title { font-size: 12pt !important; font-weight: 700; text-align: center; padding: 6px 0 4px; color: black !important; }
+  body.print-piez-map #piez-report-map { flex: 1 !important; min-height: 0 !important; height: auto !important; }
+  body.print-piez-map .leaflet-tooltip.piez-map-label { background: rgba(0,0,0,0.75) !important; color: #fff !important; border-color: rgba(0,0,0,0.75) !important; }
+  body.print-piez-map .leaflet-tooltip.piez-map-label.leaflet-tooltip-top::before { border-top-color: rgba(0,0,0,0.75) !important; }
 }

@@ -8049,6 +8049,11 @@ el('report-export-btn').addEventListener('click', () => {
 });
 
 el('piez-export-btn').addEventListener('click', () => {
+  if (piezRepType === 'map') {
+    if (!_piezRepMapGenerated) return showToast('Generate a map first', 'error');
+    printPiezMap();
+    return;
+  }
   if (piezRepType === 'status') {
     if (!lastPiezStatusRows.length) return showToast('No report data to export', 'error');
     exportContext = 'piezometers-status';
@@ -8202,6 +8207,10 @@ let piezRepType        = 'status';
 let lastPiezStatusRows = [];
 let lastPiezCompareRows1 = [];
 let lastPiezCompareRows2 = [];
+let _piezRepMap          = null;
+let _piezRepMapMarkers   = [];
+let _piezRepMapGenerated = false;
+let _piezMapPoolsLoaded  = false;
 let piezRepYear  = new Date().getFullYear();
 let piezRepMonth = new Date().getMonth() + 1;
 let piezRepStart = '';
@@ -8255,8 +8264,9 @@ function initPiezReportPanel() {
 }
 
 function runPiezReport() {
-  if (piezRepType === 'status') renderPiezReport();
-  else                          renderPiezCompareReport();
+  if (piezRepType === 'status')       renderPiezReport();
+  else if (piezRepType === 'compare') renderPiezCompareReport();
+  // 'map' — user clicks Generate; nothing auto-runs
 }
 
 document.querySelectorAll('#piez-report-seg .seg-btn').forEach(btn => {
@@ -8266,7 +8276,14 @@ document.querySelectorAll('#piez-report-seg .seg-btn').forEach(btn => {
     piezRepType = btn.dataset.val;
     el('piez-status-toolbar').style.display  = piezRepType === 'status'  ? '' : 'none';
     el('piez-compare-toolbar').style.display = piezRepType === 'compare' ? '' : 'none';
-    runPiezReport();
+    el('piez-map-toolbar').style.display     = piezRepType === 'map'     ? '' : 'none';
+    el('report-piez-output').style.display   = piezRepType === 'map'     ? 'none' : '';
+    if (piezRepType !== 'map') {
+      el('piez-map-output').style.display = 'none';
+      runPiezReport();
+    } else if (!_piezMapPoolsLoaded) {
+      loadPiezMapPools();
+    }
   });
 });
 
@@ -8414,6 +8431,130 @@ async function renderPiezCompareReport() {
   } catch (err) {
     out.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
   }
+}
+
+// ── Piezometer Map Report ─────────────────────────────────────────────────────
+
+async function loadPiezMapPools() {
+  try {
+    const items = piezAllItems.length ? piezAllItems : await api('GET', '/api/piezometers');
+    const rawPools = [...new Set(items.map(p => p.pool).filter(Boolean))];
+    const pools = sortPools(rawPools);
+    const sel = el('piez-map-pool');
+    sel.innerHTML = '<option value="">— Select pool —</option>';
+    pools.forEach(pool => {
+      const opt = document.createElement('option');
+      opt.value = opt.textContent = pool;
+      sel.appendChild(opt);
+    });
+    if (piezRepStart) el('piez-map-start').value = piezRepStart;
+    if (piezRepEnd)   el('piez-map-end').value   = piezRepEnd;
+    _piezMapPoolsLoaded = true;
+  } catch (err) {
+    showToast('Failed to load pool list', 'error');
+  }
+}
+
+el('piez-map-generate-btn').addEventListener('click', () => {
+  const pool  = el('piez-map-pool').value;
+  const start = el('piez-map-start').value;
+  const end   = el('piez-map-end').value;
+  if (!pool)        return showToast('Select a pool first', 'error');
+  if (!start || !end) return showToast('Select a date range', 'error');
+  renderPiezMapReport(pool, start, end);
+});
+
+async function renderPiezMapReport(pool, startDate, endDate) {
+  const output = el('piez-map-output');
+  const titleEl = el('piez-map-title');
+  output.style.display = '';
+  titleEl.textContent = 'Loading…';
+  _piezRepMapGenerated = false;
+
+  try {
+    const rows = await api('GET', `/api/reports/piezometers?start_date=${startDate}&end_date=${endDate}`);
+    const poolRows = rows.filter(p => (p.pool || 'No Pool') === pool && p.gps_latitude && p.gps_longitude);
+
+    if (!poolRows.length) {
+      titleEl.textContent = `${pool}: no GPS-tagged piezometers found for this range`;
+      if (_piezRepMap) { _piezRepMap.remove(); _piezRepMap = null; _piezRepMapMarkers = []; }
+      return;
+    }
+
+    const fmtD = s => s ? localDateStr(s, { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+    titleEl.textContent = `${pool} Piezometers — ${fmtD(startDate)} to ${fmtD(endDate)}`;
+
+    // Init map or clear existing markers
+    if (!_piezRepMap) {
+      _piezRepMap = L.map('piez-report-map');
+      L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+        attribution: 'Tiles &copy; Esri',
+        maxZoom: 19,
+      }).addTo(_piezRepMap);
+    } else {
+      _piezRepMapMarkers.forEach(m => _piezRepMap.removeLayer(m));
+      _piezRepMapMarkers = [];
+    }
+
+    // Place a circle marker + permanent tooltip for each piezometer
+    poolRows.forEach(p => {
+      const read  = p.reading_date != null;
+      const color = read ? '#4caf50' : '#ef5350';
+      const m = L.circleMarker([parseFloat(p.gps_latitude), parseFloat(p.gps_longitude)], {
+        radius: 8, fillColor: color, color: '#fff', weight: 2, fillOpacity: 0.9,
+      }).addTo(_piezRepMap);
+
+      const dtwLine = p.dtw_reading != null
+        ? `${Number(p.dtw_reading).toFixed(2)} ft`
+        : (read ? 'Read' : 'Not read');
+      m.bindTooltip(
+        `<b>${escHtml(p.piezometer_name)}</b><br>${escHtml(dtwLine)}`,
+        { permanent: true, direction: 'top', className: 'piez-map-label', offset: [0, -10] }
+      );
+      _piezRepMapMarkers.push(m);
+    });
+
+    const group = L.featureGroup(_piezRepMapMarkers);
+    _piezRepMap.fitBounds(group.getBounds().pad(0.2));
+    _piezRepMap.invalidateSize();
+    _piezRepMapGenerated = true;
+
+  } catch (err) {
+    titleEl.textContent = 'Failed to load';
+    showToast(err.message, 'error');
+  }
+}
+
+function printPiezMap() {
+  // Get or create a direct-body-child container so the print CSS can reach it
+  let printContainer = document.getElementById('piez-map-print-container');
+  if (!printContainer) {
+    printContainer = document.createElement('div');
+    printContainer.id = 'piez-map-print-container';
+    printContainer.style.display = 'none';
+    document.body.appendChild(printContainer);
+  }
+
+  // Temporarily move the map output into the print container
+  const mapOutput  = el('piez-map-output');
+  const origParent = mapOutput.parentElement;
+  const origNext   = mapOutput.nextSibling;
+  printContainer.appendChild(mapOutput);
+
+  document.body.classList.add('print-piez-map');
+  _piezRepMap.invalidateSize();
+
+  setTimeout(() => {
+    window.print();
+    window.addEventListener('afterprint', () => {
+      // Restore map output to original position
+      if (origNext) origParent.insertBefore(mapOutput, origNext);
+      else          origParent.appendChild(mapOutput);
+      document.body.classList.remove('print-piez-map');
+      // Re-render map in its original container
+      setTimeout(() => _piezRepMap && _piezRepMap.invalidateSize(), 100);
+    }, { once: true });
+  }, 300);
 }
 
 el('export-pdf-btn').addEventListener('click', () => {

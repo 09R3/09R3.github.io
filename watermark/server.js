@@ -3011,6 +3011,7 @@ app.get('/api/reports/piezometers', requireAuth, requireRole('supervisor', 'admi
     const { rows } = await pool.query(`
       SELECT
         p.piezometer_id, p.piezometer_name, p.pool, p.sort_order,
+        p.gps_latitude, p.gps_longitude,
         r.reading_date, r.reading_time, r.dtw_reading,
         r.operator, r.plopper_sounder, r.wet_dry_moist, r.notes
       FROM piezometers p
