@@ -9697,13 +9697,18 @@ function createDWRItem(w, dateInput, timeInput) {
 })();
 
 /* ── HR ──────────────────────────────────────────────────────────────────── */
+let torRanges = [];   // [{ start, end, hours }]
+
 function openHRPanel(panelId) {
   el('hr-main').classList.add('hidden');
   document.querySelectorAll('#screen-hr .maint-panel').forEach(p => p.classList.add('hidden'));
   el(`hr-panel-${panelId}`).classList.remove('hidden');
-  const panelTitles = { 'time-off': 'Time Off Request' };
+  const panelTitles = {
+    'time-off':     'Time Off Request',
+    'charge-codes': 'Charge Codes',
+  };
   setPanelNav(el('screen-hr'), closeHRPanel, 'HR – ' + (panelTitles[panelId] || panelId));
-  if (panelId === 'time-off')     initTimeOffPanel();
+  if (panelId === 'time-off') initTimeOffPanel();
 }
 
 function closeHRPanel() {
@@ -9718,21 +9723,21 @@ function initHRScreen() {
 
 function initTimeOffPanel() {
   const today = new Date().toLocaleDateString('en-CA');
-  if (!el('tor-start').value) el('tor-start').value = today;
-  if (!el('tor-end').value)   el('tor-end').value   = today;
+  torRanges = [];
+  el('tor-start').value  = today;
+  el('tor-end').value    = today;
+  el('tor-hours').value  = '';
+  el('tor-notes').value  = '';
+  el('tor-range-error').classList.add('hidden');
   el('tor-error').classList.add('hidden');
+  renderTorRanges();
 }
 
-document.querySelectorAll('[data-hr-panel]').forEach(btn => {
-  btn.addEventListener('click', () => openHRPanel(btn.dataset.hrPanel));
-});
-
-el('tor-submit-btn').addEventListener('click', () => {
-  const start = el('tor-start').value;
-  const end   = el('tor-end').value;
-  const hours = el('tor-hours').value;
-  const notes = el('tor-notes').value.trim();
-  const errEl = el('tor-error');
+function addTorRange() {
+  const start  = el('tor-start').value;
+  const end    = el('tor-end').value;
+  const hours  = el('tor-hours').value;
+  const errEl  = el('tor-range-error');
   errEl.classList.add('hidden');
   errEl.textContent = '';
 
@@ -9742,32 +9747,127 @@ el('tor-submit-btn').addEventListener('click', () => {
     return;
   }
   if (end < start) {
-    errEl.textContent = 'End date must be on or after the start date.';
+    errEl.textContent = 'End date must be on or after start date.';
     errEl.classList.remove('hidden');
     return;
   }
   if (!hours || parseFloat(hours) <= 0) {
-    errEl.textContent = 'Please enter the number of hours requested.';
+    errEl.textContent = 'Please enter hours requested.';
+    errEl.classList.remove('hidden');
+    return;
+  }
+
+  torRanges.push({ start, end, hours: parseFloat(hours) });
+
+  // Reset inputs for next range
+  const today = new Date().toLocaleDateString('en-CA');
+  el('tor-start').value = today;
+  el('tor-end').value   = today;
+  el('tor-hours').value = '';
+  renderTorRanges();
+}
+
+function renderTorRanges() {
+  const listEl = el('tor-ranges-list');
+  if (torRanges.length === 0) {
+    listEl.classList.add('hidden');
+    listEl.innerHTML = '';
+    el('tor-submit-btn').disabled = true;
+    return;
+  }
+  listEl.classList.remove('hidden');
+  const fmt = d => new Date(d + 'T00:00:00').toLocaleDateString('en-US', {
+    month: 'short', day: 'numeric', year: 'numeric',
+  });
+  listEl.innerHTML = torRanges.map((r, i) => {
+    const dateLabel = r.start === r.end ? fmt(r.start) : `${fmt(r.start)} – ${fmt(r.end)}`;
+    return `<div class="tor-range-item">
+      <div class="tor-range-text">
+        <div class="tor-range-dates">${dateLabel}</div>
+        <div class="tor-range-hours">${r.hours} hr${r.hours !== 1 ? 's' : ''}</div>
+      </div>
+      <button class="tor-range-remove" data-idx="${i}" title="Remove">×</button>
+    </div>`;
+  }).join('');
+  listEl.querySelectorAll('.tor-range-remove').forEach(btn => {
+    btn.addEventListener('click', () => {
+      torRanges.splice(parseInt(btn.dataset.idx), 1);
+      renderTorRanges();
+    });
+  });
+  el('tor-submit-btn').disabled = false;
+}
+
+function torGoogleCalLink(start, end, title) {
+  // Google Calendar end date is exclusive — add 1 day
+  const endExcl = new Date(end + 'T00:00:00');
+  endExcl.setDate(endExcl.getDate() + 1);
+  const toYMD = d => d.toISOString().slice(0, 10).replace(/-/g, '');
+  const params = new URLSearchParams({
+    action: 'TEMPLATE',
+    text:   title,
+    dates:  `${toYMD(new Date(start + 'T00:00:00'))}/${toYMD(endExcl)}`,
+  });
+  return `https://calendar.google.com/calendar/render?${params}`;
+}
+
+function torOutlookCalLink(start, end, title) {
+  // Outlook end date for all-day is the day after the last day
+  const endNext = new Date(end + 'T00:00:00');
+  endNext.setDate(endNext.getDate() + 1);
+  const params = new URLSearchParams({
+    subject:  title,
+    startdt:  start,
+    enddt:    endNext.toISOString().slice(0, 10),
+    allday:   'true',
+    body:     '',
+  });
+  return `https://outlook.office.com/calendar/0/deeplink/compose?${params}`;
+}
+
+document.querySelectorAll('[data-hr-panel]').forEach(btn => {
+  btn.addEventListener('click', () => openHRPanel(btn.dataset.hrPanel));
+});
+
+el('tor-add-range-btn').addEventListener('click', addTorRange);
+
+el('tor-submit-btn').addEventListener('click', () => {
+  const notes    = el('tor-notes').value.trim();
+  const errEl    = el('tor-error');
+  errEl.classList.add('hidden');
+  errEl.textContent = '';
+
+  if (torRanges.length === 0) {
+    errEl.textContent = 'Add at least one date range before sending.';
     errEl.classList.remove('hidden');
     return;
   }
 
   const fullName = currentUser?.full_name || currentUser?.username || '';
   const subject  = `Time Off Request – ${fullName}`;
-  const fmt = d => new Date(d + 'T00:00:00').toLocaleDateString('en-US', {
+  const fmtLong  = d => new Date(d + 'T00:00:00').toLocaleDateString('en-US', {
     weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
   });
 
-  let body = 'Time Off Request\n';
-  body += `Submitted by: ${fullName}\n\n`;
-  if (start === end) {
-    body += `Date:            ${fmt(start)}\n`;
-  } else {
-    body += `Start Date:      ${fmt(start)}\n`;
-    body += `End Date:        ${fmt(end)}\n`;
-  }
-  body += `Hours Requested: ${hours}\n`;
-  if (notes) body += `\nNotes:\n${notes}\n`;
+  let body = `Time Off Request\nSubmitted by: ${fullName}\n`;
+  const totalHours = torRanges.reduce((s, r) => s + r.hours, 0);
+  body += `Total Hours Requested: ${totalHours}\n\n`;
+
+  torRanges.forEach((r, i) => {
+    body += `── Range ${i + 1} ──\n`;
+    if (r.start === r.end) {
+      body += `Date:   ${fmtLong(r.start)}\n`;
+    } else {
+      body += `Start:  ${fmtLong(r.start)}\n`;
+      body += `End:    ${fmtLong(r.end)}\n`;
+    }
+    body += `Hours:  ${r.hours}\n`;
+    const calTitle = encodeURIComponent(`Time Off – ${fullName}`);
+    body += `Add to Google Calendar:\n${torGoogleCalLink(r.start, r.end, `Time Off – ${fullName}`)}\n`;
+    body += `Add to Outlook Calendar:\n${torOutlookCalLink(r.start, r.end, `Time Off – ${fullName}`)}\n\n`;
+  });
+
+  if (notes) body += `Notes:\n${notes}\n`;
 
   const to = 'syoder@kcwa.com,mansolabehere@kcwa.com';
   window.location.href = `mailto:${to}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;

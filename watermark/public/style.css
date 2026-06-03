@@ -2938,6 +2938,47 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
 }
 .gps-loc-existing.has-coords { color: var(--yellow); }
 
+/* ── Time Off Request ────────────────────────────────────────────────────── */
+.tor-add-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.tor-add-row .form-group { margin-bottom: 0; }
+.tor-add-btn { flex-shrink: 0; white-space: nowrap; }
+.tor-ranges-list {
+  margin-bottom: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.tor-range-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.tor-range-item:last-child { border-bottom: none; }
+.tor-range-text {
+  flex: 1;
+  font-size: 0.88rem;
+  line-height: 1.4;
+}
+.tor-range-dates { font-weight: 600; }
+.tor-range-hours { color: var(--text-dim); font-size: 0.82rem; }
+.tor-range-remove {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-dim);
+  font-size: 1.1rem;
+  padding: 2px 4px;
+  line-height: 1;
+}
+.tor-range-remove:hover { color: var(--red); }
+
 /* ── Print ───────────────────────────────────────────────────────────────── */
 @media print {
   html, body, #app-shell {
