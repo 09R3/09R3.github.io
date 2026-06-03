@@ -129,7 +129,7 @@
         Sign in with Microsoft 365
       </a>
       <div id="ms-login-error" class="error-msg hidden"></div>
-      <div class="login-version">v 2.17</div>
+      <div class="login-version">v 2.18</div>
     </div>
   </div>
 </div>
@@ -1314,11 +1314,17 @@
         <div class="seg-group" id="vehicle-report-seg">
           <button class="seg-btn active" data-val="mileage">CVC Mileage</button>
           <button class="seg-btn" data-val="service">Last Service</button>
+          <button class="seg-btn" data-val="compare">Compare</button>
         </div>
         <div class="report-month-nav">
           <button class="btn btn-secondary btn-sm" id="report-prev-month">&#8592;</button>
           <span id="report-month-label" class="report-month-label"></span>
           <button class="btn btn-secondary btn-sm" id="report-next-month">&#8594;</button>
+        </div>
+        <div class="report-month-nav" id="vehicle-compare-nav" style="display:none">
+          <input type="month" id="vehicle-cmp-m1" class="ctrl-input ctrl-input-sm">
+          <span style="color:var(--text-dim)">&#8594;</span>
+          <input type="month" id="vehicle-cmp-m2" class="ctrl-input ctrl-input-sm">
         </div>
         <button class="btn btn-secondary btn-sm" id="report-export-btn" style="margin-left:auto"><span class="app-icon" style="width:14px;height:14px;-webkit-mask-image:url(/marv-site/icons/icon-download.svg);mask-image:url(/marv-site/icons/icon-download.svg)"></span> Export</button>
       </div>
@@ -1637,7 +1643,7 @@
     <div id="settings-panel-appinfo" class="settings-panel hidden">
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 2.17</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 2.18</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>
