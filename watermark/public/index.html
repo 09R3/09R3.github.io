@@ -59,8 +59,6 @@
       #print-area[data-print-type="vehicle"] {
         zoom: 0.78;
       }
-      /* Map image export — fill the page */
-      #print-area img { width: 100%; height: auto; display: block; }
     }
 
     /* ── Ponds screen ─────────────────────────────────────────────────────── */
@@ -131,7 +129,7 @@
         Sign in with Microsoft 365
       </a>
       <div id="ms-login-error" class="error-msg hidden"></div>
-      <div class="login-version">v 2.10</div>
+      <div class="login-version">v 2.11</div>
     </div>
   </div>
 </div>
@@ -1346,7 +1344,6 @@
         <div class="seg-group" id="piez-report-seg">
           <button class="seg-btn active" data-val="status">Status</button>
           <button class="seg-btn" data-val="compare">Compare</button>
-          <button class="seg-btn" data-val="map">Map</button>
         </div>
         <button class="btn btn-secondary btn-sm" id="piez-export-btn" style="margin-left:auto"><span class="app-icon" style="width:14px;height:14px;-webkit-mask-image:url(/marv-site/icons/icon-download.svg);mask-image:url(/marv-site/icons/icon-download.svg)"></span> Export</button>
       </div>
@@ -1369,20 +1366,7 @@
         <span class="report-date-sep">&#8211;</span>
         <input type="date" id="piez-cmp-end2" class="ctrl-input ctrl-input-sm">
       </div>
-      <div id="piez-map-toolbar" class="report-toolbar" style="display:none">
-        <select id="piez-map-pool" class="ctrl-select ctrl-input-sm" style="max-width:150px">
-          <option value="">— Pool —</option>
-        </select>
-        <input type="date" id="piez-map-start" class="ctrl-input ctrl-input-sm">
-        <span class="report-date-sep">&#8211;</span>
-        <input type="date" id="piez-map-end" class="ctrl-input ctrl-input-sm">
-        <button class="btn btn-save btn-sm" id="piez-map-generate-btn">Generate Map</button>
-      </div>
       <div id="report-piez-output"></div>
-      <div id="piez-map-output" style="display:none">
-        <div id="piez-map-title" class="piez-map-title"></div>
-        <div id="piez-report-map" class="piez-report-map"></div>
-      </div>
     </div>
 
     <!-- Canal Readings panel -->
@@ -1613,7 +1597,7 @@
     <div id="settings-panel-appinfo" class="settings-panel hidden">
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 2.10</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 2.11</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>

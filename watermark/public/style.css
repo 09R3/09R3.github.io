@@ -549,10 +549,11 @@ html, body {
   flex: 1 1 0;
   min-width: 0;
   text-align: center;
+  white-space: nowrap;
   background: var(--surface2);
   border: none;
   color: var(--text-dim);
-  padding: 10px 4px;
+  padding: 10px 10px;
   font-size: 0.9rem;
   font-weight: 600;
   cursor: pointer;
@@ -2861,35 +2862,6 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
   margin-top: 6px;
 }
 .gps-loc-existing.has-coords { color: var(--yellow); }
-
-/* ── Piezometer Map Report ───────────────────────────────────────────────── */
-.piez-report-map {
-  width: 100%;
-  height: 55vh;
-  min-height: 280px;
-}
-.piez-map-title {
-  text-align: center;
-  font-size: 0.95rem;
-  font-weight: 600;
-  padding: 8px 0 4px;
-  color: var(--text);
-}
-.leaflet-tooltip.piez-map-label {
-  background: rgba(18,18,18,0.86);
-  color: #fff;
-  border: 1px solid rgba(255,255,255,0.25);
-  border-radius: 3px;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.55);
-  font-size: 0.68rem;
-  padding: 2px 5px;
-  white-space: nowrap;
-  line-height: 1.25;
-}
-/* Leader-line connectors handle the marker→label link, so suppress the
-   default tooltip pointer arrow (it breaks once labels are decluttered). */
-.leaflet-tooltip.piez-map-label::before { display: none !important; }
-.piez-leader-svg { position: absolute; inset: 0; pointer-events: none; }
 
 /* ── Print ───────────────────────────────────────────────────────────────── */
 @media print {

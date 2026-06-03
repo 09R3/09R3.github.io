@@ -8049,11 +8049,6 @@ el('report-export-btn').addEventListener('click', () => {
 });
 
 el('piez-export-btn').addEventListener('click', () => {
-  if (piezRepType === 'map') {
-    if (!_piezRepMapGenerated) return showToast('Generate a map first', 'error');
-    printPiezMap();
-    return;
-  }
   if (piezRepType === 'status') {
     if (!lastPiezStatusRows.length) return showToast('No report data to export', 'error');
     exportContext = 'piezometers-status';
@@ -8207,11 +8202,6 @@ let piezRepType        = 'status';
 let lastPiezStatusRows = [];
 let lastPiezCompareRows1 = [];
 let lastPiezCompareRows2 = [];
-let _piezRepMap          = null;
-let _piezRepMapMarkers   = [];
-let _piezRepMapGenerated = false;
-let _piezMapPoolsLoaded  = false;
-let _piezLeaderSvg       = null;
 let piezRepYear  = new Date().getFullYear();
 let piezRepMonth = new Date().getMonth() + 1;
 let piezRepStart = '';
@@ -8259,10 +8249,6 @@ function updatePiezRepLabel() {
 }
 
 function initPiezReportPanel() {
-  // Clean up any stuck print state from a prior session or failed export
-  document.body.classList.remove('print-piez-map');
-  document.getElementById('piez-map-print-container')?.remove();
-
   if (!piezRepStart) piezRepMonthBounds();
   updatePiezRepLabel();
   runPiezReport();
@@ -8271,7 +8257,6 @@ function initPiezReportPanel() {
 function runPiezReport() {
   if (piezRepType === 'status')       renderPiezReport();
   else if (piezRepType === 'compare') renderPiezCompareReport();
-  // 'map' — user clicks Generate; nothing auto-runs
 }
 
 document.querySelectorAll('#piez-report-seg .seg-btn').forEach(btn => {
@@ -8281,14 +8266,7 @@ document.querySelectorAll('#piez-report-seg .seg-btn').forEach(btn => {
     piezRepType = btn.dataset.val;
     el('piez-status-toolbar').style.display  = piezRepType === 'status'  ? '' : 'none';
     el('piez-compare-toolbar').style.display = piezRepType === 'compare' ? '' : 'none';
-    el('piez-map-toolbar').style.display     = piezRepType === 'map'     ? '' : 'none';
-    el('report-piez-output').style.display   = piezRepType === 'map'     ? 'none' : '';
-    if (piezRepType !== 'map') {
-      el('piez-map-output').style.display = 'none';
-      runPiezReport();
-    } else if (!_piezMapPoolsLoaded) {
-      loadPiezMapPools();
-    }
+    runPiezReport();
   });
 });
 
@@ -8437,234 +8415,6 @@ async function renderPiezCompareReport() {
     out.innerHTML = html;
   } catch (err) {
     out.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
-  }
-}
-
-// ── Piezometer Map Report ─────────────────────────────────────────────────────
-
-async function loadPiezMapPools() {
-  try {
-    const items = piezAllItems.length ? piezAllItems : await api('GET', '/api/piezometers');
-    const rawPools = [...new Set(items.map(p => p.pool).filter(Boolean))];
-    const pools = sortPools(rawPools);
-    const sel = el('piez-map-pool');
-    sel.innerHTML = '<option value="">— Select pool —</option>';
-    pools.forEach(pool => {
-      const opt = document.createElement('option');
-      opt.value = opt.textContent = pool;
-      sel.appendChild(opt);
-    });
-    if (piezRepStart) el('piez-map-start').value = piezRepStart;
-    if (piezRepEnd)   el('piez-map-end').value   = piezRepEnd;
-    _piezMapPoolsLoaded = true;
-  } catch (err) {
-    showToast('Failed to load pool list', 'error');
-  }
-}
-
-el('piez-map-generate-btn').addEventListener('click', () => {
-  const pool  = el('piez-map-pool').value;
-  const start = el('piez-map-start').value;
-  const end   = el('piez-map-end').value;
-  if (!pool)        return showToast('Select a pool first', 'error');
-  if (!start || !end) return showToast('Select a date range', 'error');
-  renderPiezMapReport(pool, start, end);
-});
-
-async function renderPiezMapReport(pool, startDate, endDate) {
-  const output = el('piez-map-output');
-  const titleEl = el('piez-map-title');
-  output.style.display = '';
-  titleEl.textContent = 'Loading…';
-  _piezRepMapGenerated = false;
-
-  try {
-    const rows = await api('GET', `/api/reports/piezometers?start_date=${startDate}&end_date=${endDate}`);
-    const poolRows = rows.filter(p => (p.pool || 'No Pool') === pool && p.gps_latitude && p.gps_longitude);
-
-    if (!poolRows.length) {
-      titleEl.textContent = `${pool}: no GPS-tagged piezometers found for this range`;
-      if (_piezRepMap) { _piezRepMap.remove(); _piezRepMap = null; _piezRepMapMarkers = []; }
-      return;
-    }
-
-    const fmtD = s => s ? localDateStr(s, { month: 'short', day: 'numeric', year: 'numeric' }) : '';
-    titleEl.textContent = `${pool} Piezometers — ${fmtD(startDate)} to ${fmtD(endDate)}`;
-
-    // Init map or clear existing markers
-    if (!_piezRepMap) {
-      _piezRepMap = L.map('piez-report-map');
-      L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
-        subdomains: 'abcd',
-        maxZoom: 19,
-      }).addTo(_piezRepMap);
-      // Re-flow labels + leader lines whenever the view changes
-      _piezRepMap.on('moveend zoomend', refreshPiezLabels);
-    } else {
-      _piezRepMapMarkers.forEach(m => _piezRepMap.removeLayer(m));
-      _piezRepMapMarkers = [];
-    }
-
-    // Place a circle marker + permanent tooltip for each piezometer
-    poolRows.forEach(p => {
-      const read  = p.reading_date != null;
-      const color = read ? '#4caf50' : '#ef5350';
-      const m = L.circleMarker([parseFloat(p.gps_latitude), parseFloat(p.gps_longitude)], {
-        radius: 7, fillColor: color, color: '#fff', weight: 2, fillOpacity: 0.95,
-      }).addTo(_piezRepMap);
-
-      const dtwLine = p.dtw_reading != null
-        ? `${Number(p.dtw_reading).toFixed(2)} ft`
-        : (read ? 'Read' : 'Not read');
-      m.bindTooltip(
-        `<b>${escHtml(p.piezometer_name)}</b><br>${escHtml(dtwLine)}`,
-        { permanent: true, direction: 'top', className: 'piez-map-label', offset: [0, -8] }
-      );
-      _piezRepMapMarkers.push(m);
-    });
-
-    const group = L.featureGroup(_piezRepMapMarkers);
-    _piezRepMap.fitBounds(group.getBounds().pad(0.5));
-    _piezRepMap.invalidateSize();
-    _piezRepMapGenerated = true;
-    setTimeout(refreshPiezLabels, 300);
-
-  } catch (err) {
-    titleEl.textContent = 'Failed to load';
-    showToast(err.message, 'error');
-  }
-}
-
-// Combined refresh: spread overlapping labels apart, then redraw leader lines.
-function refreshPiezLabels() {
-  declutterPiezLabels();
-  drawPiezLeaders();
-}
-
-// Nudge overlapping permanent tooltips apart, then clamp all labels inside the map container.
-function declutterPiezLabels() {
-  if (!_piezRepMap) return;
-  const labels = _piezRepMapMarkers
-    .map(m => m.getTooltip() ? m.getTooltip().getElement() : null)
-    .filter(Boolean);
-  // Reset prior offsets, then force a reflow so measurements are accurate
-  labels.forEach(l => { l.style.marginTop = '0px'; l.style.marginLeft = '0px'; });
-  void document.body.offsetHeight;
-
-  const cRect = _piezRepMap.getContainer().getBoundingClientRect();
-  const PAD = 4;
-
-  const items = labels.map(l => ({ l, r: l.getBoundingClientRect() }))
-    .sort((a, b) => a.r.top - b.r.top);
-  const placed = [];
-
-  items.forEach(item => {
-    let { top, bottom, left, right } = item.r;
-    let shiftY = 0;
-
-    // Resolve overlaps by nudging down
-    let moved = true, guard = 0;
-    while (moved && guard < 80) {
-      moved = false; guard++;
-      for (const p of placed) {
-        if (left < p.right + 2 && right > p.left - 2 && top < p.bottom + 2 && bottom > p.top - 2) {
-          const d = p.bottom - top + 3;
-          shiftY += d; top += d; bottom += d; moved = true;
-        }
-      }
-    }
-
-    // Clamp: keep label within map container bounds
-    if (bottom > cRect.bottom - PAD) {
-      const over = bottom - (cRect.bottom - PAD);
-      shiftY -= over; top -= over; bottom -= over;
-    }
-    if (top < cRect.top + PAD) {
-      const under = cRect.top + PAD - top;
-      shiftY += under; top += under; bottom += under;
-    }
-
-    item.l.style.marginTop = shiftY + 'px';
-    placed.push({ top, bottom, left, right });
-  });
-}
-
-// Draw a thin connector from each marker to its (possibly shifted) label.
-function drawPiezLeaders() {
-  if (!_piezRepMap) return;
-  const container = _piezRepMap.getContainer();
-  if (getComputedStyle(container).position === 'static') container.style.position = 'relative';
-  if (!_piezLeaderSvg) {
-    _piezLeaderSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    _piezLeaderSvg.setAttribute('class', 'piez-leader-svg');
-    // Above tiles/markers (overlayPane ~400) but below tooltip labels (~650)
-    _piezLeaderSvg.style.zIndex = 640;
-    container.appendChild(_piezLeaderSvg);
-  }
-  const size = _piezRepMap.getSize();
-  _piezLeaderSvg.setAttribute('width', size.x);
-  _piezLeaderSvg.setAttribute('height', size.y);
-  _piezLeaderSvg.innerHTML = '';
-  const cRect = container.getBoundingClientRect();
-
-  _piezRepMapMarkers.forEach(m => {
-    const tt = m.getTooltip(); if (!tt) return;
-    const lab = tt.getElement(); if (!lab) return;
-    const mp = _piezRepMap.latLngToContainerPoint(m.getLatLng());
-    const tRect = lab.getBoundingClientRect();
-    const tx = tRect.left - cRect.left + tRect.width / 2;
-    const ty = tRect.bottom - cRect.top;
-    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-    line.setAttribute('x1', mp.x); line.setAttribute('y1', mp.y);
-    line.setAttribute('x2', tx);   line.setAttribute('y2', ty);
-    line.setAttribute('stroke', '#ffffff');
-    line.setAttribute('stroke-width', '1.5');
-    line.setAttribute('opacity', '0.85');
-    _piezLeaderSvg.appendChild(line);
-  });
-}
-
-// Export the map to PDF by capturing it as an image with html2canvas.
-// The map DOM is never moved, so it stays visible and functional after export.
-async function printPiezMap() {
-  const btn = el('piez-export-btn');
-  const origText = btn.textContent;
-  btn.disabled = true; btn.textContent = 'Capturing…';
-
-  // Clean up any stuck state from older versions
-  document.body.classList.remove('print-piez-map');
-  document.getElementById('piez-map-print-container')?.remove();
-
-  try {
-    const mapOutput = el('piez-map-output');
-    // html2canvas with useCORS — works because CARTO tiles serve CORS headers
-    const canvas = await html2canvas(mapOutput, {
-      useCORS: true,
-      allowTaint: false,
-      scale: 1.5,
-      backgroundColor: '#1a1a1a',
-      logging: false,
-    });
-
-    const imgData = canvas.toDataURL('image/png');
-
-    let printArea = document.getElementById('print-area');
-    if (!printArea) {
-      printArea = document.createElement('div');
-      printArea.id = 'print-area';
-      document.body.appendChild(printArea);
-    }
-
-    printArea.innerHTML = `<img src="${imgData}" style="max-width:100%;height:auto;display:block;">`;
-    delete printArea.dataset.printType;
-
-    window.print();
-    window.addEventListener('afterprint', () => { printArea.innerHTML = ''; }, { once: true });
-  } catch (err) {
-    showToast('Export failed: ' + err.message, 'error');
-  } finally {
-    btn.disabled = false; btn.textContent = origText;
   }
 }
 
