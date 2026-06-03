@@ -9812,19 +9812,6 @@ function renderTorRanges() {
   el('tor-submit-btn').disabled = false;
 }
 
-function torGoogleCalLink(start, end, title) {
-  // Google Calendar end date is exclusive — add 1 day
-  const endExcl = new Date(end + 'T00:00:00');
-  endExcl.setDate(endExcl.getDate() + 1);
-  const toYMD = d => d.toISOString().slice(0, 10).replace(/-/g, '');
-  const params = new URLSearchParams({
-    action: 'TEMPLATE',
-    text:   title,
-    dates:  `${toYMD(new Date(start + 'T00:00:00'))}/${toYMD(endExcl)}`,
-  });
-  return `https://calendar.google.com/calendar/render?${params}`;
-}
-
 document.querySelectorAll('[data-hr-panel]').forEach(btn => {
   btn.addEventListener('click', () => openHRPanel(btn.dataset.hrPanel));
 });
@@ -9854,19 +9841,15 @@ el('tor-submit-btn').addEventListener('click', () => {
 
   const fullName = currentUser?.full_name || currentUser?.username || '';
   const subject  = `Time Off Request – ${fullName}`;
-  const calTitle = `Time Off – ${fullName}`;
 
   let body = `Time Off Request\nSubmitted by: ${fullName}\n`;
   const totalHours = torRanges.reduce((s, r) => s + r.hours, 0);
   body += `Total Hours Requested: ${totalHours}\n\n`;
 
   torRanges.forEach(r => {
-    // The formatted date is the label; the calendar link follows so the dates
-    // can be added to a calendar in one tap. (mailto bodies are plain text, so
-    // the URL itself is the clickable element.)
     body += `${torFmtRange(r.start, r.end)}  (${r.hours} hr${r.hours !== 1 ? 's' : ''})\n`;
-    body += `${torGoogleCalLink(r.start, r.end, calTitle)}\n\n`;
   });
+  body += '\n';
 
   if (notes) body += `Notes:\n${notes}\n`;
 
