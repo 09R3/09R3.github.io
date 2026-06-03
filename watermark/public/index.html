@@ -129,7 +129,7 @@
         Sign in with Microsoft 365
       </a>
       <div id="ms-login-error" class="error-msg hidden"></div>
-      <div class="login-version">v 2.13</div>
+      <div class="login-version">v 2.14</div>
     </div>
   </div>
 </div>
@@ -1029,6 +1029,12 @@
           </div>
           <span class="dash-label">Usage</span>
         </button>
+        <button class="dash-tile" data-pest-panel="tasks">
+          <div class="dash-icon-wrap">
+            <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-maintenance.svg);mask-image:url(/marv-site/icons/icon-maintenance.svg)"></span>
+          </div>
+          <span class="dash-label">Treatment List</span>
+        </button>
         <button class="dash-tile" data-pest-panel="location">
           <div class="dash-icon-wrap">
             <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-location.svg);mask-image:url(/marv-site/icons/icon-location.svg)"></span>
@@ -1075,6 +1081,20 @@
       </div>
 
       <div id="pest-usage-list"></div>
+    </div>
+
+    <!-- Treatment List panel -->
+    <div id="pest-panel-tasks" class="maint-panel hidden">
+      <div class="pest-task-add">
+        <input type="text" id="pest-task-input" class="ctrl-input" maxlength="200"
+          placeholder="Add an area to spray or bait…" autocomplete="off">
+        <button class="btn btn-save" id="pest-task-add-btn">Add</button>
+      </div>
+      <div id="pest-task-list"></div>
+      <button class="btn btn-secondary btn-sm pest-task-history-toggle" id="pest-task-history-btn">
+        Show completed history
+      </button>
+      <div id="pest-task-history" class="hidden"></div>
     </div>
 
     <!-- Location panel -->
@@ -1617,7 +1637,7 @@
     <div id="settings-panel-appinfo" class="settings-panel hidden">
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 2.13</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 2.14</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>

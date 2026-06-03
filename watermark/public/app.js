@@ -6854,6 +6854,7 @@ let pestLocationEditId = null;
 
 const PEST_PANEL_NAMES = {
   usage:    'Usage Log',
+  tasks:    'Treatment List',
   location: 'Application Location',
   reports:  'Monthly Report',
   products: 'Products',
@@ -6865,6 +6866,7 @@ function openPestPanel(panelId) {
   setPanelNav(el('screen-pesticides'), closePestPanel,
     'Pesticides - ' + (PEST_PANEL_NAMES[panelId] || panelId));
   if (panelId === 'usage')    initPestUsagePanel();
+  if (panelId === 'tasks')    initPestTasksPanel();
   if (panelId === 'location') initPestLocationPanel();
   if (panelId === 'reports')  initPestReportsPanel();
   if (panelId === 'products') initPestProductsPanel();
@@ -6962,6 +6964,116 @@ async function loadPestUsageList() {
     list.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
   }
 }
+
+// ── Treatment List Panel ──────────────────────────────────────────────────────
+// A shared spray/bait checklist. Anyone can add a one-line task; checking it off
+// hides it from the active list (kept for history). Records who added it and who
+// checked it off.
+function initPestTasksPanel() {
+  // Reset history view each time the panel is opened
+  el('pest-task-history').classList.add('hidden');
+  el('pest-task-history').innerHTML = '';
+  el('pest-task-history-btn').textContent = 'Show completed history';
+  loadPestTaskList();
+}
+
+async function loadPestTaskList() {
+  const list = el('pest-task-list');
+  list.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const tasks = await api('GET', '/api/pest-tasks');
+    if (!tasks.length) {
+      list.innerHTML = '<div class="placeholder-msg">No active tasks. Add one above.</div>';
+      return;
+    }
+    list.innerHTML = tasks.map(t => `
+      <div class="pest-task-item" data-id="${t.task_id}">
+        <input type="checkbox" class="pest-task-check" title="Mark as done">
+        <div class="pest-task-body">
+          <div class="pest-task-text">${escHtml(t.description)}</div>
+          <div class="pest-task-meta">Added by ${escHtml(t.created_by || 'Unknown')} · ${localDateStr(t.created_at, { month: 'short', day: 'numeric' })}</div>
+        </div>
+      </div>`).join('');
+    list.querySelectorAll('.pest-task-check').forEach(cb => {
+      cb.addEventListener('change', async e => {
+        const row = e.currentTarget.closest('.pest-task-item');
+        const id  = row.dataset.id;
+        e.currentTarget.disabled = true;
+        try {
+          await api('PATCH', `/api/pest-tasks/${id}`, { done: true });
+          row.remove();
+          if (!list.querySelector('.pest-task-item')) {
+            list.innerHTML = '<div class="placeholder-msg">No active tasks. Add one above.</div>';
+          }
+          // Refresh history if it's currently visible
+          if (!el('pest-task-history').classList.contains('hidden')) loadPestTaskHistory();
+        } catch (err) {
+          e.currentTarget.checked = false;
+          e.currentTarget.disabled = false;
+          showToast(err.message, 'error');
+        }
+      });
+    });
+  } catch (err) {
+    list.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
+  }
+}
+
+async function addPestTask() {
+  const input = el('pest-task-input');
+  const description = input.value.trim();
+  if (!description) return;
+  const btn = el('pest-task-add-btn');
+  btn.disabled = true;
+  try {
+    await api('POST', '/api/pest-tasks', { description });
+    input.value = '';
+    await loadPestTaskList();
+  } catch (err) {
+    showToast(err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    input.focus();
+  }
+}
+
+async function loadPestTaskHistory() {
+  const box = el('pest-task-history');
+  box.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const tasks = await api('GET', '/api/pest-tasks?history=1');
+    if (!tasks.length) {
+      box.innerHTML = '<div class="pest-task-history-title">Completed</div><div class="placeholder-msg">Nothing completed yet.</div>';
+      return;
+    }
+    box.innerHTML = '<div class="pest-task-history-title">Completed</div>' + tasks.map(t => `
+      <div class="pest-task-item">
+        <div class="pest-task-body">
+          <div class="pest-task-text">${escHtml(t.description)}</div>
+          <div class="pest-task-meta">Done by ${escHtml(t.done_by || 'Unknown')} · ${t.done_at ? localDateStr(t.done_at, { month: 'short', day: 'numeric', year: 'numeric' }) : ''} · added by ${escHtml(t.created_by || 'Unknown')}</div>
+        </div>
+      </div>`).join('');
+  } catch (err) {
+    box.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
+  }
+}
+
+el('pest-task-add-btn').addEventListener('click', addPestTask);
+el('pest-task-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); addPestTask(); }
+});
+el('pest-task-history-btn').addEventListener('click', () => {
+  const box = el('pest-task-history');
+  const showing = !box.classList.contains('hidden');
+  if (showing) {
+    box.classList.add('hidden');
+    el('pest-task-history-btn').textContent = 'Show completed history';
+  } else {
+    box.classList.remove('hidden');
+    el('pest-task-history-btn').textContent = 'Hide completed history';
+    loadPestTaskHistory();
+  }
+});
 
 // ── Location Panel ────────────────────────────────────────────────────────────
 async function initPestLocationPanel() {
