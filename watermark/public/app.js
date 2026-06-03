@@ -9699,6 +9699,23 @@ function createDWRItem(w, dateInput, timeInput) {
 /* ── HR ──────────────────────────────────────────────────────────────────── */
 let torRanges = [];   // [{ start, end, hours }]
 
+// "Wednesday, June 3rd"
+function torFmtDate(d) {
+  const dt = new Date(d + 'T00:00:00');
+  const day = dt.getDate();
+  const ord = (day % 10 === 1 && day !== 11) ? 'st'
+            : (day % 10 === 2 && day !== 12) ? 'nd'
+            : (day % 10 === 3 && day !== 13) ? 'rd' : 'th';
+  const weekday = dt.toLocaleDateString('en-US', { weekday: 'long' });
+  const month   = dt.toLocaleDateString('en-US', { month: 'long' });
+  return `${weekday}, ${month} ${day}${ord}`;
+}
+
+// "Wednesday, June 3rd" or "Wednesday, June 3rd – Friday, June 5th"
+function torFmtRange(start, end) {
+  return start === end ? torFmtDate(start) : `${torFmtDate(start)} – ${torFmtDate(end)}`;
+}
+
 function openHRPanel(panelId) {
   el('hr-main').classList.add('hidden');
   document.querySelectorAll('#screen-hr .maint-panel').forEach(p => p.classList.add('hidden'));
@@ -9776,11 +9793,8 @@ function renderTorRanges() {
     return;
   }
   listEl.classList.remove('hidden');
-  const fmt = d => new Date(d + 'T00:00:00').toLocaleDateString('en-US', {
-    month: 'short', day: 'numeric', year: 'numeric',
-  });
   listEl.innerHTML = torRanges.map((r, i) => {
-    const dateLabel = r.start === r.end ? fmt(r.start) : `${fmt(r.start)} – ${fmt(r.end)}`;
+    const dateLabel = torFmtRange(r.start, r.end);
     return `<div class="tor-range-item">
       <div class="tor-range-text">
         <div class="tor-range-dates">${dateLabel}</div>
@@ -9811,22 +9825,17 @@ function torGoogleCalLink(start, end, title) {
   return `https://calendar.google.com/calendar/render?${params}`;
 }
 
-function torOutlookCalLink(start, end, title) {
-  // Outlook end date for all-day is the day after the last day
-  const endNext = new Date(end + 'T00:00:00');
-  endNext.setDate(endNext.getDate() + 1);
-  const params = new URLSearchParams({
-    subject:  title,
-    startdt:  start,
-    enddt:    endNext.toISOString().slice(0, 10),
-    allday:   'true',
-    body:     '',
-  });
-  return `https://outlook.office.com/calendar/0/deeplink/compose?${params}`;
-}
-
 document.querySelectorAll('[data-hr-panel]').forEach(btn => {
   btn.addEventListener('click', () => openHRPanel(btn.dataset.hrPanel));
+});
+
+// When start date changes, keep end date in sync (ranges are usually short,
+// so the end date is most likely on/near the start). Only auto-advance if the
+// current end is before the new start.
+el('tor-start').addEventListener('change', () => {
+  const start = el('tor-start').value;
+  const end   = el('tor-end').value;
+  if (start && (!end || end < start)) el('tor-end').value = start;
 });
 
 el('tor-add-range-btn').addEventListener('click', addTorRange);
@@ -9845,26 +9854,18 @@ el('tor-submit-btn').addEventListener('click', () => {
 
   const fullName = currentUser?.full_name || currentUser?.username || '';
   const subject  = `Time Off Request – ${fullName}`;
-  const fmtLong  = d => new Date(d + 'T00:00:00').toLocaleDateString('en-US', {
-    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
-  });
+  const calTitle = `Time Off – ${fullName}`;
 
   let body = `Time Off Request\nSubmitted by: ${fullName}\n`;
   const totalHours = torRanges.reduce((s, r) => s + r.hours, 0);
   body += `Total Hours Requested: ${totalHours}\n\n`;
 
-  torRanges.forEach((r, i) => {
-    body += `── Range ${i + 1} ──\n`;
-    if (r.start === r.end) {
-      body += `Date:   ${fmtLong(r.start)}\n`;
-    } else {
-      body += `Start:  ${fmtLong(r.start)}\n`;
-      body += `End:    ${fmtLong(r.end)}\n`;
-    }
-    body += `Hours:  ${r.hours}\n`;
-    const calTitle = encodeURIComponent(`Time Off – ${fullName}`);
-    body += `Add to Google Calendar:\n${torGoogleCalLink(r.start, r.end, `Time Off – ${fullName}`)}\n`;
-    body += `Add to Outlook Calendar:\n${torOutlookCalLink(r.start, r.end, `Time Off – ${fullName}`)}\n\n`;
+  torRanges.forEach(r => {
+    // The formatted date is the label; the calendar link follows so the dates
+    // can be added to a calendar in one tap. (mailto bodies are plain text, so
+    // the URL itself is the clickable element.)
+    body += `${torFmtRange(r.start, r.end)}  (${r.hours} hr${r.hours !== 1 ? 's' : ''})\n`;
+    body += `${torGoogleCalLink(r.start, r.end, calTitle)}\n\n`;
   });
 
   if (notes) body += `Notes:\n${notes}\n`;
