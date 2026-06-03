@@ -660,12 +660,8 @@ async function loadDashboardStats() {
         <div class="stat-value">${s.kf_done}<span style="font-size:1rem;color:var(--text-dim)">/${s.kf_total}</span></div>
         <div class="stat-label">KF Complete</div>
         <div class="stat-sublabel">${rangeLabel}</div>
+        <div class="stat-sublabel" style="margin-top:2px">${s.kf_total - s.kf_done} Remaining</div>
         <div class="stat-bar"><div class="stat-bar-fill" style="width:${pct}%"></div></div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value">${s.kf_total - s.kf_done}</div>
-        <div class="stat-label">KF Remaining</div>
-        <div class="stat-sublabel">${rangeLabel}</div>
       </div>
       <div class="stat-card rw-stat-card" id="running-wells-stat" style="cursor:pointer">
         <div class="stat-value">${rwVal}</div>
@@ -1420,13 +1416,19 @@ function createWellItem(w, dateInput, timeInput) {
   div.querySelector('.list-item-header').addEventListener('click', () => {
     const open = div.classList.toggle('expanded');
     div.querySelector('.list-item-form').style.display = open ? '' : 'none';
-    if (open) el('well-time').value = nowHHMM();
+    if (open) {
+      const sb = div.querySelector('.w-save-btn');
+      sb.disabled = false; sb.textContent = 'Save Reading';
+      el('well-time').value = nowHHMM();
+    }
   });
 
   div.querySelector('.w-save-btn').addEventListener('click', async e => {
     e.stopPropagation();
     const errEl = div.querySelector('.lif-error');
     errEl.classList.add('hidden');
+    const saveBtn = e.currentTarget;
+    saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
     const body = {
       well_id:      w.well_id,
       reading_date: dateInput.value,
@@ -1452,8 +1454,11 @@ function createWellItem(w, dateInput, timeInput) {
       div.querySelector('.status-badge').className = 'status-badge done';
       div.classList.remove('expanded');
       div.querySelector('.list-item-form').style.display = 'none';
+      ['.w-hours', '.w-flow', '.w-totalizer', '.w-dripperoil', '.w-pge', '.w-notes']
+        .forEach(sel => { const el2 = div.querySelector(sel); if (el2) el2.value = ''; });
       showToast(r.queued ? `${w.common_name} queued offline` : `${w.common_name} saved`, r.queued ? 'warn' : 'success');
     } catch (err) {
+      saveBtn.disabled = false; saveBtn.textContent = 'Save Reading';
       errEl.textContent = err.message;
       errEl.classList.remove('hidden');
     }
@@ -1590,13 +1595,19 @@ function createCanalItem(s, dateInput, timeInput) {
   div.querySelector('.list-item-header').addEventListener('click', () => {
     const open = div.classList.toggle('expanded');
     div.querySelector('.list-item-form').style.display = open ? '' : 'none';
-    if (open) el('canal-time').value = nowHHMM();
+    if (open) {
+      const sb = div.querySelector('.c-save-btn');
+      sb.disabled = false; sb.textContent = 'Save Reading';
+      el('canal-time').value = nowHHMM();
+    }
   });
 
   div.querySelector('.c-save-btn').addEventListener('click', async e => {
     e.stopPropagation();
     const errEl = div.querySelector('.lif-error');
     errEl.classList.add('hidden');
+    const saveBtn = e.currentTarget;
+    saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
 
     const payload = {
       structure_id:           s.structure_id,
@@ -1626,8 +1637,11 @@ function createCanalItem(s, dateInput, timeInput) {
       }
       div.classList.remove('expanded');
       div.querySelector('.list-item-form').style.display = 'none';
+      ['.c-flow', '.c-totalizer', '.c-gate', '.c-head', '.c-derived', '.c-notes']
+        .forEach(sel => { const el2 = div.querySelector(sel); if (el2) el2.value = ''; });
       showToast(r.queued ? `${s.structure_name} queued offline` : `${s.structure_name} saved`, r.queued ? 'warn' : 'success');
     } catch (err) {
+      saveBtn.disabled = false; saveBtn.textContent = 'Save Reading';
       errEl.textContent = err.message;
       errEl.classList.remove('hidden');
     }
@@ -1811,13 +1825,19 @@ function createVehicleItem(v, dateInput, timeInput) {
   div.querySelector('.list-item-header').addEventListener('click', () => {
     const open = div.classList.toggle('expanded');
     div.querySelector('.list-item-form').style.display = open ? '' : 'none';
-    if (open) el('vehicle-time').value = nowHHMM();
+    if (open) {
+      const sb = div.querySelector('.v-save-btn');
+      sb.disabled = false; sb.textContent = 'Save Reading';
+      el('vehicle-time').value = nowHHMM();
+    }
   });
 
   div.querySelector('.v-save-btn').addEventListener('click', async e => {
     e.stopPropagation();
     const errEl = div.querySelector('.lif-error');
     errEl.classList.add('hidden');
+    const saveBtn = e.currentTarget;
+    saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
     const body = {
       vehicle_id:     v.vehicle_id,
       vehicle_number: v.vehicle_number,
@@ -1841,8 +1861,11 @@ function createVehicleItem(v, dateInput, timeInput) {
         const meta = div.querySelector('.list-item-meta span');
         if (meta && newPrev) meta.textContent = `Prev: ${newPrev}`;
       }
+      ['.v-odo', '.v-hrs', '.v-notes']
+        .forEach(sel => { const el2 = div.querySelector(sel); if (el2) el2.value = ''; });
       showToast(r.queued ? `${label} queued offline` : `${label} saved`, r.queued ? 'warn' : 'success');
     } catch (err) {
+      saveBtn.disabled = false; saveBtn.textContent = 'Save Reading';
       errEl.textContent = err.message;
       errEl.classList.remove('hidden');
     }
@@ -4283,6 +4306,13 @@ function createKFItem(w, dateInput, timeInput) {
           <button class="toggle-btn kf-off">OFF</button>
         </div>
       </div>
+      <div class="form-group toggle-row">
+        <label>Access</label>
+        <div class="toggle-group">
+          <button class="toggle-btn kf-access-tube${w.access === 'Tube' ? ' active' : ''}">Tube</button>
+          <button class="toggle-btn kf-access-plug${w.access === 'Plug' ? ' active' : ''}">Plug</button>
+        </div>
+      </div>
       <div class="two-col">
         <div class="form-group">
           <label>Method</label>
@@ -4343,10 +4373,28 @@ function createKFItem(w, dateInput, timeInput) {
     div.querySelector('.kf-on').classList.remove('active');
   });
 
+  let kfAccess = w.access || null;
+  div.querySelector('.kf-access-tube').addEventListener('click', e => {
+    if (kfAccess === 'Tube') { kfAccess = null; e.currentTarget.classList.remove('active'); return; }
+    kfAccess = 'Tube';
+    e.currentTarget.classList.add('active');
+    div.querySelector('.kf-access-plug').classList.remove('active');
+  });
+  div.querySelector('.kf-access-plug').addEventListener('click', e => {
+    if (kfAccess === 'Plug') { kfAccess = null; e.currentTarget.classList.remove('active'); return; }
+    kfAccess = 'Plug';
+    e.currentTarget.classList.add('active');
+    div.querySelector('.kf-access-tube').classList.remove('active');
+  });
+
   div.querySelector('.list-item-header').addEventListener('click', () => {
     const open = div.classList.toggle('expanded');
     div.querySelector('.list-item-form').style.display = open ? '' : 'none';
-    if (open) el('kf-time').value = nowHHMM();
+    if (open) {
+      const sb = div.querySelector('.kf-save');
+      sb.disabled = false; sb.textContent = 'Save Reading';
+      el('kf-time').value = nowHHMM();
+    }
   });
 
   div.querySelector('.kf-save').addEventListener('click', async e => {
@@ -4358,6 +4406,8 @@ function createKFItem(w, dateInput, timeInput) {
     // DTW is optional, but if omitted the notes field is required
     if (!dtw && !notes) { errEl.textContent = 'Enter a DTW reading, or add a note explaining why no reading was taken'; errEl.classList.remove('hidden'); return; }
 
+    const saveBtn = e.currentTarget;
+    saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
     const body = {
       well_id:         w.well_id,
       reading_date:    dateInput.value,
@@ -4367,6 +4417,7 @@ function createKFItem(w, dateInput, timeInput) {
       plopper_sounder: div.querySelector('.kf-method').value || null,
       operator:        div.querySelector('.kf-op').value || null,
       notes:           div.querySelector('.kf-notes').value || null,
+      access:          kfAccess,
     };
     try {
       const r = await api('POST', '/api/readings/kf-monthly', body, `KF — ${w.common_name}`);
@@ -4389,8 +4440,12 @@ function createKFItem(w, dateInput, timeInput) {
         }
         meta.innerHTML = `<span>Prev: ${newPrev}</span>`;
       }
+      div.querySelector('.kf-dtw').value = '';
+      div.querySelector('.kf-method').value = '';
+      div.querySelector('.kf-notes').value = '';
       showToast(r.queued ? `${w.common_name} queued offline` : `${w.common_name} saved`, r.queued ? 'warn' : 'success');
     } catch (err) {
+      saveBtn.disabled = false; saveBtn.textContent = 'Save Reading';
       errEl.textContent = err.message;
       errEl.classList.remove('hidden');
     }
@@ -4632,7 +4687,11 @@ function createPiezItem(p, dateInput, timeInput) {
   div.querySelector('.list-item-header').addEventListener('click', () => {
     const open = div.classList.toggle('expanded');
     div.querySelector('.list-item-form').style.display = open ? '' : 'none';
-    if (open) el('piez-time').value = nowHHMM();
+    if (open) {
+      const sb = div.querySelector('.piez-save');
+      sb.disabled = false; sb.textContent = 'Save Reading';
+      el('piez-time').value = nowHHMM();
+    }
   });
 
   div.querySelector('.piez-save').addEventListener('click', async e => {
@@ -4642,6 +4701,8 @@ function createPiezItem(p, dateInput, timeInput) {
     const dtw = div.querySelector('.piez-dtw').value;
     if (!dtw) { errEl.textContent = 'Depth to water is required'; errEl.classList.remove('hidden'); return; }
 
+    const saveBtn = e.currentTarget;
+    saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
     const body = {
       piezometer_id:  p.piezometer_id,
       reading_date:   dateInput.value,
@@ -4671,8 +4732,11 @@ function createPiezItem(p, dateInput, timeInput) {
         }
         meta.innerHTML = `<span>Prev: ${newPrev}</span>`;
       }
+      div.querySelector('.piez-dtw').value = '';
+      div.querySelector('.piez-notes').value = '';
       showToast(r.queued ? `${p.piezometer_name} queued offline` : `${p.piezometer_name} saved`, r.queued ? 'warn' : 'success');
     } catch (err) {
+      saveBtn.disabled = false; saveBtn.textContent = 'Save Reading';
       errEl.textContent = err.message;
       errEl.classList.remove('hidden');
     }
@@ -5486,10 +5550,22 @@ async function openRunningWellsModal() {
       </div>`;
     });
 
-    html += `<div class="rw-modal-total">
-      <span>Total CFS (On)</span>
-      <span>${total_cfs.toFixed(2)} cfs</span>
-    </div>`;
+    const cvcCfs = wells
+      .filter(w => w.read_today && w.on_off && w.flow_cfs != null && /^Pool\s*[1-8]$/i.test(w.discharge_pool || ''))
+      .reduce((sum, w) => sum + (parseFloat(w.flow_cfs) || 0), 0);
+    const krcCfs = wells
+      .filter(w => w.read_today && w.on_off && w.flow_cfs != null && /kern\s*river\s*canal/i.test(w.discharge_pool || ''))
+      .reduce((sum, w) => sum + (parseFloat(w.flow_cfs) || 0), 0);
+
+    html += `
+      <div class="rw-modal-total">
+        <span>CVC Well Inflow <span style="font-size:0.75rem;font-weight:400;color:var(--text-dim)">(Pools 1–8)</span></span>
+        <span>${cvcCfs.toFixed(2)} cfs</span>
+      </div>
+      <div class="rw-modal-total" style="border-top:1px solid var(--border);margin-top:0">
+        <span>Kern River Canal Inflow</span>
+        <span>${krcCfs.toFixed(2)} cfs</span>
+      </div>`;
 
     body.innerHTML = html;
   } catch (err) {
@@ -7126,6 +7202,7 @@ const REPORT_PANEL_NAMES = {
 };
 function openReportPanel(cat) {
   el('report-main').classList.add('hidden');
+  ALL_REPORT_PANELS.forEach(c => el(`report-panel-${c}`).classList.add('hidden'));
   el(`report-panel-${cat}`).classList.remove('hidden');
   setPanelNav(el('screen-reports'), closeReportPanel,
     'Reports - ' + (REPORT_PANEL_NAMES[cat] || cat));
@@ -7419,8 +7496,28 @@ async function renderKFReport() {
 
 // ── Maintenance Issues Panel ───────────────────────────────────────────────────
 function initMaintenanceReportPanel() {
+  // Always land on the Open Issues tab
+  maintReportType = 'open';
+  document.querySelectorAll('#maint-report-seg .seg-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.val === 'open'));
+  el('maint-open-output').style.display   = '';
+  el('maint-lookup-output').style.display = 'none';
   renderMaintenanceIssuesReport();
 }
+
+// ── Maintenance report tab switching ───────────────────────────────────────
+let maintReportType = 'open';
+document.querySelectorAll('#maint-report-seg .seg-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#maint-report-seg .seg-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    maintReportType = btn.dataset.val;
+    const lookup = maintReportType === 'lookup';
+    el('maint-open-output').style.display   = lookup ? 'none' : '';
+    el('maint-lookup-output').style.display = lookup ? '' : 'none';
+    if (lookup) ensureIssuesLoaded();
+  });
+});
 
 async function renderMaintenanceIssuesReport() {
   const out = el('report-maint-output');
@@ -7456,6 +7553,165 @@ async function renderMaintenanceIssuesReport() {
     out.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
   }
 }
+
+// ── Issue Look-Up ───────────────────────────────────────────────────────────
+// Search any well/building/equipment by name and view its full issue history
+// (open + resolved). Data is loaded once and searched instantly client-side.
+let _issuesAllCache = null;   // raw issue rows from the server
+let _issueSubjects  = [];     // de-duplicated subjects [{ key, type, name, category, detail, total, open }]
+let _issueSuggestActive = -1; // highlighted suggestion index for keyboard nav
+
+const issueSubjectKey = r => `${r.subject_type}|${r.subject_id}`;
+
+async function ensureIssuesLoaded() {
+  if (_issuesAllCache) return;
+  const results = el('issue-lookup-results');
+  results.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    _issuesAllCache = await api('GET', '/api/reports/issues-all');
+    // Build de-duplicated subject list with issue counts
+    const map = new Map();
+    _issuesAllCache.forEach(r => {
+      const key = issueSubjectKey(r);
+      let s = map.get(key);
+      if (!s) {
+        s = { key, type: r.subject_type, name: r.subject_name,
+              category: r.category, detail: r.subject_detail, total: 0, open: 0 };
+        map.set(key, s);
+      }
+      s.total++;
+      if (r.status === 'open' || r.status === 'in_progress') s.open++;
+    });
+    _issueSubjects = [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
+    results.innerHTML = '<div class="placeholder-msg">Search for a piece of equipment to see its issue history.</div>';
+  } catch (err) {
+    _issuesAllCache = null;
+    results.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
+  }
+}
+
+function renderIssueSuggestions(query) {
+  const box = el('issue-lookup-suggest');
+  const q = query.trim().toLowerCase();
+  _issueSuggestActive = -1;
+  if (!q) { box.classList.add('hidden'); box.innerHTML = ''; return; }
+
+  // Match on name; rank exact-prefix matches first, then alphabetical
+  const matches = _issueSubjects
+    .filter(s => s.name.toLowerCase().includes(q) || (s.detail || '').toLowerCase().includes(q))
+    .sort((a, b) => {
+      const ap = a.name.toLowerCase().startsWith(q) ? 0 : 1;
+      const bp = b.name.toLowerCase().startsWith(q) ? 0 : 1;
+      return ap - bp || a.name.localeCompare(b.name);
+    })
+    .slice(0, 12);
+
+  if (!matches.length) {
+    box.innerHTML = '<div class="issue-lookup-suggest-empty">No matching equipment with issues.</div>';
+    box.classList.remove('hidden');
+    return;
+  }
+
+  box.innerHTML = matches.map(s => `
+    <div class="issue-lookup-suggest-item" data-key="${escHtml(s.key)}">
+      <span class="issue-lookup-suggest-name">${escHtml(s.name)}</span>
+      <span class="issue-lookup-suggest-cat">${escHtml(s.category)}</span>
+      <span class="issue-lookup-suggest-count">${s.total} issue${s.total === 1 ? '' : 's'}</span>
+    </div>`).join('');
+  box.classList.remove('hidden');
+}
+
+function selectIssueSubject(key) {
+  const subject = _issueSubjects.find(s => s.key === key);
+  if (!subject) return;
+  el('issue-lookup-search').value = subject.name;
+  el('issue-lookup-suggest').classList.add('hidden');
+  renderIssueHistory(subject);
+}
+
+function renderIssueHistory(subject) {
+  const out = el('issue-lookup-results');
+  const issues = _issuesAllCache
+    .filter(r => issueSubjectKey(r) === subject.key)
+    .sort((a, b) => (b.reported_date || '').localeCompare(a.reported_date || ''));
+
+  const pillCls = st => st === 'in_progress' ? 'in-progress'
+    : (st === 'resolved' || st === 'closed') ? 'resolved' : 'open';
+  const money = c => (c != null && c !== '') ? `$${Number(c).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : null;
+  const fmtD = d => d ? localDateStr(d, { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
+
+  let html = `<div class="report-card">
+    <div class="issue-lookup-subject-head">
+      <span class="issue-lookup-subject-name">${escHtml(subject.name)}</span>
+      <span class="issue-lookup-subject-meta">${escHtml(subject.category)}${subject.detail ? ' · ' + escHtml(subject.detail) : ''}</span>
+      <span class="issue-lookup-subject-meta">${subject.total} total · ${subject.open} open</span>
+    </div>`;
+
+  issues.forEach(r => {
+    const meta = [];
+    if (r.assigned_to) meta.push(`Assigned: ${escHtml(r.assigned_to)}`);
+    if (r.po_number)   meta.push(`PO: ${escHtml(r.po_number)}`);
+    const m = money(r.cost); if (m) meta.push(`Cost: ${m}`);
+    if (r.resolved_date) meta.push(`Resolved: ${fmtD(r.resolved_date)}`);
+    html += `<div class="maint-issue-report-row">
+      <div class="maint-issue-report-header">
+        <span class="status-pill ${pillCls(r.status)}">${escHtml((r.status || '').replace('_', ' '))}</span>
+        <span class="maint-issue-report-name">${escHtml(r.description ? '' : 'Issue')}</span>
+        <span class="maint-issue-report-date">${fmtD(r.reported_date)}</span>
+      </div>
+      ${r.description     ? `<div class="maint-issue-report-desc">${escHtml(r.description)}</div>` : ''}
+      ${r.action_taken    ? `<div class="maint-issue-report-action">Action: ${escHtml(r.action_taken)}</div>` : ''}
+      ${r.resolution_notes? `<div class="maint-issue-report-action">Resolution: ${escHtml(r.resolution_notes)}</div>` : ''}
+      ${meta.length       ? `<div class="maint-issue-report-meta">${meta.join(' · ')}</div>` : ''}
+    </div>`;
+  });
+
+  if (!issues.length) html += '<div class="report-empty">No issues found.</div>';
+  html += '</div>';
+  out.innerHTML = html;
+}
+
+// Wire the search input + suggestion dropdown
+(function () {
+  const input = el('issue-lookup-search');
+  const box   = el('issue-lookup-suggest');
+  if (!input) return;
+
+  input.addEventListener('input', () => renderIssueSuggestions(input.value));
+  input.addEventListener('focus', () => { if (input.value.trim()) renderIssueSuggestions(input.value); });
+
+  input.addEventListener('keydown', e => {
+    const items = [...box.querySelectorAll('.issue-lookup-suggest-item')];
+    if (e.key === 'ArrowDown' && items.length) {
+      e.preventDefault();
+      _issueSuggestActive = Math.min(_issueSuggestActive + 1, items.length - 1);
+    } else if (e.key === 'ArrowUp' && items.length) {
+      e.preventDefault();
+      _issueSuggestActive = Math.max(_issueSuggestActive - 1, 0);
+    } else if (e.key === 'Enter') {
+      const pick = items[_issueSuggestActive] || items[0];
+      if (pick) { e.preventDefault(); selectIssueSubject(pick.dataset.key); }
+      return;
+    } else if (e.key === 'Escape') {
+      box.classList.add('hidden');
+      return;
+    } else {
+      return;
+    }
+    items.forEach((it, i) => it.classList.toggle('active', i === _issueSuggestActive));
+    if (items[_issueSuggestActive]) items[_issueSuggestActive].scrollIntoView({ block: 'nearest' });
+  });
+
+  box.addEventListener('click', e => {
+    const item = e.target.closest('.issue-lookup-suggest-item');
+    if (item) selectIssueSubject(item.dataset.key);
+  });
+
+  // Close the dropdown when clicking outside the search area
+  document.addEventListener('click', e => {
+    if (!e.target.closest('.issue-lookup-search-wrap')) box.classList.add('hidden');
+  });
+})();
 
 // ── PM Grid Panel ─────────────────────────────────────────────────────────────
 let pmsYear  = new Date().getFullYear();
@@ -8179,8 +8435,8 @@ function initPiezReportPanel() {
 }
 
 function runPiezReport() {
-  if (piezRepType === 'status') renderPiezReport();
-  else                          renderPiezCompareReport();
+  if (piezRepType === 'status')       renderPiezReport();
+  else if (piezRepType === 'compare') renderPiezCompareReport();
 }
 
 document.querySelectorAll('#piez-report-seg .seg-btn').forEach(btn => {
@@ -8315,12 +8571,14 @@ async function renderPiezCompareReport() {
         if (dtw1 != null && dtw2 != null) {
           const diff = dtw2 - dtw1;
           const abs  = Math.abs(diff).toFixed(2);
+          // DTW is depth-to-water. A larger reading than before = water level
+          // dropped → down arrow. A smaller reading = water level rose → up arrow.
           if (Math.abs(diff) < 0.005) {
             diffCell = abs;
-          } else if (diff < 0) {
-            diffCell = `<span style="color:var(--green)">↓ ${abs}</span>`;
+          } else if (diff > 0) {
+            diffCell = `<span style="color:var(--yellow)">↓ ${abs}</span>`;
           } else {
-            diffCell = `<span style="color:var(--yellow)">↑ ${abs}</span>`;
+            diffCell = `<span style="color:var(--green)">↑ ${abs}</span>`;
           }
         }
         html += `<tr>
@@ -8937,6 +9195,13 @@ function createDWRItem(w, dateInput, timeInput) {
           <option value="other">Other</option>
         </select>
       </div>
+      <div class="form-group toggle-row">
+        <label>Access</label>
+        <div class="toggle-group">
+          <button class="toggle-btn dwr-access-tube${w.access === 'Tube' ? ' active' : ''}">Tube</button>
+          <button class="toggle-btn dwr-access-plug${w.access === 'Plug' ? ' active' : ''}">Plug</button>
+        </div>
+      </div>
       <div class="form-group">
         <label>Operator</label>
         <input type="text" class="ctrl-input dwr-op" placeholder="Initials" readonly>
@@ -8979,6 +9244,20 @@ function createDWRItem(w, dateInput, timeInput) {
   // Auto-fill operator
   if (currentUser) div.querySelector('.dwr-op').value = currentUser.initials || currentUser.username;
 
+  let dwrAccess = w.access || null;
+  div.querySelector('.dwr-access-tube').addEventListener('click', e => {
+    if (dwrAccess === 'Tube') { dwrAccess = null; e.currentTarget.classList.remove('active'); return; }
+    dwrAccess = 'Tube';
+    e.currentTarget.classList.add('active');
+    div.querySelector('.dwr-access-plug').classList.remove('active');
+  });
+  div.querySelector('.dwr-access-plug').addEventListener('click', e => {
+    if (dwrAccess === 'Plug') { dwrAccess = null; e.currentTarget.classList.remove('active'); return; }
+    dwrAccess = 'Plug';
+    e.currentTarget.classList.add('active');
+    div.querySelector('.dwr-access-tube').classList.remove('active');
+  });
+
   // Map button (individual well)
   div.querySelector('.dwr-map-item-btn')?.addEventListener('click', e => {
     e.stopPropagation();
@@ -8996,6 +9275,8 @@ function createDWRItem(w, dateInput, timeInput) {
     const open = div.classList.toggle('expanded');
     div.querySelector('.list-item-form').style.display = open ? '' : 'none';
     if (open) {
+      const sb = div.querySelector('.dwr-save-btn');
+      sb.disabled = false; sb.textContent = 'Save Reading';
       dateInput.value = todayISO();
       timeInput.value = nowHHMM();
     }
@@ -9018,6 +9299,8 @@ function createDWRItem(w, dateInput, timeInput) {
       return;
     }
 
+    const saveBtn = e.currentTarget;
+    saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
     const body = {
       well_id:                  w.well_id,
       reading_date:             dateInput.value,
@@ -9028,6 +9311,7 @@ function createDWRItem(w, dateInput, timeInput) {
       no_measurement:           nmCodes,
       questionable_measurement: qmCodes,
       notes:                    div.querySelector('.dwr-notes').value || null,
+      access:                   dwrAccess,
     };
 
     try {
@@ -9060,11 +9344,13 @@ function createDWRItem(w, dateInput, timeInput) {
       dtwInput.value = ''; dtwInput.disabled = false;
       dtwInput.placeholder = '0.00'; dtwInput.classList.remove('dwr-dtw-nm');
       nmWrap.clearAll(); qmWrap.clearAll();
-      div.querySelector('.dwr-notes').value = body.notes || '';
+      div.querySelector('.dwr-method').value = '';
+      div.querySelector('.dwr-notes').value = '';
 
       updateDWRCounter();
       showToast(`${w.common_name} saved`, 'success');
     } catch (err) {
+      saveBtn.disabled = false; saveBtn.textContent = 'Save Reading';
       errEl.textContent = err.message;
       errEl.classList.remove('hidden');
     }

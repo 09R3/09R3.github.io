@@ -945,7 +945,7 @@ app.get('/api/wells/kf', requireAuth, async (req, res) => {
     const { rows } = await pool.query(`
       SELECT
         w.well_id, w.common_name, w.state_well_number, w.area, w.kf_set_id, ws.set_name,
-        w.gps_latitude, w.gps_longitude, w.is_important,
+        w.gps_latitude, w.gps_longitude, w.is_important, w.access,
         -- Most recent reading ever (for pre-fill and hint display)
         prev.kf_reading_id   AS last_reading_id,
         prev.reading_date    AS last_reading_date,
@@ -1028,7 +1028,7 @@ app.get('/api/wells/operational', requireAuth, async (req, res) => {
 app.post('/api/readings/kf-monthly', requireAuth, async (req, res) => {
   const {
     well_id, reading_date, reading_time,
-    dtw_reading, well_on_off, plopper_sounder, operator, notes,
+    dtw_reading, well_on_off, plopper_sounder, operator, notes, access,
   } = req.body;
   if (!well_id || dtw_reading == null) {
     return res.status(400).json({ error: 'well_id and dtw_reading are required' });
@@ -1043,6 +1043,9 @@ app.post('/api/readings/kf-monthly', requireAuth, async (req, res) => {
       [well_id, reading_date, reading_time, dtw_reading,
        well_on_off ?? null, plopper_sounder || null, operator || null, notes || null]
     );
+    if (access === 'Tube' || access === 'Plug') {
+      await pool.query(`UPDATE wells SET access = $1 WHERE well_id = $2`, [access, well_id]);
+    }
     res.json({ ok: true, kf_reading_id: rows[0].kf_reading_id });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1168,7 +1171,7 @@ app.get('/api/wells/dwr', requireAuth, async (req, res) => {
     const { rows } = await pool.query(`
       SELECT
         w.well_id, w.common_name, w.state_well_number, w.area,
-        w.gps_latitude, w.gps_longitude,
+        w.gps_latitude, w.gps_longitude, w.access,
         prev.reading_id      AS last_reading_id,
         prev.reading_date    AS last_reading_date,
         prev.depth_to_water  AS last_dtw,
@@ -1200,7 +1203,7 @@ app.post('/api/readings/run-dwr', requireAuth, async (req, res) => {
   const {
     well_id, reading_date, reading_time,
     depth_to_water, method, operator,
-    no_measurement, questionable_measurement, notes,
+    no_measurement, questionable_measurement, notes, access,
   } = req.body;
   if (!well_id || !reading_date) {
     return res.status(400).json({ error: 'well_id and reading_date are required' });
@@ -1221,6 +1224,9 @@ app.post('/api/readings/run-dwr', requireAuth, async (req, res) => {
         notes || null, req.user.username,
       ]
     );
+    if (access === 'Tube' || access === 'Plug') {
+      await pool.query(`UPDATE wells SET access = $1 WHERE well_id = $2`, [access, well_id]);
+    }
     res.json({ reading_id: rows[0].reading_id });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -3005,6 +3011,7 @@ app.get('/api/reports/piezometers', requireAuth, requireRole('supervisor', 'admi
     const { rows } = await pool.query(`
       SELECT
         p.piezometer_id, p.piezometer_name, p.pool, p.sort_order,
+        p.gps_latitude, p.gps_longitude,
         r.reading_date, r.reading_time, r.dtw_reading,
         r.operator, r.plopper_sounder, r.wet_dry_moist, r.notes
       FROM piezometers p
@@ -3255,6 +3262,45 @@ app.get('/api/reports/maintenance-issues', requireAuth, requireRole('supervisor'
       FROM equipment_issues
       WHERE status IN ('open','in_progress')
       ORDER BY category, reported_date ASC
+    `);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Issue look-up — all issues (open + resolved) across wells, buildings, and
+// equipment, tagged with their subject so the client can search/group by the
+// specific piece of equipment and see its full issue history.
+app.get('/api/reports/issues-all', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT 'Wells' AS category, 'well' AS subject_type,
+        well_id::text AS subject_id,
+        COALESCE(well_name, 'Unknown') AS subject_name,
+        well_area AS subject_detail,
+        issue_id, description, status, reported_date, resolved_date,
+        assigned_to, action_taken, resolution_notes, po_number, cost
+      FROM well_issues
+      UNION ALL
+      SELECT 'Buildings', 'building',
+        building_id::text,
+        TRIM(COALESCE(site_name,'') ||
+          CASE WHEN building_name IS NOT NULL THEN ' — ' || building_name ELSE '' END
+        ),
+        site_name,
+        issue_id, description, status, reported_date, resolved_date,
+        assigned_to, action_taken, resolution_notes, po_number, cost
+      FROM building_issues
+      UNION ALL
+      SELECT 'Equipment', 'equipment',
+        COALESCE(equipment_id::text, 'n:' || equipment_name),
+        COALESCE(equipment_name, equipment_type, 'Unknown'),
+        equipment_type,
+        issue_id, description, status, reported_date, resolved_date,
+        assigned_to, action_taken, resolution_notes, po_number, cost
+      FROM equipment_issues
+      ORDER BY reported_date DESC NULLS LAST
     `);
     res.json(rows);
   } catch (err) {

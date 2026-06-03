@@ -546,16 +546,22 @@ html, body {
   overflow: hidden;
 }
 .seg-btn {
-  flex: 1;
+  flex: 1 1 0;
+  min-width: 96px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
   background: var(--surface2);
   border: none;
   color: var(--text-dim);
-  padding: 10px 4px;
+  padding: 10px 12px;
   font-size: 0.9rem;
   font-weight: 600;
   cursor: pointer;
   transition: background var(--transition), color var(--transition);
 }
+.seg-btn + .seg-btn { border-left: 1px solid var(--border); }
 .seg-btn.active { background: var(--accent); color: #fff; }
 
 /* ── Non-sticky date/time bar (wells, vehicles, KF) ─────────────────────── */
@@ -1388,6 +1394,49 @@ input[type="date"].ctrl-input { min-height: 44px; }
 .maint-issue-report-action { font-size: 0.82rem; color: var(--text-dim); font-style: italic; }
 .maint-issue-report-meta  { font-size: 0.78rem; color: var(--text-dim); }
 
+/* ── Issue Look-Up ───────────────────────────────────────────────────────── */
+.issue-lookup-bar { padding: 12px 16px; background: var(--surface); border-bottom: 1px solid var(--border); }
+.issue-lookup-search-wrap { position: relative; max-width: 480px; }
+.issue-lookup-suggest {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0; right: 0;
+  z-index: 30;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 6px 20px rgba(0,0,0,0.35);
+  max-height: 320px;
+  overflow-y: auto;
+}
+.issue-lookup-suggest.hidden { display: none; }
+.issue-lookup-suggest-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+}
+.issue-lookup-suggest-item:last-child { border-bottom: none; }
+.issue-lookup-suggest-item:hover,
+.issue-lookup-suggest-item.active { background: var(--surface2); }
+.issue-lookup-suggest-name { flex: 1; font-size: 0.88rem; font-weight: 600; }
+.issue-lookup-suggest-cat  { font-size: 0.72rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.04em; }
+.issue-lookup-suggest-count {
+  font-size: 0.72rem; font-weight: 700;
+  background: var(--surface2); color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: 10px; padding: 1px 8px;
+}
+.issue-lookup-suggest-empty { padding: 10px 12px; font-size: 0.85rem; color: var(--text-dim); }
+.issue-lookup-subject-head {
+  display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+  padding: 4px 0 10px;
+}
+.issue-lookup-subject-name { font-size: 1.05rem; font-weight: 700; }
+.issue-lookup-subject-meta { font-size: 0.8rem; color: var(--text-dim); }
+
 /* ── Siphon Breaker PM ───────────────────────────────────────────────────── */
 .sb-site-group { margin-bottom: 14px; }
 .sb-site-header {
@@ -2123,9 +2172,10 @@ input[type="date"].ctrl-input { min-height: 44px; }
 .ir-coords { font-size: 0.73rem; color: #1a73e8; text-decoration: underline; }
 .ir-photos { display: flex; flex-direction: column; gap: 12px; }
 .ir-photo  { width: 100%; max-width: 620px; border-radius: 4px; display: block; }
-/* Print: hide everything except the report */
+/* Print: hide everything except the issue report modal (when printing one).
+   Also exclude #print-area so the standard print path still works. */
 @media print {
-  body > *:not(#issue-report-modal) { display: none !important; }
+  body > *:not(#issue-report-modal):not(#print-area) { display: none !important; }
   #issue-report-modal { position: static !important; background: #fff !important; }
   .report-preview-bar { display: none !important; }
   .report-preview-scroll { overflow: visible !important; padding: 0 !important; }
