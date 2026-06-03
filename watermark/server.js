@@ -206,6 +206,18 @@ pool.query(`
 `).catch(err => console.error('Migration error (canal_issues):', err.message));
 
 pool.query(`
+  CREATE TABLE IF NOT EXISTS pest_tasks (
+    task_id      SERIAL PRIMARY KEY,
+    description  TEXT NOT NULL,
+    created_by   TEXT,
+    created_at   TIMESTAMPTZ DEFAULT NOW(),
+    done         BOOLEAN DEFAULT FALSE,
+    done_by      TEXT,
+    done_at      TIMESTAMPTZ
+  )
+`).catch(err => console.error('Migration error (pest_tasks):', err.message));
+
+pool.query(`
   CREATE TABLE IF NOT EXISTS pond_locations (
     location_id SERIAL PRIMARY KEY,
     name        TEXT NOT NULL,
@@ -3711,6 +3723,59 @@ app.patch('/api/pesticide-usage/:id', requireAuth, async (req, res) => {
        RETURNING *`,
       [location_description || null, notes || null, req.params.id]
     );
+    if (!rows.length) return res.status(404).json({ error: 'Not found' });
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Treatment List (shared spray/bait checklist) ───────────────────────────
+// Active (unchecked) tasks by default; pass ?history=1 for checked-off tasks.
+app.get('/api/pest-tasks', requireAuth, async (req, res) => {
+  const history = req.query.history === '1';
+  try {
+    const { rows } = history
+      ? await pool.query(
+          `SELECT task_id, description, created_by, created_at, done, done_by, done_at
+           FROM pest_tasks WHERE done = TRUE
+           ORDER BY done_at DESC NULLS LAST LIMIT 200`)
+      : await pool.query(
+          `SELECT task_id, description, created_by, created_at, done, done_by, done_at
+           FROM pest_tasks WHERE done = FALSE
+           ORDER BY created_at ASC`);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Add a task (any role). Records who created it.
+app.post('/api/pest-tasks', requireAuth, async (req, res) => {
+  const description = (req.body.description || '').trim();
+  if (!description) return res.status(400).json({ error: 'description required' });
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO pest_tasks (description, created_by) VALUES ($1, $2) RETURNING *`,
+      [description, req.user.full_name]);
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Check off / re-open a task (any role). Records who checked it off.
+app.patch('/api/pest-tasks/:id', requireAuth, async (req, res) => {
+  const { done } = req.body;
+  if (done === undefined) return res.status(400).json({ error: 'done required' });
+  try {
+    const { rows } = done
+      ? await pool.query(
+          `UPDATE pest_tasks SET done = TRUE, done_by = $1, done_at = NOW()
+           WHERE task_id = $2 RETURNING *`, [req.user.full_name, req.params.id])
+      : await pool.query(
+          `UPDATE pest_tasks SET done = FALSE, done_by = NULL, done_at = NULL
+           WHERE task_id = $1 RETURNING *`, [req.params.id]);
     if (!rows.length) return res.status(404).json({ error: 'Not found' });
     res.json(rows[0]);
   } catch (err) {

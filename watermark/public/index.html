@@ -129,7 +129,7 @@
         Sign in with Microsoft 365
       </a>
       <div id="ms-login-error" class="error-msg hidden"></div>
-      <div class="login-version">v 2.13</div>
+      <div class="login-version">v 2.17</div>
     </div>
   </div>
 </div>
@@ -1029,6 +1029,12 @@
           </div>
           <span class="dash-label">Usage</span>
         </button>
+        <button class="dash-tile" data-pest-panel="tasks">
+          <div class="dash-icon-wrap">
+            <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-maintenance.svg);mask-image:url(/marv-site/icons/icon-maintenance.svg)"></span>
+          </div>
+          <span class="dash-label">Treatment List</span>
+        </button>
         <button class="dash-tile" data-pest-panel="location">
           <div class="dash-icon-wrap">
             <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-location.svg);mask-image:url(/marv-site/icons/icon-location.svg)"></span>
@@ -1075,6 +1081,20 @@
       </div>
 
       <div id="pest-usage-list"></div>
+    </div>
+
+    <!-- Treatment List panel -->
+    <div id="pest-panel-tasks" class="maint-panel hidden">
+      <div class="pest-task-add">
+        <input type="text" id="pest-task-input" class="ctrl-input" maxlength="200"
+          placeholder="Add an area to spray or bait…" autocomplete="off">
+        <button class="btn btn-save" id="pest-task-add-btn">Add</button>
+      </div>
+      <div id="pest-task-list"></div>
+      <button class="btn btn-secondary btn-sm pest-task-history-toggle" id="pest-task-history-btn">
+        Show completed history
+      </button>
+      <div id="pest-task-history" class="hidden"></div>
     </div>
 
     <!-- Location panel -->
@@ -1617,7 +1637,7 @@
     <div id="settings-panel-appinfo" class="settings-panel hidden">
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 2.13</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 2.17</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>
@@ -1933,13 +1953,21 @@
           </div>
           <span class="dash-label">Time Off Request</span>
         </button>
+        <button class="dash-tile" data-hr-panel="charge-codes">
+          <div class="dash-icon-wrap">
+            <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-reports.svg);mask-image:url(/marv-site/icons/icon-reports.svg)"></span>
+          </div>
+          <span class="dash-label">Charge Codes</span>
+        </button>
       </div>
     </div>
 
+    <!-- Time Off Request panel -->
     <div id="hr-panel-time-off" class="maint-panel hidden">
       <div class="settings-section">
         <div class="settings-card">
           <div class="settings-pad">
+            <!-- Date range builder -->
             <div class="two-col">
               <div class="form-group">
                 <label>Start Date</label>
@@ -1950,18 +1978,34 @@
                 <input type="date" id="tor-end" class="ctrl-input ctrl-input-sm">
               </div>
             </div>
-            <div class="form-group">
-              <label>Hours Requested</label>
-              <input type="number" id="tor-hours" class="ctrl-input" min="0.5" step="0.5" placeholder="8">
+            <div class="tor-add-row">
+              <div class="form-group" style="flex:1;margin:0">
+                <label>Hours Requested</label>
+                <input type="number" id="tor-hours" class="ctrl-input" min="0.5" step="0.5" placeholder="8">
+              </div>
+              <button class="btn btn-primary tor-add-btn" id="tor-add-range-btn">+ Add Range</button>
             </div>
+            <div id="tor-range-error" class="error-msg hidden" style="margin-top:6px"></div>
+
+            <!-- Accumulated ranges list -->
+            <div id="tor-ranges-list" class="tor-ranges-list hidden"></div>
+
+            <!-- Notes and submit -->
             <div class="form-group">
               <label>Notes <span style="color:var(--text-dim);font-weight:400">(optional)</span></label>
               <textarea id="tor-notes" class="ctrl-textarea" rows="3" placeholder="Add any additional details…"></textarea>
             </div>
             <div id="tor-error" class="error-msg hidden"></div>
-            <button class="btn btn-save" id="tor-submit-btn">Open in Email App</button>
+            <button class="btn btn-save" id="tor-submit-btn" disabled>Send Email</button>
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- Charge Codes placeholder panel -->
+    <div id="hr-panel-charge-codes" class="maint-panel hidden">
+      <div class="placeholder-msg" style="padding-top:40px">
+        Charge Codes — coming soon.
       </div>
     </div>
 

@@ -6854,6 +6854,7 @@ let pestLocationEditId = null;
 
 const PEST_PANEL_NAMES = {
   usage:    'Usage Log',
+  tasks:    'Treatment List',
   location: 'Application Location',
   reports:  'Monthly Report',
   products: 'Products',
@@ -6865,6 +6866,7 @@ function openPestPanel(panelId) {
   setPanelNav(el('screen-pesticides'), closePestPanel,
     'Pesticides - ' + (PEST_PANEL_NAMES[panelId] || panelId));
   if (panelId === 'usage')    initPestUsagePanel();
+  if (panelId === 'tasks')    initPestTasksPanel();
   if (panelId === 'location') initPestLocationPanel();
   if (panelId === 'reports')  initPestReportsPanel();
   if (panelId === 'products') initPestProductsPanel();
@@ -6962,6 +6964,116 @@ async function loadPestUsageList() {
     list.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
   }
 }
+
+// ── Treatment List Panel ──────────────────────────────────────────────────────
+// A shared spray/bait checklist. Anyone can add a one-line task; checking it off
+// hides it from the active list (kept for history). Records who added it and who
+// checked it off.
+function initPestTasksPanel() {
+  // Reset history view each time the panel is opened
+  el('pest-task-history').classList.add('hidden');
+  el('pest-task-history').innerHTML = '';
+  el('pest-task-history-btn').textContent = 'Show completed history';
+  loadPestTaskList();
+}
+
+async function loadPestTaskList() {
+  const list = el('pest-task-list');
+  list.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const tasks = await api('GET', '/api/pest-tasks');
+    if (!tasks.length) {
+      list.innerHTML = '<div class="placeholder-msg">No active tasks. Add one above.</div>';
+      return;
+    }
+    list.innerHTML = tasks.map(t => `
+      <div class="pest-task-item" data-id="${t.task_id}">
+        <input type="checkbox" class="pest-task-check" title="Mark as done">
+        <div class="pest-task-body">
+          <div class="pest-task-text">${escHtml(t.description)}</div>
+          <div class="pest-task-meta">Added by ${escHtml(t.created_by || 'Unknown')} · ${localDateStr(t.created_at, { month: 'short', day: 'numeric' })}</div>
+        </div>
+      </div>`).join('');
+    list.querySelectorAll('.pest-task-check').forEach(cb => {
+      cb.addEventListener('change', async e => {
+        const row = e.currentTarget.closest('.pest-task-item');
+        const id  = row.dataset.id;
+        e.currentTarget.disabled = true;
+        try {
+          await api('PATCH', `/api/pest-tasks/${id}`, { done: true });
+          row.remove();
+          if (!list.querySelector('.pest-task-item')) {
+            list.innerHTML = '<div class="placeholder-msg">No active tasks. Add one above.</div>';
+          }
+          // Refresh history if it's currently visible
+          if (!el('pest-task-history').classList.contains('hidden')) loadPestTaskHistory();
+        } catch (err) {
+          e.currentTarget.checked = false;
+          e.currentTarget.disabled = false;
+          showToast(err.message, 'error');
+        }
+      });
+    });
+  } catch (err) {
+    list.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
+  }
+}
+
+async function addPestTask() {
+  const input = el('pest-task-input');
+  const description = input.value.trim();
+  if (!description) return;
+  const btn = el('pest-task-add-btn');
+  btn.disabled = true;
+  try {
+    await api('POST', '/api/pest-tasks', { description });
+    input.value = '';
+    await loadPestTaskList();
+  } catch (err) {
+    showToast(err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    input.focus();
+  }
+}
+
+async function loadPestTaskHistory() {
+  const box = el('pest-task-history');
+  box.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const tasks = await api('GET', '/api/pest-tasks?history=1');
+    if (!tasks.length) {
+      box.innerHTML = '<div class="pest-task-history-title">Completed</div><div class="placeholder-msg">Nothing completed yet.</div>';
+      return;
+    }
+    box.innerHTML = '<div class="pest-task-history-title">Completed</div>' + tasks.map(t => `
+      <div class="pest-task-item">
+        <div class="pest-task-body">
+          <div class="pest-task-text">${escHtml(t.description)}</div>
+          <div class="pest-task-meta">Done by ${escHtml(t.done_by || 'Unknown')} · ${t.done_at ? localDateStr(t.done_at, { month: 'short', day: 'numeric', year: 'numeric' }) : ''} · added by ${escHtml(t.created_by || 'Unknown')}</div>
+        </div>
+      </div>`).join('');
+  } catch (err) {
+    box.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
+  }
+}
+
+el('pest-task-add-btn').addEventListener('click', addPestTask);
+el('pest-task-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); addPestTask(); }
+});
+el('pest-task-history-btn').addEventListener('click', () => {
+  const box = el('pest-task-history');
+  const showing = !box.classList.contains('hidden');
+  if (showing) {
+    box.classList.add('hidden');
+    el('pest-task-history-btn').textContent = 'Show completed history';
+  } else {
+    box.classList.remove('hidden');
+    el('pest-task-history-btn').textContent = 'Hide completed history';
+    loadPestTaskHistory();
+  }
+});
 
 // ── Location Panel ────────────────────────────────────────────────────────────
 async function initPestLocationPanel() {
@@ -9585,13 +9697,35 @@ function createDWRItem(w, dateInput, timeInput) {
 })();
 
 /* ── HR ──────────────────────────────────────────────────────────────────── */
+let torRanges = [];   // [{ start, end, hours }]
+
+// "Wednesday, June 3rd"
+function torFmtDate(d) {
+  const dt = new Date(d + 'T00:00:00');
+  const day = dt.getDate();
+  const ord = (day % 10 === 1 && day !== 11) ? 'st'
+            : (day % 10 === 2 && day !== 12) ? 'nd'
+            : (day % 10 === 3 && day !== 13) ? 'rd' : 'th';
+  const weekday = dt.toLocaleDateString('en-US', { weekday: 'long' });
+  const month   = dt.toLocaleDateString('en-US', { month: 'long' });
+  return `${weekday}, ${month} ${day}${ord}`;
+}
+
+// "Wednesday, June 3rd" or "Wednesday, June 3rd – Friday, June 5th"
+function torFmtRange(start, end) {
+  return start === end ? torFmtDate(start) : `${torFmtDate(start)} – ${torFmtDate(end)}`;
+}
+
 function openHRPanel(panelId) {
   el('hr-main').classList.add('hidden');
   document.querySelectorAll('#screen-hr .maint-panel').forEach(p => p.classList.add('hidden'));
   el(`hr-panel-${panelId}`).classList.remove('hidden');
-  const panelTitles = { 'time-off': 'Time Off Request' };
+  const panelTitles = {
+    'time-off':     'Time Off Request',
+    'charge-codes': 'Charge Codes',
+  };
   setPanelNav(el('screen-hr'), closeHRPanel, 'HR – ' + (panelTitles[panelId] || panelId));
-  if (panelId === 'time-off')     initTimeOffPanel();
+  if (panelId === 'time-off') initTimeOffPanel();
 }
 
 function closeHRPanel() {
@@ -9606,21 +9740,21 @@ function initHRScreen() {
 
 function initTimeOffPanel() {
   const today = new Date().toLocaleDateString('en-CA');
-  if (!el('tor-start').value) el('tor-start').value = today;
-  if (!el('tor-end').value)   el('tor-end').value   = today;
+  torRanges = [];
+  el('tor-start').value  = today;
+  el('tor-end').value    = today;
+  el('tor-hours').value  = '';
+  el('tor-notes').value  = '';
+  el('tor-range-error').classList.add('hidden');
   el('tor-error').classList.add('hidden');
+  renderTorRanges();
 }
 
-document.querySelectorAll('[data-hr-panel]').forEach(btn => {
-  btn.addEventListener('click', () => openHRPanel(btn.dataset.hrPanel));
-});
-
-el('tor-submit-btn').addEventListener('click', () => {
-  const start = el('tor-start').value;
-  const end   = el('tor-end').value;
-  const hours = el('tor-hours').value;
-  const notes = el('tor-notes').value.trim();
-  const errEl = el('tor-error');
+function addTorRange() {
+  const start  = el('tor-start').value;
+  const end    = el('tor-end').value;
+  const hours  = el('tor-hours').value;
+  const errEl  = el('tor-range-error');
   errEl.classList.add('hidden');
   errEl.textContent = '';
 
@@ -9630,32 +9764,94 @@ el('tor-submit-btn').addEventListener('click', () => {
     return;
   }
   if (end < start) {
-    errEl.textContent = 'End date must be on or after the start date.';
+    errEl.textContent = 'End date must be on or after start date.';
     errEl.classList.remove('hidden');
     return;
   }
   if (!hours || parseFloat(hours) <= 0) {
-    errEl.textContent = 'Please enter the number of hours requested.';
+    errEl.textContent = 'Please enter hours requested.';
+    errEl.classList.remove('hidden');
+    return;
+  }
+
+  torRanges.push({ start, end, hours: parseFloat(hours) });
+
+  // Reset inputs for next range
+  const today = new Date().toLocaleDateString('en-CA');
+  el('tor-start').value = today;
+  el('tor-end').value   = today;
+  el('tor-hours').value = '';
+  renderTorRanges();
+}
+
+function renderTorRanges() {
+  const listEl = el('tor-ranges-list');
+  if (torRanges.length === 0) {
+    listEl.classList.add('hidden');
+    listEl.innerHTML = '';
+    el('tor-submit-btn').disabled = true;
+    return;
+  }
+  listEl.classList.remove('hidden');
+  listEl.innerHTML = torRanges.map((r, i) => {
+    const dateLabel = torFmtRange(r.start, r.end);
+    return `<div class="tor-range-item">
+      <div class="tor-range-text">
+        <div class="tor-range-dates">${dateLabel}</div>
+        <div class="tor-range-hours">${r.hours} hr${r.hours !== 1 ? 's' : ''}</div>
+      </div>
+      <button class="tor-range-remove" data-idx="${i}" title="Remove">×</button>
+    </div>`;
+  }).join('');
+  listEl.querySelectorAll('.tor-range-remove').forEach(btn => {
+    btn.addEventListener('click', () => {
+      torRanges.splice(parseInt(btn.dataset.idx), 1);
+      renderTorRanges();
+    });
+  });
+  el('tor-submit-btn').disabled = false;
+}
+
+document.querySelectorAll('[data-hr-panel]').forEach(btn => {
+  btn.addEventListener('click', () => openHRPanel(btn.dataset.hrPanel));
+});
+
+// When start date changes, keep end date in sync (ranges are usually short,
+// so the end date is most likely on/near the start). Only auto-advance if the
+// current end is before the new start.
+el('tor-start').addEventListener('change', () => {
+  const start = el('tor-start').value;
+  const end   = el('tor-end').value;
+  if (start && (!end || end < start)) el('tor-end').value = start;
+});
+
+el('tor-add-range-btn').addEventListener('click', addTorRange);
+
+el('tor-submit-btn').addEventListener('click', () => {
+  const notes    = el('tor-notes').value.trim();
+  const errEl    = el('tor-error');
+  errEl.classList.add('hidden');
+  errEl.textContent = '';
+
+  if (torRanges.length === 0) {
+    errEl.textContent = 'Add at least one date range before sending.';
     errEl.classList.remove('hidden');
     return;
   }
 
   const fullName = currentUser?.full_name || currentUser?.username || '';
   const subject  = `Time Off Request – ${fullName}`;
-  const fmt = d => new Date(d + 'T00:00:00').toLocaleDateString('en-US', {
-    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
-  });
 
-  let body = 'Time Off Request\n';
-  body += `Submitted by: ${fullName}\n\n`;
-  if (start === end) {
-    body += `Date:            ${fmt(start)}\n`;
-  } else {
-    body += `Start Date:      ${fmt(start)}\n`;
-    body += `End Date:        ${fmt(end)}\n`;
-  }
-  body += `Hours Requested: ${hours}\n`;
-  if (notes) body += `\nNotes:\n${notes}\n`;
+  let body = `Time Off Request\nSubmitted by: ${fullName}\n`;
+  const totalHours = torRanges.reduce((s, r) => s + r.hours, 0);
+  body += `Total Hours Requested: ${totalHours}\n\n`;
+
+  torRanges.forEach(r => {
+    body += `${torFmtRange(r.start, r.end)}  (${r.hours} hr${r.hours !== 1 ? 's' : ''})\n`;
+  });
+  body += '\n';
+
+  if (notes) body += `Notes:\n${notes}\n`;
 
   const to = 'syoder@kcwa.com,mansolabehere@kcwa.com';
   window.location.href = `mailto:${to}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
