@@ -7202,6 +7202,7 @@ const REPORT_PANEL_NAMES = {
 };
 function openReportPanel(cat) {
   el('report-main').classList.add('hidden');
+  ALL_REPORT_PANELS.forEach(c => el(`report-panel-${c}`).classList.add('hidden'));
   el(`report-panel-${cat}`).classList.remove('hidden');
   setPanelNav(el('screen-reports'), closeReportPanel,
     'Reports - ' + (REPORT_PANEL_NAMES[cat] || cat));
