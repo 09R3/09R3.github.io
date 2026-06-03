@@ -3269,6 +3269,45 @@ app.get('/api/reports/maintenance-issues', requireAuth, requireRole('supervisor'
   }
 });
 
+// Issue look-up — all issues (open + resolved) across wells, buildings, and
+// equipment, tagged with their subject so the client can search/group by the
+// specific piece of equipment and see its full issue history.
+app.get('/api/reports/issues-all', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT 'Wells' AS category, 'well' AS subject_type,
+        well_id::text AS subject_id,
+        COALESCE(well_name, 'Unknown') AS subject_name,
+        well_area AS subject_detail,
+        issue_id, description, status, reported_date, resolved_date,
+        assigned_to, action_taken, resolution_notes, po_number, cost
+      FROM well_issues
+      UNION ALL
+      SELECT 'Buildings', 'building',
+        building_id::text,
+        TRIM(COALESCE(site_name,'') ||
+          CASE WHEN building_name IS NOT NULL THEN ' — ' || building_name ELSE '' END
+        ),
+        site_name,
+        issue_id, description, status, reported_date, resolved_date,
+        assigned_to, action_taken, resolution_notes, po_number, cost
+      FROM building_issues
+      UNION ALL
+      SELECT 'Equipment', 'equipment',
+        COALESCE(equipment_id::text, 'n:' || equipment_name),
+        COALESCE(equipment_name, equipment_type, 'Unknown'),
+        equipment_type,
+        issue_id, description, status, reported_date, resolved_date,
+        assigned_to, action_taken, resolution_notes, po_number, cost
+      FROM equipment_issues
+      ORDER BY reported_date DESC NULLS LAST
+    `);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // PM Grid report — latest per-plant siphon breaker + air compressor records + positions
 app.get('/api/reports/pm-grid', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
   const { year, month } = req.query;

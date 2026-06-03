@@ -7496,8 +7496,28 @@ async function renderKFReport() {
 
 // ── Maintenance Issues Panel ───────────────────────────────────────────────────
 function initMaintenanceReportPanel() {
+  // Always land on the Open Issues tab
+  maintReportType = 'open';
+  document.querySelectorAll('#maint-report-seg .seg-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.val === 'open'));
+  el('maint-open-output').style.display   = '';
+  el('maint-lookup-output').style.display = 'none';
   renderMaintenanceIssuesReport();
 }
+
+// ── Maintenance report tab switching ───────────────────────────────────────
+let maintReportType = 'open';
+document.querySelectorAll('#maint-report-seg .seg-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#maint-report-seg .seg-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    maintReportType = btn.dataset.val;
+    const lookup = maintReportType === 'lookup';
+    el('maint-open-output').style.display   = lookup ? 'none' : '';
+    el('maint-lookup-output').style.display = lookup ? '' : 'none';
+    if (lookup) ensureIssuesLoaded();
+  });
+});
 
 async function renderMaintenanceIssuesReport() {
   const out = el('report-maint-output');
@@ -7533,6 +7553,165 @@ async function renderMaintenanceIssuesReport() {
     out.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
   }
 }
+
+// ── Issue Look-Up ───────────────────────────────────────────────────────────
+// Search any well/building/equipment by name and view its full issue history
+// (open + resolved). Data is loaded once and searched instantly client-side.
+let _issuesAllCache = null;   // raw issue rows from the server
+let _issueSubjects  = [];     // de-duplicated subjects [{ key, type, name, category, detail, total, open }]
+let _issueSuggestActive = -1; // highlighted suggestion index for keyboard nav
+
+const issueSubjectKey = r => `${r.subject_type}|${r.subject_id}`;
+
+async function ensureIssuesLoaded() {
+  if (_issuesAllCache) return;
+  const results = el('issue-lookup-results');
+  results.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    _issuesAllCache = await api('GET', '/api/reports/issues-all');
+    // Build de-duplicated subject list with issue counts
+    const map = new Map();
+    _issuesAllCache.forEach(r => {
+      const key = issueSubjectKey(r);
+      let s = map.get(key);
+      if (!s) {
+        s = { key, type: r.subject_type, name: r.subject_name,
+              category: r.category, detail: r.subject_detail, total: 0, open: 0 };
+        map.set(key, s);
+      }
+      s.total++;
+      if (r.status === 'open' || r.status === 'in_progress') s.open++;
+    });
+    _issueSubjects = [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
+    results.innerHTML = '<div class="placeholder-msg">Search for a piece of equipment to see its issue history.</div>';
+  } catch (err) {
+    _issuesAllCache = null;
+    results.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
+  }
+}
+
+function renderIssueSuggestions(query) {
+  const box = el('issue-lookup-suggest');
+  const q = query.trim().toLowerCase();
+  _issueSuggestActive = -1;
+  if (!q) { box.classList.add('hidden'); box.innerHTML = ''; return; }
+
+  // Match on name; rank exact-prefix matches first, then alphabetical
+  const matches = _issueSubjects
+    .filter(s => s.name.toLowerCase().includes(q) || (s.detail || '').toLowerCase().includes(q))
+    .sort((a, b) => {
+      const ap = a.name.toLowerCase().startsWith(q) ? 0 : 1;
+      const bp = b.name.toLowerCase().startsWith(q) ? 0 : 1;
+      return ap - bp || a.name.localeCompare(b.name);
+    })
+    .slice(0, 12);
+
+  if (!matches.length) {
+    box.innerHTML = '<div class="issue-lookup-suggest-empty">No matching equipment with issues.</div>';
+    box.classList.remove('hidden');
+    return;
+  }
+
+  box.innerHTML = matches.map(s => `
+    <div class="issue-lookup-suggest-item" data-key="${escHtml(s.key)}">
+      <span class="issue-lookup-suggest-name">${escHtml(s.name)}</span>
+      <span class="issue-lookup-suggest-cat">${escHtml(s.category)}</span>
+      <span class="issue-lookup-suggest-count">${s.total} issue${s.total === 1 ? '' : 's'}</span>
+    </div>`).join('');
+  box.classList.remove('hidden');
+}
+
+function selectIssueSubject(key) {
+  const subject = _issueSubjects.find(s => s.key === key);
+  if (!subject) return;
+  el('issue-lookup-search').value = subject.name;
+  el('issue-lookup-suggest').classList.add('hidden');
+  renderIssueHistory(subject);
+}
+
+function renderIssueHistory(subject) {
+  const out = el('issue-lookup-results');
+  const issues = _issuesAllCache
+    .filter(r => issueSubjectKey(r) === subject.key)
+    .sort((a, b) => (b.reported_date || '').localeCompare(a.reported_date || ''));
+
+  const pillCls = st => st === 'in_progress' ? 'in-progress'
+    : (st === 'resolved' || st === 'closed') ? 'resolved' : 'open';
+  const money = c => (c != null && c !== '') ? `$${Number(c).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : null;
+  const fmtD = d => d ? localDateStr(d, { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
+
+  let html = `<div class="report-card">
+    <div class="issue-lookup-subject-head">
+      <span class="issue-lookup-subject-name">${escHtml(subject.name)}</span>
+      <span class="issue-lookup-subject-meta">${escHtml(subject.category)}${subject.detail ? ' · ' + escHtml(subject.detail) : ''}</span>
+      <span class="issue-lookup-subject-meta">${subject.total} total · ${subject.open} open</span>
+    </div>`;
+
+  issues.forEach(r => {
+    const meta = [];
+    if (r.assigned_to) meta.push(`Assigned: ${escHtml(r.assigned_to)}`);
+    if (r.po_number)   meta.push(`PO: ${escHtml(r.po_number)}`);
+    const m = money(r.cost); if (m) meta.push(`Cost: ${m}`);
+    if (r.resolved_date) meta.push(`Resolved: ${fmtD(r.resolved_date)}`);
+    html += `<div class="maint-issue-report-row">
+      <div class="maint-issue-report-header">
+        <span class="status-pill ${pillCls(r.status)}">${escHtml((r.status || '').replace('_', ' '))}</span>
+        <span class="maint-issue-report-name">${escHtml(r.description ? '' : 'Issue')}</span>
+        <span class="maint-issue-report-date">${fmtD(r.reported_date)}</span>
+      </div>
+      ${r.description     ? `<div class="maint-issue-report-desc">${escHtml(r.description)}</div>` : ''}
+      ${r.action_taken    ? `<div class="maint-issue-report-action">Action: ${escHtml(r.action_taken)}</div>` : ''}
+      ${r.resolution_notes? `<div class="maint-issue-report-action">Resolution: ${escHtml(r.resolution_notes)}</div>` : ''}
+      ${meta.length       ? `<div class="maint-issue-report-meta">${meta.join(' · ')}</div>` : ''}
+    </div>`;
+  });
+
+  if (!issues.length) html += '<div class="report-empty">No issues found.</div>';
+  html += '</div>';
+  out.innerHTML = html;
+}
+
+// Wire the search input + suggestion dropdown
+(function () {
+  const input = el('issue-lookup-search');
+  const box   = el('issue-lookup-suggest');
+  if (!input) return;
+
+  input.addEventListener('input', () => renderIssueSuggestions(input.value));
+  input.addEventListener('focus', () => { if (input.value.trim()) renderIssueSuggestions(input.value); });
+
+  input.addEventListener('keydown', e => {
+    const items = [...box.querySelectorAll('.issue-lookup-suggest-item')];
+    if (e.key === 'ArrowDown' && items.length) {
+      e.preventDefault();
+      _issueSuggestActive = Math.min(_issueSuggestActive + 1, items.length - 1);
+    } else if (e.key === 'ArrowUp' && items.length) {
+      e.preventDefault();
+      _issueSuggestActive = Math.max(_issueSuggestActive - 1, 0);
+    } else if (e.key === 'Enter') {
+      const pick = items[_issueSuggestActive] || items[0];
+      if (pick) { e.preventDefault(); selectIssueSubject(pick.dataset.key); }
+      return;
+    } else if (e.key === 'Escape') {
+      box.classList.add('hidden');
+      return;
+    } else {
+      return;
+    }
+    items.forEach((it, i) => it.classList.toggle('active', i === _issueSuggestActive));
+    if (items[_issueSuggestActive]) items[_issueSuggestActive].scrollIntoView({ block: 'nearest' });
+  });
+
+  box.addEventListener('click', e => {
+    const item = e.target.closest('.issue-lookup-suggest-item');
+    if (item) selectIssueSubject(item.dataset.key);
+  });
+
+  // Close the dropdown when clicking outside the search area
+  document.addEventListener('click', e => {
+    if (!e.target.closest('.issue-lookup-search-wrap')) box.classList.add('hidden');
+  });
+})();
 
 // ── PM Grid Panel ─────────────────────────────────────────────────────────────
 let pmsYear  = new Date().getFullYear();

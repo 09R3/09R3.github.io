@@ -129,7 +129,7 @@
         Sign in with Microsoft 365
       </a>
       <div id="ms-login-error" class="error-msg hidden"></div>
-      <div class="login-version">v 2.12</div>
+      <div class="login-version">v 2.13</div>
     </div>
   </div>
 </div>
@@ -1322,7 +1322,27 @@
 
     <!-- Maintenance Issues panel -->
     <div id="report-panel-maintenance" class="maint-panel hidden">
-      <div id="report-maint-output"></div>
+      <div class="report-toolbar">
+        <div class="seg-group" id="maint-report-seg">
+          <button class="seg-btn active" data-val="open">Open Issues</button>
+          <button class="seg-btn" data-val="lookup">Look Up</button>
+        </div>
+      </div>
+      <div id="maint-open-output">
+        <div id="report-maint-output"></div>
+      </div>
+      <div id="maint-lookup-output" style="display:none">
+        <div class="issue-lookup-bar">
+          <div class="issue-lookup-search-wrap">
+            <input id="issue-lookup-search" class="ctrl-input" type="text"
+              placeholder="Search well, building, pump, motor…" autocomplete="off">
+            <div id="issue-lookup-suggest" class="issue-lookup-suggest hidden"></div>
+          </div>
+        </div>
+        <div id="issue-lookup-results">
+          <div class="placeholder-msg">Search for a piece of equipment to see its issue history.</div>
+        </div>
+      </div>
     </div>
 
     <!-- PM Grid panel -->
@@ -1597,7 +1617,7 @@
     <div id="settings-panel-appinfo" class="settings-panel hidden">
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 2.12</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 2.13</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>
