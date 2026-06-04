@@ -9976,6 +9976,152 @@ el('tor-submit-btn').addEventListener('click', () => {
   window.location.href = `mailto:${to}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 });
 
+/* ── Global Search ───────────────────────────────────────────────────────── */
+const SEARCH_TYPE_META = {
+  well:        { label: 'Wells',            screen: 'wells',    icon: 'wells' },
+  vehicle:     { label: 'Vehicles',         screen: 'vehicles', icon: 'vehicles' },
+  piezometer:  { label: 'Piezometers',      screen: null,       icon: 'piezometers', action: 'piezometer' },
+  canal:       { label: 'Canal Structures', screen: 'canal',    icon: 'canal' },
+  building:    { label: 'Buildings',        screen: null,       icon: 'buildings',   action: 'building' },
+  site:        { label: 'Sites',            screen: null,       icon: 'location' },
+  motor:       { label: 'Motors',           screen: null,       icon: 'equipment',   action: 'equipment' },
+  pond:        { label: 'Ponds',            screen: 'ponds',    icon: 'gauge' },
+};
+
+const SEARCH_SCREEN_LABEL = {
+  wells: 'Well Readings', vehicles: 'Vehicles', canal: 'Canal', ponds: 'Ponds',
+};
+
+let _searchDebounce = null;
+
+function openSearchModal() {
+  el('search-modal').classList.remove('hidden');
+  el('search-input').value = '';
+  el('search-results').innerHTML = '<div class="search-placeholder">Type to search wells, vehicles, buildings, and more…</div>';
+  setTimeout(() => el('search-input').focus(), 60);
+}
+
+function closeSearchModal() {
+  el('search-modal').classList.add('hidden');
+}
+
+el('header-search-btn').addEventListener('click', openSearchModal);
+el('search-modal-close').addEventListener('click', closeSearchModal);
+el('search-modal').addEventListener('click', e => {
+  if (e.target === el('search-modal')) closeSearchModal();
+});
+
+el('search-input').addEventListener('input', () => {
+  clearTimeout(_searchDebounce);
+  const q = el('search-input').value.trim();
+  if (q.length < 2) {
+    el('search-results').innerHTML = '<div class="search-placeholder">Type at least 2 characters…</div>';
+    return;
+  }
+  el('search-results').innerHTML = '<div class="search-placeholder">Searching…</div>';
+  _searchDebounce = setTimeout(() => runSearch(q), 280);
+});
+
+// Close on Escape
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && !el('search-modal').classList.contains('hidden')) closeSearchModal();
+});
+
+async function runSearch(q) {
+  try {
+    const rows = await api('GET', `/api/search?q=${encodeURIComponent(q)}`);
+    renderSearchResults(rows);
+  } catch (err) {
+    el('search-results').innerHTML = `<div class="search-placeholder" style="color:var(--red-light)">Search failed.</div>`;
+  }
+}
+
+function renderSearchResults(rows) {
+  const out = el('search-results');
+  if (!rows.length) {
+    out.innerHTML = '<div class="search-placeholder">No results found.</div>';
+    return;
+  }
+
+  // Group by type preserving the ORDER BY type,name order from server
+  const groups = {};
+  rows.forEach(r => {
+    if (!groups[r.type]) groups[r.type] = [];
+    groups[r.type].push(r);
+  });
+
+  let html = '';
+  for (const [type, items] of Object.entries(groups)) {
+    const meta = SEARCH_TYPE_META[type] || { label: type, icon: 'dashboard' };
+    html += `<div class="search-type-header">${meta.label}</div>`;
+    html += items.map(r => {
+      const navLabel = meta.screen ? SEARCH_SCREEN_LABEL[meta.screen] || meta.screen
+                     : meta.action ? '→ Go to' : '';
+      const detail = [r.detail, r.context].filter(Boolean).join(' · ');
+      return `<div class="search-result-item" data-type="${r.type}" data-id="${r.id}" data-action="${meta.action || meta.screen || ''}">
+        <div class="search-result-icon">${icon(meta.icon, 16)}</div>
+        <div class="search-result-body">
+          <div class="search-result-name">${r.name}</div>
+          ${detail ? `<div class="search-result-detail">${detail}</div>` : ''}
+        </div>
+        ${navLabel ? `<div class="search-result-nav">${navLabel} →</div>` : ''}
+      </div>`;
+    }).join('');
+  }
+  out.innerHTML = html;
+
+  out.querySelectorAll('.search-result-item').forEach(item => {
+    item.addEventListener('click', () => navigateToSearchResult(item.dataset));
+  });
+}
+
+function navigateToSearchResult({ type, id, action }) {
+  closeSearchModal();
+  switch (action || type) {
+    case 'wells':
+    case 'well':
+      showScreen('wells');
+      break;
+    case 'vehicles':
+    case 'vehicle':
+      showScreen('vehicles');
+      break;
+    case 'canal':
+      showScreen('canal');
+      break;
+    case 'ponds':
+    case 'pond':
+      showScreen('ponds');
+      break;
+    case 'piezometer':
+      // Navigate into Well Runs → KCWA Piezometers
+      showScreen('well-runs');
+      setTimeout(() => {
+        const btn = document.querySelector('[data-wr-panel="kcwa"]');
+        if (btn) btn.click();
+      }, 80);
+      break;
+    case 'building':
+      showScreen('maintenance');
+      setTimeout(() => {
+        const btn = document.querySelector('[data-maint-panel="buildings"]');
+        if (btn) btn.click();
+      }, 80);
+      break;
+    case 'equipment':
+    case 'motor':
+      showScreen('maintenance');
+      setTimeout(() => {
+        const btn = document.querySelector('[data-maint-panel="equipment"]');
+        if (btn) btn.click();
+      }, 80);
+      break;
+    default:
+      // site or unhandled — no specific screen, just close
+      break;
+  }
+}
+
 /* ── Charts ───────────────────────────────────────────────────────────────── */
 const CHART_PANEL_TITLES = {
   overpour: 'Overpour', pressure: 'Pressure', 'open-air': 'Open Air', p11: 'P-11',

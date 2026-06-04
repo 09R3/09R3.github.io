@@ -1248,6 +1248,91 @@ app.post('/api/readings/run-dwr', requireAuth, async (req, res) => {
 app.delete('/api/readings/run-dwr/:id', requireAuth, (req, res) =>
   deleteReading(req, res, 'readings_run_dwr', 'reading_id'));
 
+/* ── Global Search ─────────────────────────────────────────────────────────── */
+app.get('/api/search', requireAuth, async (req, res) => {
+  const q = (req.query.q || '').trim();
+  if (q.length < 2) return res.json([]);
+  const like = `%${q}%`;
+  try {
+    const { rows } = await pool.query(`
+      SELECT 'well'         AS type, well_id::text       AS id,
+             common_name                                  AS name,
+             COALESCE(state_well_number,'')               AS detail,
+             COALESCE(area,'')                            AS context
+      FROM wells
+      WHERE (common_name ILIKE $1 OR state_well_number ILIKE $1
+             OR area ILIKE $1 OR well_run ILIKE $1 OR notes ILIKE $1)
+        AND (LOWER(status) != 'inactive' OR status IS NULL)
+
+      UNION ALL
+      SELECT 'vehicle',     vehicle_id::text,
+             TRIM(CONCAT_WS(' ', vehicle_number, make, model)),
+             COALESCE(assigned_user,''),
+             COALESCE(vehicle_type,'')
+      FROM vehicles
+      WHERE (vehicle_number ILIKE $1 OR make ILIKE $1 OR model ILIKE $1
+             OR assigned_user ILIKE $1 OR vin ILIKE $1 OR license_plate ILIKE $1)
+        AND (LOWER(status) != 'inactive' OR status IS NULL)
+
+      UNION ALL
+      SELECT 'piezometer',  piezometer_id::text,
+             piezometer_name,
+             COALESCE(pool,''), ''
+      FROM piezometers
+      WHERE (piezometer_name ILIKE $1 OR pool ILIKE $1 OR notes ILIKE $1)
+        AND (LOWER(status) != 'inactive' OR status IS NULL)
+
+      UNION ALL
+      SELECT 'canal',       structure_id::text,
+             structure_name,
+             COALESCE(structure_type,''),
+             COALESCE(owner,'')
+      FROM canal_structures
+      WHERE (structure_name ILIKE $1 OR structure_type ILIKE $1
+             OR owner ILIKE $1 OR notes ILIKE $1)
+
+      UNION ALL
+      SELECT 'building',    b.building_id::text,
+             b.building_name,
+             COALESCE(b.building_letter,''),
+             COALESCE(s.site_name,'')
+      FROM buildings b
+      LEFT JOIN sites s ON s.site_id = b.site_id
+      WHERE (b.building_name ILIKE $1 OR b.building_letter ILIKE $1
+             OR s.site_name ILIKE $1)
+
+      UNION ALL
+      SELECT 'site',        site_id::text,
+             site_name,
+             COALESCE(site_type,''), ''
+      FROM sites
+      WHERE (site_name ILIKE $1 OR site_type ILIKE $1 OR notes ILIKE $1)
+
+      UNION ALL
+      SELECT 'motor',       motor_id::text,
+             TRIM(CONCAT_WS(' ', manufacturer, model_number)),
+             COALESCE(serial_number,''),
+             COALESCE(current_location,'')
+      FROM motors
+      WHERE (manufacturer ILIKE $1 OR model_number ILIKE $1
+             OR serial_number ILIKE $1 OR current_location ILIKE $1)
+        AND (LOWER(status) != 'inactive' OR status IS NULL)
+
+      UNION ALL
+      SELECT 'pond',        pond_id::text,
+             p.name, '', COALESCE(pl.name,'')
+      FROM ponds p
+      LEFT JOIN pond_locations pl ON pl.location_id = p.location_id
+      WHERE p.name ILIKE $1
+
+      ORDER BY type, name
+    `, [like]);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 
 app.get('/api/wells', requireAuth, async (req, res) => {
   try {
