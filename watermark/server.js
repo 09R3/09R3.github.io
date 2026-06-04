@@ -1258,7 +1258,9 @@ app.get('/api/search', requireAuth, async (req, res) => {
       SELECT 'well'         AS type, well_id::text       AS id,
              common_name                                  AS name,
              COALESCE(state_well_number,'')               AS detail,
-             COALESCE(area,'')                            AS context
+             COALESCE(area,'')                            AS context,
+             COALESCE(well_run,'') || '|' ||
+               CASE WHEN kf_set_id IS NOT NULL THEN 'kf' ELSE '' END AS meta
       FROM wells
       WHERE (common_name ILIKE $1 OR state_well_number ILIKE $1
              OR area ILIKE $1 OR well_run ILIKE $1 OR notes ILIKE $1)
@@ -1268,7 +1270,8 @@ app.get('/api/search', requireAuth, async (req, res) => {
       SELECT 'vehicle',     vehicle_id::text,
              TRIM(CONCAT_WS(' ', vehicle_number, make, model)),
              COALESCE(assigned_user,''),
-             COALESCE(vehicle_type,'')
+             COALESCE(vehicle_type,''),
+             COALESCE(reading_type,'odometer')
       FROM vehicles
       WHERE (vehicle_number ILIKE $1 OR make ILIKE $1 OR model ILIKE $1
              OR assigned_user ILIKE $1 OR vin ILIKE $1 OR license_plate ILIKE $1)
@@ -1277,7 +1280,7 @@ app.get('/api/search', requireAuth, async (req, res) => {
       UNION ALL
       SELECT 'piezometer',  piezometer_id::text,
              piezometer_name,
-             COALESCE(pool,''), ''
+             COALESCE(pool,''), '', ''
       FROM piezometers
       WHERE (piezometer_name ILIKE $1 OR pool ILIKE $1 OR notes ILIKE $1)
         AND (LOWER(status) != 'inactive' OR status IS NULL)
@@ -1286,7 +1289,7 @@ app.get('/api/search', requireAuth, async (req, res) => {
       SELECT 'canal',       structure_id::text,
              structure_name,
              COALESCE(structure_type,''),
-             COALESCE(owner,'')
+             COALESCE(owner,''), ''
       FROM canal_structures
       WHERE (structure_name ILIKE $1 OR structure_type ILIKE $1
              OR owner ILIKE $1 OR notes ILIKE $1)
@@ -1295,7 +1298,7 @@ app.get('/api/search', requireAuth, async (req, res) => {
       SELECT 'building',    b.building_id::text,
              b.building_name,
              COALESCE(b.building_letter,''),
-             COALESCE(s.site_name,'')
+             COALESCE(s.site_name,''), ''
       FROM buildings b
       LEFT JOIN sites s ON s.site_id = b.site_id
       WHERE (b.building_name ILIKE $1 OR b.building_letter ILIKE $1
@@ -1304,7 +1307,7 @@ app.get('/api/search', requireAuth, async (req, res) => {
       UNION ALL
       SELECT 'site',        site_id::text,
              site_name,
-             COALESCE(site_type,''), ''
+             COALESCE(site_type,''), '', ''
       FROM sites
       WHERE (site_name ILIKE $1 OR site_type ILIKE $1 OR notes ILIKE $1)
 
@@ -1312,7 +1315,7 @@ app.get('/api/search', requireAuth, async (req, res) => {
       SELECT 'motor',       motor_id::text,
              TRIM(CONCAT_WS(' ', manufacturer, model_number)),
              COALESCE(serial_number,''),
-             COALESCE(current_location,'')
+             COALESCE(current_location,''), ''
       FROM motors
       WHERE (manufacturer ILIKE $1 OR model_number ILIKE $1
              OR serial_number ILIKE $1 OR current_location ILIKE $1)
@@ -1320,7 +1323,7 @@ app.get('/api/search', requireAuth, async (req, res) => {
 
       UNION ALL
       SELECT 'pond',        pond_id::text,
-             p.name, '', COALESCE(pl.name,'')
+             p.name, '', COALESCE(pl.name,''), ''
       FROM ponds p
       LEFT JOIN pond_locations pl ON pl.location_id = p.location_id
       WHERE p.name ILIKE $1

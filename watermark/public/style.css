@@ -3035,12 +3035,28 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
   text-overflow: ellipsis;
   margin-top: 1px;
 }
-.search-result-nav {
-  flex-shrink: 0;
+.search-nav-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.search-nav-chip {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 3px 10px;
   font-size: 0.75rem;
-  color: var(--accent);
   font-weight: 600;
+  color: var(--accent);
+  cursor: pointer;
   white-space: nowrap;
+  transition: background var(--transition), border-color var(--transition);
+  line-height: 1.5;
+}
+.search-nav-chip:hover {
+  background: var(--surface3);
+  border-color: var(--accent);
 }
 
 /* ── Time Off Request ────────────────────────────────────────────────────── */

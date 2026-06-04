@@ -9977,20 +9977,54 @@ el('tor-submit-btn').addEventListener('click', () => {
 });
 
 /* ── Global Search ───────────────────────────────────────────────────────── */
-const SEARCH_TYPE_META = {
-  well:        { label: 'Wells',            screen: 'wells',    icon: 'wells' },
-  vehicle:     { label: 'Vehicles',         screen: 'vehicles', icon: 'vehicles' },
-  piezometer:  { label: 'Piezometers',      screen: null,       icon: 'piezometers', action: 'piezometer' },
-  canal:       { label: 'Canal Structures', screen: 'canal',    icon: 'canal' },
-  building:    { label: 'Buildings',        screen: null,       icon: 'buildings',   action: 'building' },
-  site:        { label: 'Sites',            screen: null,       icon: 'location' },
-  motor:       { label: 'Motors',           screen: null,       icon: 'equipment',   action: 'equipment' },
-  pond:        { label: 'Ponds',            screen: 'ponds',    icon: 'gauge' },
+const SEARCH_TYPE_ICON = {
+  well: 'wells', vehicle: 'vehicles', piezometer: 'piezometers',
+  canal: 'canal', building: 'buildings', site: 'location',
+  motor: 'equipment', pond: 'gauge',
+};
+const SEARCH_TYPE_LABEL = {
+  well: 'Wells', vehicle: 'Vehicles', piezometer: 'Piezometers',
+  canal: 'Canal Structures', building: 'Buildings', site: 'Sites',
+  motor: 'Motors', pond: 'Ponds',
 };
 
-const SEARCH_SCREEN_LABEL = {
-  wells: 'Well Readings', vehicles: 'Vehicles', canal: 'Canal', ponds: 'Ponds',
-};
+// Returns all navigation destinations for a result row.
+// Each dest: { label, action }
+function searchNavTargets(r) {
+  const [wellRun, kfFlag] = (r.meta || '').split('|');
+  switch (r.type) {
+    case 'well': {
+      const targets = [{ label: 'Well Readings', action: 'wells' }];
+      if (kfFlag === 'kf')
+        targets.push({ label: 'KF Monthly', action: 'kf-monthly' });
+      if (wellRun === 'DWR')
+        targets.push({ label: 'Well Runs – DWR', action: 'wr-dwr' });
+      if (wellRun === 'Shallow')
+        targets.push({ label: 'Well Runs – Shallow', action: 'wr-shallow' });
+      if (wellRun === 'IWV')
+        targets.push({ label: 'Well Runs – IWV', action: 'wr-iwv' });
+      targets.push({ label: 'Well Issues', action: 'maint-wells' });
+      return targets;
+    }
+    case 'vehicle':
+      return [
+        { label: 'Vehicle Monthly', action: 'vehicles' },
+        { label: 'Maintenance',     action: 'maint-vehicles' },
+      ];
+    case 'piezometer':
+      return [{ label: 'Well Runs – Piezometers', action: 'wr-kcwa' }];
+    case 'canal':
+      return [{ label: 'Canal Readings', action: 'canal' }];
+    case 'building':
+      return [{ label: 'Maintenance – Buildings', action: 'maint-buildings' }];
+    case 'motor':
+      return [{ label: 'Maintenance – Equipment', action: 'maint-equipment' }];
+    case 'pond':
+      return [{ label: 'Ponds', action: 'ponds' }];
+    default:
+      return [];
+  }
+}
 
 let _searchDebounce = null;
 
@@ -10022,7 +10056,6 @@ el('search-input').addEventListener('input', () => {
   _searchDebounce = setTimeout(() => runSearch(q), 280);
 });
 
-// Close on Escape
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && !el('search-modal').classList.contains('hidden')) closeSearchModal();
 });
@@ -10043,82 +10076,59 @@ function renderSearchResults(rows) {
     return;
   }
 
-  // Group by type preserving the ORDER BY type,name order from server
+  // Group by type preserving ORDER BY type,name from server
   const groups = {};
-  rows.forEach(r => {
-    if (!groups[r.type]) groups[r.type] = [];
-    groups[r.type].push(r);
-  });
+  rows.forEach(r => { (groups[r.type] = groups[r.type] || []).push(r); });
 
   let html = '';
   for (const [type, items] of Object.entries(groups)) {
-    const meta = SEARCH_TYPE_META[type] || { label: type, icon: 'dashboard' };
-    html += `<div class="search-type-header">${meta.label}</div>`;
+    html += `<div class="search-type-header">${SEARCH_TYPE_LABEL[type] || type}</div>`;
     html += items.map(r => {
-      const navLabel = meta.screen ? SEARCH_SCREEN_LABEL[meta.screen] || meta.screen
-                     : meta.action ? '→ Go to' : '';
-      const detail = [r.detail, r.context].filter(Boolean).join(' · ');
-      return `<div class="search-result-item" data-type="${r.type}" data-id="${r.id}" data-action="${meta.action || meta.screen || ''}">
-        <div class="search-result-icon">${icon(meta.icon, 16)}</div>
+      const detail  = [r.detail, r.context].filter(Boolean).join(' · ');
+      const targets = searchNavTargets(r);
+      const chips   = targets.map(t =>
+        `<button class="search-nav-chip" data-action="${t.action}">${t.label}</button>`
+      ).join('');
+      return `<div class="search-result-item">
+        <div class="search-result-icon">${icon(SEARCH_TYPE_ICON[type] || 'dashboard', 16)}</div>
         <div class="search-result-body">
           <div class="search-result-name">${r.name}</div>
           ${detail ? `<div class="search-result-detail">${detail}</div>` : ''}
+          ${chips ? `<div class="search-nav-chips">${chips}</div>` : ''}
         </div>
-        ${navLabel ? `<div class="search-result-nav">${navLabel} →</div>` : ''}
       </div>`;
     }).join('');
   }
   out.innerHTML = html;
 
-  out.querySelectorAll('.search-result-item').forEach(item => {
-    item.addEventListener('click', () => navigateToSearchResult(item.dataset));
+  out.querySelectorAll('.search-nav-chip').forEach(chip => {
+    chip.addEventListener('click', e => {
+      e.stopPropagation();
+      navigateToSearchResult(chip.dataset.action);
+    });
   });
 }
 
-function navigateToSearchResult({ type, id, action }) {
+function navigateToSearchResult(action) {
   closeSearchModal();
-  switch (action || type) {
-    case 'wells':
-    case 'well':
-      showScreen('wells');
-      break;
-    case 'vehicles':
-    case 'vehicle':
-      showScreen('vehicles');
-      break;
-    case 'canal':
-      showScreen('canal');
-      break;
-    case 'ponds':
-    case 'pond':
-      showScreen('ponds');
-      break;
-    case 'piezometer':
-      // Navigate into Well Runs → KCWA Piezometers
-      showScreen('well-runs');
-      setTimeout(() => {
-        const btn = document.querySelector('[data-wr-panel="kcwa"]');
-        if (btn) btn.click();
-      }, 80);
-      break;
-    case 'building':
-      showScreen('maintenance');
-      setTimeout(() => {
-        const btn = document.querySelector('[data-maint-panel="buildings"]');
-        if (btn) btn.click();
-      }, 80);
-      break;
-    case 'equipment':
-    case 'motor':
-      showScreen('maintenance');
-      setTimeout(() => {
-        const btn = document.querySelector('[data-maint-panel="equipment"]');
-        if (btn) btn.click();
-      }, 80);
-      break;
-    default:
-      // site or unhandled — no specific screen, just close
-      break;
+  const wrPanel = action.startsWith('wr-') ? action.slice(3) : null;
+  const maintPanel = action.startsWith('maint-') ? action.slice(6) : null;
+  if (wrPanel) {
+    showScreen('well-runs');
+    setTimeout(() => {
+      const btn = document.querySelector(`[data-wr-panel="${wrPanel}"]`);
+      if (btn) btn.click();
+    }, 80);
+  } else if (maintPanel) {
+    showScreen('maintenance');
+    setTimeout(() => {
+      const btn = document.querySelector(`[data-maint-panel="${maintPanel}"]`);
+      if (btn) btn.click();
+    }, 80);
+  } else if (action === 'kf-monthly') {
+    showScreen('kf-monthly');
+  } else {
+    showScreen(action);
   }
 }
 
