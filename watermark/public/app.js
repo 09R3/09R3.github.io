@@ -6642,6 +6642,10 @@ function collectChecklist(checklistEl, def, building) {
       const cb  = checklistEl.querySelector(`input[data-key="${item.key}"][data-type="twc"]`);
       const txt = checklistEl.querySelector(`input[data-key="${item.key}"][data-type="twc-val"]`);
       result[item.key] = { checked: cb?.checked || false, value: txt?.value.trim() || '' };
+    } else if (item.type === 'twc-area') {
+      const cb  = checklistEl.querySelector(`input[data-key="${item.key}"][data-type="twc"]`);
+      const txt = checklistEl.querySelector(`textarea[data-key="${item.key}"][data-type="twc-val"]`);
+      result[item.key] = { checked: cb?.checked || false, value: txt?.value.trim() || '' };
     } else if (item.type === 'text') {
       const txt = checklistEl.querySelector(`input[data-key="${item.key}"][data-type="text-only"]`);
       result[item.key] = txt?.value.trim() || '';
