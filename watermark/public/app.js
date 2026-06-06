@@ -6642,6 +6642,10 @@ function collectChecklist(checklistEl, def, building) {
       const cb  = checklistEl.querySelector(`input[data-key="${item.key}"][data-type="twc"]`);
       const txt = checklistEl.querySelector(`input[data-key="${item.key}"][data-type="twc-val"]`);
       result[item.key] = { checked: cb?.checked || false, value: txt?.value.trim() || '' };
+    } else if (item.type === 'twc-area') {
+      const cb  = checklistEl.querySelector(`input[data-key="${item.key}"][data-type="twc"]`);
+      const txt = checklistEl.querySelector(`textarea[data-key="${item.key}"][data-type="twc-val"]`);
+      result[item.key] = { checked: cb?.checked || false, value: txt?.value.trim() || '' };
     } else if (item.type === 'text') {
       const txt = checklistEl.querySelector(`input[data-key="${item.key}"][data-type="text-only"]`);
       result[item.key] = txt?.value.trim() || '';
@@ -7348,13 +7352,28 @@ function updateReportsMonthLabel() {
 
 function initVehicleReportPanel() {
   updateReportsMonthLabel();
+  // Default the Compare pickers to last month → this month (only on first open).
+  if (!el('vehicle-cmp-m2').value) {
+    const now  = new Date();
+    const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const ym = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    el('vehicle-cmp-m1').value = ym(prev);
+    el('vehicle-cmp-m2').value = ym(now);
+  }
   runVehicleReport();
 }
 
 async function runVehicleReport() {
+  const isCompare = vehicleReportType === 'compare';
   el('report-export-btn').style.display = vehicleReportType === 'mileage' ? '' : 'none';
-  if (vehicleReportType === 'mileage') await renderMileageReport();
-  else                                  await renderVehicleServiceReport();
+  // The single-month nav is used by CVC Mileage / Last Service; Compare uses
+  // its own two-month picker.
+  document.querySelector('#report-panel-vehicles .report-month-nav:not(#vehicle-compare-nav)')
+    .style.display = isCompare ? 'none' : '';
+  el('vehicle-compare-nav').style.display = isCompare ? '' : 'none';
+  if (vehicleReportType === 'mileage')      await renderMileageReport();
+  else if (vehicleReportType === 'service') await renderVehicleServiceReport();
+  else                                       await renderVehicleCompareReport();
 }
 
 document.querySelectorAll('#vehicle-report-seg .seg-btn').forEach(btn => {
@@ -7418,6 +7437,110 @@ async function renderMileageReport() {
   try {
     lastReportRows = await api('GET', `/api/reports/mileage?year=${reportsYear}&month=${reportsMonth}`);
     out.innerHTML = `<div class="report-card">${buildMileageHTML(lastReportRows, reportsYear, reportsMonth)}</div>`;
+  } catch (err) {
+    out.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
+  }
+}
+
+// ── Compare report ──────────────────────────────────────────────────────────
+el('vehicle-cmp-m1').addEventListener('change', runVehicleReport);
+el('vehicle-cmp-m2').addEventListener('change', runVehicleReport);
+
+// "YYYY-MM" → { year, month } (month 1-12)
+function parseYearMonth(v) {
+  if (!v) return null;
+  const [y, m] = v.split('-').map(Number);
+  return { year: y, month: m };
+}
+
+function buildCompareHTML(rows1, rows2, ym1, ym2) {
+  const label = ym => new Date(ym.year, ym.month - 1, 1)
+    .toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+  const m1Label = label(ym1), m2Label = label(ym2);
+
+  // Index second-month readings by vehicle for quick lookup, then merge so the
+  // row list always mirrors the (active) vehicle set from the first query.
+  const byId2 = {};
+  rows2.forEach(r => { byId2[r.vehicle_id] = r; });
+  const merged = rows1.map(a => {
+    const b = byId2[a.vehicle_id] || {};
+    return {
+      ...a,
+      odo1: a.odometer_miles, odo2: b.odometer_miles,
+      hrs1: a.engine_hours,   hrs2: b.engine_hours,
+    };
+  });
+
+  const trucks = merged.filter(r => !r.reading_type || r.reading_type === 'odometer');
+  const heavy  = merged.filter(r => r.reading_type === 'hours' || r.reading_type === 'both');
+  const ac = v => (v.assigned_user && v.assigned_user.trim().toLowerCase() !== 'ops & maint') ? v.assigned_user : '';
+  const num  = (v, dec = 0) => v != null ? Number(v).toLocaleString(undefined, { minimumFractionDigits: dec, maximumFractionDigits: dec }) : '—';
+  const dash = '<span style="color:var(--text-dim)">—</span>';
+
+  // Difference cell: 2nd − 1st. Red when negative.
+  const diffCell = (a, b, dec = 0) => {
+    if (a == null || b == null) return `<td class="report-num">${dash}</td>`;
+    const d = Number(b) - Number(a);
+    const color = d < 0 ? 'var(--red-light)' : '';
+    const sign = d > 0 ? '+' : '';
+    return `<td class="report-num" style="${color ? `color:${color};font-weight:600` : ''}">${sign}${d.toLocaleString(undefined, { minimumFractionDigits: dec, maximumFractionDigits: dec })}</td>`;
+  };
+
+  const truckRows = trucks.map(v => `<tr>
+    <td>${v.vehicle_number||''}</td><td>${v.make||''}</td><td>${v.model||''}</td><td>${ac(v)}</td>
+    <td class="report-num">${num(v.odo1)}</td>
+    <td class="report-num">${num(v.odo2)}</td>
+    ${diffCell(v.odo1, v.odo2)}
+  </tr>`).join('');
+
+  const heavyRows = heavy.map(v => `<tr>
+    <td>${v.vehicle_number||''}</td><td>${v.make||''}</td><td>${v.model||''}</td><td>${ac(v)}</td>
+    <td class="report-num">${num(v.odo1)}</td>
+    <td class="report-num">${num(v.odo2)}</td>
+    <td class="report-num">${num(v.hrs1, 1)}</td>
+    <td class="report-num">${num(v.hrs2, 1)}</td>
+    ${diffCell(v.hrs1, v.hrs2, 1)}
+  </tr>`).join('');
+
+  return `
+    <div class="report-title">Compare</div>
+    <div class="report-subtitle">${m1Label} → ${m2Label}</div>
+    <div class="report-section-title">Trucks</div>
+    ${trucks.length ? `<table class="report-table trucks">
+      <thead><tr>
+        <th>Unit #</th><th>Make</th><th>Model</th><th>Operator</th>
+        <th class="report-num">${m1Label} Odo</th><th class="report-num">${m2Label} Odo</th>
+        <th class="report-num">Difference</th>
+      </tr></thead>
+      <tbody>${truckRows}</tbody></table>`
+    : '<div class="report-empty">No active trucks.</div>'}
+    <div class="report-section-title">Heavy Equipment</div>
+    ${heavy.length ? `<table class="report-table heavy">
+      <thead><tr>
+        <th>Unit #</th><th>Make</th><th>Model</th><th>Operator</th>
+        <th class="report-num">${m1Label} Odo</th><th class="report-num">${m2Label} Odo</th>
+        <th class="report-num">${m1Label} Hrs</th><th class="report-num">${m2Label} Hrs</th>
+        <th class="report-num">Difference</th>
+      </tr></thead>
+      <tbody>${heavyRows}</tbody></table>`
+    : '<div class="report-empty">No active heavy equipment.</div>'}`;
+}
+
+async function renderVehicleCompareReport() {
+  const out = el('report-output');
+  const ym1 = parseYearMonth(el('vehicle-cmp-m1').value);
+  const ym2 = parseYearMonth(el('vehicle-cmp-m2').value);
+  if (!ym1 || !ym2) {
+    out.innerHTML = '<div class="placeholder-msg">Select two months to compare.</div>';
+    return;
+  }
+  out.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const [rows1, rows2] = await Promise.all([
+      api('GET', `/api/reports/mileage?year=${ym1.year}&month=${ym1.month}`),
+      api('GET', `/api/reports/mileage?year=${ym2.year}&month=${ym2.month}`),
+    ]);
+    out.innerHTML = `<div class="report-card">${buildCompareHTML(rows1, rows2, ym1, ym2)}</div>`;
   } catch (err) {
     out.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
   }
@@ -9856,6 +9979,162 @@ el('tor-submit-btn').addEventListener('click', () => {
   const to = 'syoder@kcwa.com,mansolabehere@kcwa.com';
   window.location.href = `mailto:${to}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 });
+
+/* ── Global Search ───────────────────────────────────────────────────────── */
+const SEARCH_TYPE_ICON = {
+  well: 'wells', vehicle: 'vehicles', piezometer: 'piezometers',
+  canal: 'canal', building: 'buildings', site: 'location',
+  motor: 'equipment', pond: 'gauge',
+};
+const SEARCH_TYPE_LABEL = {
+  well: 'Wells', vehicle: 'Vehicles', piezometer: 'Piezometers',
+  canal: 'Canal Structures', building: 'Buildings', site: 'Sites',
+  motor: 'Motors', pond: 'Ponds',
+};
+
+// Returns all navigation destinations for a result row.
+// Each dest: { label, action }
+function searchNavTargets(r) {
+  const [wellRun, kfFlag] = (r.meta || '').split('|');
+  switch (r.type) {
+    case 'well': {
+      const targets = [{ label: 'Well Readings', action: 'wells' }];
+      if (kfFlag === 'kf')
+        targets.push({ label: 'KF Monthly', action: 'kf-monthly' });
+      if (wellRun === 'DWR')
+        targets.push({ label: 'Well Runs – DWR', action: 'wr-dwr' });
+      if (wellRun === 'Shallow')
+        targets.push({ label: 'Well Runs – Shallow', action: 'wr-shallow' });
+      if (wellRun === 'IWV')
+        targets.push({ label: 'Well Runs – IWV', action: 'wr-iwv' });
+      targets.push({ label: 'Well Issues', action: 'maint-wells' });
+      return targets;
+    }
+    case 'vehicle':
+      return [
+        { label: 'Vehicle Monthly', action: 'vehicles' },
+        { label: 'Maintenance',     action: 'maint-vehicles' },
+      ];
+    case 'piezometer':
+      return [{ label: 'Well Runs – Piezometers', action: 'wr-kcwa' }];
+    case 'canal':
+      return [{ label: 'Canal Readings', action: 'canal' }];
+    case 'building':
+      return [{ label: 'Maintenance – Buildings', action: 'maint-buildings' }];
+    case 'motor':
+      return [{ label: 'Maintenance – Equipment', action: 'maint-equipment' }];
+    case 'pond':
+      return [{ label: 'Ponds', action: 'ponds' }];
+    default:
+      return [];
+  }
+}
+
+let _searchDebounce = null;
+
+function openSearchModal() {
+  el('search-modal').classList.remove('hidden');
+  el('search-input').value = '';
+  el('search-results').innerHTML = '<div class="search-placeholder">Type to search wells, vehicles, buildings, and more…</div>';
+  setTimeout(() => el('search-input').focus(), 60);
+}
+
+function closeSearchModal() {
+  el('search-modal').classList.add('hidden');
+}
+
+el('header-search-btn').addEventListener('click', openSearchModal);
+el('search-modal-close').addEventListener('click', closeSearchModal);
+el('search-modal').addEventListener('click', e => {
+  if (e.target === el('search-modal')) closeSearchModal();
+});
+
+el('search-input').addEventListener('input', () => {
+  clearTimeout(_searchDebounce);
+  const q = el('search-input').value.trim();
+  if (q.length < 2) {
+    el('search-results').innerHTML = '<div class="search-placeholder">Type at least 2 characters…</div>';
+    return;
+  }
+  el('search-results').innerHTML = '<div class="search-placeholder">Searching…</div>';
+  _searchDebounce = setTimeout(() => runSearch(q), 280);
+});
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && !el('search-modal').classList.contains('hidden')) closeSearchModal();
+});
+
+async function runSearch(q) {
+  try {
+    const rows = await api('GET', `/api/search?q=${encodeURIComponent(q)}`);
+    renderSearchResults(rows);
+  } catch (err) {
+    el('search-results').innerHTML = `<div class="search-placeholder" style="color:var(--red-light)">Search failed.</div>`;
+  }
+}
+
+function renderSearchResults(rows) {
+  const out = el('search-results');
+  if (!rows.length) {
+    out.innerHTML = '<div class="search-placeholder">No results found.</div>';
+    return;
+  }
+
+  // Group by type preserving ORDER BY type,name from server
+  const groups = {};
+  rows.forEach(r => { (groups[r.type] = groups[r.type] || []).push(r); });
+
+  let html = '';
+  for (const [type, items] of Object.entries(groups)) {
+    html += `<div class="search-type-header">${SEARCH_TYPE_LABEL[type] || type}</div>`;
+    html += items.map(r => {
+      const detail  = [r.detail, r.context].filter(Boolean).join(' · ');
+      const targets = searchNavTargets(r);
+      const chips   = targets.map(t =>
+        `<button class="search-nav-chip" data-action="${t.action}">${t.label}</button>`
+      ).join('');
+      return `<div class="search-result-item">
+        <div class="search-result-icon">${icon(SEARCH_TYPE_ICON[type] || 'dashboard', 16)}</div>
+        <div class="search-result-body">
+          <div class="search-result-name">${r.name}</div>
+          ${detail ? `<div class="search-result-detail">${detail}</div>` : ''}
+          ${chips ? `<div class="search-nav-chips">${chips}</div>` : ''}
+        </div>
+      </div>`;
+    }).join('');
+  }
+  out.innerHTML = html;
+
+  out.querySelectorAll('.search-nav-chip').forEach(chip => {
+    chip.addEventListener('click', e => {
+      e.stopPropagation();
+      navigateToSearchResult(chip.dataset.action);
+    });
+  });
+}
+
+function navigateToSearchResult(action) {
+  closeSearchModal();
+  const wrPanel = action.startsWith('wr-') ? action.slice(3) : null;
+  const maintPanel = action.startsWith('maint-') ? action.slice(6) : null;
+  if (wrPanel) {
+    showScreen('well-runs');
+    setTimeout(() => {
+      const btn = document.querySelector(`[data-wr-panel="${wrPanel}"]`);
+      if (btn) btn.click();
+    }, 80);
+  } else if (maintPanel) {
+    showScreen('maintenance');
+    setTimeout(() => {
+      const btn = document.querySelector(`[data-maint-panel="${maintPanel}"]`);
+      if (btn) btn.click();
+    }, 80);
+  } else if (action === 'kf-monthly') {
+    showScreen('kf-monthly');
+  } else {
+    showScreen(action);
+  }
+}
 
 /* ── Charts ───────────────────────────────────────────────────────────────── */
 const CHART_PANEL_TITLES = {
