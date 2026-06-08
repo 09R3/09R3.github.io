@@ -334,9 +334,7 @@ pool.query(`
     created_by   INTEGER REFERENCES users(user_id),
     created_at   TIMESTAMPTZ DEFAULT NOW()
   )
-`).catch(err => console.error('Migration error (safety_meetings):', err.message));
-
-pool.query(`
+`).then(() => pool.query(`
   CREATE TABLE IF NOT EXISTS safety_meeting_attendees (
     attendee_id    SERIAL PRIMARY KEY,
     meeting_id     INTEGER REFERENCES safety_meetings(meeting_id) ON DELETE CASCADE,
@@ -345,7 +343,7 @@ pool.query(`
     signed_date    DATE,
     created_at     TIMESTAMPTZ DEFAULT NOW()
   )
-`).catch(err => console.error('Migration error (safety_meeting_attendees):', err.message));
+`)).catch(err => console.error('Migration error (safety tables):', err.message));
 
 // ─────────────────────────────────────────────────────────────────────────────
 const SESSION_TTL = 8 * 60 * 60 * 1000; // 8 hours

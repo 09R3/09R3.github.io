@@ -10167,7 +10167,7 @@ async function loadSafetyMeetings(q = '') {
       });
     });
   } catch (err) {
-    listEl.innerHTML = `<div class="placeholder-msg">Failed to load.</div>`;
+    listEl.innerHTML = `<div class="placeholder-msg">Failed to load: ${escHtml(err.message)}</div>`;
   }
 }
 
