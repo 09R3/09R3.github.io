@@ -10458,16 +10458,21 @@ function exportSafetyMeetingPDF(meeting, attendees) {
     </tr>`).join('')
     : `<tr><td class="num" colspan="4" style="text-align:center;color:#999">No attendees recorded</td></tr>`;
 
+  // Build filename: mm-dd-yy-Safety-Meeting (used as <title> → default PDF filename)
+  const rawDate = meeting.meeting_date ? String(meeting.meeting_date).slice(0, 10) : '';
+  const [yr, mo, dy] = rawDate ? rawDate.split('-') : ['', '', ''];
+  const fileTitle = rawDate ? `${mo}-${dy}-${yr.slice(2)}-Safety-Meeting` : 'Safety-Meeting';
+
   _pdfWindow.document.open();
   _pdfWindow.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8">
-    <title>Safety Meeting Sign-In — ${esc(meeting.topic)}</title>
+    <title>${fileTitle}</title>
     <style>
       * { box-sizing: border-box; margin: 0; padding: 0; }
       body { font-family: Arial, sans-serif; font-size: 10pt; color: #000; padding: 20px 24px; }
       .page-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 12px; }
-      .page-header-text h1 { font-size: 13pt; margin-bottom: 2px; }
-      .page-header-text .org { font-size: 9pt; color: #555; }
-      .logo { height: 56px; width: auto; }
+      .page-header-text h1 { font-size: 14pt; font-weight: 700; margin-bottom: 3px; }
+      .page-header-text .org { font-size: 10pt; color: #444; }
+      .logo { height: 56px; width: auto; margin-left: auto; }
       .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px; margin-bottom: 14px; border: 1px solid #ccc; padding: 8px 10px; border-radius: 4px; }
       .meta-item { font-size: 9.5pt; }
       .meta-label { font-weight: bold; color: #333; }
@@ -10508,7 +10513,7 @@ function exportSafetyMeetingPDF(meeting, attendees) {
     <div class="content">
     <div class="page-header">
       <div class="page-header-text">
-        <h1>Safety Meeting Sign-In Sheet</h1>
+        <h1>Safety Meeting</h1>
         <div class="org">Kern County Water Agency</div>
       </div>
       <img class="logo" src="/icons/kcwa-seal-192.png" alt="KCWA">
