@@ -347,7 +347,7 @@ pool.query(`
   )
 `).catch(err => console.error('Migration error (safety_meeting_attendees):', err.message));
 
- ───────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 const SESSION_TTL = 8 * 60 * 60 * 1000; // 8 hours
 const sessions = new Map();
 
