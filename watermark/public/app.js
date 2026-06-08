@@ -10291,13 +10291,12 @@ function openSafetySigninModal(meetingId, bodyEl) {
       const isOther = el('safety-signin-name-sel').value === '__other__';
       el('safety-signin-name-other').style.display = isOther ? '' : 'none';
     });
-    el('safety-signin-save').addEventListener('click', () => saveSignIn(bodyEl));
-  } else {
-    // Clear canvas on re-open
-    _sigCtx.clearRect(0, 0, _sigCanvas.width, _sigCanvas.height);
-    // Store latest bodyEl for save callback
-    el('safety-signin-save').onclick = () => saveSignIn(bodyEl);
   }
+  // Always (re-)set onclick so the correct bodyEl is captured and no duplicate
+  // handlers accumulate — onclick replaces itself, addEventListener would stack
+  el('safety-signin-save').onclick = () => saveSignIn(bodyEl);
+  // Clear canvas on every open
+  if (_sigCtx) _sigCtx.clearRect(0, 0, _sigCanvas.width, _sigCanvas.height);
 
   // Populate name dropdown
   api('GET', '/api/users/list').then(users => {
@@ -10364,7 +10363,8 @@ async function saveSignIn(bodyEl) {
   const imgData = _sigCtx.getImageData(0, 0, _sigCanvas.width, _sigCanvas.height).data;
   const blank   = !new Uint32Array(imgData.buffer).some(p => p !== 0);
 
-  // Normalize: if dark mode the strokes are white — invert them to black for storage/PDF
+  // Normalize: dark mode draws white strokes — invert to black via pixel ops (ctx.filter
+  // is unsupported in Safari so we manipulate the pixel buffer directly instead)
   let sigData = '';
   if (!blank) {
     const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
@@ -10372,8 +10372,13 @@ async function saveSignIn(bodyEl) {
       const tmp = document.createElement('canvas');
       tmp.width = _sigCanvas.width; tmp.height = _sigCanvas.height;
       const c = tmp.getContext('2d');
-      c.filter = 'invert(1)';
       c.drawImage(_sigCanvas, 0, 0);
+      const id = c.getImageData(0, 0, tmp.width, tmp.height);
+      const d  = id.data;
+      for (let i = 0; i < d.length; i += 4) {
+        if (d[i + 3] > 0) { d[i] = 255 - d[i]; d[i+1] = 255 - d[i+1]; d[i+2] = 255 - d[i+2]; }
+      }
+      c.putImageData(id, 0, 0);
       sigData = tmp.toDataURL('image/png');
     } else {
       sigData = _sigCanvas.toDataURL('image/png');
