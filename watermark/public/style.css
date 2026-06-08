@@ -3102,11 +3102,13 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
 
 /* ── Safety ──────────────────────────────────────────────────────────────── */
 .safety-sig-canvas {
-  display: block; width: 100%; height: 110px;
+  display: block; width: 100%; height: 150px;
   border: 1px dashed var(--border); border-radius: 8px;
   touch-action: none; cursor: crosshair;
   background: #fff;
 }
+:root:not([data-theme="light"]) .safety-sig-canvas { background: var(--surface); }
+:root:not([data-theme="light"]) .sig-preview-img { filter: invert(1); }
 .safety-attend-table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 0.88rem; }
 .safety-attend-table th {
   text-align: left; padding: 6px 8px;
@@ -3129,7 +3131,7 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
   margin-bottom: 6px;
 }
 .safety-attend-count { font-size: 0.82rem; color: var(--text-dim); }
-.safety-signin-card { max-width: 420px; width: 100%; }
+.safety-signin-card { max-width: 520px; width: 100%; }
 
 /* ── Print ───────────────────────────────────────────────────────────────── */
 @media print {

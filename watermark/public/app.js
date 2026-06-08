@@ -10217,7 +10217,7 @@ function renderSafetyMeetingBody(body, data) {
       <div class="safety-attend-list"></div>
     </div>`;
 
-  renderSafetyAttendees(body.querySelector('.safety-attend-list'), data.attendees || []);
+  renderSafetyAttendees(body.querySelector('.safety-attend-list'), data.attendees || [], data.meeting_id);
 
   body.querySelector('.safety-signin-btn').addEventListener('click', () => {
     openSafetySigninModal(data.meeting_id, body);
@@ -10227,20 +10227,39 @@ function renderSafetyMeetingBody(body, data) {
   });
 }
 
-function renderSafetyAttendees(listEl, attendees) {
+function renderSafetyAttendees(listEl, attendees, meetingId) {
+  const canDelete = currentUser && (currentUser.role === 'supervisor' || currentUser.role === 'admin');
   if (!attendees.length) {
     listEl.innerHTML = '<div class="placeholder-msg" style="padding:12px 0">No attendees yet.</div>';
     return;
   }
   listEl.innerHTML = `<table class="safety-attend-table">
-    <thead><tr><th>#</th><th>Print Name</th><th>Signature</th><th>Date</th></tr></thead>
+    <thead><tr>
+      <th>#</th><th>Print Name</th><th>Signature</th><th>Date</th>
+      ${canDelete ? '<th></th>' : ''}
+    </tr></thead>
     <tbody>${attendees.map((a, i) => `<tr>
       <td style="color:var(--text-dim);font-size:0.82rem">${i + 1}</td>
       <td>${escHtml(a.full_name)}</td>
-      <td>${a.signature_data ? `<img src="${escHtml(a.signature_data)}" alt="signature">` : '<span style="color:var(--text-dim)">—</span>'}</td>
+      <td>${a.signature_data ? `<img class="sig-preview-img" src="${escHtml(a.signature_data)}" alt="signature">` : '<span style="color:var(--text-dim)">—</span>'}</td>
       <td style="white-space:nowrap">${a.signed_date ? localDateStr(a.signed_date, { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}</td>
+      ${canDelete ? `<td style="width:32px;text-align:center"><button class="hist-del-btn del-attendee-btn" data-aid="${a.attendee_id}" title="Remove attendee">${icon('delete', 14)}</button></td>` : ''}
     </tr>`).join('')}</tbody>
   </table>`;
+
+  if (canDelete) {
+    listEl.querySelectorAll('.del-attendee-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        if (!confirm('Remove this attendee from the meeting?')) return;
+        try {
+          await api('DELETE', `/api/safety-meetings/${meetingId}/attendees/${btn.dataset.aid}`);
+          const data = await api('GET', `/api/safety-meetings/${meetingId}`);
+          renderSafetyAttendees(listEl, data.attendees || [], meetingId);
+          showToast('Attendee removed');
+        } catch (err) { showToast(err.message, 'error'); }
+      });
+    });
+  }
 }
 
 // ── Sign-in Modal ─────────────────────────────────────────────────────────────
@@ -10311,7 +10330,11 @@ function initSigCanvas(canvas, ctx) {
       y: (src.clientY - r.top)  * (canvas.height / r.height),
     };
   };
-  const start = e => { _sigDrawing = true; const p = pt(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); e.preventDefault(); };
+  const start = e => {
+    _sigDrawing = true;
+    ctx.strokeStyle = document.documentElement.getAttribute('data-theme') === 'light' ? '#000' : '#fff';
+    const p = pt(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); e.preventDefault();
+  };
   const draw  = e => { if (!_sigDrawing) return; const p = pt(e); ctx.lineTo(p.x, p.y); ctx.stroke(); e.preventDefault(); };
   const stop  = ()  => { _sigDrawing = false; };
 
@@ -10337,9 +10360,25 @@ async function saveSignIn(bodyEl) {
     return;
   }
 
-  // Check if canvas has any drawn content
-  const blank = !_sigCanvas.toDataURL().includes('data:image/png;base64,iVBOR');
-  const sigData = blank ? '' : _sigCanvas.toDataURL('image/png');
+  // Check if canvas has any drawn content (pixel buffer approach)
+  const imgData = _sigCtx.getImageData(0, 0, _sigCanvas.width, _sigCanvas.height).data;
+  const blank   = !new Uint32Array(imgData.buffer).some(p => p !== 0);
+
+  // Normalize: if dark mode the strokes are white — invert them to black for storage/PDF
+  let sigData = '';
+  if (!blank) {
+    const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
+    if (isDark) {
+      const tmp = document.createElement('canvas');
+      tmp.width = _sigCanvas.width; tmp.height = _sigCanvas.height;
+      const c = tmp.getContext('2d');
+      c.filter = 'invert(1)';
+      c.drawImage(_sigCanvas, 0, 0);
+      sigData = tmp.toDataURL('image/png');
+    } else {
+      sigData = _sigCanvas.toDataURL('image/png');
+    }
+  }
 
   const btn = el('safety-signin-save');
   btn.disabled = true;
@@ -10353,7 +10392,7 @@ async function saveSignIn(bodyEl) {
     showToast('Signed in successfully');
     // Reload attendees in the expanded body
     const data = await api('GET', `/api/safety-meetings/${_safetySigninMeetingId}`);
-    renderSafetyAttendees(bodyEl.querySelector('.safety-attend-list'), data.attendees || []);
+    renderSafetyAttendees(bodyEl.querySelector('.safety-attend-list'), data.attendees || [], _safetySigninMeetingId);
     // Update the attendee count badge in the header
     const item = bodyEl.closest('.safety-meeting-item');
     if (item) {
