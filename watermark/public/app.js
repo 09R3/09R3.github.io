@@ -9985,6 +9985,7 @@ el('tor-submit-btn').addEventListener('click', () => {
 /* ── Safety ──────────────────────────────────────────────────────────────── */
 let _safetyInited = false;
 let _safetySigninMeetingId = null;
+let _pdfWindow = null;
 
 const SAFETY_PANEL_NAMES = { meetings: 'Safety Meetings' };
 
@@ -10419,6 +10420,9 @@ function exportSafetyMeetingPDF(meeting, attendees) {
   const w = window.open('', '_blank');
   if (!w) { showToast('Allow pop-ups to export PDF', 'error'); return; }
 
+  // Close any previously opened PDF window so stale content can't print again
+  if (_pdfWindow && !_pdfWindow.closed) _pdfWindow.close();
+
   const fmtDate = d => d ? localDateStr(d, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }) : '—';
   const fmtShort = d => d ? localDateStr(d, { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
   const esc = s => String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
@@ -10428,12 +10432,15 @@ function exportSafetyMeetingPDF(meeting, attendees) {
     <tr>
       <td class="num">${i + 1}</td>
       <td>${esc(a.full_name)}</td>
-      <td class="sig-cell">${a.signature_data ? `<img src="${esc(a.signature_data)}" alt="">` : ''}</td>
+      <td class="sig-cell">${a.signature_data ? `<img src="${esc(a.signature_data)}" alt="" style="filter:brightness(0)">` : ''}</td>
       <td class="date-cell">${fmtShort(a.signed_date)}</td>
     </tr>`).join('')
     : `<tr><td class="num" colspan="4" style="text-align:center;color:#999">No attendees recorded</td></tr>`;
 
-  w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8">
+  _pdfWindow = window.open('', '_blank');
+  if (!_pdfWindow) { showToast('Allow pop-ups to export PDF', 'error'); return; }
+
+  _pdfWindow.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8">
     <title>Safety Meeting Sign-In — ${esc(meeting.topic)}</title>
     <style>
       * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -10450,23 +10457,36 @@ function exportSafetyMeetingPDF(meeting, attendees) {
       td { border: 1px solid #bbb; padding: 5px 7px; font-size: 9.5pt; height: 36px; vertical-align: middle; }
       td.num { width: 30px; text-align: center; color: #888; font-size: 8.5pt; }
       td.sig-cell { width: 180px; }
-      td.sig-cell img { height: 28px; max-width: 170px; filter: brightness(0); }
+      td.sig-cell img { height: 28px; max-width: 170px; }
       td.date-cell { width: 90px; font-size: 8.5pt; }
       .doc-footer { margin-top: 14px; font-size: 8pt; color: #888; }
-      .close-btn {
-        position: fixed; top: 10px; right: 10px; z-index: 999;
-        background: #333; color: #fff; border: none; border-radius: 6px;
-        padding: 8px 14px; font-size: 10pt; cursor: pointer; font-family: Arial, sans-serif;
+      .toolbar {
+        position: fixed; top: 0; left: 0; right: 0; z-index: 999;
+        display: flex; align-items: center; gap: 8px;
+        background: #222; padding: 8px 12px;
       }
-      .close-btn:hover { background: #000; }
+      .toolbar button {
+        border: none; border-radius: 6px; padding: 7px 14px;
+        font-size: 10pt; cursor: pointer; font-family: Arial, sans-serif;
+      }
+      .btn-close { background: #555; color: #fff; }
+      .btn-close:hover { background: #333; }
+      .btn-print { background: #1a7f4b; color: #fff; }
+      .btn-print:hover { background: #145f38; }
+      .content { margin-top: 52px; }
       @media print {
         @page { margin: 0; }
         body { padding: 15mm; }
-        .close-btn { display: none !important; }
+        .toolbar { display: none !important; }
+        .content { margin-top: 0; }
       }
     </style>
   </head><body>
-    <button class="close-btn" onclick="window.close()">&#8592; Back to App</button>
+    <div class="toolbar">
+      <button class="btn-close" onclick="window.close()">&#8592; Back to App</button>
+      <button class="btn-print" onclick="window.print()">&#128438; Print / Save PDF</button>
+    </div>
+    <div class="content">
     <div class="page-header">
       <div class="page-header-text">
         <h1>Safety Meeting Sign-In Sheet</h1>
@@ -10487,9 +10507,16 @@ function exportSafetyMeetingPDF(meeting, attendees) {
       <tbody>${rows}</tbody>
     </table>
     <div class="doc-footer">Total Attendees: ${attendees.length} &nbsp;|&nbsp; Exported: ${new Date().toLocaleString()}</div>
+    </div>
+    <script>
+      var _ts = 0;
+      document.addEventListener('touchstart', function(e) { _ts = e.touches[0].clientX; }, { passive: true });
+      document.addEventListener('touchend', function(e) {
+        if (_ts < 40 && (e.changedTouches[0].clientX - _ts) > 60) window.close();
+      }, { passive: true });
+    <\/script>
   </body></html>`);
-  w.document.close();
-  w.setTimeout(() => w.print(), 400);
+  _pdfWindow.document.close();
 }
 
 /* ── Global Search ───────────────────────────────────────────────────────── */
