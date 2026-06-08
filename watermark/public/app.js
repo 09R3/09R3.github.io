@@ -10298,7 +10298,7 @@ function closeSafetySigninModal() {
 }
 
 function initSigCanvas(canvas, ctx) {
-  ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--text').trim() || '#000';
+  ctx.strokeStyle = '#000';
   ctx.lineWidth   = 2;
   ctx.lineCap     = 'round';
   ctx.lineJoin    = 'round';
@@ -10377,43 +10377,57 @@ function exportSafetyMeetingPDF(meeting, attendees) {
   const fmtShort = d => d ? localDateStr(d, { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
   const esc = s => String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 
-  const rows = attendees.map((a, i) => `
+  const rows = attendees.length
+    ? attendees.map((a, i) => `
     <tr>
       <td class="num">${i + 1}</td>
       <td>${esc(a.full_name)}</td>
       <td class="sig-cell">${a.signature_data ? `<img src="${esc(a.signature_data)}" alt="">` : ''}</td>
       <td class="date-cell">${fmtShort(a.signed_date)}</td>
-    </tr>`).join('');
-
-  // Fill remaining rows to ~20 total for a clean sheet
-  const empty = Math.max(0, 20 - attendees.length);
-  const blankRows = Array(empty).fill(0).map((_, i) =>
-    `<tr><td class="num">${attendees.length + i + 1}</td><td></td><td class="sig-cell"></td><td class="date-cell"></td></tr>`
-  ).join('');
+    </tr>`).join('')
+    : `<tr><td class="num" colspan="4" style="text-align:center;color:#999">No attendees recorded</td></tr>`;
 
   w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8">
     <title>Safety Meeting Sign-In — ${esc(meeting.topic)}</title>
     <style>
       * { box-sizing: border-box; margin: 0; padding: 0; }
       body { font-family: Arial, sans-serif; font-size: 10pt; color: #000; padding: 20px 24px; }
-      h1 { font-size: 13pt; margin-bottom: 4px; }
-      .org { font-size: 9pt; color: #555; margin-bottom: 12px; }
+      .page-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 12px; }
+      .page-header-text h1 { font-size: 13pt; margin-bottom: 2px; }
+      .page-header-text .org { font-size: 9pt; color: #555; }
+      .logo { height: 56px; width: auto; }
       .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px; margin-bottom: 14px; border: 1px solid #ccc; padding: 8px 10px; border-radius: 4px; }
       .meta-item { font-size: 9.5pt; }
       .meta-label { font-weight: bold; color: #333; }
       table { width: 100%; border-collapse: collapse; margin-top: 6px; }
       th { background: #f0f0f0; border: 1px solid #bbb; padding: 5px 7px; font-size: 9pt; text-align: left; }
-      td { border: 1px solid #bbb; padding: 5px 7px; font-size: 9.5pt; height: 32px; vertical-align: middle; }
+      td { border: 1px solid #bbb; padding: 5px 7px; font-size: 9.5pt; height: 36px; vertical-align: middle; }
       td.num { width: 30px; text-align: center; color: #888; font-size: 8.5pt; }
       td.sig-cell { width: 180px; }
-      td.sig-cell img { height: 26px; max-width: 170px; }
+      td.sig-cell img { height: 28px; max-width: 170px; filter: brightness(0); }
       td.date-cell { width: 90px; font-size: 8.5pt; }
-      .footer { margin-top: 16px; font-size: 8pt; color: #888; }
-      @media print { @page { margin: 15mm; } button { display: none !important; } }
+      .doc-footer { margin-top: 14px; font-size: 8pt; color: #888; }
+      .close-btn {
+        position: fixed; top: 10px; right: 10px; z-index: 999;
+        background: #333; color: #fff; border: none; border-radius: 6px;
+        padding: 8px 14px; font-size: 10pt; cursor: pointer; font-family: Arial, sans-serif;
+      }
+      .close-btn:hover { background: #000; }
+      @media print {
+        @page { margin: 0; }
+        body { padding: 15mm; }
+        .close-btn { display: none !important; }
+      }
     </style>
   </head><body>
-    <h1>Safety Meeting Sign-In Sheet</h1>
-    <div class="org">Kern County Water Agency</div>
+    <button class="close-btn" onclick="window.close()">&#8592; Back to App</button>
+    <div class="page-header">
+      <div class="page-header-text">
+        <h1>Safety Meeting Sign-In Sheet</h1>
+        <div class="org">Kern County Water Agency</div>
+      </div>
+      <img class="logo" src="/icons/kcwa-seal-192.png" alt="KCWA">
+    </div>
     <div class="meta">
       <div class="meta-item"><span class="meta-label">Date:</span> ${fmtDate(meeting.meeting_date)}</div>
       <div class="meta-item"><span class="meta-label">Time:</span> ${meeting.meeting_time ? meeting.meeting_time.slice(0,5) : '—'}</div>
@@ -10424,9 +10438,9 @@ function exportSafetyMeetingPDF(meeting, attendees) {
     </div>
     <table>
       <thead><tr><th>#</th><th>Print Name</th><th>Signature</th><th>Date</th></tr></thead>
-      <tbody>${rows}${blankRows}</tbody>
+      <tbody>${rows}</tbody>
     </table>
-    <div class="footer">Total Attendees: ${attendees.length} &nbsp;|&nbsp; Exported: ${new Date().toLocaleString()}</div>
+    <div class="doc-footer">Total Attendees: ${attendees.length} &nbsp;|&nbsp; Exported: ${new Date().toLocaleString()}</div>
   </body></html>`);
   w.document.close();
   w.setTimeout(() => w.print(), 400);
