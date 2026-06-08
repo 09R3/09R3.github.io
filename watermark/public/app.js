@@ -10380,10 +10380,12 @@ async function saveSignIn(bodyEl) {
     }
   }
 
+  // Capture before closeSafetySigninModal() nulls it
+  const meetingId = _safetySigninMeetingId;
   const btn = el('safety-signin-save');
   btn.disabled = true;
   try {
-    await api('POST', `/api/safety-meetings/${_safetySigninMeetingId}/attend`, {
+    await api('POST', `/api/safety-meetings/${meetingId}/attend`, {
       full_name:      name,
       signature_data: sigData || null,
       signed_date:    el('safety-signin-date').value,
@@ -10391,8 +10393,8 @@ async function saveSignIn(bodyEl) {
     closeSafetySigninModal();
     showToast('Signed in successfully');
     // Reload attendees in the expanded body
-    const data = await api('GET', `/api/safety-meetings/${_safetySigninMeetingId}`);
-    renderSafetyAttendees(bodyEl.querySelector('.safety-attend-list'), data.attendees || [], _safetySigninMeetingId);
+    const data = await api('GET', `/api/safety-meetings/${meetingId}`);
+    renderSafetyAttendees(bodyEl.querySelector('.safety-attend-list'), data.attendees || [], meetingId);
     // Update the attendee count badge in the header
     const item = bodyEl.closest('.safety-meeting-item');
     if (item) {
