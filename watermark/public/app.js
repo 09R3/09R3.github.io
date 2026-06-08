@@ -498,6 +498,7 @@ function showScreen(name) {
     hr:              'HR',
     charts:          'Charts',
     ponds:           'Ponds',
+    safety:          'Safety',
   };
   closeDrawer();
 
@@ -532,6 +533,7 @@ function showScreen(name) {
   if (name === 'hr')            initHRScreen();
   if (name === 'charts')        initChartsScreen();
   if (name === 'ponds')         initPondsScreen();
+  if (name === 'safety')        initSafetyScreen();
 
   // Refresh time to current on every screen visit
   const screenTimeIds = {
@@ -9979,6 +9981,456 @@ el('tor-submit-btn').addEventListener('click', () => {
   const to = 'syoder@kcwa.com,mansolabehere@kcwa.com';
   window.location.href = `mailto:${to}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 });
+
+/* ── Safety ──────────────────────────────────────────────────────────────── */
+let _safetyInited = false;
+let _safetySigninMeetingId = null;
+
+const SAFETY_PANEL_NAMES = { meetings: 'Safety Meetings' };
+
+function initSafetyScreen() {
+  if (_safetyInited) return;
+  _safetyInited = true;
+  document.querySelectorAll('[data-safety-panel]').forEach(tile => {
+    tile.addEventListener('click', () => openSafetyPanel(tile.dataset.safetyPanel));
+  });
+}
+
+function openSafetyPanel(id) {
+  el('safety-main').classList.add('hidden');
+  document.querySelectorAll('#screen-safety .maint-panel').forEach(p => p.classList.add('hidden'));
+  el(`safety-panel-${id}`).classList.remove('hidden');
+  setPanelNav(el('screen-safety'), closeSafetyPanel, 'Safety – ' + (SAFETY_PANEL_NAMES[id] || id));
+  if (id === 'meetings') buildSafetyMeetingsPanel(el('safety-panel-meetings'));
+}
+
+function closeSafetyPanel() {
+  document.querySelectorAll('#screen-safety .maint-panel').forEach(p => p.classList.add('hidden'));
+  el('safety-main').classList.remove('hidden');
+  setPanelNav(el('screen-safety'), () => showScreen('dashboard'), 'Safety');
+}
+
+// ── Safety Meetings Panel ─────────────────────────────────────────────────────
+function buildSafetyMeetingsPanel(contentEl) {
+  if (contentEl.firstElementChild) { loadSafetyMeetings(); return; }
+
+  contentEl.innerHTML = `
+    <div class="issue-toolbar" style="gap:8px">
+      <button class="btn btn-primary btn-sm" id="safety-new-btn">+ New Meeting</button>
+      <input type="search" id="safety-topic-search" class="ctrl-input" placeholder="Search by topic…" style="flex:1;min-width:0">
+    </div>
+    <div id="safety-meeting-form" class="settings-card hidden" style="margin:0 0 14px">
+      <div class="settings-pad">
+        <div class="two-col">
+          <div class="form-group">
+            <label>Date</label>
+            <input type="date" id="sm-date" class="ctrl-input ctrl-input-sm">
+          </div>
+          <div class="form-group">
+            <label>Time</label>
+            <input type="time" id="sm-time" class="ctrl-input ctrl-input-sm">
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Presented By</label>
+          <select id="sm-presenter" class="ctrl-select"></select>
+        </div>
+        <div class="form-group">
+          <label>Topic</label>
+          <input type="text" id="sm-topic" class="ctrl-input" placeholder="Meeting topic or title">
+        </div>
+        <div class="form-group">
+          <label>Link <span style="color:var(--text-dim);font-weight:400">(optional)</span></label>
+          <input type="url" id="sm-link" class="ctrl-input" placeholder="https://…">
+        </div>
+        <div class="form-group">
+          <label>Notes <span style="color:var(--text-dim);font-weight:400">(optional)</span></label>
+          <textarea id="sm-notes" class="ctrl-input" rows="3" placeholder="Additional details…"></textarea>
+        </div>
+        <div id="sm-error" class="error-msg hidden"></div>
+        <div class="form-row">
+          <button class="btn btn-save" id="sm-submit">Create Meeting</button>
+          <button class="btn btn-secondary" id="sm-cancel">Cancel</button>
+        </div>
+      </div>
+    </div>
+    <div id="safety-meetings-list"><div class="placeholder-msg">Loading…</div></div>`;
+
+  el('safety-new-btn').addEventListener('click', openNewSafetyMeetingForm);
+  el('sm-cancel').addEventListener('click', () => {
+    el('safety-meeting-form').classList.add('hidden');
+    el('safety-new-btn').style.display = '';
+  });
+  el('sm-submit').addEventListener('click', submitSafetyMeeting);
+
+  let _smSearchTimer;
+  el('safety-topic-search').addEventListener('input', () => {
+    clearTimeout(_smSearchTimer);
+    _smSearchTimer = setTimeout(() => loadSafetyMeetings(el('safety-topic-search').value.trim()), 300);
+  });
+
+  loadSafetyMeetings();
+}
+
+async function openNewSafetyMeetingForm() {
+  el('safety-new-btn').style.display = 'none';
+  el('safety-meeting-form').classList.remove('hidden');
+  el('sm-date').value = new Date().toLocaleDateString('en-CA');
+  el('sm-time').value = nowHHMM();
+  el('sm-topic').value = '';
+  el('sm-link').value  = '';
+  el('sm-notes').value = '';
+  el('sm-error').classList.add('hidden');
+
+  // Populate presenter dropdown
+  const sel = el('sm-presenter');
+  sel.innerHTML = '<option value="">Loading…</option>';
+  try {
+    const users = await api('GET', '/api/users/list');
+    const fullNames = users.map(u => u.full_name || u.username).filter(Boolean);
+    const current = currentUser?.full_name || '';
+    sel.innerHTML = fullNames.map(n =>
+      `<option value="${escHtml(n)}" ${n === current ? 'selected' : ''}>${escHtml(n)}</option>`
+    ).join('');
+    if (!sel.value && current) {
+      const opt = document.createElement('option');
+      opt.value = current; opt.textContent = current; opt.selected = true;
+      sel.prepend(opt);
+    }
+  } catch {
+    sel.innerHTML = `<option value="${escHtml(currentUser?.full_name || '')}">${escHtml(currentUser?.full_name || 'Unknown')}</option>`;
+  }
+}
+
+async function submitSafetyMeeting() {
+  const topic = el('sm-topic').value.trim();
+  const errEl = el('sm-error');
+  errEl.classList.add('hidden');
+  if (!topic) {
+    errEl.textContent = 'Topic is required.';
+    errEl.classList.remove('hidden');
+    return;
+  }
+  const btn = el('sm-submit');
+  btn.disabled = true;
+  try {
+    await api('POST', '/api/safety-meetings', {
+      meeting_date: el('sm-date').value,
+      meeting_time: el('sm-time').value,
+      presented_by: el('sm-presenter').value,
+      topic,
+      link:  el('sm-link').value.trim(),
+      notes: el('sm-notes').value.trim(),
+    });
+    el('safety-meeting-form').classList.add('hidden');
+    el('safety-new-btn').style.display = '';
+    showToast('Meeting created');
+    loadSafetyMeetings(el('safety-topic-search').value.trim());
+  } catch (err) {
+    errEl.textContent = err.message;
+    errEl.classList.remove('hidden');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function loadSafetyMeetings(q = '') {
+  const listEl = el('safety-meetings-list');
+  if (!listEl) return;
+  listEl.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const meetings = await api('GET', `/api/safety-meetings${q ? `?q=${encodeURIComponent(q)}` : ''}`);
+    if (!meetings.length) {
+      listEl.innerHTML = '<div class="placeholder-msg">No meetings found.</div>';
+      return;
+    }
+    listEl.innerHTML = meetings.map(m => {
+      const dateStr = localDateStr(m.meeting_date, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+      const time = m.meeting_time ? ' · ' + m.meeting_time.slice(0,5) : '';
+      return `<div class="safety-meeting-item" data-mid="${m.meeting_id}">
+        <div class="safety-meeting-header">
+          <div class="safety-meeting-info">
+            <div class="safety-meeting-topic">${escHtml(m.topic)}</div>
+            <div class="safety-meeting-date">${dateStr}${time} · ${escHtml(m.presented_by || '')}
+              <span class="safety-attend-count">${m.attendee_count} attendee${m.attendee_count !== 1 ? 's' : ''}</span>
+            </div>
+          </div>
+          <span class="safety-meeting-chevron">›</span>
+        </div>
+        <div class="safety-meeting-body hidden"></div>
+      </div>`;
+    }).join('');
+
+    listEl.querySelectorAll('.safety-meeting-item').forEach(item => {
+      item.querySelector('.safety-meeting-header').addEventListener('click', () => {
+        toggleSafetyMeeting(item);
+      });
+    });
+  } catch (err) {
+    listEl.innerHTML = `<div class="placeholder-msg">Failed to load.</div>`;
+  }
+}
+
+async function toggleSafetyMeeting(item) {
+  const body = item.querySelector('.safety-meeting-body');
+  const chevron = item.querySelector('.safety-meeting-chevron');
+  const isOpen = !body.classList.contains('hidden');
+  if (isOpen) {
+    body.classList.add('hidden');
+    chevron.style.transform = '';
+    return;
+  }
+  body.classList.remove('hidden');
+  chevron.style.transform = 'rotate(90deg)';
+  if (body.dataset.loaded) return;
+  body.dataset.loaded = '1';
+  body.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+
+  const mid = item.dataset.mid;
+  try {
+    const data = await api('GET', `/api/safety-meetings/${mid}`);
+    renderSafetyMeetingBody(body, data);
+  } catch {
+    body.innerHTML = '<div class="placeholder-msg">Failed to load.</div>';
+  }
+}
+
+function renderSafetyMeetingBody(body, data) {
+  const linkHtml = data.link
+    ? `<div class="form-group"><label>Link</label><a href="${escHtml(data.link)}" target="_blank" rel="noopener" class="safety-meeting-link">${escHtml(data.link)}</a></div>`
+    : '';
+  const notesHtml = data.notes
+    ? `<div class="form-group"><label>Notes</label><div class="safety-meeting-notes">${escHtml(data.notes)}</div></div>`
+    : '';
+
+  body.innerHTML = `
+    ${linkHtml}
+    ${notesHtml}
+    <div class="safety-attend-section">
+      <div class="safety-attend-header">
+        <span class="report-section-title" style="margin:0">Attendance</span>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-primary btn-sm safety-signin-btn">Sign In</button>
+          <button class="btn btn-secondary btn-sm safety-export-btn">${icon('print',14)} Export PDF</button>
+        </div>
+      </div>
+      <div class="safety-attend-list"></div>
+    </div>`;
+
+  renderSafetyAttendees(body.querySelector('.safety-attend-list'), data.attendees || []);
+
+  body.querySelector('.safety-signin-btn').addEventListener('click', () => {
+    openSafetySigninModal(data.meeting_id, body);
+  });
+  body.querySelector('.safety-export-btn').addEventListener('click', () => {
+    exportSafetyMeetingPDF(data, data.attendees || []);
+  });
+}
+
+function renderSafetyAttendees(listEl, attendees) {
+  if (!attendees.length) {
+    listEl.innerHTML = '<div class="placeholder-msg" style="padding:12px 0">No attendees yet.</div>';
+    return;
+  }
+  listEl.innerHTML = `<table class="safety-attend-table">
+    <thead><tr><th>#</th><th>Print Name</th><th>Signature</th><th>Date</th></tr></thead>
+    <tbody>${attendees.map((a, i) => `<tr>
+      <td style="color:var(--text-dim);font-size:0.82rem">${i + 1}</td>
+      <td>${escHtml(a.full_name)}</td>
+      <td>${a.signature_data ? `<img src="${escHtml(a.signature_data)}" alt="signature">` : '<span style="color:var(--text-dim)">—</span>'}</td>
+      <td style="white-space:nowrap">${a.signed_date ? localDateStr(a.signed_date, { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}</td>
+    </tr>`).join('')}</tbody>
+  </table>`;
+}
+
+// ── Sign-in Modal ─────────────────────────────────────────────────────────────
+let _sigCanvas = null;
+let _sigCtx    = null;
+let _sigDrawing = false;
+let _sigInited  = false;
+
+function openSafetySigninModal(meetingId, bodyEl) {
+  _safetySigninMeetingId = meetingId;
+  el('safety-signin-modal').classList.remove('hidden');
+  el('safety-signin-date').value = new Date().toLocaleDateString('en-CA');
+  el('safety-signin-error').classList.add('hidden');
+
+  // Init canvas once
+  if (!_sigInited) {
+    _sigInited = true;
+    _sigCanvas = el('safety-sig-canvas');
+    _sigCtx = _sigCanvas.getContext('2d');
+    initSigCanvas(_sigCanvas, _sigCtx);
+    el('safety-sig-clear').addEventListener('click', () => {
+      _sigCtx.clearRect(0, 0, _sigCanvas.width, _sigCanvas.height);
+    });
+    el('safety-signin-close').addEventListener('click', closeSafetySigninModal);
+    el('safety-signin-modal').addEventListener('click', e => {
+      if (e.target === el('safety-signin-modal')) closeSafetySigninModal();
+    });
+    el('safety-signin-name-sel').addEventListener('change', () => {
+      const isOther = el('safety-signin-name-sel').value === '__other__';
+      el('safety-signin-name-other').style.display = isOther ? '' : 'none';
+    });
+    el('safety-signin-save').addEventListener('click', () => saveSignIn(bodyEl));
+  } else {
+    // Clear canvas on re-open
+    _sigCtx.clearRect(0, 0, _sigCanvas.width, _sigCanvas.height);
+    // Store latest bodyEl for save callback
+    el('safety-signin-save').onclick = () => saveSignIn(bodyEl);
+  }
+
+  // Populate name dropdown
+  api('GET', '/api/users/list').then(users => {
+    const sel = el('safety-signin-name-sel');
+    const current = currentUser?.full_name || '';
+    sel.innerHTML = users.map(u => {
+      const n = u.full_name || u.username;
+      return `<option value="${escHtml(n)}" ${n === current ? 'selected' : ''}>${escHtml(n)}</option>`;
+    }).join('') + '<option value="__other__">Other (type below)…</option>';
+    el('safety-signin-name-other').style.display = 'none';
+  }).catch(() => {});
+}
+
+function closeSafetySigninModal() {
+  el('safety-signin-modal').classList.add('hidden');
+  _safetySigninMeetingId = null;
+}
+
+function initSigCanvas(canvas, ctx) {
+  ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--text').trim() || '#000';
+  ctx.lineWidth   = 2;
+  ctx.lineCap     = 'round';
+  ctx.lineJoin    = 'round';
+
+  const pt = e => {
+    const r = canvas.getBoundingClientRect();
+    const src = e.touches ? e.touches[0] : e;
+    return {
+      x: (src.clientX - r.left) * (canvas.width  / r.width),
+      y: (src.clientY - r.top)  * (canvas.height / r.height),
+    };
+  };
+  const start = e => { _sigDrawing = true; const p = pt(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); e.preventDefault(); };
+  const draw  = e => { if (!_sigDrawing) return; const p = pt(e); ctx.lineTo(p.x, p.y); ctx.stroke(); e.preventDefault(); };
+  const stop  = ()  => { _sigDrawing = false; };
+
+  canvas.addEventListener('pointerdown',  start);
+  canvas.addEventListener('pointermove',  draw);
+  canvas.addEventListener('pointerup',    stop);
+  canvas.addEventListener('pointerleave', stop);
+  canvas.addEventListener('touchstart',   start, { passive: false });
+  canvas.addEventListener('touchmove',    draw,  { passive: false });
+  canvas.addEventListener('touchend',     stop);
+}
+
+async function saveSignIn(bodyEl) {
+  const sel    = el('safety-signin-name-sel');
+  const isOther = sel.value === '__other__';
+  const name   = isOther ? el('safety-signin-name-other').value.trim() : sel.value;
+  const errEl  = el('safety-signin-error');
+  errEl.classList.add('hidden');
+
+  if (!name) {
+    errEl.textContent = 'Please enter your name.';
+    errEl.classList.remove('hidden');
+    return;
+  }
+
+  // Check if canvas has any drawn content
+  const blank = !_sigCanvas.toDataURL().includes('data:image/png;base64,iVBOR');
+  const sigData = blank ? '' : _sigCanvas.toDataURL('image/png');
+
+  const btn = el('safety-signin-save');
+  btn.disabled = true;
+  try {
+    await api('POST', `/api/safety-meetings/${_safetySigninMeetingId}/attend`, {
+      full_name:      name,
+      signature_data: sigData || null,
+      signed_date:    el('safety-signin-date').value,
+    });
+    closeSafetySigninModal();
+    showToast('Signed in successfully');
+    // Reload attendees in the expanded body
+    const data = await api('GET', `/api/safety-meetings/${_safetySigninMeetingId}`);
+    renderSafetyAttendees(bodyEl.querySelector('.safety-attend-list'), data.attendees || []);
+    // Update the attendee count badge in the header
+    const item = bodyEl.closest('.safety-meeting-item');
+    if (item) {
+      const countEl = item.querySelector('.safety-attend-count');
+      if (countEl) countEl.textContent = `${data.attendees.length} attendee${data.attendees.length !== 1 ? 's' : ''}`;
+    }
+  } catch (err) {
+    errEl.textContent = err.message;
+    errEl.classList.remove('hidden');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ── PDF Export ────────────────────────────────────────────────────────────────
+function exportSafetyMeetingPDF(meeting, attendees) {
+  const w = window.open('', '_blank');
+  if (!w) { showToast('Allow pop-ups to export PDF', 'error'); return; }
+
+  const fmtDate = d => d ? localDateStr(d, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }) : '—';
+  const fmtShort = d => d ? localDateStr(d, { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
+  const esc = s => String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+  const rows = attendees.map((a, i) => `
+    <tr>
+      <td class="num">${i + 1}</td>
+      <td>${esc(a.full_name)}</td>
+      <td class="sig-cell">${a.signature_data ? `<img src="${esc(a.signature_data)}" alt="">` : ''}</td>
+      <td class="date-cell">${fmtShort(a.signed_date)}</td>
+    </tr>`).join('');
+
+  // Fill remaining rows to ~20 total for a clean sheet
+  const empty = Math.max(0, 20 - attendees.length);
+  const blankRows = Array(empty).fill(0).map((_, i) =>
+    `<tr><td class="num">${attendees.length + i + 1}</td><td></td><td class="sig-cell"></td><td class="date-cell"></td></tr>`
+  ).join('');
+
+  w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8">
+    <title>Safety Meeting Sign-In — ${esc(meeting.topic)}</title>
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body { font-family: Arial, sans-serif; font-size: 10pt; color: #000; padding: 20px 24px; }
+      h1 { font-size: 13pt; margin-bottom: 4px; }
+      .org { font-size: 9pt; color: #555; margin-bottom: 12px; }
+      .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px; margin-bottom: 14px; border: 1px solid #ccc; padding: 8px 10px; border-radius: 4px; }
+      .meta-item { font-size: 9.5pt; }
+      .meta-label { font-weight: bold; color: #333; }
+      table { width: 100%; border-collapse: collapse; margin-top: 6px; }
+      th { background: #f0f0f0; border: 1px solid #bbb; padding: 5px 7px; font-size: 9pt; text-align: left; }
+      td { border: 1px solid #bbb; padding: 5px 7px; font-size: 9.5pt; height: 32px; vertical-align: middle; }
+      td.num { width: 30px; text-align: center; color: #888; font-size: 8.5pt; }
+      td.sig-cell { width: 180px; }
+      td.sig-cell img { height: 26px; max-width: 170px; }
+      td.date-cell { width: 90px; font-size: 8.5pt; }
+      .footer { margin-top: 16px; font-size: 8pt; color: #888; }
+      @media print { @page { margin: 15mm; } button { display: none !important; } }
+    </style>
+  </head><body>
+    <h1>Safety Meeting Sign-In Sheet</h1>
+    <div class="org">Kern County Water Agency</div>
+    <div class="meta">
+      <div class="meta-item"><span class="meta-label">Date:</span> ${fmtDate(meeting.meeting_date)}</div>
+      <div class="meta-item"><span class="meta-label">Time:</span> ${meeting.meeting_time ? meeting.meeting_time.slice(0,5) : '—'}</div>
+      <div class="meta-item"><span class="meta-label">Topic:</span> ${esc(meeting.topic)}</div>
+      <div class="meta-item"><span class="meta-label">Presented By:</span> ${esc(meeting.presented_by || '—')}</div>
+      ${meeting.link ? `<div class="meta-item" style="grid-column:1/-1"><span class="meta-label">Reference:</span> ${esc(meeting.link)}</div>` : ''}
+      ${meeting.notes ? `<div class="meta-item" style="grid-column:1/-1"><span class="meta-label">Notes:</span> ${esc(meeting.notes)}</div>` : ''}
+    </div>
+    <table>
+      <thead><tr><th>#</th><th>Print Name</th><th>Signature</th><th>Date</th></tr></thead>
+      <tbody>${rows}${blankRows}</tbody>
+    </table>
+    <div class="footer">Total Attendees: ${attendees.length} &nbsp;|&nbsp; Exported: ${new Date().toLocaleString()}</div>
+  </body></html>`);
+  w.document.close();
+  w.setTimeout(() => w.print(), 400);
+}
 
 /* ── Global Search ───────────────────────────────────────────────────────── */
 const SEARCH_TYPE_ICON = {

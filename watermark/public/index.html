@@ -129,7 +129,7 @@
         Sign in with Microsoft 365
       </a>
       <div id="ms-login-error" class="error-msg hidden"></div>
-      <div class="login-version">v 2.21</div>
+      <div class="login-version">v 2.22</div>
     </div>
   </div>
 </div>
@@ -240,6 +240,10 @@
       <li><button class="nav-btn" data-screen="ponds">
         <span class="nav-btn-icon"><span class="app-icon" style="width:22px;height:22px;-webkit-mask-image:url(/marv-site/icons/icon-gauge.svg);mask-image:url(/marv-site/icons/icon-gauge.svg)"></span></span>
         Ponds
+      </button></li>
+      <li><button class="nav-btn" data-screen="safety">
+        <span class="nav-btn-icon"><span class="app-icon" style="width:22px;height:22px;-webkit-mask-image:url(/marv-site/icons/icon-pm-records.svg);mask-image:url(/marv-site/icons/icon-pm-records.svg)"></span></span>
+        Safety
       </button></li>
       <li class="drawer-section-hdr">Maintenance</li>
       <li><button class="nav-btn" data-screen="maintenance">
@@ -1646,7 +1650,7 @@
     <div id="settings-panel-appinfo" class="settings-panel hidden">
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 2.21</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 2.22</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>
@@ -2019,6 +2023,19 @@
     </div>
 
   </div><!-- /screen-hr -->
+
+  <!-- ── Safety ────────────────────────────────────────────────────────────── -->
+  <div id="screen-safety" class="screen-content">
+    <div id="safety-main" class="dashboard-grid">
+      <button class="dash-tile" data-safety-panel="meetings">
+        <div class="dash-icon-wrap">
+          <span class="app-icon" style="width:32px;height:32px;-webkit-mask-image:url(/marv-site/icons/icon-annual-pm.svg);mask-image:url(/marv-site/icons/icon-annual-pm.svg)"></span>
+        </div>
+        <div class="dash-label">Safety Meetings</div>
+      </button>
+    </div>
+    <div id="safety-panel-meetings" class="maint-panel hidden"></div>
+  </div><!-- /screen-safety -->
 
   <!-- ── Charts ────────────────────────────────────────────────────────────── -->
   <div id="screen-charts" class="screen-content">
@@ -2506,6 +2523,34 @@
 <div id="toast" class="toast hidden"></div>
 
 <script src="app.js"></script>
+<!-- Safety Meeting Sign-in Modal -->
+<div id="safety-signin-modal" class="modal-overlay hidden">
+  <div class="modal-card safety-signin-card">
+    <div class="modal-header">
+      <h2>Sign In to Meeting</h2>
+      <button class="modal-close" id="safety-signin-close">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>Your Name</label>
+        <select id="safety-signin-name-sel" class="ctrl-select"></select>
+        <input type="text" id="safety-signin-name-other" class="ctrl-input" placeholder="Enter name…" style="display:none;margin-top:6px">
+      </div>
+      <div class="form-group">
+        <label>Signature <span style="color:var(--text-dim);font-weight:400;font-size:0.8rem">— draw with finger or mouse</span></label>
+        <canvas id="safety-sig-canvas" class="safety-sig-canvas"></canvas>
+        <button class="btn btn-secondary btn-sm" id="safety-sig-clear" style="margin-top:6px">Clear</button>
+      </div>
+      <div class="form-group">
+        <label>Date</label>
+        <input type="date" id="safety-signin-date" class="ctrl-input ctrl-input-sm">
+      </div>
+      <div id="safety-signin-error" class="error-msg hidden"></div>
+      <button class="btn btn-save" id="safety-signin-save">Save</button>
+    </div>
+  </div>
+</div>
+
 <script>
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');
 </script>

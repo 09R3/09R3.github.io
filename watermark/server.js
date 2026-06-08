@@ -322,7 +322,32 @@ pool.query(`
   END $$
 `).catch(err => console.error('Migration error (overpour rename):', err.message));
 
-// ── Auth / Sessions ───────────────────────────────────────────────────────────
+pool.query(`
+  CREATE TABLE IF NOT EXISTS safety_meetings (
+    meeting_id   SERIAL PRIMARY KEY,
+    meeting_date DATE NOT NULL,
+    meeting_time TIME,
+    presented_by TEXT,
+    topic        TEXT NOT NULL,
+    link         TEXT,
+    notes        TEXT,
+    created_by   INTEGER REFERENCES users(user_id),
+    created_at   TIMESTAMPTZ DEFAULT NOW()
+  )
+`).catch(err => console.error('Migration error (safety_meetings):', err.message));
+
+pool.query(`
+  CREATE TABLE IF NOT EXISTS safety_meeting_attendees (
+    attendee_id    SERIAL PRIMARY KEY,
+    meeting_id     INTEGER REFERENCES safety_meetings(meeting_id) ON DELETE CASCADE,
+    full_name      TEXT NOT NULL,
+    signature_data TEXT,
+    signed_date    DATE,
+    created_at     TIMESTAMPTZ DEFAULT NOW()
+  )
+`).catch(err => console.error('Migration error (safety_meeting_attendees):', err.message));
+
+ ───────────────────────────────────────────────────────────
 const SESSION_TTL = 8 * 60 * 60 * 1000; // 8 hours
 const sessions = new Map();
 
@@ -4288,6 +4313,73 @@ app.get('/api/dashboard/running-wells', requireAuth, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+/* ── Safety Meetings ─────────────────────────────────────────────────────── */
+app.get('/api/safety-meetings', requireAuth, async (req, res) => {
+  const q = (req.query.q || '').trim();
+  try {
+    const { rows } = await pool.query(`
+      SELECT m.meeting_id, m.meeting_date, m.meeting_time, m.presented_by,
+             m.topic, m.link, m.notes, m.created_at,
+             COUNT(a.attendee_id)::int AS attendee_count
+      FROM safety_meetings m
+      LEFT JOIN safety_meeting_attendees a ON a.meeting_id = m.meeting_id
+      ${q ? 'WHERE m.topic ILIKE $1' : ''}
+      GROUP BY m.meeting_id
+      ORDER BY m.meeting_date DESC, m.created_at DESC
+    `, q ? [`%${q}%`] : []);
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/safety-meetings', requireAuth, async (req, res) => {
+  const { meeting_date, meeting_time, presented_by, topic, link, notes } = req.body;
+  if (!topic) return res.status(400).json({ error: 'topic required' });
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO safety_meetings (meeting_date, meeting_time, presented_by, topic, link, notes, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING meeting_id`,
+      [meeting_date, meeting_time || null, presented_by || null, topic,
+       link || null, notes || null, req.user.user_id]
+    );
+    res.json({ ok: true, meeting_id: rows[0].meeting_id });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/safety-meetings/:id', requireAuth, async (req, res) => {
+  try {
+    const { rows: [meeting] } = await pool.query(
+      'SELECT * FROM safety_meetings WHERE meeting_id = $1', [req.params.id]
+    );
+    if (!meeting) return res.status(404).json({ error: 'not found' });
+    const { rows: attendees } = await pool.query(
+      'SELECT * FROM safety_meeting_attendees WHERE meeting_id = $1 ORDER BY created_at',
+      [req.params.id]
+    );
+    res.json({ ...meeting, attendees });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/safety-meetings/:id/attend', requireAuth, async (req, res) => {
+  const { full_name, signature_data, signed_date } = req.body;
+  if (!full_name) return res.status(400).json({ error: 'full_name required' });
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO safety_meeting_attendees (meeting_id, full_name, signature_data, signed_date)
+       VALUES ($1,$2,$3,$4) RETURNING attendee_id`,
+      [req.params.id, full_name, signature_data || null, signed_date || null]
+    );
+    res.json({ ok: true, attendee_id: rows[0].attendee_id });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/safety-meetings/:id/attendees/:aid', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+  try {
+    await pool.query('DELETE FROM safety_meeting_attendees WHERE attendee_id = $1 AND meeting_id = $2',
+      [req.params.aid, req.params.id]);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // ── Start ─────────────────────────────────────────────────────────────────────
