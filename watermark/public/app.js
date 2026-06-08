@@ -10223,8 +10223,28 @@ function renderSafetyMeetingBody(body, data) {
   body.querySelector('.safety-signin-btn').addEventListener('click', () => {
     openSafetySigninModal(data.meeting_id, body);
   });
-  body.querySelector('.safety-export-btn').addEventListener('click', () => {
-    exportSafetyMeetingPDF(data, data.attendees || []);
+  body.querySelector('.safety-export-btn').addEventListener('click', async () => {
+    // Open (or reuse) the PDF window NOW — must be synchronous in the click event
+    // so the browser doesn't treat it as a blocked popup
+    if (!_pdfWindow || _pdfWindow.closed) {
+      _pdfWindow = window.open('', '_blank');
+      if (!_pdfWindow) { showToast('Allow pop-ups to export PDF', 'error'); return; }
+    }
+    _pdfWindow.document.open();
+    _pdfWindow.document.write('<html><head><meta charset="UTF-8"><style>body{background:#111;color:#fff;font-family:Arial,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;font-size:1.1rem}</style></head><body>Loading…</body></html>');
+    _pdfWindow.document.close();
+    _pdfWindow.focus();
+    try {
+      const fresh = await api('GET', `/api/safety-meetings/${data.meeting_id}`);
+      data.attendees = fresh.attendees || [];
+      exportSafetyMeetingPDF(fresh, fresh.attendees || []);
+    } catch (e) {
+      if (_pdfWindow && !_pdfWindow.closed) {
+        _pdfWindow.document.open();
+        _pdfWindow.document.write('<html><body style="font-family:Arial;padding:20px;color:#c00">Failed to load meeting data. Please try again.</body></html>');
+        _pdfWindow.document.close();
+      }
+    }
   });
 }
 
@@ -10417,11 +10437,12 @@ async function saveSignIn(bodyEl) {
 
 // ── PDF Export ────────────────────────────────────────────────────────────────
 function exportSafetyMeetingPDF(meeting, attendees) {
-  const w = window.open('', '_blank');
-  if (!w) { showToast('Allow pop-ups to export PDF', 'error'); return; }
-
-  // Close any previously opened PDF window so stale content can't print again
-  if (_pdfWindow && !_pdfWindow.closed) _pdfWindow.close();
+  // _pdfWindow is pre-opened synchronously in the click handler to avoid popup blocker.
+  // Fall back to opening a new one only if called without prior setup.
+  if (!_pdfWindow || _pdfWindow.closed) {
+    _pdfWindow = window.open('', '_blank');
+    if (!_pdfWindow) { showToast('Allow pop-ups to export PDF', 'error'); return; }
+  }
 
   const fmtDate = d => d ? localDateStr(d, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }) : '—';
   const fmtShort = d => d ? localDateStr(d, { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
@@ -10437,9 +10458,7 @@ function exportSafetyMeetingPDF(meeting, attendees) {
     </tr>`).join('')
     : `<tr><td class="num" colspan="4" style="text-align:center;color:#999">No attendees recorded</td></tr>`;
 
-  _pdfWindow = window.open('', '_blank');
-  if (!_pdfWindow) { showToast('Allow pop-ups to export PDF', 'error'); return; }
-
+  _pdfWindow.document.open();
   _pdfWindow.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8">
     <title>Safety Meeting Sign-In — ${esc(meeting.topic)}</title>
     <style>
@@ -10517,6 +10536,7 @@ function exportSafetyMeetingPDF(meeting, attendees) {
     <\/script>
   </body></html>`);
   _pdfWindow.document.close();
+  _pdfWindow.focus();
 }
 
 /* ── Global Search ───────────────────────────────────────────────────────── */
