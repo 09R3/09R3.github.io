@@ -129,7 +129,7 @@
         Sign in with Microsoft 365
       </a>
       <div id="ms-login-error" class="error-msg hidden"></div>
-      <div class="login-version">v 2.21</div>
+      <div class="login-version">v 2.36</div>
     </div>
   </div>
 </div>
@@ -240,6 +240,10 @@
       <li><button class="nav-btn" data-screen="ponds">
         <span class="nav-btn-icon"><span class="app-icon" style="width:22px;height:22px;-webkit-mask-image:url(/marv-site/icons/icon-gauge.svg);mask-image:url(/marv-site/icons/icon-gauge.svg)"></span></span>
         Ponds
+      </button></li>
+      <li><button class="nav-btn" data-screen="safety">
+        <span class="nav-btn-icon"><span class="app-icon" style="width:22px;height:22px;-webkit-mask-image:url(/marv-site/icons/icon-pm-records.svg);mask-image:url(/marv-site/icons/icon-pm-records.svg)"></span></span>
+        Safety
       </button></li>
       <li class="drawer-section-hdr">Maintenance</li>
       <li><button class="nav-btn" data-screen="maintenance">
@@ -406,6 +410,12 @@
             <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-gauge.svg);mask-image:url(/marv-site/icons/icon-gauge.svg)"></span>
           </div>
           <span class="dash-label">Ponds</span>
+        </button>
+        <button class="dash-tile" data-screen="safety">
+          <div class="dash-icon-wrap">
+            <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-pm-records.svg);mask-image:url(/marv-site/icons/icon-pm-records.svg)"></span>
+          </div>
+          <span class="dash-label">Safety</span>
         </button>
       </div>
     </div>
@@ -598,6 +608,20 @@
         <button class="btn btn-save btn-sm" id="veh-new-record-btn">+ New Record</button>
       </div>
 
+      <!-- Filter bar -->
+      <div class="issue-filter-bar">
+        <select id="veh-filter-vehicle" class="ctrl-select"><option value="">All Vehicles</option></select>
+        <select id="veh-filter-type" class="ctrl-select">
+          <option value="">All Types</option>
+          <option value="repair">Repair</option>
+          <option value="pm">PM</option>
+          <option value="inspection">Inspection</option>
+          <option value="replacement">Replacement</option>
+          <option value="other">Other</option>
+        </select>
+        <input type="search" id="veh-filter-q" class="ctrl-input" placeholder="Search…">
+      </div>
+
       <!-- Record list -->
       <div id="veh-record-list"></div>
 
@@ -720,6 +744,19 @@
         <button class="btn btn-save btn-sm" id="equip-new-issue-btn">+ New Issue</button>
       </div>
 
+      <!-- Filter bar -->
+      <div class="issue-filter-bar">
+        <select id="equip-filter-type" class="ctrl-select">
+          <option value="">All Types</option>
+          <option value="pump">Pump</option>
+          <option value="motor">Motor</option>
+          <option value="compressor">Compressor</option>
+          <option value="siphon_breaker">Siphon Breaker</option>
+          <option value="other">Other</option>
+        </select>
+        <input type="search" id="equip-filter-q" class="ctrl-input" placeholder="Search…">
+      </div>
+
       <!-- New issue form -->
       <div id="equip-new-issue-form" class="form-card hidden">
         <div class="form-group">
@@ -781,6 +818,12 @@
         <button class="btn btn-save btn-sm" id="bldg-new-issue-btn">+ New Issue</button>
       </div>
 
+      <!-- Filter bar -->
+      <div class="issue-filter-bar">
+        <select id="bldg-filter-site" class="ctrl-select"><option value="">All Sites</option></select>
+        <input type="search" id="bldg-filter-q" class="ctrl-input" placeholder="Search…">
+      </div>
+
       <!-- New issue form -->
       <div id="bldg-new-issue-form" class="form-card hidden">
         <div class="form-group">
@@ -834,6 +877,13 @@
       <div class="issue-toolbar">
         <button class="btn btn-secondary btn-sm" id="well-show-resolved-btn">Show Resolved</button>
         <button class="btn btn-save btn-sm" id="well-new-issue-btn">+ New Issue</button>
+      </div>
+
+      <!-- Filter bar -->
+      <div class="issue-filter-bar">
+        <select id="well-filter-well" class="ctrl-select"><option value="">All Wells</option></select>
+        <select id="well-filter-area" class="ctrl-select"><option value="">All Areas</option></select>
+        <input type="search" id="well-filter-q" class="ctrl-input" placeholder="Search…">
       </div>
 
       <!-- New issue form -->
@@ -908,6 +958,23 @@
         <div id="swap-error" class="error-msg hidden"></div>
         <button class="btn btn-save btn-full" id="swap-save-btn">Complete Swap</button>
       </div>
+
+      <!-- Swap history -->
+      <div style="margin-top:20px">
+        <div class="issue-filter-bar">
+          <select id="swap-filter-cat" class="ctrl-select">
+            <option value="">All Categories</option>
+            <option value="siphon_breaker">Siphon Breaker</option>
+            <option value="motor">Motor</option>
+            <option value="pp_pump">PP Pump</option>
+            <option value="well_motor">Well Motor</option>
+            <option value="well_meter">Well Meter</option>
+          </select>
+          <select id="swap-filter-loc" class="ctrl-select"><option value="">All Locations</option></select>
+          <input type="search" id="swap-filter-q" class="ctrl-input" placeholder="Search…">
+        </div>
+        <div id="swap-history-list"></div>
+      </div>
     </div>
 
     <!-- PMs Panel -->
@@ -976,6 +1043,12 @@
       <div class="issue-toolbar">
         <button class="btn btn-secondary btn-sm" id="canal-show-resolved-btn">Show Resolved</button>
         <button class="btn btn-save btn-sm" id="canal-new-issue-btn">+ New Issue</button>
+      </div>
+
+      <!-- Filter bar -->
+      <div class="issue-filter-bar">
+        <select id="canal-filter-pool" class="ctrl-select"><option value="">All Pools</option></select>
+        <input type="search" id="canal-filter-q" class="ctrl-input" placeholder="Search…">
       </div>
 
       <!-- New issue form -->
@@ -1646,7 +1719,7 @@
     <div id="settings-panel-appinfo" class="settings-panel hidden">
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 2.21</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 2.36</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>
@@ -2019,6 +2092,19 @@
     </div>
 
   </div><!-- /screen-hr -->
+
+  <!-- ── Safety ────────────────────────────────────────────────────────────── -->
+  <div id="screen-safety" class="screen-content">
+    <div id="safety-main" class="dashboard-grid">
+      <button class="dash-tile" data-safety-panel="meetings">
+        <div class="dash-icon-wrap">
+          <span class="app-icon" style="width:32px;height:32px;-webkit-mask-image:url(/marv-site/icons/icon-annual-pm.svg);mask-image:url(/marv-site/icons/icon-annual-pm.svg)"></span>
+        </div>
+        <div class="dash-label">Safety Meetings</div>
+      </button>
+    </div>
+    <div id="safety-panel-meetings" class="maint-panel hidden"></div>
+  </div><!-- /screen-safety -->
 
   <!-- ── Charts ────────────────────────────────────────────────────────────── -->
   <div id="screen-charts" class="screen-content">
@@ -2506,6 +2592,52 @@
 <div id="toast" class="toast hidden"></div>
 
 <script src="app.js"></script>
+<!-- Safety Meeting Sign-in Modal -->
+<div id="safety-signin-modal" class="modal-overlay hidden">
+  <div class="modal-card safety-signin-card">
+    <div class="modal-header">
+      <h2>Sign In to Meeting</h2>
+      <button class="modal-close" id="safety-signin-close">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>Your Name</label>
+        <select id="safety-signin-name-sel" class="ctrl-select"></select>
+        <input type="text" id="safety-signin-name-other" class="ctrl-input" placeholder="Enter name…" style="display:none;margin-top:6px">
+      </div>
+      <div class="form-group">
+        <label>Signature <span style="color:var(--text-dim);font-weight:400;font-size:0.8rem">— draw with finger or mouse</span></label>
+        <canvas id="safety-sig-canvas" class="safety-sig-canvas"></canvas>
+        <button class="btn btn-secondary btn-sm" id="safety-sig-clear" style="margin-top:6px">Clear</button>
+      </div>
+      <div class="form-group">
+        <label>Date</label>
+        <input type="date" id="safety-signin-date" class="ctrl-input ctrl-input-sm">
+      </div>
+      <div id="safety-signin-error" class="error-msg hidden"></div>
+      <button class="btn btn-save" id="safety-signin-save">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Report location picker modal -->
+<div id="report-loc-modal" class="modal-overlay hidden">
+  <div class="modal-card" style="max-width:480px;width:100%">
+    <div class="modal-header">
+      <h2>Select Location</h2>
+      <button class="modal-close" id="rlo-close">&times;</button>
+    </div>
+    <div class="modal-body" style="padding:0">
+      <div style="padding:10px 16px 8px;font-size:0.85rem;color:var(--text-dim)">No GPS found — tap the map to pin a location for this report.</div>
+      <div id="report-loc-map" style="height:260px"></div>
+      <div style="padding:12px 16px;display:flex;gap:8px">
+        <button class="btn btn-secondary" id="rlo-skip" style="flex:1">Skip</button>
+        <button class="btn btn-save" id="rlo-use" style="flex:1">Use This Location</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');
 </script>

@@ -379,6 +379,42 @@ el('location-modal-open-btn').addEventListener('click', () => {
   window.location.href = _locationModalUrl;
 });
 
+/* ── Report Location Picker ─────────────────────────────────────────────── */
+let _rloMap = null, _rloMarker = null;
+
+function pickReportLocation() {
+  return new Promise(resolve => {
+    const modal = el('report-loc-modal');
+    modal.classList.remove('hidden');
+    if (_rloMarker) { _rloMarker.remove(); _rloMarker = null; }
+
+    const done = result => { modal.classList.add('hidden'); resolve(result); };
+
+    el('rlo-close').onclick = () => done(null);
+    el('rlo-skip').onclick  = () => done(null);
+    el('rlo-use').onclick   = () => {
+      if (!_rloMarker) { showToast('Tap the map to place a pin first', 'error'); return; }
+      const ll = _rloMarker.getLatLng();
+      done({ lat: ll.lat, lon: ll.lng });
+    };
+    modal.onclick = e => { if (e.target === modal) done(null); };
+
+    if (!_rloMap) {
+      _rloMap = L.map('report-loc-map', { zoomControl: true, attributionControl: false });
+      L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+        maxZoom: 20
+      }).addTo(_rloMap);
+      _rloMap.setView([35.37, -119.02], 12);
+      _rloMap.on('click', e => {
+        const { lat, lng } = e.latlng;
+        if (_rloMarker) _rloMarker.setLatLng([lat, lng]);
+        else _rloMarker = L.marker([lat, lng], { draggable: true }).addTo(_rloMap);
+      });
+    }
+    setTimeout(() => _rloMap.invalidateSize(), 200);
+  });
+}
+
 /* ── Set Map Modal ───────────────────────────────────────────────────────── */
 let _setLeafletMap = null;
 let _setLeafletMarkers = [];
@@ -498,6 +534,7 @@ function showScreen(name) {
     hr:              'HR',
     charts:          'Charts',
     ponds:           'Ponds',
+    safety:          'Safety',
   };
   closeDrawer();
 
@@ -532,6 +569,7 @@ function showScreen(name) {
   if (name === 'hr')            initHRScreen();
   if (name === 'charts')        initChartsScreen();
   if (name === 'ponds')         initPondsScreen();
+  if (name === 'safety')        initSafetyScreen();
 
   // Refresh time to current on every screen visit
   const screenTimeIds = {
@@ -1879,13 +1917,16 @@ function createVehicleItem(v, dateInput, timeInput) {
 let wellIssuesLoaded  = false;
 let wellIssues        = [];
 let wellShowResolved  = false;
+let _wellFilterWell   = '';
+let _wellFilterArea   = '';
+let _wellFilterQ      = '';
 
 function initMaintWellsPanel() {
   if (wellIssuesLoaded) return;
   wellIssuesLoaded = true;
   el('well-issue-date').value = todayISO();
   loadWellIssues();
-  // Populate well dropdown
+  // Populate new-issue well dropdown
   api('GET', '/api/wells/operational').then(wells => {
     const sel = el('well-issue-select');
     sel.innerHTML = '<option value="">Select well…</option>';
@@ -1897,16 +1938,66 @@ function initMaintWellsPanel() {
       sel.appendChild(opt);
     });
   }).catch(() => {});
+
+  // Wire filter bar
+  el('well-filter-well').addEventListener('change', () => {
+    _wellFilterWell = el('well-filter-well').value;
+    applyWellFilters();
+  });
+  el('well-filter-area').addEventListener('change', () => {
+    _wellFilterArea = el('well-filter-area').value;
+    applyWellFilters();
+  });
+  let _wfqTimer;
+  el('well-filter-q').addEventListener('input', () => {
+    clearTimeout(_wfqTimer);
+    _wfqTimer = setTimeout(() => {
+      _wellFilterQ = el('well-filter-q').value.trim();
+      applyWellFilters();
+    }, 250);
+  });
 }
 
 async function loadWellIssues() {
   try {
     wellIssues = await api('GET', `/api/well-issues?include_resolved=${wellShowResolved}`);
-    renderWellIssues();
+    populateWellFilterDropdowns();
+    applyWellFilters();
     updateWellBadge();
   } catch {
     el('well-issue-list').innerHTML = `<div class="placeholder-msg">Failed to load issues</div>`;
   }
+}
+
+function populateWellFilterDropdowns() {
+  const wellSel = el('well-filter-well');
+  const prevWell = wellSel.value;
+  const seenWells = new Map();
+  wellIssues.forEach(i => { if (i.well_id && !seenWells.has(i.well_id)) seenWells.set(i.well_id, i); });
+  const sortedWells = [...seenWells.values()].sort((a, b) => (a.well_name || '').localeCompare(b.well_name || ''));
+  wellSel.innerHTML = '<option value="">All Wells</option>' +
+    sortedWells.map(i => `<option value="${i.well_id}"${String(i.well_id) === prevWell ? ' selected' : ''}>${escHtml(i.well_area ? `${i.well_name} (${i.well_area})` : i.well_name || '')}</option>`).join('');
+
+  const areaSel = el('well-filter-area');
+  const prevArea = areaSel.value;
+  const areas = [...new Set(wellIssues.map(i => i.well_area).filter(Boolean))].sort();
+  areaSel.innerHTML = '<option value="">All Areas</option>' +
+    areas.map(a => `<option value="${escHtml(a)}"${a === prevArea ? ' selected' : ''}>${escHtml(a)}</option>`).join('');
+}
+
+function applyWellFilters() {
+  let items = wellIssues;
+  if (_wellFilterWell) items = items.filter(i => String(i.well_id) === _wellFilterWell);
+  if (_wellFilterArea) items = items.filter(i => i.well_area === _wellFilterArea);
+  if (_wellFilterQ) {
+    const q = _wellFilterQ.toLowerCase();
+    items = items.filter(i =>
+      [i.well_name, i.well_area, i.description, i.action_taken,
+       i.resolution_notes, i.assigned_to, i.entered_by_full_name, i.notes]
+        .some(f => (f || '').toLowerCase().includes(q))
+    );
+  }
+  renderWellIssues(items);
 }
 
 function updateWellBadge() {
@@ -1914,13 +2005,15 @@ function updateWellBadge() {
   setBadge('maint-badge-wells', count);
 }
 
-function renderWellIssues() {
+function renderWellIssues(items) {
+  items = items ?? wellIssues;
   const list = el('well-issue-list');
-  if (!wellIssues.length) {
-    list.innerHTML = `<div class="placeholder-msg">No ${wellShowResolved ? '' : 'open '}issues</div>`;
+  if (!items.length) {
+    const hasFilters = _wellFilterWell || _wellFilterArea || _wellFilterQ;
+    list.innerHTML = `<div class="placeholder-msg">${hasFilters ? 'No matching issues.' : `No ${wellShowResolved ? '' : 'open '}issues`}</div>`;
     return;
   }
-  list.innerHTML = wellIssues.map(issue => {
+  list.innerHTML = items.map(issue => {
     const statusClass = issue.status.replace('_', '-');
     const title   = issue.well_area ? `${issue.well_name} (${issue.well_area})` : (issue.well_name || 'Unknown Well');
     const snippet = (issue.description || '').slice(0, 80) + (issue.description?.length > 80 ? '…' : '');
@@ -2099,6 +2192,7 @@ el('well-issue-list').addEventListener('click', async e => {
       reportLabel: 'Well Issue Report',
       getTitle:    i => i.well_area ? `${i.well_name} (${i.well_area})` : (i.well_name || 'Unknown Well'),
       getGPS:      i => i.gps_latitude != null ? { lat: i.gps_latitude, lon: i.gps_longitude } : null,
+      resolveGPS:  resolveGPSFromBlobs,
       getRows:     i => [
         ['Well',       escHtml(i.well_name || '—')],
         i.well_area ? ['Area', escHtml(i.well_area)] : null,
@@ -2146,10 +2240,17 @@ el('well-issue-list').addEventListener('click', async e => {
 let bldgIssuesLoaded  = false;
 let bldgIssues        = [];
 let bldgShowResolved  = false;
+let _bldgFilterSite   = '';
+let _bldgFilterQ      = '';
 
 function initMaintBuildingsPanel() {
   if (bldgIssuesLoaded) return;
   bldgIssuesLoaded = true;
+
+  el('bldg-filter-site').addEventListener('change', () => { _bldgFilterSite = el('bldg-filter-site').value; applyBldgFilters(); });
+  let _bfqT;
+  el('bldg-filter-q').addEventListener('input', () => { clearTimeout(_bfqT); _bfqT = setTimeout(() => { _bldgFilterQ = el('bldg-filter-q').value.trim(); applyBldgFilters(); }, 250); });
+
   el('bldg-issue-date').value = todayISO();
   loadBldgIssues();
   // Load sites for new-issue form
@@ -2168,7 +2269,8 @@ function initMaintBuildingsPanel() {
 async function loadBldgIssues() {
   try {
     bldgIssues = await api('GET', `/api/building-issues?include_resolved=${bldgShowResolved}`);
-    renderBldgIssues();
+    populateBldgFilterDropdowns();
+    applyBldgFilters();
     updateBldgBadge();
   } catch {
     el('bldg-issue-list').innerHTML = `<div class="placeholder-msg">Failed to load issues</div>`;
@@ -2180,13 +2282,37 @@ function updateBldgBadge() {
   setBadge('maint-badge-buildings', count);
 }
 
-function renderBldgIssues() {
+function populateBldgFilterDropdowns() {
+  const sSel = el('bldg-filter-site');
+  const prev = sSel.value;
+  const sites = [...new Set(bldgIssues.map(i => i.site_name).filter(Boolean))].sort();
+  sSel.innerHTML = '<option value="">All Sites</option>' +
+    sites.map(s => `<option value="${escHtml(s)}"${s === prev ? ' selected' : ''}>${escHtml(s)}</option>`).join('');
+}
+
+function applyBldgFilters() {
+  let items = bldgIssues;
+  if (_bldgFilterSite) items = items.filter(i => i.site_name === _bldgFilterSite);
+  if (_bldgFilterQ) {
+    const q = _bldgFilterQ.toLowerCase();
+    items = items.filter(i =>
+      [i.site_name, i.building_name, i.description, i.action_taken,
+       i.resolution_notes, i.assigned_to, i.entered_by_full_name, i.notes]
+        .some(f => (f || '').toLowerCase().includes(q))
+    );
+  }
+  renderBldgIssues(items);
+}
+
+function renderBldgIssues(items) {
+  items = items ?? bldgIssues;
   const list = el('bldg-issue-list');
-  if (!bldgIssues.length) {
-    list.innerHTML = `<div class="placeholder-msg">No ${bldgShowResolved ? '' : 'open '}issues</div>`;
+  if (!items.length) {
+    const hasF = _bldgFilterSite || _bldgFilterQ;
+    list.innerHTML = `<div class="placeholder-msg">${hasF ? 'No matching issues.' : `No ${bldgShowResolved ? '' : 'open '}issues`}</div>`;
     return;
   }
-  list.innerHTML = bldgIssues.map(issue => {
+  list.innerHTML = items.map(issue => {
     const statusClass = issue.status.replace('_', '-');
     const title   = [issue.site_name, issue.building_name].filter(Boolean).join(' — ') || 'Unknown Building';
     const snippet = (issue.description || '').slice(0, 80) + (issue.description?.length > 80 ? '…' : '');
@@ -2421,11 +2547,18 @@ el('bldg-issue-list').addEventListener('click', async e => {
 let equipIssuesLoaded = false;
 let equipIssues       = [];
 let equipShowResolved = false;
+let _equipFilterType  = '';
+let _equipFilterQ     = '';
 let equipNewType      = 'pump';
 
 function initMaintEquipmentPanel() {
   if (equipIssuesLoaded) return;
   equipIssuesLoaded = true;
+
+  el('equip-filter-type').addEventListener('change', () => { _equipFilterType = el('equip-filter-type').value; applyEquipFilters(); });
+  let _efqT;
+  el('equip-filter-q').addEventListener('input', () => { clearTimeout(_efqT); _efqT = setTimeout(() => { _equipFilterQ = el('equip-filter-q').value.trim(); applyEquipFilters(); }, 250); });
+
   el('equip-issue-date').value = todayISO();
   loadEquipIssues();
   loadEquipForNewIssue(equipNewType);
@@ -2434,11 +2567,25 @@ function initMaintEquipmentPanel() {
 async function loadEquipIssues() {
   try {
     equipIssues = await api('GET', `/api/equipment-issues?include_resolved=${equipShowResolved}`);
-    renderEquipIssues();
+    applyEquipFilters();
     updateEquipBadge();
   } catch (err) {
     el('equip-issue-list').innerHTML = `<div class="placeholder-msg">Failed to load issues</div>`;
   }
+}
+
+function applyEquipFilters() {
+  let items = equipIssues;
+  if (_equipFilterType) items = items.filter(i => i.equipment_type === _equipFilterType);
+  if (_equipFilterQ) {
+    const q = _equipFilterQ.toLowerCase();
+    items = items.filter(i =>
+      [i.equipment_name, i.equipment_type, i.description, i.action_taken,
+       i.resolution_notes, i.assigned_to, i.entered_by_full_name, i.notes]
+        .some(f => (f || '').toLowerCase().includes(q))
+    );
+  }
+  renderEquipIssues(items);
 }
 
 function updateEquipBadge() {
@@ -2446,13 +2593,15 @@ function updateEquipBadge() {
   setBadge('maint-badge-equipment', count);
 }
 
-function renderEquipIssues() {
+function renderEquipIssues(items) {
+  items = items ?? equipIssues;
   const list = el('equip-issue-list');
-  if (!equipIssues.length) {
-    list.innerHTML = `<div class="placeholder-msg">No ${equipShowResolved ? '' : 'open '}issues</div>`;
+  if (!items.length) {
+    const hasF = _equipFilterType || _equipFilterQ;
+    list.innerHTML = `<div class="placeholder-msg">${hasF ? 'No matching issues.' : `No ${equipShowResolved ? '' : 'open '}issues`}</div>`;
     return;
   }
-  list.innerHTML = equipIssues.map(issue => {
+  list.innerHTML = items.map(issue => {
     const statusClass = issue.status.replace('_', '-');
     const snippet = (issue.description || '').slice(0, 80) + (issue.description?.length > 80 ? '…' : '');
     const entityName = (issue.equipment_name || issue.equipment_type || 'equip').replace(/[^a-zA-Z0-9-]/g,'_').replace(/_+/g,'_').replace(/^_|_$/,'').slice(0,30);
@@ -2708,11 +2857,18 @@ el('equip-issue-list').addEventListener('click', async e => {
 let canalIssues       = [];
 let canalIssuesLoaded = false;
 let canalShowResolved = false;
+let _canalFilterPool  = '';
+let _canalFilterQ     = '';
 let canalNewPhotos    = []; // [{file, gps}] for new-issue form, gps is null until extracted
 
 function initMaintCanalPanel() {
   if (canalIssuesLoaded) return;
   canalIssuesLoaded = true;
+
+  el('canal-filter-pool').addEventListener('change', () => { _canalFilterPool = el('canal-filter-pool').value; applyCanalFilters(); });
+  let _cfqT;
+  el('canal-filter-q').addEventListener('input', () => { clearTimeout(_cfqT); _cfqT = setTimeout(() => { _canalFilterQ = el('canal-filter-q').value.trim(); applyCanalFilters(); }, 250); });
+
   el('canal-issue-date').value = todayISO();
   loadCanalIssues();
 }
@@ -2720,7 +2876,8 @@ function initMaintCanalPanel() {
 async function loadCanalIssues() {
   try {
     canalIssues = await api('GET', `/api/canal-issues?include_resolved=${canalShowResolved}`);
-    renderCanalIssues();
+    populateCanalFilterDropdowns();
+    applyCanalFilters();
     updateCanalBadge();
   } catch {
     el('canal-issue-list').innerHTML = `<div class="placeholder-msg">Failed to load issues</div>`;
@@ -2732,13 +2889,37 @@ function updateCanalBadge() {
   setBadge('maint-badge-canal', count);
 }
 
-function renderCanalIssues() {
+function populateCanalFilterDropdowns() {
+  const pSel = el('canal-filter-pool');
+  const prev = pSel.value;
+  const pools = [...new Set(canalIssues.map(i => i.pool).filter(Boolean))].sort((a, b) => Number(a) - Number(b));
+  pSel.innerHTML = '<option value="">All Pools</option>' +
+    pools.map(p => `<option value="${escHtml(p)}"${p === prev ? ' selected' : ''}>Pool ${escHtml(p)}</option>`).join('');
+}
+
+function applyCanalFilters() {
+  let items = canalIssues;
+  if (_canalFilterPool) items = items.filter(i => String(i.pool) === _canalFilterPool);
+  if (_canalFilterQ) {
+    const q = _canalFilterQ.toLowerCase();
+    items = items.filter(i =>
+      [i.pool ? `pool ${i.pool}` : '', i.description, i.action_taken,
+       i.resolution_notes, i.assigned_to, i.entered_by_full_name, i.notes]
+        .some(f => (f || '').toLowerCase().includes(q))
+    );
+  }
+  renderCanalIssues(items);
+}
+
+function renderCanalIssues(items) {
+  items = items ?? canalIssues;
   const list = el('canal-issue-list');
-  if (!canalIssues.length) {
-    list.innerHTML = `<div class="placeholder-msg">No ${canalShowResolved ? '' : 'open '}issues</div>`;
+  if (!items.length) {
+    const hasF = _canalFilterPool || _canalFilterQ;
+    list.innerHTML = `<div class="placeholder-msg">${hasF ? 'No matching issues.' : `No ${canalShowResolved ? '' : 'open '}issues`}</div>`;
     return;
   }
-  list.innerHTML = canalIssues.map(issue => {
+  list.innerHTML = items.map(issue => {
     const statusClass = issue.status.replace('_', '-');
     const title   = issue.pool ? `Pool ${escHtml(issue.pool)}` : 'Canal';
     const snippet = (issue.description || '').slice(0, 80) + (issue.description?.length > 80 ? '…' : '');
@@ -3088,16 +3269,24 @@ async function shareMaintenanceReport(issueId, item, cfg) {
     }))).filter(Boolean);
     const photoUris = await Promise.all(photoBlobs.map(b => blobToDataUri(b)));
 
-    // GPS: from issue record (getGPS) or scanned from photo EXIF (resolveGPS)
+    // GPS priority: 1) issue record (e.g. well GPS from DB), 2) photo EXIF, 3) user picks
     let gps = cfg.getGPS ? cfg.getGPS(issue) : null;
     if (!gps && cfg.resolveGPS) gps = await cfg.resolveGPS(photoBlobs);
+    if (!gps) gps = await pickReportLocation();
 
     // Optional GPS map with pin
+    // Use Web Mercator (EPSG:3857) bbox so the GPS point falls exactly at the
+    // image pixel center — a geographic (4326) bbox renders in Mercator, causing
+    // equal-degree lat/lon intervals to map to unequal pixel distances and
+    // shifting the pin off-center.
     let mapSrc = null;
     if (gps) {
-      const pad = 0.0015;
-      const bbox = `${gps.lon-pad},${gps.lat-pad},${gps.lon+pad},${gps.lat+pad}`;
-      const esriUrl = `https://server.arcgisonline.com/arcgis/rest/services/World_Imagery/MapServer/export?bbox=${bbox}&bboxSR=4326&size=600,300&imageSR=96&f=image`;
+      const R = 6378137;
+      const mx = R * gps.lon * Math.PI / 180;
+      const my = R * Math.log(Math.tan(Math.PI / 4 + gps.lat * Math.PI / 360));
+      const padX = 250, padY = 125; // metres; 2:1 matches 600×300 px
+      const bbox = `${mx-padX},${my-padY},${mx+padX},${my+padY}`;
+      const esriUrl = `https://server.arcgisonline.com/arcgis/rest/services/World_Imagery/MapServer/export?bbox=${bbox}&bboxSR=3857&size=600,300&imageSR=3857&f=image`;
       try {
         const resp = await fetch(esriUrl);
         if (resp.ok) mapSrc = await addPinToMapImage(await blobToDataUri(await resp.blob()), 600, 300);
@@ -3124,6 +3313,12 @@ async function shareMaintenanceReport(issueId, item, cfg) {
 function buildMaintenanceReportHtml({ reportLabel, title, rows, description, mapSrc, gps, photoUris }) {
   const lat = gps ? Number(gps.lat).toFixed(6) : null;
   const lon = gps ? Number(gps.lon).toFixed(6) : null;
+
+  // Location section: satellite map when GPS is available, first photo as fallback
+  const locationImg   = mapSrc || (photoUris.length ? photoUris[0] : null);
+  const photoFallback = !mapSrc && photoUris.length > 0;
+  const galleryPhotos = photoFallback ? photoUris.slice(1) : photoUris;
+
   return `
     <div class="ir-header">
       <div class="ir-title">${escHtml(reportLabel)} — ${escHtml(title)}</div>
@@ -3136,17 +3331,17 @@ function buildMaintenanceReportHtml({ reportLabel, title, rows, description, map
       <div class="ir-section-label">Description</div>
       <div class="ir-text">${escHtml(description).replace(/\n/g,'<br>')}</div>
     </div>
-    ${mapSrc ? `
+    ${locationImg ? `
     <div class="ir-section">
-      <div class="ir-section-label">Location</div>
-      <img src="${mapSrc}" class="ir-map" alt="Location map" crossorigin="anonymous">
-      <a href="#" class="ir-coords" data-lat="${lat}" data-lon="${lon}">${lat}, ${lon}</a>
+      <div class="ir-section-label">Location${photoFallback ? ' (site photo)' : ''}</div>
+      <img src="${locationImg}" class="${photoFallback ? 'ir-photo' : 'ir-map'}" alt="${photoFallback ? 'Site photo' : 'Location map'}" ${mapSrc ? 'crossorigin="anonymous"' : ''}>
+      ${gps ? `<a href="#" class="ir-coords" data-lat="${lat}" data-lon="${lon}">${lat}, ${lon}</a>` : ''}
     </div>` : ''}
-    ${photoUris.length ? `
+    ${galleryPhotos.length ? `
     <div class="ir-section">
-      <div class="ir-section-label">Photos (${photoUris.length})</div>
+      <div class="ir-section-label">Photos (${galleryPhotos.length})</div>
       <div class="ir-photos">
-        ${photoUris.map(uri => `<img src="${uri}" class="ir-photo" alt="">`).join('')}
+        ${galleryPhotos.map(uri => `<img src="${uri}" class="ir-photo" alt="">`).join('')}
       </div>
     </div>` : ''}`;
 }
@@ -3187,7 +3382,34 @@ function showMaintenanceReportPreview({ reportLabel, title, rows, description, m
     );
   });
 
-  modal.querySelector('#rp-print').addEventListener('click', () => window.print());
+  modal.querySelector('#rp-print').addEventListener('click', () => {
+    // Open an isolated window so the app's flex/fixed layout can't interfere
+    const pw = window.open('', '_blank');
+    if (!pw) { showToast('Allow pop-ups to print', 'error'); return; }
+    const bodyHtml = modal.querySelector('#ir-body').innerHTML;
+    pw.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8">
+      <title>${escHtml(title)}</title>
+      <style>
+        *{box-sizing:border-box;margin:0;padding:0}
+        body{font-family:Arial,sans-serif;font-size:10pt;color:#111;background:#fff;padding:20px 24px}
+        .ir-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px;padding-bottom:10px;border-bottom:2px solid #333}
+        .ir-title{font-size:1.1rem;font-weight:700;color:#111}
+        .ir-meta{font-size:0.74rem;color:#666;white-space:nowrap;padding-top:2px}
+        .ir-table{width:100%;border-collapse:collapse;margin-bottom:14px;font-size:0.84rem}
+        .ir-table th{text-align:left;width:130px;padding:4px 10px 4px 0;color:#555;font-weight:600;vertical-align:top}
+        .ir-table td{padding:4px 0;color:#111}
+        .ir-section{margin-top:14px;padding-top:10px;border-top:1px solid #ddd}
+        .ir-section-label{font-weight:700;font-size:0.74rem;text-transform:uppercase;letter-spacing:.06em;color:#555;margin-bottom:6px}
+        .ir-text{font-size:0.87rem;color:#222;white-space:pre-wrap}
+        .ir-map{width:100%;max-width:620px;border-radius:4px;display:block;margin-bottom:4px}
+        .ir-coords{font-size:0.73rem;color:#1a73e8;text-decoration:underline}
+        .ir-photos{display:flex;flex-direction:column;gap:12px}
+        .ir-photo{width:100%;max-width:620px;border-radius:4px;display:block}
+        @media print{@page{margin:0}body{padding:15mm}.ir-photo{page-break-inside:avoid}}
+      </style>
+    </head><body>${bodyHtml}</body></html>`);
+    pw.document.close();
+  });
 
   modal.querySelector('#rp-share').addEventListener('click', async () => {
     const shareBtn = modal.querySelector('#rp-share');
@@ -3313,15 +3535,43 @@ let maintVehiclesLoaded = false;
 // Vehicle record list state
 let vehRecords       = [];
 let vehShowResolved  = false;
+let _vehFilterVehicle = '';
+let _vehFilterType    = '';
+let _vehFilterQ       = '';
 
 async function loadVehRecords() {
   try {
     vehRecords = await api('GET', `/api/maintenance/vehicles-list?include_resolved=${vehShowResolved}`);
-    renderVehRecords();
+    populateVehFilterDropdowns();
+    applyVehFilters();
     setBadge('maint-badge-vehicles', vehRecords.filter(r => r.status === 'open' || r.status === 'in-progress').length);
   } catch {
     el('veh-record-list').innerHTML = '<div class="placeholder-msg">Failed to load records</div>';
   }
+}
+
+function populateVehFilterDropdowns() {
+  const vSel = el('veh-filter-vehicle');
+  const prev = vSel.value;
+  const seen = new Map();
+  vehRecords.forEach(r => { if (r.vehicle_number && !seen.has(r.vehicle_number)) seen.set(r.vehicle_number, r); });
+  const sorted = [...seen.values()].sort((a, b) => (a.vehicle_number || '').localeCompare(b.vehicle_number || ''));
+  vSel.innerHTML = '<option value="">All Vehicles</option>' +
+    sorted.map(r => `<option value="${escHtml(r.vehicle_number)}"${r.vehicle_number === prev ? ' selected' : ''}>${escHtml([r.vehicle_number, r.model].filter(Boolean).join(' — '))}</option>`).join('');
+}
+
+function applyVehFilters() {
+  let items = vehRecords;
+  if (_vehFilterVehicle) items = items.filter(r => r.vehicle_number === _vehFilterVehicle);
+  if (_vehFilterType)    items = items.filter(r => r.work_type === _vehFilterType);
+  if (_vehFilterQ) {
+    const q = _vehFilterQ.toLowerCase();
+    items = items.filter(r =>
+      [r.vehicle_number, r.model, r.work_type, r.description, r.performed_by, r.notes]
+        .some(f => (f || '').toLowerCase().includes(q))
+    );
+  }
+  renderVehRecords(items);
 }
 
 // Per-card pending files: Map<maintenance_id, [{file, fileType}]>
@@ -3496,14 +3746,16 @@ function renderVehCardQueue(id) {
   });
 }
 
-function renderVehRecords() {
+function renderVehRecords(items) {
+  items = items ?? vehRecords;
   const list = el('veh-record-list');
-  if (!vehRecords.length) {
-    list.innerHTML = `<div class="placeholder-msg">No ${vehShowResolved ? '' : 'open '}records</div>`;
+  if (!items.length) {
+    const hasF = _vehFilterVehicle || _vehFilterType || _vehFilterQ;
+    list.innerHTML = `<div class="placeholder-msg">${hasF ? 'No matching records.' : `No ${vehShowResolved ? '' : 'open '}records`}</div>`;
     return;
   }
   const statusLabel = { open: 'Open', 'in-progress': 'In Progress', resolved: 'Resolved' };
-  list.innerHTML = vehRecords.map(r => {
+  list.innerHTML = items.map(r => {
     const id = r.maintenance_id;
     const vehicleName = [r.vehicle_number, r.model].filter(Boolean).join(' — ');
     const snippet = (r.description || '').slice(0, 80) + ((r.description || '').length > 80 ? '…' : '');
@@ -3754,6 +4006,11 @@ async function initMaintVehiclesPanel() {
   if (maintVehiclesLoaded) return;
   maintVehiclesLoaded = true;
 
+  el('veh-filter-vehicle').addEventListener('change', () => { _vehFilterVehicle = el('veh-filter-vehicle').value; applyVehFilters(); });
+  el('veh-filter-type').addEventListener('change',   () => { _vehFilterType    = el('veh-filter-type').value;    applyVehFilters(); });
+  let _vfqT;
+  el('veh-filter-q').addEventListener('input', () => { clearTimeout(_vfqT); _vfqT = setTimeout(() => { _vehFilterQ = el('veh-filter-q').value.trim(); applyVehFilters(); }, 250); });
+
   try {
     const vehicles = await api('GET', '/api/vehicles');
     maintVehicles = vehicles;
@@ -3853,6 +4110,11 @@ el('maint-site-select').addEventListener('change', async () => {
 /* ── Equipment Swaps ─────────────────────────────────────────────────────── */
 let swapCategory = 'siphon_breaker';
 let swapPanelLoaded = false;
+let swapHistory      = [];
+let _swapFilterCat   = '';
+let _swapFilterLoc   = '';
+let _swapFilterQ     = '';
+const SWAP_CAT_LABEL = { siphon_breaker: 'Siphon Breaker', motor: 'Motor', pp_pump: 'PP Pump', well_motor: 'Well Motor', well_meter: 'Well Meter' };
 
 function initMaintSwapsPanel() {
   if (swapPanelLoaded) return;
@@ -3860,6 +4122,12 @@ function initMaintSwapsPanel() {
   el('swap-date').value = todayISO();
   if (!el('swap-performed-by').value) el('swap-performed-by').value = currentUser?.full_name || '';
   loadSwapUnits(swapCategory);
+  loadSwapHistory();
+
+  el('swap-filter-cat').addEventListener('change', () => { _swapFilterCat = el('swap-filter-cat').value; applySwapFilters(); });
+  el('swap-filter-loc').addEventListener('change', () => { _swapFilterLoc = el('swap-filter-loc').value; applySwapFilters(); });
+  let _swqT;
+  el('swap-filter-q').addEventListener('input', () => { clearTimeout(_swqT); _swqT = setTimeout(() => { _swapFilterQ = el('swap-filter-q').value.trim(); applySwapFilters(); }, 250); });
 }
 
 async function loadSwapUnits(category) {
@@ -3946,13 +4214,73 @@ el('swap-save-btn').addEventListener('click', async () => {
     el('swap-notes').value = '';
     el('swap-location-hint').classList.add('hidden');
     // Reload units so dropdowns reflect the updated statuses
-    if (!r.queued) loadSwapUnits(swapCategory);
+    if (!r.queued) { loadSwapUnits(swapCategory); loadSwapHistory(); }
   } catch (err) {
     showError('swap-error', err.message);
   } finally {
     btn.disabled = false; btn.textContent = 'Complete Swap';
   }
 });
+
+async function loadSwapHistory() {
+  el('swap-history-list').innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    swapHistory = await api('GET', '/api/equipment-swaps');
+    populateSwapHistoryDropdowns();
+    applySwapFilters();
+  } catch {
+    el('swap-history-list').innerHTML = '<div class="placeholder-msg">Failed to load.</div>';
+  }
+}
+
+function populateSwapHistoryDropdowns() {
+  const lSel = el('swap-filter-loc');
+  const prev = lSel.value;
+  const locs = [...new Set(swapHistory.map(s => s.location).filter(Boolean))].sort();
+  lSel.innerHTML = '<option value="">All Locations</option>' +
+    locs.map(l => `<option value="${escHtml(l)}"${l === prev ? ' selected' : ''}>${escHtml(l)}</option>`).join('');
+}
+
+function applySwapFilters() {
+  let items = swapHistory;
+  if (_swapFilterCat) items = items.filter(s => s.category === _swapFilterCat);
+  if (_swapFilterLoc) items = items.filter(s => s.location === _swapFilterLoc);
+  if (_swapFilterQ) {
+    const q = _swapFilterQ.toLowerCase();
+    items = items.filter(s =>
+      [s.location, s.category, s.removed_description, s.installed_description, s.performed_by, s.notes]
+        .some(f => (f || '').toLowerCase().includes(q))
+    );
+  }
+  renderSwapHistory(items);
+}
+
+function renderSwapHistory(items) {
+  const list = el('swap-history-list');
+  if (!items.length) {
+    const hasF = _swapFilterCat || _swapFilterLoc || _swapFilterQ;
+    list.innerHTML = `<div class="placeholder-msg">${hasF ? 'No matching swaps.' : 'No swaps recorded.'}</div>`;
+    return;
+  }
+  list.innerHTML = items.map(s => `
+    <div class="equip-issue-item" style="padding:10px 14px">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
+        <div>
+          <div style="font-weight:600;font-size:0.9rem">${escHtml(s.location || '—')}</div>
+          <div style="font-size:0.78rem;color:var(--text-dim);margin:2px 0">${escHtml(SWAP_CAT_LABEL[s.category] || s.category || '—')}</div>
+          <div style="font-size:0.83rem;margin-top:4px">
+            <span style="color:var(--text-dim)">Removed:</span> ${escHtml(s.removed_description || '—')}
+          </div>
+          <div style="font-size:0.83rem;margin-top:2px">
+            <span style="color:var(--text-dim)">Installed:</span> ${escHtml(s.installed_description || '—')}
+          </div>
+          ${s.performed_by ? `<div style="font-size:0.78rem;color:var(--text-dim);margin-top:4px">By: ${escHtml(s.performed_by)}</div>` : ''}
+          ${s.notes ? `<div style="font-size:0.78rem;color:var(--text-dim);margin-top:2px;font-style:italic">${escHtml(s.notes)}</div>` : ''}
+        </div>
+        <div style="white-space:nowrap;font-size:0.78rem;color:var(--text-dim);flex-shrink:0">${(s.swap_date || '').slice(0,10)}</div>
+      </div>
+    </div>`).join('');
+}
 
 /* ── Maintenance Attachments ─────────────────────────────────────────────── */
 let maintPendingAttachments = []; // { file, fileType }
@@ -9979,6 +10307,568 @@ el('tor-submit-btn').addEventListener('click', () => {
   const to = 'syoder@kcwa.com,mansolabehere@kcwa.com';
   window.location.href = `mailto:${to}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 });
+
+/* ── Safety ──────────────────────────────────────────────────────────────── */
+let _safetyInited = false;
+let _safetySigninMeetingId = null;
+let _pdfWindow = null;
+
+const SAFETY_PANEL_NAMES = { meetings: 'Safety Meetings' };
+
+function initSafetyScreen() {
+  if (_safetyInited) return;
+  _safetyInited = true;
+  document.querySelectorAll('[data-safety-panel]').forEach(tile => {
+    tile.addEventListener('click', () => openSafetyPanel(tile.dataset.safetyPanel));
+  });
+}
+
+function openSafetyPanel(id) {
+  el('safety-main').classList.add('hidden');
+  document.querySelectorAll('#screen-safety .maint-panel').forEach(p => p.classList.add('hidden'));
+  el(`safety-panel-${id}`).classList.remove('hidden');
+  setPanelNav(el('screen-safety'), closeSafetyPanel, 'Safety – ' + (SAFETY_PANEL_NAMES[id] || id));
+  if (id === 'meetings') buildSafetyMeetingsPanel(el('safety-panel-meetings'));
+}
+
+function closeSafetyPanel() {
+  document.querySelectorAll('#screen-safety .maint-panel').forEach(p => p.classList.add('hidden'));
+  el('safety-main').classList.remove('hidden');
+  setPanelNav(el('screen-safety'), () => showScreen('dashboard'), 'Safety');
+}
+
+// ── Safety Meetings Panel ─────────────────────────────────────────────────────
+function buildSafetyMeetingsPanel(contentEl) {
+  if (contentEl.firstElementChild) { loadSafetyMeetings(); return; }
+
+  contentEl.innerHTML = `
+    <div class="issue-toolbar" style="gap:8px">
+      <button class="btn btn-primary btn-sm" id="safety-new-btn">+ New Meeting</button>
+      <input type="search" id="safety-topic-search" class="ctrl-input" placeholder="Search by topic…" style="flex:1;min-width:0">
+    </div>
+    <div id="safety-meeting-form" class="settings-card hidden" style="margin:0 0 14px">
+      <div class="settings-pad">
+        <div class="two-col">
+          <div class="form-group">
+            <label>Date</label>
+            <input type="date" id="sm-date" class="ctrl-input ctrl-input-sm">
+          </div>
+          <div class="form-group">
+            <label>Time</label>
+            <input type="time" id="sm-time" class="ctrl-input ctrl-input-sm">
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Presented By</label>
+          <select id="sm-presenter" class="ctrl-select"></select>
+        </div>
+        <div class="form-group">
+          <label>Topic</label>
+          <input type="text" id="sm-topic" class="ctrl-input" placeholder="Meeting topic or title">
+        </div>
+        <div class="form-group">
+          <label>Link <span style="color:var(--text-dim);font-weight:400">(optional)</span></label>
+          <input type="url" id="sm-link" class="ctrl-input" placeholder="https://…">
+        </div>
+        <div class="form-group">
+          <label>Notes <span style="color:var(--text-dim);font-weight:400">(optional)</span></label>
+          <textarea id="sm-notes" class="ctrl-input" rows="3" placeholder="Additional details…"></textarea>
+        </div>
+        <div id="sm-error" class="error-msg hidden"></div>
+        <div class="form-row">
+          <button class="btn btn-save" id="sm-submit">Create Meeting</button>
+          <button class="btn btn-secondary" id="sm-cancel">Cancel</button>
+        </div>
+      </div>
+    </div>
+    <div id="safety-meetings-list"><div class="placeholder-msg">Loading…</div></div>`;
+
+  el('safety-new-btn').addEventListener('click', openNewSafetyMeetingForm);
+  el('sm-cancel').addEventListener('click', () => {
+    el('safety-meeting-form').classList.add('hidden');
+    el('safety-new-btn').style.display = '';
+  });
+  el('sm-submit').addEventListener('click', submitSafetyMeeting);
+
+  let _smSearchTimer;
+  el('safety-topic-search').addEventListener('input', () => {
+    clearTimeout(_smSearchTimer);
+    _smSearchTimer = setTimeout(() => loadSafetyMeetings(el('safety-topic-search').value.trim()), 300);
+  });
+
+  loadSafetyMeetings();
+}
+
+async function openNewSafetyMeetingForm() {
+  el('safety-new-btn').style.display = 'none';
+  el('safety-meeting-form').classList.remove('hidden');
+  el('sm-date').value = new Date().toLocaleDateString('en-CA');
+  el('sm-time').value = nowHHMM();
+  el('sm-topic').value = '';
+  el('sm-link').value  = '';
+  el('sm-notes').value = '';
+  el('sm-error').classList.add('hidden');
+
+  // Populate presenter dropdown
+  const sel = el('sm-presenter');
+  sel.innerHTML = '<option value="">Loading…</option>';
+  try {
+    const users = await api('GET', '/api/users/list');
+    const fullNames = users.map(u => u.full_name || u.username).filter(Boolean);
+    const current = currentUser?.full_name || '';
+    sel.innerHTML = fullNames.map(n =>
+      `<option value="${escHtml(n)}" ${n === current ? 'selected' : ''}>${escHtml(n)}</option>`
+    ).join('');
+    if (!sel.value && current) {
+      const opt = document.createElement('option');
+      opt.value = current; opt.textContent = current; opt.selected = true;
+      sel.prepend(opt);
+    }
+  } catch {
+    sel.innerHTML = `<option value="${escHtml(currentUser?.full_name || '')}">${escHtml(currentUser?.full_name || 'Unknown')}</option>`;
+  }
+}
+
+async function submitSafetyMeeting() {
+  const topic = el('sm-topic').value.trim();
+  const errEl = el('sm-error');
+  errEl.classList.add('hidden');
+  if (!topic) {
+    errEl.textContent = 'Topic is required.';
+    errEl.classList.remove('hidden');
+    return;
+  }
+  const btn = el('sm-submit');
+  btn.disabled = true;
+  try {
+    await api('POST', '/api/safety-meetings', {
+      meeting_date: el('sm-date').value,
+      meeting_time: el('sm-time').value,
+      presented_by: el('sm-presenter').value,
+      topic,
+      link:  el('sm-link').value.trim(),
+      notes: el('sm-notes').value.trim(),
+    });
+    el('safety-meeting-form').classList.add('hidden');
+    el('safety-new-btn').style.display = '';
+    showToast('Meeting created');
+    loadSafetyMeetings(el('safety-topic-search').value.trim());
+  } catch (err) {
+    errEl.textContent = err.message;
+    errEl.classList.remove('hidden');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function loadSafetyMeetings(q = '') {
+  const listEl = el('safety-meetings-list');
+  if (!listEl) return;
+  listEl.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const meetings = await api('GET', `/api/safety-meetings${q ? `?q=${encodeURIComponent(q)}` : ''}`);
+    if (!meetings.length) {
+      listEl.innerHTML = '<div class="placeholder-msg">No meetings found.</div>';
+      return;
+    }
+    listEl.innerHTML = meetings.map(m => {
+      const dateStr = localDateStr(m.meeting_date, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+      const time = m.meeting_time ? ' · ' + m.meeting_time.slice(0,5) : '';
+      return `<div class="safety-meeting-item" data-mid="${m.meeting_id}">
+        <div class="safety-meeting-header">
+          <div class="safety-meeting-info">
+            <div class="safety-meeting-topic">${escHtml(m.topic)}</div>
+            <div class="safety-meeting-date">${dateStr}${time} · ${escHtml(m.presented_by || '')}
+              <span class="safety-attend-count">${m.attendee_count} attendee${m.attendee_count !== 1 ? 's' : ''}</span>
+            </div>
+          </div>
+          <span class="safety-meeting-chevron">›</span>
+        </div>
+        <div class="safety-meeting-body hidden"></div>
+      </div>`;
+    }).join('');
+
+    listEl.querySelectorAll('.safety-meeting-item').forEach(item => {
+      item.querySelector('.safety-meeting-header').addEventListener('click', () => {
+        toggleSafetyMeeting(item);
+      });
+    });
+  } catch (err) {
+    listEl.innerHTML = `<div class="placeholder-msg">Failed to load: ${escHtml(err.message)}</div>`;
+  }
+}
+
+async function toggleSafetyMeeting(item) {
+  const body = item.querySelector('.safety-meeting-body');
+  const chevron = item.querySelector('.safety-meeting-chevron');
+  const isOpen = !body.classList.contains('hidden');
+  if (isOpen) {
+    body.classList.add('hidden');
+    chevron.style.transform = '';
+    return;
+  }
+  body.classList.remove('hidden');
+  chevron.style.transform = 'rotate(90deg)';
+  if (body.dataset.loaded) return;
+  body.dataset.loaded = '1';
+  body.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+
+  const mid = item.dataset.mid;
+  try {
+    const data = await api('GET', `/api/safety-meetings/${mid}`);
+    renderSafetyMeetingBody(body, data);
+  } catch {
+    body.innerHTML = '<div class="placeholder-msg">Failed to load.</div>';
+  }
+}
+
+function renderSafetyMeetingBody(body, data) {
+  const linkHtml = data.link
+    ? `<div class="form-group"><label>Link</label><a href="${escHtml(data.link)}" target="_blank" rel="noopener" class="safety-meeting-link">${escHtml(data.link)}</a></div>`
+    : '';
+  const notesHtml = data.notes
+    ? `<div class="form-group"><label>Notes</label><div class="safety-meeting-notes">${escHtml(data.notes)}</div></div>`
+    : '';
+
+  body.innerHTML = `
+    ${linkHtml}
+    ${notesHtml}
+    <div class="safety-attend-section">
+      <div class="safety-attend-header">
+        <span class="report-section-title" style="margin:0">Attendance</span>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-primary btn-sm safety-signin-btn">Sign In</button>
+          <button class="btn btn-secondary btn-sm safety-export-btn">${icon('print',14)} Export PDF</button>
+        </div>
+      </div>
+      <div class="safety-attend-list"></div>
+    </div>`;
+
+  renderSafetyAttendees(body.querySelector('.safety-attend-list'), data.attendees || [], data.meeting_id);
+
+  body.querySelector('.safety-signin-btn').addEventListener('click', () => {
+    openSafetySigninModal(data.meeting_id, body);
+  });
+  body.querySelector('.safety-export-btn').addEventListener('click', async () => {
+    // Open (or reuse) the PDF window NOW — must be synchronous in the click event
+    // so the browser doesn't treat it as a blocked popup
+    if (!_pdfWindow || _pdfWindow.closed) {
+      _pdfWindow = window.open('', '_blank');
+      if (!_pdfWindow) { showToast('Allow pop-ups to export PDF', 'error'); return; }
+    }
+    _pdfWindow.document.open();
+    _pdfWindow.document.write('<html><head><meta charset="UTF-8"><style>body{background:#111;color:#fff;font-family:Arial,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;font-size:1.1rem}</style></head><body>Loading…</body></html>');
+    _pdfWindow.document.close();
+    _pdfWindow.focus();
+    try {
+      const fresh = await api('GET', `/api/safety-meetings/${data.meeting_id}`);
+      data.attendees = fresh.attendees || [];
+      exportSafetyMeetingPDF(fresh, fresh.attendees || []);
+    } catch (e) {
+      if (_pdfWindow && !_pdfWindow.closed) {
+        _pdfWindow.document.open();
+        _pdfWindow.document.write('<html><body style="font-family:Arial;padding:20px;color:#c00">Failed to load meeting data. Please try again.</body></html>');
+        _pdfWindow.document.close();
+      }
+    }
+  });
+}
+
+function renderSafetyAttendees(listEl, attendees, meetingId) {
+  const canDelete = currentUser && (currentUser.role === 'supervisor' || currentUser.role === 'admin');
+  if (!attendees.length) {
+    listEl.innerHTML = '<div class="placeholder-msg" style="padding:12px 0">No attendees yet.</div>';
+    return;
+  }
+  listEl.innerHTML = `<table class="safety-attend-table">
+    <thead><tr>
+      <th>#</th><th>Print Name</th><th>Signature</th><th>Date</th>
+      ${canDelete ? '<th></th>' : ''}
+    </tr></thead>
+    <tbody>${attendees.map((a, i) => `<tr>
+      <td style="color:var(--text-dim);font-size:0.82rem">${i + 1}</td>
+      <td>${escHtml(a.full_name)}</td>
+      <td>${a.signature_data ? `<img class="sig-preview-img" src="${escHtml(a.signature_data)}" alt="signature">` : '<span style="color:var(--text-dim)">—</span>'}</td>
+      <td style="white-space:nowrap">${a.signed_date ? localDateStr(a.signed_date, { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}</td>
+      ${canDelete ? `<td style="width:32px;text-align:center"><button class="hist-del-btn del-attendee-btn" data-aid="${a.attendee_id}" title="Remove attendee">${icon('delete', 14)}</button></td>` : ''}
+    </tr>`).join('')}</tbody>
+  </table>`;
+
+  if (canDelete) {
+    listEl.querySelectorAll('.del-attendee-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        if (!confirm('Remove this attendee from the meeting?')) return;
+        try {
+          await api('DELETE', `/api/safety-meetings/${meetingId}/attendees/${btn.dataset.aid}`);
+          const data = await api('GET', `/api/safety-meetings/${meetingId}`);
+          renderSafetyAttendees(listEl, data.attendees || [], meetingId);
+          showToast('Attendee removed');
+        } catch (err) { showToast(err.message, 'error'); }
+      });
+    });
+  }
+}
+
+// ── Sign-in Modal ─────────────────────────────────────────────────────────────
+let _sigCanvas = null;
+let _sigCtx    = null;
+let _sigDrawing = false;
+let _sigInited  = false;
+
+function openSafetySigninModal(meetingId, bodyEl) {
+  _safetySigninMeetingId = meetingId;
+  el('safety-signin-modal').classList.remove('hidden');
+  el('safety-signin-date').value = new Date().toLocaleDateString('en-CA');
+  el('safety-signin-error').classList.add('hidden');
+
+  // Init canvas once
+  if (!_sigInited) {
+    _sigInited = true;
+    _sigCanvas = el('safety-sig-canvas');
+    _sigCtx = _sigCanvas.getContext('2d');
+    initSigCanvas(_sigCanvas, _sigCtx);
+    el('safety-sig-clear').addEventListener('click', () => {
+      _sigCtx.clearRect(0, 0, _sigCanvas.width, _sigCanvas.height);
+    });
+    el('safety-signin-close').addEventListener('click', closeSafetySigninModal);
+    el('safety-signin-modal').addEventListener('click', e => {
+      if (e.target === el('safety-signin-modal')) closeSafetySigninModal();
+    });
+    el('safety-signin-name-sel').addEventListener('change', () => {
+      const isOther = el('safety-signin-name-sel').value === '__other__';
+      el('safety-signin-name-other').style.display = isOther ? '' : 'none';
+    });
+  }
+  // Always (re-)set onclick so the correct bodyEl is captured and no duplicate
+  // handlers accumulate — onclick replaces itself, addEventListener would stack
+  el('safety-signin-save').onclick = () => saveSignIn(bodyEl);
+  // Clear canvas on every open
+  if (_sigCtx) _sigCtx.clearRect(0, 0, _sigCanvas.width, _sigCanvas.height);
+
+  // Populate name dropdown
+  api('GET', '/api/users/list').then(users => {
+    const sel = el('safety-signin-name-sel');
+    const current = currentUser?.full_name || '';
+    sel.innerHTML = users.map(u => {
+      const n = u.full_name || u.username;
+      return `<option value="${escHtml(n)}" ${n === current ? 'selected' : ''}>${escHtml(n)}</option>`;
+    }).join('') + '<option value="__other__">Other (type below)…</option>';
+    el('safety-signin-name-other').style.display = 'none';
+  }).catch(() => {});
+}
+
+function closeSafetySigninModal() {
+  el('safety-signin-modal').classList.add('hidden');
+  _safetySigninMeetingId = null;
+}
+
+function initSigCanvas(canvas, ctx) {
+  ctx.strokeStyle = '#000';
+  ctx.lineWidth   = 2;
+  ctx.lineCap     = 'round';
+  ctx.lineJoin    = 'round';
+
+  const pt = e => {
+    const r = canvas.getBoundingClientRect();
+    const src = e.touches ? e.touches[0] : e;
+    return {
+      x: (src.clientX - r.left) * (canvas.width  / r.width),
+      y: (src.clientY - r.top)  * (canvas.height / r.height),
+    };
+  };
+  const start = e => {
+    _sigDrawing = true;
+    ctx.strokeStyle = document.documentElement.getAttribute('data-theme') === 'light' ? '#000' : '#fff';
+    const p = pt(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); e.preventDefault();
+  };
+  const draw  = e => { if (!_sigDrawing) return; const p = pt(e); ctx.lineTo(p.x, p.y); ctx.stroke(); e.preventDefault(); };
+  const stop  = ()  => { _sigDrawing = false; };
+
+  canvas.addEventListener('pointerdown',  start);
+  canvas.addEventListener('pointermove',  draw);
+  canvas.addEventListener('pointerup',    stop);
+  canvas.addEventListener('pointerleave', stop);
+  canvas.addEventListener('touchstart',   start, { passive: false });
+  canvas.addEventListener('touchmove',    draw,  { passive: false });
+  canvas.addEventListener('touchend',     stop);
+}
+
+async function saveSignIn(bodyEl) {
+  const sel    = el('safety-signin-name-sel');
+  const isOther = sel.value === '__other__';
+  const name   = isOther ? el('safety-signin-name-other').value.trim() : sel.value;
+  const errEl  = el('safety-signin-error');
+  errEl.classList.add('hidden');
+
+  if (!name) {
+    errEl.textContent = 'Please enter your name.';
+    errEl.classList.remove('hidden');
+    return;
+  }
+
+  // Check if canvas has any drawn content (pixel buffer approach)
+  const imgData = _sigCtx.getImageData(0, 0, _sigCanvas.width, _sigCanvas.height).data;
+  const blank   = !new Uint32Array(imgData.buffer).some(p => p !== 0);
+
+  // Normalize: dark mode draws white strokes — invert to black via pixel ops (ctx.filter
+  // is unsupported in Safari so we manipulate the pixel buffer directly instead)
+  let sigData = '';
+  if (!blank) {
+    const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
+    if (isDark) {
+      const tmp = document.createElement('canvas');
+      tmp.width = _sigCanvas.width; tmp.height = _sigCanvas.height;
+      const c = tmp.getContext('2d');
+      c.drawImage(_sigCanvas, 0, 0);
+      const id = c.getImageData(0, 0, tmp.width, tmp.height);
+      const d  = id.data;
+      for (let i = 0; i < d.length; i += 4) {
+        if (d[i + 3] > 0) { d[i] = 255 - d[i]; d[i+1] = 255 - d[i+1]; d[i+2] = 255 - d[i+2]; }
+      }
+      c.putImageData(id, 0, 0);
+      sigData = tmp.toDataURL('image/png');
+    } else {
+      sigData = _sigCanvas.toDataURL('image/png');
+    }
+  }
+
+  // Capture before closeSafetySigninModal() nulls it
+  const meetingId = _safetySigninMeetingId;
+  const btn = el('safety-signin-save');
+  btn.disabled = true;
+  try {
+    await api('POST', `/api/safety-meetings/${meetingId}/attend`, {
+      full_name:      name,
+      signature_data: sigData || null,
+      signed_date:    el('safety-signin-date').value,
+    });
+    closeSafetySigninModal();
+    showToast('Signed in successfully');
+    // Reload attendees in the expanded body
+    const data = await api('GET', `/api/safety-meetings/${meetingId}`);
+    renderSafetyAttendees(bodyEl.querySelector('.safety-attend-list'), data.attendees || [], meetingId);
+    // Update the attendee count badge in the header
+    const item = bodyEl.closest('.safety-meeting-item');
+    if (item) {
+      const countEl = item.querySelector('.safety-attend-count');
+      if (countEl) countEl.textContent = `${data.attendees.length} attendee${data.attendees.length !== 1 ? 's' : ''}`;
+    }
+  } catch (err) {
+    errEl.textContent = err.message;
+    errEl.classList.remove('hidden');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ── PDF Export ────────────────────────────────────────────────────────────────
+function exportSafetyMeetingPDF(meeting, attendees) {
+  // _pdfWindow is pre-opened synchronously in the click handler to avoid popup blocker.
+  // Fall back to opening a new one only if called without prior setup.
+  if (!_pdfWindow || _pdfWindow.closed) {
+    _pdfWindow = window.open('', '_blank');
+    if (!_pdfWindow) { showToast('Allow pop-ups to export PDF', 'error'); return; }
+  }
+
+  const fmtDate = d => d ? localDateStr(d, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }) : '—';
+  const fmtShort = d => d ? localDateStr(d, { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
+  const esc = s => String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+  const rows = attendees.length
+    ? attendees.map((a, i) => `
+    <tr>
+      <td class="num">${i + 1}</td>
+      <td>${esc(a.full_name)}</td>
+      <td class="sig-cell">${a.signature_data ? `<img src="${esc(a.signature_data)}" alt="" style="filter:brightness(0)">` : ''}</td>
+      <td class="date-cell">${fmtShort(a.signed_date)}</td>
+    </tr>`).join('')
+    : `<tr><td class="num" colspan="4" style="text-align:center;color:#999">No attendees recorded</td></tr>`;
+
+  // Build filename: mm-dd-yy-Safety-Meeting (used as <title> → default PDF filename)
+  const rawDate = meeting.meeting_date ? String(meeting.meeting_date).slice(0, 10) : '';
+  const [yr, mo, dy] = rawDate ? rawDate.split('-') : ['', '', ''];
+  const fileTitle = rawDate ? `${mo}-${dy}-${yr.slice(2)}-Safety-Meeting` : 'Safety-Meeting';
+
+  _pdfWindow.document.open();
+  _pdfWindow.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8">
+    <title>${fileTitle}</title>
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body { font-family: Arial, sans-serif; font-size: 10pt; color: #000; padding: 20px 24px; }
+      .page-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 12px; }
+      .page-header-text h1 { font-size: 14pt; font-weight: 700; margin-bottom: 3px; }
+      .page-header-text .org { font-size: 10pt; color: #444; }
+      .logo { height: 56px; width: auto; margin-left: auto; }
+      .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px; margin-bottom: 14px; border: 1px solid #ccc; padding: 8px 10px; border-radius: 4px; }
+      .meta-item { font-size: 9.5pt; }
+      .meta-label { font-weight: bold; color: #333; }
+      table { width: 100%; border-collapse: collapse; margin-top: 6px; }
+      th { background: #f0f0f0; border: 1px solid #bbb; padding: 5px 7px; font-size: 9pt; text-align: left; }
+      td { border: 1px solid #bbb; padding: 5px 7px; font-size: 9.5pt; height: 36px; vertical-align: middle; }
+      td.num { width: 30px; text-align: center; color: #888; font-size: 8.5pt; }
+      td.sig-cell { width: 180px; }
+      td.sig-cell img { height: 28px; max-width: 170px; }
+      td.date-cell { width: 90px; font-size: 8.5pt; }
+      .doc-footer { margin-top: 14px; font-size: 8pt; color: #888; }
+      .toolbar {
+        position: fixed; top: 0; left: 0; right: 0; z-index: 999;
+        display: flex; align-items: center; gap: 8px;
+        background: #222; padding: 8px 12px;
+      }
+      .toolbar button {
+        border: none; border-radius: 6px; padding: 7px 14px;
+        font-size: 10pt; cursor: pointer; font-family: Arial, sans-serif;
+      }
+      .btn-close { background: #555; color: #fff; }
+      .btn-close:hover { background: #333; }
+      .btn-print { background: #1a7f4b; color: #fff; }
+      .btn-print:hover { background: #145f38; }
+      .content { margin-top: 52px; }
+      @media print {
+        @page { margin: 0; }
+        body { padding: 15mm; }
+        .toolbar { display: none !important; }
+        .content { margin-top: 0; }
+      }
+    </style>
+  </head><body>
+    <div class="toolbar">
+      <button class="btn-close" onclick="window.close()">&#8592; Back to App</button>
+      <button class="btn-print" onclick="window.print()">&#128438; Print / Save PDF</button>
+    </div>
+    <div class="content">
+    <div class="page-header">
+      <div class="page-header-text">
+        <h1>Safety Meeting</h1>
+        <div class="org">Kern County Water Agency</div>
+      </div>
+      <img class="logo" src="/icons/kcwa-seal-192.png" alt="KCWA">
+    </div>
+    <div class="meta">
+      <div class="meta-item"><span class="meta-label">Date:</span> ${fmtDate(meeting.meeting_date)}</div>
+      <div class="meta-item"><span class="meta-label">Time:</span> ${meeting.meeting_time ? meeting.meeting_time.slice(0,5) : '—'}</div>
+      <div class="meta-item"><span class="meta-label">Topic:</span> ${esc(meeting.topic)}</div>
+      <div class="meta-item"><span class="meta-label">Presented By:</span> ${esc(meeting.presented_by || '—')}</div>
+      ${meeting.link ? `<div class="meta-item" style="grid-column:1/-1"><span class="meta-label">Reference:</span> ${esc(meeting.link)}</div>` : ''}
+      ${meeting.notes ? `<div class="meta-item" style="grid-column:1/-1"><span class="meta-label">Notes:</span> ${esc(meeting.notes)}</div>` : ''}
+    </div>
+    <table>
+      <thead><tr><th>#</th><th>Print Name</th><th>Signature</th><th>Date</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <div class="doc-footer">Total Attendees: ${attendees.length} &nbsp;|&nbsp; Exported: ${new Date().toLocaleString()}</div>
+    </div>
+    <script>
+      var _ts = 0;
+      document.addEventListener('touchstart', function(e) { _ts = e.touches[0].clientX; }, { passive: true });
+      document.addEventListener('touchend', function(e) {
+        if (_ts < 40 && (e.changedTouches[0].clientX - _ts) > 60) window.close();
+      }, { passive: true });
+    <\/script>
+  </body></html>`);
+  _pdfWindow.document.close();
+  _pdfWindow.focus();
+}
 
 /* ── Global Search ───────────────────────────────────────────────────────── */
 const SEARCH_TYPE_ICON = {
