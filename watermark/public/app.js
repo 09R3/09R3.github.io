@@ -3188,11 +3188,18 @@ async function shareMaintenanceReport(issueId, item, cfg) {
     if (!gps) gps = await pickReportLocation();
 
     // Optional GPS map with pin
+    // Use Web Mercator (EPSG:3857) bbox so the GPS point falls exactly at the
+    // image pixel center — a geographic (4326) bbox renders in Mercator, causing
+    // equal-degree lat/lon intervals to map to unequal pixel distances and
+    // shifting the pin off-center.
     let mapSrc = null;
     if (gps) {
-      const pad = 0.0015;
-      const bbox = `${gps.lon-pad},${gps.lat-pad},${gps.lon+pad},${gps.lat+pad}`;
-      const esriUrl = `https://server.arcgisonline.com/arcgis/rest/services/World_Imagery/MapServer/export?bbox=${bbox}&bboxSR=4326&size=600,300&imageSR=96&f=image`;
+      const R = 6378137;
+      const mx = R * gps.lon * Math.PI / 180;
+      const my = R * Math.log(Math.tan(Math.PI / 4 + gps.lat * Math.PI / 360));
+      const padX = 250, padY = 125; // metres; 2:1 matches 600×300 px
+      const bbox = `${mx-padX},${my-padY},${mx+padX},${my+padY}`;
+      const esriUrl = `https://server.arcgisonline.com/arcgis/rest/services/World_Imagery/MapServer/export?bbox=${bbox}&bboxSR=3857&size=600,300&imageSR=3857&f=image`;
       try {
         const resp = await fetch(esriUrl);
         if (resp.ok) mapSrc = await addPinToMapImage(await blobToDataUri(await resp.blob()), 600, 300);
@@ -3288,7 +3295,34 @@ function showMaintenanceReportPreview({ reportLabel, title, rows, description, m
     );
   });
 
-  modal.querySelector('#rp-print').addEventListener('click', () => window.print());
+  modal.querySelector('#rp-print').addEventListener('click', () => {
+    // Open an isolated window so the app's flex/fixed layout can't interfere
+    const pw = window.open('', '_blank');
+    if (!pw) { showToast('Allow pop-ups to print', 'error'); return; }
+    const bodyHtml = modal.querySelector('#ir-body').innerHTML;
+    pw.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8">
+      <title>${escHtml(title)}</title>
+      <style>
+        *{box-sizing:border-box;margin:0;padding:0}
+        body{font-family:Arial,sans-serif;font-size:10pt;color:#111;background:#fff;padding:20px 24px}
+        .ir-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px;padding-bottom:10px;border-bottom:2px solid #333}
+        .ir-title{font-size:1.1rem;font-weight:700;color:#111}
+        .ir-meta{font-size:0.74rem;color:#666;white-space:nowrap;padding-top:2px}
+        .ir-table{width:100%;border-collapse:collapse;margin-bottom:14px;font-size:0.84rem}
+        .ir-table th{text-align:left;width:130px;padding:4px 10px 4px 0;color:#555;font-weight:600;vertical-align:top}
+        .ir-table td{padding:4px 0;color:#111}
+        .ir-section{margin-top:14px;padding-top:10px;border-top:1px solid #ddd}
+        .ir-section-label{font-weight:700;font-size:0.74rem;text-transform:uppercase;letter-spacing:.06em;color:#555;margin-bottom:6px}
+        .ir-text{font-size:0.87rem;color:#222;white-space:pre-wrap}
+        .ir-map{width:100%;max-width:620px;border-radius:4px;display:block;margin-bottom:4px}
+        .ir-coords{font-size:0.73rem;color:#1a73e8;text-decoration:underline}
+        .ir-photos{display:flex;flex-direction:column;gap:12px}
+        .ir-photo{width:100%;max-width:620px;border-radius:4px;display:block}
+        @media print{@page{margin:0}body{padding:15mm}.ir-photo{page-break-inside:avoid}}
+      </style>
+    </head><body>${bodyHtml}</body></html>`);
+    pw.document.close();
+  });
 
   modal.querySelector('#rp-share').addEventListener('click', async () => {
     const shareBtn = modal.querySelector('#rp-share');
