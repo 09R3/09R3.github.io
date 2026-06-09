@@ -2855,8 +2855,8 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
 /* Running wells modal */
 .rw-modal-area {
   padding: 10px 16px 4px;
-  font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
-  letter-spacing: 0.06em; color: var(--text-dim);
+  font-size: 0.9rem; font-weight: 700;
+  color: var(--text);
   border-top: 1px solid var(--border);
 }
 .rw-modal-area:first-child { border-top: none; }
@@ -2901,7 +2901,7 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
 .rw-well-extra-label { flex: 1; font-size: 0.85rem; color: var(--text-dim); }
 .rw-well-extra-unit  { font-size: 0.82rem; color: var(--text-dim); flex-shrink: 0; }
 .rw-modal-subtotal {
-  display: flex; align-items: center; justify-content: space-between;
+  display: flex; align-items: center; justify-content: flex-end;
   padding: 6px 16px 8px;
   font-size: 0.8rem; font-weight: 600; color: var(--text-dim);
   border-top: 1px solid var(--border);

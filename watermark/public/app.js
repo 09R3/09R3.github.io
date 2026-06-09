@@ -651,7 +651,12 @@ async function loadDashboardStats() {
       ? `${fmtDate(s.kf_widget_start)} – ${fmtDate(s.kf_widget_end)}`
       : 'This Month';
     const pct = s.kf_total > 0 ? Math.round((s.kf_done / s.kf_total) * 100) : 0;
-    const rwCvc = rw ? parseFloat(rw.cvc_total_cfs || 0).toFixed(2) : '—';
+    const rwCount = rw ? rw.read_today_count : 0;
+    const rwTotal = rw ? rw.total_count      : 0;
+    const rwCvc   = rw ? parseFloat(rw.cvc_total_cfs || 0).toFixed(2) : '0.00';
+    const rwVal   = rwTotal > 0
+      ? `${rwCount}<span style="font-size:1rem;color:var(--text-dim)">/${rwTotal}</span>`
+      : `<span style="font-size:1rem;color:var(--text-muted)">—</span>`;
     const grid = el('dashboard-stats');
     grid.innerHTML = `
       <div class="stat-card stat-accent" id="kf-complete-stat" style="cursor:pointer">
@@ -662,9 +667,9 @@ async function loadDashboardStats() {
         <div class="stat-bar"><div class="stat-bar-fill" style="width:${pct}%"></div></div>
       </div>
       <div class="stat-card rw-stat-card" id="running-wells-stat" style="cursor:pointer">
-        <div class="stat-value">${rwCvc} <span style="font-size:0.85rem;font-weight:400">cfs</span></div>
-        <div class="stat-label">CVC Total Inflow</div>
-        <div class="stat-sublabel">Pools 1–6</div>
+        <div class="stat-value">${rwVal}</div>
+        <div class="stat-label">Running Wells</div>
+        <div class="stat-sublabel">CVC Well Inflow: ${rwCvc} cfs</div>
       </div>
     `;
     el('running-wells-stat').addEventListener('click', openRunningWellsModal);
@@ -5620,10 +5625,7 @@ async function openRunningWellsModal() {
         </div>`;
       }
 
-      html += `<div class="rw-modal-subtotal">
-        <span>${escHtml(pool)} Total</span>
-        <span>${poolTotal.toFixed(2)} cfs</span>
-      </div>`;
+      html += `<div class="rw-modal-subtotal">${escHtml(pool)} Total: ${poolTotal.toFixed(2)} cfs</div>`;
 
       if (isKRC) krcTotal += poolTotal;
       else       cvcTotal += poolTotal;
