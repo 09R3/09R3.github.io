@@ -2240,10 +2240,17 @@ el('well-issue-list').addEventListener('click', async e => {
 let bldgIssuesLoaded  = false;
 let bldgIssues        = [];
 let bldgShowResolved  = false;
+let _bldgFilterSite   = '';
+let _bldgFilterQ      = '';
 
 function initMaintBuildingsPanel() {
   if (bldgIssuesLoaded) return;
   bldgIssuesLoaded = true;
+
+  el('bldg-filter-site').addEventListener('change', () => { _bldgFilterSite = el('bldg-filter-site').value; applyBldgFilters(); });
+  let _bfqT;
+  el('bldg-filter-q').addEventListener('input', () => { clearTimeout(_bfqT); _bfqT = setTimeout(() => { _bldgFilterQ = el('bldg-filter-q').value.trim(); applyBldgFilters(); }, 250); });
+
   el('bldg-issue-date').value = todayISO();
   loadBldgIssues();
   // Load sites for new-issue form
@@ -2262,7 +2269,8 @@ function initMaintBuildingsPanel() {
 async function loadBldgIssues() {
   try {
     bldgIssues = await api('GET', `/api/building-issues?include_resolved=${bldgShowResolved}`);
-    renderBldgIssues();
+    populateBldgFilterDropdowns();
+    applyBldgFilters();
     updateBldgBadge();
   } catch {
     el('bldg-issue-list').innerHTML = `<div class="placeholder-msg">Failed to load issues</div>`;
@@ -2274,13 +2282,37 @@ function updateBldgBadge() {
   setBadge('maint-badge-buildings', count);
 }
 
-function renderBldgIssues() {
+function populateBldgFilterDropdowns() {
+  const sSel = el('bldg-filter-site');
+  const prev = sSel.value;
+  const sites = [...new Set(bldgIssues.map(i => i.site_name).filter(Boolean))].sort();
+  sSel.innerHTML = '<option value="">All Sites</option>' +
+    sites.map(s => `<option value="${escHtml(s)}"${s === prev ? ' selected' : ''}>${escHtml(s)}</option>`).join('');
+}
+
+function applyBldgFilters() {
+  let items = bldgIssues;
+  if (_bldgFilterSite) items = items.filter(i => i.site_name === _bldgFilterSite);
+  if (_bldgFilterQ) {
+    const q = _bldgFilterQ.toLowerCase();
+    items = items.filter(i =>
+      [i.site_name, i.building_name, i.description, i.action_taken,
+       i.resolution_notes, i.assigned_to, i.entered_by_full_name, i.notes]
+        .some(f => (f || '').toLowerCase().includes(q))
+    );
+  }
+  renderBldgIssues(items);
+}
+
+function renderBldgIssues(items) {
+  items = items ?? bldgIssues;
   const list = el('bldg-issue-list');
-  if (!bldgIssues.length) {
-    list.innerHTML = `<div class="placeholder-msg">No ${bldgShowResolved ? '' : 'open '}issues</div>`;
+  if (!items.length) {
+    const hasF = _bldgFilterSite || _bldgFilterQ;
+    list.innerHTML = `<div class="placeholder-msg">${hasF ? 'No matching issues.' : `No ${bldgShowResolved ? '' : 'open '}issues`}</div>`;
     return;
   }
-  list.innerHTML = bldgIssues.map(issue => {
+  list.innerHTML = items.map(issue => {
     const statusClass = issue.status.replace('_', '-');
     const title   = [issue.site_name, issue.building_name].filter(Boolean).join(' — ') || 'Unknown Building';
     const snippet = (issue.description || '').slice(0, 80) + (issue.description?.length > 80 ? '…' : '');
@@ -2515,11 +2547,18 @@ el('bldg-issue-list').addEventListener('click', async e => {
 let equipIssuesLoaded = false;
 let equipIssues       = [];
 let equipShowResolved = false;
+let _equipFilterType  = '';
+let _equipFilterQ     = '';
 let equipNewType      = 'pump';
 
 function initMaintEquipmentPanel() {
   if (equipIssuesLoaded) return;
   equipIssuesLoaded = true;
+
+  el('equip-filter-type').addEventListener('change', () => { _equipFilterType = el('equip-filter-type').value; applyEquipFilters(); });
+  let _efqT;
+  el('equip-filter-q').addEventListener('input', () => { clearTimeout(_efqT); _efqT = setTimeout(() => { _equipFilterQ = el('equip-filter-q').value.trim(); applyEquipFilters(); }, 250); });
+
   el('equip-issue-date').value = todayISO();
   loadEquipIssues();
   loadEquipForNewIssue(equipNewType);
@@ -2528,11 +2567,25 @@ function initMaintEquipmentPanel() {
 async function loadEquipIssues() {
   try {
     equipIssues = await api('GET', `/api/equipment-issues?include_resolved=${equipShowResolved}`);
-    renderEquipIssues();
+    applyEquipFilters();
     updateEquipBadge();
   } catch (err) {
     el('equip-issue-list').innerHTML = `<div class="placeholder-msg">Failed to load issues</div>`;
   }
+}
+
+function applyEquipFilters() {
+  let items = equipIssues;
+  if (_equipFilterType) items = items.filter(i => i.equipment_type === _equipFilterType);
+  if (_equipFilterQ) {
+    const q = _equipFilterQ.toLowerCase();
+    items = items.filter(i =>
+      [i.equipment_name, i.equipment_type, i.description, i.action_taken,
+       i.resolution_notes, i.assigned_to, i.entered_by_full_name, i.notes]
+        .some(f => (f || '').toLowerCase().includes(q))
+    );
+  }
+  renderEquipIssues(items);
 }
 
 function updateEquipBadge() {
@@ -2540,13 +2593,15 @@ function updateEquipBadge() {
   setBadge('maint-badge-equipment', count);
 }
 
-function renderEquipIssues() {
+function renderEquipIssues(items) {
+  items = items ?? equipIssues;
   const list = el('equip-issue-list');
-  if (!equipIssues.length) {
-    list.innerHTML = `<div class="placeholder-msg">No ${equipShowResolved ? '' : 'open '}issues</div>`;
+  if (!items.length) {
+    const hasF = _equipFilterType || _equipFilterQ;
+    list.innerHTML = `<div class="placeholder-msg">${hasF ? 'No matching issues.' : `No ${equipShowResolved ? '' : 'open '}issues`}</div>`;
     return;
   }
-  list.innerHTML = equipIssues.map(issue => {
+  list.innerHTML = items.map(issue => {
     const statusClass = issue.status.replace('_', '-');
     const snippet = (issue.description || '').slice(0, 80) + (issue.description?.length > 80 ? '…' : '');
     const entityName = (issue.equipment_name || issue.equipment_type || 'equip').replace(/[^a-zA-Z0-9-]/g,'_').replace(/_+/g,'_').replace(/^_|_$/,'').slice(0,30);
@@ -2802,11 +2857,18 @@ el('equip-issue-list').addEventListener('click', async e => {
 let canalIssues       = [];
 let canalIssuesLoaded = false;
 let canalShowResolved = false;
+let _canalFilterPool  = '';
+let _canalFilterQ     = '';
 let canalNewPhotos    = []; // [{file, gps}] for new-issue form, gps is null until extracted
 
 function initMaintCanalPanel() {
   if (canalIssuesLoaded) return;
   canalIssuesLoaded = true;
+
+  el('canal-filter-pool').addEventListener('change', () => { _canalFilterPool = el('canal-filter-pool').value; applyCanalFilters(); });
+  let _cfqT;
+  el('canal-filter-q').addEventListener('input', () => { clearTimeout(_cfqT); _cfqT = setTimeout(() => { _canalFilterQ = el('canal-filter-q').value.trim(); applyCanalFilters(); }, 250); });
+
   el('canal-issue-date').value = todayISO();
   loadCanalIssues();
 }
@@ -2814,7 +2876,8 @@ function initMaintCanalPanel() {
 async function loadCanalIssues() {
   try {
     canalIssues = await api('GET', `/api/canal-issues?include_resolved=${canalShowResolved}`);
-    renderCanalIssues();
+    populateCanalFilterDropdowns();
+    applyCanalFilters();
     updateCanalBadge();
   } catch {
     el('canal-issue-list').innerHTML = `<div class="placeholder-msg">Failed to load issues</div>`;
@@ -2826,13 +2889,37 @@ function updateCanalBadge() {
   setBadge('maint-badge-canal', count);
 }
 
-function renderCanalIssues() {
+function populateCanalFilterDropdowns() {
+  const pSel = el('canal-filter-pool');
+  const prev = pSel.value;
+  const pools = [...new Set(canalIssues.map(i => i.pool).filter(Boolean))].sort((a, b) => Number(a) - Number(b));
+  pSel.innerHTML = '<option value="">All Pools</option>' +
+    pools.map(p => `<option value="${escHtml(p)}"${p === prev ? ' selected' : ''}>Pool ${escHtml(p)}</option>`).join('');
+}
+
+function applyCanalFilters() {
+  let items = canalIssues;
+  if (_canalFilterPool) items = items.filter(i => String(i.pool) === _canalFilterPool);
+  if (_canalFilterQ) {
+    const q = _canalFilterQ.toLowerCase();
+    items = items.filter(i =>
+      [i.pool ? `pool ${i.pool}` : '', i.description, i.action_taken,
+       i.resolution_notes, i.assigned_to, i.entered_by_full_name, i.notes]
+        .some(f => (f || '').toLowerCase().includes(q))
+    );
+  }
+  renderCanalIssues(items);
+}
+
+function renderCanalIssues(items) {
+  items = items ?? canalIssues;
   const list = el('canal-issue-list');
-  if (!canalIssues.length) {
-    list.innerHTML = `<div class="placeholder-msg">No ${canalShowResolved ? '' : 'open '}issues</div>`;
+  if (!items.length) {
+    const hasF = _canalFilterPool || _canalFilterQ;
+    list.innerHTML = `<div class="placeholder-msg">${hasF ? 'No matching issues.' : `No ${canalShowResolved ? '' : 'open '}issues`}</div>`;
     return;
   }
-  list.innerHTML = canalIssues.map(issue => {
+  list.innerHTML = items.map(issue => {
     const statusClass = issue.status.replace('_', '-');
     const title   = issue.pool ? `Pool ${escHtml(issue.pool)}` : 'Canal';
     const snippet = (issue.description || '').slice(0, 80) + (issue.description?.length > 80 ? '…' : '');
@@ -3448,15 +3535,43 @@ let maintVehiclesLoaded = false;
 // Vehicle record list state
 let vehRecords       = [];
 let vehShowResolved  = false;
+let _vehFilterVehicle = '';
+let _vehFilterType    = '';
+let _vehFilterQ       = '';
 
 async function loadVehRecords() {
   try {
     vehRecords = await api('GET', `/api/maintenance/vehicles-list?include_resolved=${vehShowResolved}`);
-    renderVehRecords();
+    populateVehFilterDropdowns();
+    applyVehFilters();
     setBadge('maint-badge-vehicles', vehRecords.filter(r => r.status === 'open' || r.status === 'in-progress').length);
   } catch {
     el('veh-record-list').innerHTML = '<div class="placeholder-msg">Failed to load records</div>';
   }
+}
+
+function populateVehFilterDropdowns() {
+  const vSel = el('veh-filter-vehicle');
+  const prev = vSel.value;
+  const seen = new Map();
+  vehRecords.forEach(r => { if (r.vehicle_number && !seen.has(r.vehicle_number)) seen.set(r.vehicle_number, r); });
+  const sorted = [...seen.values()].sort((a, b) => (a.vehicle_number || '').localeCompare(b.vehicle_number || ''));
+  vSel.innerHTML = '<option value="">All Vehicles</option>' +
+    sorted.map(r => `<option value="${escHtml(r.vehicle_number)}"${r.vehicle_number === prev ? ' selected' : ''}>${escHtml([r.vehicle_number, r.model].filter(Boolean).join(' — '))}</option>`).join('');
+}
+
+function applyVehFilters() {
+  let items = vehRecords;
+  if (_vehFilterVehicle) items = items.filter(r => r.vehicle_number === _vehFilterVehicle);
+  if (_vehFilterType)    items = items.filter(r => r.work_type === _vehFilterType);
+  if (_vehFilterQ) {
+    const q = _vehFilterQ.toLowerCase();
+    items = items.filter(r =>
+      [r.vehicle_number, r.model, r.work_type, r.description, r.performed_by, r.notes]
+        .some(f => (f || '').toLowerCase().includes(q))
+    );
+  }
+  renderVehRecords(items);
 }
 
 // Per-card pending files: Map<maintenance_id, [{file, fileType}]>
@@ -3631,14 +3746,16 @@ function renderVehCardQueue(id) {
   });
 }
 
-function renderVehRecords() {
+function renderVehRecords(items) {
+  items = items ?? vehRecords;
   const list = el('veh-record-list');
-  if (!vehRecords.length) {
-    list.innerHTML = `<div class="placeholder-msg">No ${vehShowResolved ? '' : 'open '}records</div>`;
+  if (!items.length) {
+    const hasF = _vehFilterVehicle || _vehFilterType || _vehFilterQ;
+    list.innerHTML = `<div class="placeholder-msg">${hasF ? 'No matching records.' : `No ${vehShowResolved ? '' : 'open '}records`}</div>`;
     return;
   }
   const statusLabel = { open: 'Open', 'in-progress': 'In Progress', resolved: 'Resolved' };
-  list.innerHTML = vehRecords.map(r => {
+  list.innerHTML = items.map(r => {
     const id = r.maintenance_id;
     const vehicleName = [r.vehicle_number, r.model].filter(Boolean).join(' — ');
     const snippet = (r.description || '').slice(0, 80) + ((r.description || '').length > 80 ? '…' : '');
@@ -3889,6 +4006,11 @@ async function initMaintVehiclesPanel() {
   if (maintVehiclesLoaded) return;
   maintVehiclesLoaded = true;
 
+  el('veh-filter-vehicle').addEventListener('change', () => { _vehFilterVehicle = el('veh-filter-vehicle').value; applyVehFilters(); });
+  el('veh-filter-type').addEventListener('change',   () => { _vehFilterType    = el('veh-filter-type').value;    applyVehFilters(); });
+  let _vfqT;
+  el('veh-filter-q').addEventListener('input', () => { clearTimeout(_vfqT); _vfqT = setTimeout(() => { _vehFilterQ = el('veh-filter-q').value.trim(); applyVehFilters(); }, 250); });
+
   try {
     const vehicles = await api('GET', '/api/vehicles');
     maintVehicles = vehicles;
@@ -3988,6 +4110,11 @@ el('maint-site-select').addEventListener('change', async () => {
 /* ── Equipment Swaps ─────────────────────────────────────────────────────── */
 let swapCategory = 'siphon_breaker';
 let swapPanelLoaded = false;
+let swapHistory      = [];
+let _swapFilterCat   = '';
+let _swapFilterLoc   = '';
+let _swapFilterQ     = '';
+const SWAP_CAT_LABEL = { siphon_breaker: 'Siphon Breaker', motor: 'Motor', pp_pump: 'PP Pump', well_motor: 'Well Motor', well_meter: 'Well Meter' };
 
 function initMaintSwapsPanel() {
   if (swapPanelLoaded) return;
@@ -3995,6 +4122,12 @@ function initMaintSwapsPanel() {
   el('swap-date').value = todayISO();
   if (!el('swap-performed-by').value) el('swap-performed-by').value = currentUser?.full_name || '';
   loadSwapUnits(swapCategory);
+  loadSwapHistory();
+
+  el('swap-filter-cat').addEventListener('change', () => { _swapFilterCat = el('swap-filter-cat').value; applySwapFilters(); });
+  el('swap-filter-loc').addEventListener('change', () => { _swapFilterLoc = el('swap-filter-loc').value; applySwapFilters(); });
+  let _swqT;
+  el('swap-filter-q').addEventListener('input', () => { clearTimeout(_swqT); _swqT = setTimeout(() => { _swapFilterQ = el('swap-filter-q').value.trim(); applySwapFilters(); }, 250); });
 }
 
 async function loadSwapUnits(category) {
@@ -4081,13 +4214,73 @@ el('swap-save-btn').addEventListener('click', async () => {
     el('swap-notes').value = '';
     el('swap-location-hint').classList.add('hidden');
     // Reload units so dropdowns reflect the updated statuses
-    if (!r.queued) loadSwapUnits(swapCategory);
+    if (!r.queued) { loadSwapUnits(swapCategory); loadSwapHistory(); }
   } catch (err) {
     showError('swap-error', err.message);
   } finally {
     btn.disabled = false; btn.textContent = 'Complete Swap';
   }
 });
+
+async function loadSwapHistory() {
+  el('swap-history-list').innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    swapHistory = await api('GET', '/api/equipment-swaps');
+    populateSwapHistoryDropdowns();
+    applySwapFilters();
+  } catch {
+    el('swap-history-list').innerHTML = '<div class="placeholder-msg">Failed to load.</div>';
+  }
+}
+
+function populateSwapHistoryDropdowns() {
+  const lSel = el('swap-filter-loc');
+  const prev = lSel.value;
+  const locs = [...new Set(swapHistory.map(s => s.location).filter(Boolean))].sort();
+  lSel.innerHTML = '<option value="">All Locations</option>' +
+    locs.map(l => `<option value="${escHtml(l)}"${l === prev ? ' selected' : ''}>${escHtml(l)}</option>`).join('');
+}
+
+function applySwapFilters() {
+  let items = swapHistory;
+  if (_swapFilterCat) items = items.filter(s => s.category === _swapFilterCat);
+  if (_swapFilterLoc) items = items.filter(s => s.location === _swapFilterLoc);
+  if (_swapFilterQ) {
+    const q = _swapFilterQ.toLowerCase();
+    items = items.filter(s =>
+      [s.location, s.category, s.removed_description, s.installed_description, s.performed_by, s.notes]
+        .some(f => (f || '').toLowerCase().includes(q))
+    );
+  }
+  renderSwapHistory(items);
+}
+
+function renderSwapHistory(items) {
+  const list = el('swap-history-list');
+  if (!items.length) {
+    const hasF = _swapFilterCat || _swapFilterLoc || _swapFilterQ;
+    list.innerHTML = `<div class="placeholder-msg">${hasF ? 'No matching swaps.' : 'No swaps recorded.'}</div>`;
+    return;
+  }
+  list.innerHTML = items.map(s => `
+    <div class="equip-issue-item" style="padding:10px 14px">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
+        <div>
+          <div style="font-weight:600;font-size:0.9rem">${escHtml(s.location || '—')}</div>
+          <div style="font-size:0.78rem;color:var(--text-dim);margin:2px 0">${escHtml(SWAP_CAT_LABEL[s.category] || s.category || '—')}</div>
+          <div style="font-size:0.83rem;margin-top:4px">
+            <span style="color:var(--text-dim)">Removed:</span> ${escHtml(s.removed_description || '—')}
+          </div>
+          <div style="font-size:0.83rem;margin-top:2px">
+            <span style="color:var(--text-dim)">Installed:</span> ${escHtml(s.installed_description || '—')}
+          </div>
+          ${s.performed_by ? `<div style="font-size:0.78rem;color:var(--text-dim);margin-top:4px">By: ${escHtml(s.performed_by)}</div>` : ''}
+          ${s.notes ? `<div style="font-size:0.78rem;color:var(--text-dim);margin-top:2px;font-style:italic">${escHtml(s.notes)}</div>` : ''}
+        </div>
+        <div style="white-space:nowrap;font-size:0.78rem;color:var(--text-dim);flex-shrink:0">${(s.swap_date || '').slice(0,10)}</div>
+      </div>
+    </div>`).join('');
+}
 
 /* ── Maintenance Attachments ─────────────────────────────────────────────── */
 let maintPendingAttachments = []; // { file, fileType }
