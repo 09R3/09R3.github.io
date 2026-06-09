@@ -1881,13 +1881,16 @@ function createVehicleItem(v, dateInput, timeInput) {
 let wellIssuesLoaded  = false;
 let wellIssues        = [];
 let wellShowResolved  = false;
+let _wellFilterWell   = '';
+let _wellFilterArea   = '';
+let _wellFilterQ      = '';
 
 function initMaintWellsPanel() {
   if (wellIssuesLoaded) return;
   wellIssuesLoaded = true;
   el('well-issue-date').value = todayISO();
   loadWellIssues();
-  // Populate well dropdown
+  // Populate new-issue well dropdown
   api('GET', '/api/wells/operational').then(wells => {
     const sel = el('well-issue-select');
     sel.innerHTML = '<option value="">Select well…</option>';
@@ -1899,16 +1902,66 @@ function initMaintWellsPanel() {
       sel.appendChild(opt);
     });
   }).catch(() => {});
+
+  // Wire filter bar
+  el('well-filter-well').addEventListener('change', () => {
+    _wellFilterWell = el('well-filter-well').value;
+    applyWellFilters();
+  });
+  el('well-filter-area').addEventListener('change', () => {
+    _wellFilterArea = el('well-filter-area').value;
+    applyWellFilters();
+  });
+  let _wfqTimer;
+  el('well-filter-q').addEventListener('input', () => {
+    clearTimeout(_wfqTimer);
+    _wfqTimer = setTimeout(() => {
+      _wellFilterQ = el('well-filter-q').value.trim();
+      applyWellFilters();
+    }, 250);
+  });
 }
 
 async function loadWellIssues() {
   try {
     wellIssues = await api('GET', `/api/well-issues?include_resolved=${wellShowResolved}`);
-    renderWellIssues();
+    populateWellFilterDropdowns();
+    applyWellFilters();
     updateWellBadge();
   } catch {
     el('well-issue-list').innerHTML = `<div class="placeholder-msg">Failed to load issues</div>`;
   }
+}
+
+function populateWellFilterDropdowns() {
+  const wellSel = el('well-filter-well');
+  const prevWell = wellSel.value;
+  const seenWells = new Map();
+  wellIssues.forEach(i => { if (i.well_id && !seenWells.has(i.well_id)) seenWells.set(i.well_id, i); });
+  const sortedWells = [...seenWells.values()].sort((a, b) => (a.well_name || '').localeCompare(b.well_name || ''));
+  wellSel.innerHTML = '<option value="">All Wells</option>' +
+    sortedWells.map(i => `<option value="${i.well_id}"${String(i.well_id) === prevWell ? ' selected' : ''}>${escHtml(i.well_area ? `${i.well_name} (${i.well_area})` : i.well_name || '')}</option>`).join('');
+
+  const areaSel = el('well-filter-area');
+  const prevArea = areaSel.value;
+  const areas = [...new Set(wellIssues.map(i => i.well_area).filter(Boolean))].sort();
+  areaSel.innerHTML = '<option value="">All Areas</option>' +
+    areas.map(a => `<option value="${escHtml(a)}"${a === prevArea ? ' selected' : ''}>${escHtml(a)}</option>`).join('');
+}
+
+function applyWellFilters() {
+  let items = wellIssues;
+  if (_wellFilterWell) items = items.filter(i => String(i.well_id) === _wellFilterWell);
+  if (_wellFilterArea) items = items.filter(i => i.well_area === _wellFilterArea);
+  if (_wellFilterQ) {
+    const q = _wellFilterQ.toLowerCase();
+    items = items.filter(i =>
+      [i.well_name, i.well_area, i.description, i.action_taken,
+       i.resolution_notes, i.assigned_to, i.entered_by_full_name, i.notes]
+        .some(f => (f || '').toLowerCase().includes(q))
+    );
+  }
+  renderWellIssues(items);
 }
 
 function updateWellBadge() {
@@ -1916,13 +1969,15 @@ function updateWellBadge() {
   setBadge('maint-badge-wells', count);
 }
 
-function renderWellIssues() {
+function renderWellIssues(items) {
+  items = items ?? wellIssues;
   const list = el('well-issue-list');
-  if (!wellIssues.length) {
-    list.innerHTML = `<div class="placeholder-msg">No ${wellShowResolved ? '' : 'open '}issues</div>`;
+  if (!items.length) {
+    const hasFilters = _wellFilterWell || _wellFilterArea || _wellFilterQ;
+    list.innerHTML = `<div class="placeholder-msg">${hasFilters ? 'No matching issues.' : `No ${wellShowResolved ? '' : 'open '}issues`}</div>`;
     return;
   }
-  list.innerHTML = wellIssues.map(issue => {
+  list.innerHTML = items.map(issue => {
     const statusClass = issue.status.replace('_', '-');
     const title   = issue.well_area ? `${issue.well_name} (${issue.well_area})` : (issue.well_name || 'Unknown Well');
     const snippet = (issue.description || '').slice(0, 80) + (issue.description?.length > 80 ? '…' : '');

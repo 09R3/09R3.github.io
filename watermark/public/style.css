@@ -2005,6 +2005,17 @@ input[type="date"].ctrl-input { min-height: 44px; }
   margin-bottom: 12px;
   gap: 8px;
 }
+.issue-filter-bar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+.issue-filter-bar select,
+.issue-filter-bar input[type="search"] {
+  flex: 1 1 120px;
+  min-width: 0;
+}
 
 .equip-issue-item {
   background: var(--surface);

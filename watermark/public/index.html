@@ -129,7 +129,7 @@
         Sign in with Microsoft 365
       </a>
       <div id="ms-login-error" class="error-msg hidden"></div>
-      <div class="login-version">v 2.30</div>
+      <div class="login-version">v 2.31</div>
     </div>
   </div>
 </div>
@@ -844,6 +844,13 @@
       <div class="issue-toolbar">
         <button class="btn btn-secondary btn-sm" id="well-show-resolved-btn">Show Resolved</button>
         <button class="btn btn-save btn-sm" id="well-new-issue-btn">+ New Issue</button>
+      </div>
+
+      <!-- Filter bar -->
+      <div class="issue-filter-bar">
+        <select id="well-filter-well" class="ctrl-select"><option value="">All Wells</option></select>
+        <select id="well-filter-area" class="ctrl-select"><option value="">All Areas</option></select>
+        <input type="search" id="well-filter-q" class="ctrl-input" placeholder="Search…">
       </div>
 
       <!-- New issue form -->
@@ -1656,7 +1663,7 @@
     <div id="settings-panel-appinfo" class="settings-panel hidden">
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 2.30</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 2.31</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>
