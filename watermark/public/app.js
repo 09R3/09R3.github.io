@@ -5720,6 +5720,22 @@ async function initRunningWellsPanel() {
         </div>`;
       }
     });
+
+    // Add pipeline total inputs for any Pool 1/2/3 that had no operational wells
+    Object.entries(POOL_EXTRA_LABELS).forEach(([pool, label]) => {
+      if (byPool[pool]) return; // already rendered above
+      const safePool = pool.replace(/"/g, '&quot;');
+      const savedVal = pool_extras[pool] != null ? pool_extras[pool] : '';
+      html += `<div class="rw-area-row"><label class="rw-area-label"><span>${escHtml(pool)}</span></label></div>
+        <div class="rw-well-extra-row">
+          <span class="rw-well-extra-label">${escHtml(label)}</span>
+          <input type="number" class="ctrl-input ctrl-input-sm rw-pool-extra-input"
+            data-pool="${safePool}" step="0.01" min="0" placeholder="0.00"
+            value="${savedVal}" style="width:80px;text-align:right">
+          <span class="rw-well-extra-unit">cfs</span>
+        </div>`;
+    });
+
     list.innerHTML = html;
 
     function syncPoolCheckbox(pool) {
