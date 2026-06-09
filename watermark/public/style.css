@@ -2216,10 +2216,30 @@ input[type="date"].ctrl-input { min-height: 44px; }
    Also exclude #print-area so the standard print path still works. */
 @media print {
   body > *:not(#issue-report-modal):not(#print-area) { display: none !important; }
-  #issue-report-modal { position: static !important; background: #fff !important; }
+  /* Override flex layout so content flows for print — flex with no height = collapsed */
+  #issue-report-modal {
+    position: static !important;
+    display: block !important;
+    height: auto !important;
+    overflow: visible !important;
+    background: #fff !important;
+  }
   .report-preview-bar { display: none !important; }
-  .report-preview-scroll { overflow: visible !important; padding: 0 !important; }
-  .ir-content { max-width: 100% !important; padding: 0 !important; border-radius: 0 !important; box-shadow: none !important; }
+  .report-preview-scroll {
+    display: block !important;
+    overflow: visible !important;
+    height: auto !important;
+    flex: unset !important;
+    padding: 0 !important;
+  }
+  .ir-content {
+    max-width: 100% !important;
+    padding: 20px !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    background: #fff !important;
+    color: #111 !important;
+  }
   .ir-photo { page-break-inside: avoid; }
 }
 

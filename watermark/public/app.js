@@ -379,6 +379,42 @@ el('location-modal-open-btn').addEventListener('click', () => {
   window.location.href = _locationModalUrl;
 });
 
+/* ── Report Location Picker ─────────────────────────────────────────────── */
+let _rloMap = null, _rloMarker = null;
+
+function pickReportLocation() {
+  return new Promise(resolve => {
+    const modal = el('report-loc-modal');
+    modal.classList.remove('hidden');
+    if (_rloMarker) { _rloMarker.remove(); _rloMarker = null; }
+
+    const done = result => { modal.classList.add('hidden'); resolve(result); };
+
+    el('rlo-close').onclick = () => done(null);
+    el('rlo-skip').onclick  = () => done(null);
+    el('rlo-use').onclick   = () => {
+      if (!_rloMarker) { showToast('Tap the map to place a pin first', 'error'); return; }
+      const ll = _rloMarker.getLatLng();
+      done({ lat: ll.lat, lon: ll.lng });
+    };
+    modal.onclick = e => { if (e.target === modal) done(null); };
+
+    if (!_rloMap) {
+      _rloMap = L.map('report-loc-map', { zoomControl: true, attributionControl: false });
+      L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+        maxZoom: 20
+      }).addTo(_rloMap);
+      _rloMap.setView([35.37, -119.02], 12);
+      _rloMap.on('click', e => {
+        const { lat, lng } = e.latlng;
+        if (_rloMarker) _rloMarker.setLatLng([lat, lng]);
+        else _rloMarker = L.marker([lat, lng], { draggable: true }).addTo(_rloMap);
+      });
+    }
+    setTimeout(() => _rloMap.invalidateSize(), 200);
+  });
+}
+
 /* ── Set Map Modal ───────────────────────────────────────────────────────── */
 let _setLeafletMap = null;
 let _setLeafletMarkers = [];
@@ -2156,6 +2192,7 @@ el('well-issue-list').addEventListener('click', async e => {
       reportLabel: 'Well Issue Report',
       getTitle:    i => i.well_area ? `${i.well_name} (${i.well_area})` : (i.well_name || 'Unknown Well'),
       getGPS:      i => i.gps_latitude != null ? { lat: i.gps_latitude, lon: i.gps_longitude } : null,
+      resolveGPS:  resolveGPSFromBlobs,
       getRows:     i => [
         ['Well',       escHtml(i.well_name || '—')],
         i.well_area ? ['Area', escHtml(i.well_area)] : null,
@@ -3145,9 +3182,10 @@ async function shareMaintenanceReport(issueId, item, cfg) {
     }))).filter(Boolean);
     const photoUris = await Promise.all(photoBlobs.map(b => blobToDataUri(b)));
 
-    // GPS: from issue record (getGPS) or scanned from photo EXIF (resolveGPS)
+    // GPS priority: 1) issue record (e.g. well GPS from DB), 2) photo EXIF, 3) user picks
     let gps = cfg.getGPS ? cfg.getGPS(issue) : null;
     if (!gps && cfg.resolveGPS) gps = await cfg.resolveGPS(photoBlobs);
+    if (!gps) gps = await pickReportLocation();
 
     // Optional GPS map with pin
     let mapSrc = null;

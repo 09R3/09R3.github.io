@@ -129,7 +129,7 @@
         Sign in with Microsoft 365
       </a>
       <div id="ms-login-error" class="error-msg hidden"></div>
-      <div class="login-version">v 2.32</div>
+      <div class="login-version">v 2.33</div>
     </div>
   </div>
 </div>
@@ -1663,7 +1663,7 @@
     <div id="settings-panel-appinfo" class="settings-panel hidden">
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 2.32</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 2.33</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>
@@ -2560,6 +2560,24 @@
       </div>
       <div id="safety-signin-error" class="error-msg hidden"></div>
       <button class="btn btn-save" id="safety-signin-save">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Report location picker modal -->
+<div id="report-loc-modal" class="modal-overlay hidden">
+  <div class="modal-card" style="max-width:480px;width:100%">
+    <div class="modal-header">
+      <h2>Select Location</h2>
+      <button class="modal-close" id="rlo-close">&times;</button>
+    </div>
+    <div class="modal-body" style="padding:0">
+      <div style="padding:10px 16px 8px;font-size:0.85rem;color:var(--text-dim)">No GPS found — tap the map to pin a location for this report.</div>
+      <div id="report-loc-map" style="height:260px"></div>
+      <div style="padding:12px 16px;display:flex;gap:8px">
+        <button class="btn btn-secondary" id="rlo-skip" style="flex:1">Skip</button>
+        <button class="btn btn-save" id="rlo-use" style="flex:1">Use This Location</button>
+      </div>
     </div>
   </div>
 </div>
