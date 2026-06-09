@@ -5666,11 +5666,17 @@ el('kf-widget-save-btn').addEventListener('click', async () => {
 });
 
 // ── Running Wells Settings ────────────────────────────────────────────────────
+const POOL_EXTRA_LABELS = {
+  'Pool 1': 'KWB & West Kern Pipeline Total',
+  'Pool 2': 'KWB & RRB Turn-In Total',
+  'Pool 3': 'KWB, RRB Strand Wells, & Central Intake Total',
+};
+
 async function initRunningWellsPanel() {
   const list = el('rw-settings-list');
   list.innerHTML = '<div class="placeholder-msg">Loading…</div>';
   try {
-    const [{ well_ids }, wells] = await Promise.all([
+    const [{ well_ids, pool_extras }, wells] = await Promise.all([
       api('GET', '/api/settings/running-wells'),
       api('GET', '/api/wells/operational'),
     ]);
@@ -5690,7 +5696,7 @@ async function initRunningWellsPanel() {
       html += `<div class="rw-area-row">
         <label class="rw-area-label">
           <input type="checkbox" class="rw-area-cb" data-pool="${safePool}">
-          <span>${pool}</span>
+          <span>${escHtml(pool)}</span>
         </label>
       </div>`;
       poolWells.forEach(w => {
@@ -5698,10 +5704,21 @@ async function initRunningWellsPanel() {
         html += `<div class="rw-well-row">
           <label class="rw-well-label">
             <input type="checkbox" class="rw-well-cb" data-pool="${safePool}" data-id="${w.well_id}" ${checked}>
-            <span>${w.common_name}</span>
+            <span>${escHtml(w.common_name)}</span>
           </label>
         </div>`;
       });
+      // Pipeline / turn-in total input for Pool 1, 2, 3
+      if (POOL_EXTRA_LABELS[pool]) {
+        const savedVal = pool_extras[pool] != null ? pool_extras[pool] : '';
+        html += `<div class="rw-well-extra-row">
+          <span class="rw-well-extra-label">${escHtml(POOL_EXTRA_LABELS[pool])}</span>
+          <input type="number" class="ctrl-input ctrl-input-sm rw-pool-extra-input"
+            data-pool="${safePool}" step="0.01" min="0" placeholder="0.00"
+            value="${savedVal}" style="width:80px;text-align:right">
+          <span class="rw-well-extra-unit">cfs</span>
+        </div>`;
+      }
     });
     list.innerHTML = html;
 
@@ -5737,8 +5754,13 @@ async function initRunningWellsPanel() {
 
 el('rw-settings-save-btn').addEventListener('click', async () => {
   const checked = [...document.querySelectorAll('.rw-well-cb:checked')].map(cb => Number(cb.dataset.id));
+  const pool_extras = {};
+  document.querySelectorAll('.rw-pool-extra-input').forEach(inp => {
+    const v = parseFloat(inp.value);
+    if (!isNaN(v) && v >= 0) pool_extras[inp.dataset.pool] = v;
+  });
   try {
-    await api('PUT', '/api/settings/running-wells', { well_ids: checked });
+    await api('PUT', '/api/settings/running-wells', { well_ids: checked, pool_extras });
     showToast('Running wells saved');
     loadDashboardStats();
   } catch (err) {
@@ -5836,64 +5858,92 @@ async function openRunningWellsModal() {
   body.innerHTML = '<div class="placeholder-msg">Loading…</div>';
   el('running-wells-modal').classList.remove('hidden');
   try {
-    const { wells, total_cfs, total_count } = await api('GET', '/api/dashboard/running-wells');
+    const { wells, total_count, pool_extras } = await api('GET', '/api/dashboard/running-wells');
     if (!total_count) {
       body.innerHTML = '<div class="placeholder-msg">No running wells configured.</div>';
       return;
     }
 
-    // Group by discharge_pool
+    // Group by discharge_pool; Kern River Canal sorts to bottom
     const byPool = {};
     wells.forEach(w => {
       const pool = w.discharge_pool || 'Other';
       if (!byPool[pool]) byPool[pool] = [];
       byPool[pool].push(w);
     });
+    const poolOrder = Object.keys(byPool).sort((a, b) => {
+      const isKRC = p => /kern\s*river\s*canal/i.test(p);
+      if (isKRC(a) && !isKRC(b)) return 1;
+      if (!isKRC(a) && isKRC(b)) return -1;
+      return a.localeCompare(b);
+    });
 
+    let grandTotal = 0;
     let html = '';
-    Object.entries(byPool).forEach(([pool, poolWells]) => {
-      html += `<div class="rw-modal-area">${pool}</div>`;
+
+    poolOrder.forEach(pool => {
+      const poolWells = byPool[pool];
+      html += `<div class="rw-modal-area">${escHtml(pool)}</div>`;
+
       poolWells.forEach(w => {
         const dot = w.read_today
           ? '<span class="rw-modal-dot rw-dot-read"></span>'
           : '<span class="rw-modal-dot rw-dot-unread"></span>';
-        const status = w.read_today
-          ? '<span class="rw-modal-status rw-status-read">Read</span>'
-          : '<span class="rw-modal-status rw-status-unread">Not Read</span>';
-        const cfs = w.read_today && w.on_off && w.flow_cfs != null
-          ? `${parseFloat(w.flow_cfs).toFixed(2)} cfs`
-          : '—';
+
+        let onOffHtml;
+        if (w.on_off === true)       onOffHtml = '<span class="rw-modal-onoff rw-onoff-on">On</span>';
+        else if (w.on_off === false) onOffHtml = '<span class="rw-modal-onoff rw-onoff-off">Off</span>';
+        else                         onOffHtml = '<span class="rw-modal-onoff" style="color:var(--text-dim)">—</span>';
+
+        // Effective flow: today's reading, or fallback if on but no today flow
+        const effectiveFlow = w.flow_cfs ?? (w.on_off ? w.fallback_flow_cfs : null);
+        let cfsHtml;
+        if (w.on_off && effectiveFlow != null) {
+          const isFallback = w.flow_cfs == null && w.fallback_flow_cfs != null;
+          cfsHtml = `<span class="rw-modal-cfs${isFallback ? ' rw-cfs-fallback' : ''}" title="${isFallback ? 'Last known flow' : ''}">${parseFloat(effectiveFlow).toFixed(2)} cfs</span>`;
+        } else if (w.on_off === false) {
+          cfsHtml = '<span class="rw-modal-cfs rw-cfs-off">Off</span>';
+        } else {
+          cfsHtml = '<span class="rw-modal-cfs" style="color:var(--text-dim)">—</span>';
+        }
+
         html += `<div class="rw-modal-row">
-          <span class="rw-modal-well-name">${dot}${w.common_name}</span>
-          ${status}
-          <span class="rw-modal-cfs">${cfs}</span>
+          <span class="rw-modal-well-name">${dot}${escHtml(w.common_name)}</span>
+          ${onOffHtml}
+          ${cfsHtml}
         </div>`;
       });
-      const poolCfs = poolWells
-        .filter(w => w.read_today && w.on_off && w.flow_cfs != null)
-        .reduce((sum, w) => sum + (parseFloat(w.flow_cfs) || 0), 0);
+
+      // Pool well total
+      const wellPoolCfs = poolWells
+        .filter(w => w.on_off)
+        .reduce((sum, w) => {
+          const flow = w.flow_cfs ?? w.fallback_flow_cfs;
+          return sum + (parseFloat(flow) || 0);
+        }, 0);
+
+      // Pipeline / turn-in extra for this pool
+      const extraCfs = parseFloat(pool_extras[pool]) || 0;
+      const poolTotal = wellPoolCfs + extraCfs;
+      grandTotal += poolTotal;
+
+      if (POOL_EXTRA_LABELS[pool] && extraCfs > 0) {
+        html += `<div class="rw-modal-extra-row">
+          <span>${escHtml(POOL_EXTRA_LABELS[pool])}</span>
+          <span class="rw-modal-cfs">${extraCfs.toFixed(2)} cfs</span>
+        </div>`;
+      }
+
       html += `<div class="rw-modal-subtotal">
-        <span>Pool Total</span>
-        <span>${poolCfs.toFixed(2)} cfs</span>
+        <span>${escHtml(pool)} Total</span>
+        <span>${poolTotal.toFixed(2)} cfs</span>
       </div>`;
     });
 
-    const cvcCfs = wells
-      .filter(w => w.read_today && w.on_off && w.flow_cfs != null && /^Pool\s*[1-8]$/i.test(w.discharge_pool || ''))
-      .reduce((sum, w) => sum + (parseFloat(w.flow_cfs) || 0), 0);
-    const krcCfs = wells
-      .filter(w => w.read_today && w.on_off && w.flow_cfs != null && /kern\s*river\s*canal/i.test(w.discharge_pool || ''))
-      .reduce((sum, w) => sum + (parseFloat(w.flow_cfs) || 0), 0);
-
-    html += `
-      <div class="rw-modal-total">
-        <span>CVC Well Inflow <span style="font-size:0.75rem;font-weight:400;color:var(--text-dim)">(Pools 1–8)</span></span>
-        <span>${cvcCfs.toFixed(2)} cfs</span>
-      </div>
-      <div class="rw-modal-total" style="border-top:1px solid var(--border);margin-top:0">
-        <span>Kern River Canal Inflow</span>
-        <span>${krcCfs.toFixed(2)} cfs</span>
-      </div>`;
+    html += `<div class="rw-modal-total">
+      <span>Grand Total</span>
+      <span>${grandTotal.toFixed(2)} cfs</span>
+    </div>`;
 
     body.innerHTML = html;
   } catch (err) {
