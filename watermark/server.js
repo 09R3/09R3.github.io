@@ -2462,23 +2462,6 @@ app.get('/api/equipment-swap-units/:category', requireAuth, async (req, res) => 
   }
 });
 
-app.get('/api/equipment-swaps', requireAuth, async (req, res) => {
-  try {
-    const { rows } = await pool.query(`
-      SELECT swap_id, category, swap_date, location,
-             item_removed_id, item_installed_id,
-             removed_description, installed_description,
-             performed_by, notes, entered_by, created_at
-      FROM equipment_swaps
-      ORDER BY swap_date DESC, created_at DESC
-      LIMIT 500
-    `);
-    res.json(rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
 // ── Equipment Swap — unified (siphon_breaker / motor / pp_pump / well_motor / well_meter)
 app.post('/api/equipment-swaps', requireAuth, async (req, res) => {
   const { category, remove_id, install_id, swap_date, performed_by, notes } = req.body;
@@ -4269,7 +4252,7 @@ app.put('/api/settings/gps-selector', requireAuth, requireRole('admin'), async (
 app.get('/api/settings/running-wells', requireAuth, async (req, res) => {
   try {
     const { rows } = await pool.query(`SELECT value FROM app_settings WHERE key = 'running_wells'`);
-    const raw = rows.length ? JSON.parse(rows[0].value) : {};
+    const raw         = rows.length ? JSON.parse(rows[0].value) : {};
     const ids         = Array.isArray(raw) ? raw : (raw.well_ids    || []);
     const pool_extras = Array.isArray(raw) ? {} : (raw.pool_extras  || {});
     res.json({ well_ids: ids, pool_extras });
@@ -4296,10 +4279,10 @@ app.put('/api/settings/running-wells', requireAuth, requireRole('supervisor', 'a
 app.get('/api/dashboard/running-wells', requireAuth, async (req, res) => {
   try {
     const settingsRes = await pool.query(`SELECT value FROM app_settings WHERE key = 'running_wells'`);
-    const raw = settingsRes.rows.length ? JSON.parse(settingsRes.rows[0].value) : {};
+    const raw         = settingsRes.rows.length ? JSON.parse(settingsRes.rows[0].value) : {};
     const ids         = Array.isArray(raw) ? raw : (raw.well_ids    || []);
     const pool_extras = Array.isArray(raw) ? {} : (raw.pool_extras  || {});
-    if (!ids.length) return res.json({ wells: [], total_cfs: 0, read_today_count: 0, total_count: 0, pool_extras });
+    if (!ids.length) return res.json({ wells: [], cvc_total_cfs: 0, krc_total_cfs: 0, read_today_count: 0, total_count: 0, pool_extras });
 
     const { rows } = await pool.query(
       `WITH today_rdg AS (
@@ -4328,16 +4311,24 @@ app.get('/api/dashboard/running-wells', requireAuth, async (req, res) => {
     );
 
     const read_today_count = rows.filter(r => r.read_today).length;
-    const total_cfs = rows
-      .filter(r => r.on_off)
-      .reduce((sum, r) => {
-        const flow = r.flow_cfs ?? r.fallback_flow_cfs;
-        return sum + (parseFloat(flow) || 0);
-      }, 0);
+
+    // CVC = Pools 1-6 wells + pool_extras for those pools
+    const cvc_well_cfs = rows
+      .filter(r => r.on_off && /^Pool\s*[1-6]$/i.test(r.discharge_pool || ''))
+      .reduce((sum, r) => sum + (parseFloat(r.flow_cfs ?? r.fallback_flow_cfs) || 0), 0);
+    const cvc_extra_cfs = Object.entries(pool_extras)
+      .filter(([p]) => /^Pool\s*[1-6]$/i.test(p))
+      .reduce((sum, [, v]) => sum + (parseFloat(v) || 0), 0);
+    const cvc_total_cfs = cvc_well_cfs + cvc_extra_cfs;
+
+    const krc_total_cfs = rows
+      .filter(r => r.on_off && /kern\s*river\s*canal/i.test(r.discharge_pool || ''))
+      .reduce((sum, r) => sum + (parseFloat(r.flow_cfs ?? r.fallback_flow_cfs) || 0), 0);
 
     res.json({
       wells: rows,
-      total_cfs: Math.round(total_cfs * 100) / 100,
+      cvc_total_cfs:  Math.round(cvc_total_cfs  * 100) / 100,
+      krc_total_cfs:  Math.round(krc_total_cfs  * 100) / 100,
       read_today_count,
       total_count: rows.length,
       pool_extras,
