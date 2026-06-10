@@ -2462,6 +2462,23 @@ app.get('/api/equipment-swap-units/:category', requireAuth, async (req, res) => 
   }
 });
 
+app.get('/api/equipment-swaps', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT swap_id, category, swap_date, location,
+             item_removed_id, item_installed_id,
+             removed_description, installed_description,
+             performed_by, notes, entered_by, created_at
+      FROM equipment_swaps
+      ORDER BY swap_date DESC, created_at DESC
+      LIMIT 500
+    `);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Equipment Swap — unified (siphon_breaker / motor / pp_pump / well_motor / well_meter)
 app.post('/api/equipment-swaps', requireAuth, async (req, res) => {
   const { category, remove_id, install_id, swap_date, performed_by, notes } = req.body;
