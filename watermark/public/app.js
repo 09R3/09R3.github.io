@@ -680,6 +680,8 @@ async function loadDashboardStats() {
 function onLogout() {
   currentUser = null;
   localStorage.removeItem('watermark-user');
+  // Purge cached API data so it doesn't linger on shared devices (S-5)
+  navigator.serviceWorker?.controller?.postMessage({ type: 'clear-api-cache' });
   el('app-shell').classList.add('hidden');
   el('screen-login').classList.add('active');
   el('login-password').value = '';
@@ -711,6 +713,10 @@ async function checkAuth() {
     const cached = localStorage.getItem('watermark-user');
     if (isNetworkError && cached) {
       try { onLogin(JSON.parse(cached)); } catch { /* bad cache, ignore */ }
+    } else if (!isNetworkError) {
+      // Session rejected (expired/invalid) — purge cached API data (S-5)
+      localStorage.removeItem('watermark-user');
+      navigator.serviceWorker?.controller?.postMessage({ type: 'clear-api-cache' });
     }
     // Otherwise: not logged in — show login screen (already visible by default)
   }
@@ -2991,21 +2997,25 @@ function renderCanalNewPhotoList() {
       ${p.gps ? `<button type="button" class="canal-aq-map-btn" data-idx="${i}" style="padding:2px 7px;font-size:0.8rem;border:1px solid var(--border);border-radius:6px;background:var(--surface2);cursor:pointer">&#127757;</button>` : ''}
       <button class="maint-aq-remove canal-new-aq-remove" data-idx="${i}">×</button>
     </div>`).join('');
-  listEl.querySelectorAll('.canal-new-aq-remove').forEach(btn => {
-    btn.addEventListener('click', e => {
-      e.stopPropagation();
-      canalNewPhotos.splice(parseInt(btn.dataset.idx), 1);
-      renderCanalNewPhotoList();
-    });
-  });
-  listEl.querySelectorAll('.canal-aq-map-btn').forEach(btn => {
-    btn.addEventListener('click', e => {
-      e.stopPropagation();
-      const p = canalNewPhotos[parseInt(btn.dataset.idx)];
-      if (p?.gps) openGPSMap(p.gps.lat, p.gps.lon);
-    });
-  });
 }
+
+// One delegated listener — render only sets innerHTML, so handlers can't
+// stack across re-renders as EXIF GPS results come in (E-1)
+el('canal-new-photo-list').addEventListener('click', e => {
+  const rm = e.target.closest('.canal-new-aq-remove');
+  if (rm) {
+    e.stopPropagation();
+    canalNewPhotos.splice(parseInt(rm.dataset.idx), 1);
+    renderCanalNewPhotoList();
+    return;
+  }
+  const mapBtn = e.target.closest('.canal-aq-map-btn');
+  if (mapBtn) {
+    e.stopPropagation();
+    const p = canalNewPhotos[parseInt(mapBtn.dataset.idx)];
+    if (p?.gps) openGPSMap(p.gps.lat, p.gps.lon);
+  }
+});
 
 // Photo picker for new issue (multiple)
 const canalNewPhotoInput = document.createElement('input');

@@ -87,17 +87,17 @@
 ## 5. Recommended Action Plan (prioritized)
 
 **Phase 1 — Security quick wins (small diffs, high value)**
-1. S-3: error-message sanitization sweep (one helper + find/replace).
-2. S-2: `express-rate-limit` on login + download-token; 32-byte tokens.
-3. S-11: `sameSite: 'lax'` on the session cookie.
-4. S-5: purge SW cache on logout.
-5. S-6/S-7: extension whitelist + unique filename suffix + `nosniff` on `/uploads`.
-6. S-1: migrate remaining plaintext passwords, delete the fallback.
+1. ✔️ **DONE (v2.41)** S-3: error-message sanitization sweep — `handleErr()` helper, 125 endpoints now return "Server error. Check Docker logs for more information."
+2. ✔️ **DONE (v2.41)** S-2: login rate limit (5 failures / 15 min per username+IP, no external dependency); 32-byte download tokens. Lockout clears instantly when an admin resets the user's password (or on any successful login).
+3. ✔️ **DONE (v2.41)** S-11: `sameSite: 'lax'` on the session cookie (both set locations).
+4. ✔️ **DONE (v2.41)** S-5: SW purges cached `/api/` data on logout **and** when an expired session is detected at app launch. App shell stays cached for offline.
+5. ✔️ **DONE (v2.41)** S-6/S-7: extension whitelist + unique filename suffix + `nosniff` on `/uploads`.
+6. ⏸ **HANDLED MANUALLY** S-1: admin will reset any plaintext accounts directly; code fallback left in place. Check who's affected with: `SELECT username FROM users WHERE password NOT LIKE '$2%';`
 
 **Phase 2 — Hardening & hygiene**
-7. S-4: SRI hashes or self-host the 4 CDN libraries.
-8. E-1: fix the canal-photo listener accumulation (real bug).
-9. S-12: sequential, fail-loud migrations.
+7. ⏳ **PENDING DECISION** S-4: SRI hashes or self-host the 4 CDN libraries. (Self-hosting stores files on the *server*, not user devices — see discussion.)
+8. ✔️ **DONE (v2.41)** E-1: canal-photo listeners converted to event delegation (real bug).
+9. ⏸ **DEFERRED** S-12: sequential, fail-loud migrations — waiting per owner.
 10. R-4, R-5, R-7: delete dead equipment branch, dup CSS rule, stale todo items; remove `tools/exif.html` if unused.
 11. E-3/E-4: SW icon caching + seal compression.
 12. S-8: expired-session sweep; helmet baseline (S-9).

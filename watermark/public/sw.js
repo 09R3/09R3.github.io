@@ -1,4 +1,4 @@
-const CACHE = 'watermark-v2.40';
+const CACHE = 'watermark-v2.41';
 const SHELL = ['/', '/app.js', '/style.css', '/manifest.json'];
 
 self.addEventListener('install', e => {
@@ -12,6 +12,22 @@ self.addEventListener('activate', e => {
       Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))
     ).then(() => clients.claim())
   );
+});
+
+// Purge cached API data (user lists, readings, reports) on logout or when the
+// app detects an expired session — keeps shared-device data from lingering (S-5).
+// The app shell stays cached so offline launch still works.
+self.addEventListener('message', e => {
+  if (e.data?.type === 'clear-api-cache') {
+    e.waitUntil(
+      caches.open(CACHE).then(c =>
+        c.keys().then(reqs => Promise.all(
+          reqs.filter(r => new URL(r.url).pathname.startsWith('/api/'))
+              .map(r => c.delete(r))
+        ))
+      )
+    );
+  }
 });
 
 self.addEventListener('fetch', e => {
