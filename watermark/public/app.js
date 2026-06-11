@@ -3299,13 +3299,18 @@ async function shareMaintenanceReport(issueId, item, cfg) {
       } catch { mapSrc = esriUrl; }
     }
 
+    // Filename: equipment name (well / building / equipment / pool) + date
+    const reportDate = issue.reported_date ? String(issue.reported_date).slice(0, 10) : todayISO();
+    const fileName = `${cfg.getTitle(issue)} ${reportDate}`
+      .replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '') || `${cfg.tableName}-${issueId}`;
+
     showMaintenanceReportPreview({
       reportLabel: cfg.reportLabel,
       title:       cfg.getTitle(issue),
       rows:        cfg.getRows(issue),
       description: issue.description || '',
       mapSrc, gps, photoUris,
-      filename:    `${cfg.tableName}-${issueId}`,
+      filename:    fileName,
     });
   } catch (err) {
     showToast('Failed to prepare report: ' + err.message, 'error');
@@ -3325,6 +3330,7 @@ function buildMaintenanceReportHtml({ reportLabel, title, rows, description, map
   const galleryPhotos = photoFallback ? photoUris.slice(1) : photoUris;
 
   return `
+    <div class="ir-logo-row"><img src="/icons/kcwa-seal-192.png" class="ir-logo" alt="KCWA"></div>
     <div class="ir-header">
       <div class="ir-title">${escHtml(reportLabel)} — ${escHtml(title)}</div>
       <div class="ir-meta">${new Date().toLocaleDateString()}</div>
@@ -3389,14 +3395,30 @@ async function sharePdfFromElement(element, filename, title, opts = {}) {
   await shareFile(blob, filename.endsWith('.pdf') ? filename : `${filename}.pdf`, title);
 }
 
+// Wait for all <img> in a freshly-built off-screen node to finish loading,
+// otherwise html2canvas can capture before the KCWA logo / map / photos paint.
+function waitForImages(root) {
+  const imgs = [...root.querySelectorAll('img')];
+  return Promise.all(imgs.map(img =>
+    (img.complete && img.naturalWidth)
+      ? Promise.resolve()
+      : new Promise(res => { img.onload = img.onerror = res; setTimeout(res, 3000); })
+  ));
+}
+
 // Render an HTML string with its own print CSS off-screen (always on a white
-// page, never the dark app theme) and share it as a PDF.
+// page, never the dark app theme) and share it as a PDF. A KCWA logo is added
+// at the top-left unless opts.noLogo is set.
 async function sharePdfFromHtml(innerHtml, cssText, filename, title, opts = {}) {
+  const logo = opts.noLogo ? '' :
+    `<div class="pdf-logo-row"><img src="/icons/kcwa-seal-192.png" class="pdf-logo" alt="KCWA"></div>`;
+  const logoCss = `.pdf-logo-row{margin-bottom:8px}.pdf-logo{height:46px;width:auto;display:block}`;
   const holder = document.createElement('div');
   holder.style.cssText = `position:fixed;left:-10000px;top:0;width:${opts.widthPx || 794}px;background:#fff;color:#000;`;
-  holder.innerHTML = `<style>${cssText}</style><div class="pdf-root">${innerHtml}</div>`;
+  holder.innerHTML = `<style>${cssText}${logoCss}</style><div class="pdf-root">${logo}${innerHtml}</div>`;
   document.body.appendChild(holder);
   try {
+    await waitForImages(holder);
     await sharePdfFromElement(holder.querySelector('.pdf-root'), filename, title, opts);
   } finally {
     holder.remove();
@@ -3418,6 +3440,20 @@ const REPORT_PDF_CSS = `
   .report-num { text-align: right; }
   .dripper-check, .dripper-area-all { display: none !important; }
   [style*="border-top:2px"] { border-top: 2px solid #000 !important; padding-top: 10px; }`;
+
+// Compact variant so the whole vehicle/mileage fleet fits one portrait page.
+const MILEAGE_PDF_CSS = `
+  body { font-family: Arial, sans-serif; color: #000; margin: 0; }
+  .report-card { background: #fff; color: #000; }
+  .report-title { font-size: 13pt; font-weight: 700; text-align: center; margin: 0 0 2px; }
+  .report-subtitle { font-size: 8pt; text-align: center; color: #444; margin: 0 0 6px; }
+  .report-section-title { font-size: 7.5pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; margin: 7px 0 2px; border-bottom: 1px solid #000; padding-bottom: 1px; }
+  table { width: 100%; border-collapse: collapse; font-size: 7.5pt; margin-bottom: 3px; }
+  th { text-align: left; padding: 1px 4px; font-size: 6.8pt; font-weight: 700; text-transform: uppercase; border-bottom: 1px solid #000; }
+  td { padding: 1px 4px; border-bottom: 0.5px solid #ddd; }
+  tr { page-break-inside: avoid; }
+  .report-num { text-align: right; }
+  .report-empty { font-size: 7.5pt; color: #666; padding: 2px 0; }`;
 
 function showMaintenanceReportPreview({ reportLabel, title, rows, description, mapSrc, gps, photoUris, filename }) {
   document.getElementById('issue-report-modal')?.remove();
@@ -9379,10 +9415,12 @@ el('export-pdf-btn').addEventListener('click', async () => {
       const s1 = el('piez-cmp-start1').value, s2 = el('piez-cmp-start2').value;
       await sharePdfFromHtml(card.outerHTML, REPORT_PDF_CSS, `Piezometers_Compare_${s1}_${s2}`, 'Piezometer Comparison');
     } else {
-      // vehicles / mileage — wider landscape sheet
+      // vehicles / mileage — compact so the whole fleet fits one portrait page
       const html = buildMileageHTML(lastReportRows, reportsYear, reportsMonth);
-      await sharePdfFromHtml(html, REPORT_PDF_CSS, `CVC_Mileage_${reportsYear}_${reportsMonth}`,
-        'CVC Mileage', { orientation: 'landscape', format: 'letter', widthPx: 1056 });
+      const monthName = new Date(reportsYear, reportsMonth - 1, 1).toLocaleDateString('en-US', { month: 'long' });
+      const fname = `${reportsMonth}-${monthName}-${String(reportsYear).slice(2)}-Mileage`;
+      await sharePdfFromHtml(html, MILEAGE_PDF_CSS, fname, 'CVC Mileage',
+        { orientation: 'portrait', format: 'letter', widthPx: 794, margin: 6 });
     }
   } catch (err) {
     if (err.name !== 'AbortError') showToast('Export failed: ' + err.message, 'error');

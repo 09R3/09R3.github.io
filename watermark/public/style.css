@@ -2200,7 +2200,22 @@ input[type="date"].ctrl-input { min-height: 44px; }
 .ir-map   { width: 100%; max-width: 620px; border-radius: 4px; display: block; margin-bottom: 4px; }
 .ir-coords { font-size: 0.73rem; color: #1a73e8; text-decoration: underline; }
 .ir-photos { display: flex; flex-direction: column; gap: 12px; }
-.ir-photo  { width: 100%; max-width: 620px; border-radius: 4px; display: block; }
+/* Keep original aspect ratio, bound the size so portrait phone photos don't
+   blow up, and keep each photo whole across PDF page breaks. */
+.ir-photo  {
+  max-width: 100%;
+  max-height: 360px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: 4px;
+  display: block;
+  page-break-inside: avoid;
+  break-inside: avoid;
+}
+/* KCWA logo header (top-left) shared by report PDFs */
+.ir-logo-row, .pdf-logo-row { margin-bottom: 10px; }
+.ir-logo, .pdf-logo { height: 46px; width: auto; display: block; }
 /* Print: hide everything except the issue report modal (when printing one).
    Also exclude #print-area so the standard print path still works. */
 @media print {
