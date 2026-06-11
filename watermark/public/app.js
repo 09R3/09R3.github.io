@@ -3953,7 +3953,25 @@ async function loadAssignmentBadge() {
   } catch { /* non-critical */ }
 }
 
+// Bell button wired at top level (element is in the header, before app.js script tag)
+el('header-bell-btn').addEventListener('click', openAssignModal);
+
+let _assignModalInited = false;
 function openAssignModal() {
+  // Wire modal-internal listeners once on first open (modal HTML is after the script tag)
+  if (!_assignModalInited) {
+    _assignModalInited = true;
+    el('assign-modal-close').addEventListener('click', closeAssignModal);
+    el('assign-modal').addEventListener('click', e => {
+      if (e.target === el('assign-modal')) closeAssignModal();
+      const btn = e.target.closest('.assign-view-btn');
+      if (btn) {
+        closeAssignModal();
+        showScreen('maintenance');
+        openMaintPanel(btn.dataset.panel);
+      }
+    });
+  }
   el('assign-modal').classList.remove('hidden');
   renderAssignModal();
 }
@@ -3992,19 +4010,6 @@ async function renderAssignModal() {
     body.innerHTML = '<div class="placeholder-msg">Failed to load.</div>';
   }
 }
-
-// Bell button and modal close wired once at startup
-el('header-bell-btn').addEventListener('click', openAssignModal);
-el('assign-modal-close').addEventListener('click', closeAssignModal);
-el('assign-modal').addEventListener('click', e => {
-  if (e.target === el('assign-modal')) closeAssignModal();
-  const btn = e.target.closest('.assign-view-btn');
-  if (btn) {
-    closeAssignModal();
-    showScreen('maintenance');
-    openMaintPanel(btn.dataset.panel);
-  }
-});
 
 function initMaintAssignedPanel() {
   const panel = el('maint-panel-assigned');
