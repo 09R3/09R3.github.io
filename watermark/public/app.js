@@ -3318,6 +3318,12 @@ async function shareMaintenanceReport(issueId, item, cfg) {
 function buildMaintenanceReportHtml({ reportLabel, title, rows, description, mapSrc, gps, photoUris }) {
   const lat = gps ? Number(gps.lat).toFixed(6) : null;
   const lon = gps ? Number(gps.lon).toFixed(6) : null;
+
+  // Location section: satellite map when GPS is available, first photo as fallback
+  const locationImg   = mapSrc || (photoUris.length ? photoUris[0] : null);
+  const photoFallback = !mapSrc && photoUris.length > 0;
+  const galleryPhotos = photoFallback ? photoUris.slice(1) : photoUris;
+
   return `
     <div class="ir-header">
       <div class="ir-title">${escHtml(reportLabel)} — ${escHtml(title)}</div>
@@ -3330,17 +3336,17 @@ function buildMaintenanceReportHtml({ reportLabel, title, rows, description, map
       <div class="ir-section-label">Description</div>
       <div class="ir-text">${escHtml(description).replace(/\n/g,'<br>')}</div>
     </div>
-    ${mapSrc ? `
+    ${locationImg ? `
     <div class="ir-section">
-      <div class="ir-section-label">Location</div>
-      <img src="${mapSrc}" class="ir-map" alt="Location map" crossorigin="anonymous">
-      <a href="#" class="ir-coords" data-lat="${lat}" data-lon="${lon}">${lat}, ${lon}</a>
+      <div class="ir-section-label">Location${photoFallback ? ' (site photo)' : ''}</div>
+      <img src="${locationImg}" class="${photoFallback ? 'ir-photo' : 'ir-map'}" alt="${photoFallback ? 'Site photo' : 'Location map'}" ${mapSrc ? 'crossorigin="anonymous"' : ''}>
+      ${gps ? `<a href="#" class="ir-coords" data-lat="${lat}" data-lon="${lon}">${lat}, ${lon}</a>` : ''}
     </div>` : ''}
-    ${photoUris.length ? `
+    ${galleryPhotos.length ? `
     <div class="ir-section">
-      <div class="ir-section-label">Photos (${photoUris.length})</div>
+      <div class="ir-section-label">Photos (${galleryPhotos.length})</div>
       <div class="ir-photos">
-        ${photoUris.map(uri => `<img src="${uri}" class="ir-photo" alt="">`).join('')}
+        ${galleryPhotos.map(uri => `<img src="${uri}" class="ir-photo" alt="">`).join('')}
       </div>
     </div>` : ''}`;
 }
