@@ -3351,6 +3351,74 @@ function buildMaintenanceReportHtml({ reportLabel, title, rows, description, map
     </div>` : ''}`;
 }
 
+/* ── Share helpers ───────────────────────────────────────────────────────────
+   All exports (CSV / Excel / PDF) flow through these so the user gets the OS
+   share sheet (with Print, Save to Files, Mail, AirDrop, etc.) instead of a
+   forced download or print dialog. On platforms without file-share support
+   (most desktop browsers) they transparently fall back to a download. */
+
+// Share a ready-made file blob, or download it if sharing isn't available.
+async function shareFile(blob, filename, title) {
+  const file = new File([blob], filename, { type: blob.type || 'application/octet-stream' });
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file], title });
+      return;
+    } catch (err) {
+      if (err.name === 'AbortError') return; // user dismissed the sheet
+      // any other share error → fall through to download
+    }
+  }
+  const url = URL.createObjectURL(blob);
+  Object.assign(document.createElement('a'), { href: url, download: filename }).click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// Render an in-DOM element to a PDF blob and share it.
+async function sharePdfFromElement(element, filename, title, opts = {}) {
+  const blob = await html2pdf()
+    .set({
+      margin: opts.margin ?? 8,
+      image: { type: 'jpeg', quality: 0.92 },
+      html2canvas: { scale: 2, useCORS: true, backgroundColor: '#fff', logging: false },
+      jsPDF: { unit: 'mm', format: opts.format || 'a4', orientation: opts.orientation || 'portrait' },
+      pagebreak: { mode: ['css', 'legacy'] },
+    })
+    .from(element)
+    .outputPdf('blob');
+  await shareFile(blob, filename.endsWith('.pdf') ? filename : `${filename}.pdf`, title);
+}
+
+// Render an HTML string with its own print CSS off-screen (always on a white
+// page, never the dark app theme) and share it as a PDF.
+async function sharePdfFromHtml(innerHtml, cssText, filename, title, opts = {}) {
+  const holder = document.createElement('div');
+  holder.style.cssText = `position:fixed;left:-10000px;top:0;width:${opts.widthPx || 794}px;background:#fff;color:#000;`;
+  holder.innerHTML = `<style>${cssText}</style><div class="pdf-root">${innerHtml}</div>`;
+  document.body.appendChild(holder);
+  try {
+    await sharePdfFromElement(holder.querySelector('.pdf-root'), filename, title, opts);
+  } finally {
+    holder.remove();
+  }
+}
+
+// Shared light-theme CSS for tabular report-card PDFs (wells, piezometers,
+// ponds, mileage). page-break-inside:avoid keeps table rows whole across pages.
+const REPORT_PDF_CSS = `
+  body { font-family: Arial, sans-serif; color: #000; font-size: 10pt; margin: 0; }
+  .report-card { background: #fff; color: #000; }
+  .report-title { font-size: 14pt; font-weight: 700; text-align: center; margin: 0 0 3px; }
+  .report-subtitle { font-size: 9pt; text-align: center; color: #444; margin: 0 0 10px; }
+  .report-section-title { font-size: 8pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; margin: 10px 0 3px; border-bottom: 1px solid #000; padding-bottom: 2px; }
+  table { width: 100%; border-collapse: collapse; font-size: 9.5pt; margin-bottom: 4px; }
+  th { text-align: left; padding: 2px 5px; font-size: 8pt; font-weight: 700; text-transform: uppercase; border-bottom: 1.5px solid #000; }
+  td { padding: 2px 5px; border-bottom: 0.5px solid #ddd; }
+  tr { page-break-inside: avoid; }
+  .report-num { text-align: right; }
+  .dripper-check, .dripper-area-all { display: none !important; }
+  [style*="border-top:2px"] { border-top: 2px solid #000 !important; padding-top: 10px; }`;
+
 function showMaintenanceReportPreview({ reportLabel, title, rows, description, mapSrc, gps, photoUris, filename }) {
   document.getElementById('issue-report-modal')?.remove();
 
@@ -3362,8 +3430,7 @@ function showMaintenanceReportPreview({ reportLabel, title, rows, description, m
       <button class="btn btn-secondary btn-sm" id="rp-close">&times; Close</button>
       <span class="report-preview-bar-title">${escHtml(title)}</span>
       <div style="display:flex;gap:8px;flex-shrink:0">
-        <button class="btn btn-secondary btn-sm" id="rp-print">&#128424; Print</button>
-        <button class="btn btn-save btn-sm" id="rp-share">&#8679; Share</button>
+        <button class="btn btn-save btn-sm" id="rp-share">&#8679; Share / Export</button>
       </div>
     </div>
     <div class="report-preview-scroll">
@@ -3387,63 +3454,17 @@ function showMaintenanceReportPreview({ reportLabel, title, rows, description, m
     );
   });
 
-  modal.querySelector('#rp-print').addEventListener('click', () => {
-    // Open an isolated window so the app's flex/fixed layout can't blank the page
-    const pw = window.open('', '_blank');
-    if (!pw) { showToast('Allow pop-ups to print', 'error'); return; }
-    const bodyHtml = modal.querySelector('#ir-body').innerHTML;
-    pw.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8">
-      <title>${escHtml(title)}</title>
-      <style>
-        *{box-sizing:border-box;margin:0;padding:0}
-        body{font-family:Arial,sans-serif;font-size:10pt;color:#111;background:#fff;padding:20px 24px}
-        .ir-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px;padding-bottom:10px;border-bottom:2px solid #333}
-        .ir-title{font-size:1.1rem;font-weight:700;color:#111}
-        .ir-meta{font-size:0.74rem;color:#666;white-space:nowrap;padding-top:2px}
-        .ir-table{width:100%;border-collapse:collapse;margin-bottom:14px;font-size:0.84rem}
-        .ir-table th{text-align:left;width:130px;padding:4px 10px 4px 0;color:#555;font-weight:600;vertical-align:top}
-        .ir-table td{padding:4px 0;color:#111}
-        .ir-section{margin-top:14px;padding-top:10px;border-top:1px solid #ddd}
-        .ir-section-label{font-weight:700;font-size:0.74rem;text-transform:uppercase;letter-spacing:.06em;color:#555;margin-bottom:6px}
-        .ir-text{font-size:0.87rem;color:#222;white-space:pre-wrap}
-        .ir-map{width:100%;max-width:620px;border-radius:4px;display:block;margin-bottom:4px}
-        .ir-coords{font-size:0.73rem;color:#1a73e8;text-decoration:underline}
-        .ir-photos{display:flex;flex-direction:column;gap:12px}
-        .ir-photo{width:100%;max-width:620px;border-radius:4px;display:block}
-        @media print{@page{margin:0}body{padding:15mm}.ir-photo{page-break-inside:avoid}}
-      </style>
-    </head><body>${bodyHtml}</body></html>`);
-    pw.document.close();
-  });
-
   modal.querySelector('#rp-share').addEventListener('click', async () => {
     const shareBtn = modal.querySelector('#rp-share');
     shareBtn.disabled = true;
     shareBtn.textContent = 'Generating…';
     try {
-      const blob = await html2pdf()
-        .set({
-          margin: 8,
-          filename: `${filename}.pdf`,
-          image: { type: 'jpeg', quality: 0.92 },
-          html2canvas: { scale: 2, useCORS: true, logging: false },
-          jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-        })
-        .from(modal.querySelector('#ir-body'))
-        .outputPdf('blob');
-      const file = new File([blob], `${filename}.pdf`, { type: 'application/pdf' });
-      if (navigator.canShare && navigator.canShare({ files: [file] })) {
-        await navigator.share({ files: [file], title: `${reportLabel} — ${title}` });
-      } else {
-        const url = URL.createObjectURL(blob);
-        Object.assign(document.createElement('a'), { href: url, download: `${filename}.pdf` }).click();
-        URL.revokeObjectURL(url);
-      }
+      await sharePdfFromElement(modal.querySelector('#ir-body'), filename, `${reportLabel} — ${title}`);
     } catch (err) {
       if (err.name !== 'AbortError') showToast('Share failed: ' + err.message, 'error');
     } finally {
       shareBtn.disabled = false;
-      shareBtn.textContent = '↑ Share';
+      shareBtn.innerHTML = '&#8679; Share';
     }
   });
 }
@@ -5699,17 +5720,14 @@ el('exif-back-btn').addEventListener('click', () => {
     renderChips(); renderTable(); updateStats();
   }
 
-  function exportCSV() {
+  async function exportCSV() {
     if (!exifRows.length) return;
     const cols = exifFields.filter(f => exifActive.has(f));
     const esc  = v => `"${String(v).replace(/"/g, '""')}"`;
     let csv = cols.map(esc).join(',') + '\n';
     for (const row of exifRows) csv += cols.map(f => esc(row[f] || '')).join(',') + '\n';
-    const a = Object.assign(document.createElement('a'), {
-      href: URL.createObjectURL(new Blob([csv], { type: 'text/csv' })),
-      download: `exif_${new Date().toISOString().slice(0,10)}.csv`,
-    });
-    a.click(); URL.revokeObjectURL(a.href);
+    await shareFile(new Blob([csv], { type: 'text/csv' }),
+      `exif_${new Date().toISOString().slice(0,10)}.csv`, 'EXIF GPS Data');
   }
 
   const dropzone = el('exif-dropzone');
@@ -7292,81 +7310,73 @@ function showPMRecord(record, def) {
 
 // ── PM PDF Export ─────────────────────────────────────────────────────────────
 function exportPMRecordAsPDF(record, def) {
-  const w = window.open('', '_blank');
-  if (!w) { showToast('Allow pop-ups to export PDF', 'error'); return; }
   const d = localDateStr(record.completed_date, { month: 'long', day: 'numeric', year: 'numeric' });
   const t = record.completed_time?.slice(0, 5) || '';
+  const fileDate = record.completed_date ? String(record.completed_date).slice(0, 10) : '';
+  const filename = `${def.title} ${fileDate}`.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '');
+
+  const PM_CSS = `
+    body{font-family:Arial,sans-serif;font-size:12px;color:#000;margin:0}
+    h1{font-size:14px;margin:0 0 2px}
+    .sub{font-size:11px;color:#555;margin:0 0 12px}
+    table{border-collapse:collapse;margin-bottom:14px}
+    td{padding:2px 14px 2px 0;font-size:12px}
+    .item{margin:5px 0;line-height:1.5}
+    .pm-view-row{display:flex;gap:8px;padding:4px 0;border-bottom:1px solid #eee}
+    .pv-loc{font-weight:600;min-width:40px}.pv-note{color:#555;font-style:italic}
+    .pass{color:#388e3c}.fail{color:#d32f2f}.ac-group{margin-bottom:12px}
+    .ac-title{font-weight:700;font-size:11px;text-transform:uppercase;margin-bottom:4px}
+    .ac-row{display:flex;gap:6px;padding:2px 0}.ac-dot{width:10px;height:10px;border-radius:50%;margin-top:2px}
+    .ac-dot.pass{background:#388e3c}.ac-dot.fail{background:#d32f2f}.ac-dot.empty{background:#ccc}
+    .notes{margin-top:14px;border-top:1px solid #ccc;padding-top:10px}
+    .footer{margin-top:20px;border-top:2px solid #000;padding-top:8px;font-weight:bold}`;
+
+  let inner;
   if (def.customType) {
     const body = def.customType === 'siphon' ? renderSBRecordView(record) : renderACRecordView(record, def);
-    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8">
-<title>${escHtml(def.title)} — ${d}</title>
-<style>body{font-family:Arial,sans-serif;font-size:12px;margin:20px 40px;color:#000}
-h1{font-size:14px;margin:0 0 2px}.sub{font-size:11px;color:#555;margin:0 0 12px}
-table{border-collapse:collapse;margin-bottom:14px}td{padding:2px 14px 2px 0}
-.pm-view-row{display:flex;gap:8px;padding:4px 0;border-bottom:1px solid #eee}
-.pv-loc{font-weight:600;min-width:40px}.pv-note{color:#555;font-style:italic}
-.pass{color:#388e3c}.fail{color:#d32f2f}.ac-group{margin-bottom:12px}
-.ac-title{font-weight:700;font-size:11px;text-transform:uppercase;margin-bottom:4px}
-.ac-row{display:flex;gap:6px;padding:2px 0}.ac-dot{width:10px;height:10px;border-radius:50%;margin-top:2px}
-.ac-dot.pass{background:#388e3c}.ac-dot.fail{background:#d32f2f}.ac-dot.empty{background:#ccc}
-@media print{body{margin:10mm 15mm}}</style></head><body>
-<h1>${escHtml(def.title)}</h1>
-<table><tr><td><strong>Location:</strong></td><td>${escHtml(record.building||'—')}</td>
-<td><strong>Date:</strong></td><td>${d}${t?' · '+t:''}</td>
-<td><strong>By:</strong></td><td>${escHtml(record.completed_by_name||'—')}</td></tr></table>
-${body}
-${record.notes?`<div style="margin-top:14px;border-top:1px solid #ccc;padding-top:10px"><strong>Notes:</strong><br>${escHtml(record.notes).replace(/\n/g,'<br>')}</div>`:''}
-</body></html>`);
-    w.document.close();
-    setTimeout(() => w.print(), 400);
-    return;
-  }
-  let itemNum = 0;
-  const itemsHTML = def.items.map(item => {
-    if (item.condBuilding && item.condBuilding !== record.building) return '';
-    itemNum++;
-    const val = record.checklist[item.key];
-    let checked = false, extra = '';
-    if (item.type === 'twc' || item.type === 'twc-area') {
-      checked = val?.checked || false;
-      if (val?.value) extra = ` — <strong>${escHtml(val.value)}</strong>`;
-    } else if (item.type === 'text') {
-      extra = val ? `: <strong>${escHtml(val)}</strong>` : '';
-      checked = !!val;
-    } else {
-      checked = val === true;
-    }
-    const sym = checked ? '&#9745;' : '&#9744;';
-    return `<div class="item">${sym} <strong>${itemNum}.</strong> ${escHtml(item.label)}${extra}</div>`;
-  }).filter(Boolean).join('');
+    inner = `
+      <h1>${escHtml(def.title)}</h1>
+      <table><tr><td><strong>Location:</strong></td><td>${escHtml(record.building||'—')}</td>
+      <td><strong>Date:</strong></td><td>${d}${t?' · '+t:''}</td>
+      <td><strong>By:</strong></td><td>${escHtml(record.completed_by_name||'—')}</td></tr></table>
+      ${body}
+      ${record.notes?`<div class="notes"><strong>Notes:</strong><br>${escHtml(record.notes).replace(/\n/g,'<br>')}</div>`:''}`;
+  } else {
+    let itemNum = 0;
+    const itemsHTML = def.items.map(item => {
+      if (item.condBuilding && item.condBuilding !== record.building) return '';
+      itemNum++;
+      const val = record.checklist[item.key];
+      let checked = false, extra = '';
+      if (item.type === 'twc' || item.type === 'twc-area') {
+        checked = val?.checked || false;
+        if (val?.value) extra = ` — <strong>${escHtml(val.value)}</strong>`;
+      } else if (item.type === 'text') {
+        extra = val ? `: <strong>${escHtml(val)}</strong>` : '';
+        checked = !!val;
+      } else {
+        checked = val === true;
+      }
+      const sym = checked ? '&#9745;' : '&#9744;';
+      return `<div class="item">${sym} <strong>${itemNum}.</strong> ${escHtml(item.label)}${extra}</div>`;
+    }).filter(Boolean).join('');
 
-  w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8">
-<title>${escHtml(def.title)} — ${d}</title>
-<style>
-  body{font-family:Arial,sans-serif;font-size:12px;margin:20px 40px;color:#000}
-  h1{font-size:14px;margin:0 0 2px}
-  .sub{font-size:11px;color:#555;margin:0 0 12px}
-  table{border-collapse:collapse;margin-bottom:14px}
-  td{padding:2px 14px 2px 0;font-size:12px}
-  .item{margin:5px 0;line-height:1.5}
-  .notes{margin-top:14px;border-top:1px solid #ccc;padding-top:10px}
-  .footer{margin-top:20px;border-top:2px solid #000;padding-top:8px;font-weight:bold}
-  @media print{body{margin:10mm 15mm}}
-</style></head><body>
-<h1>${escHtml(def.subtitle || def.title)}</h1>
-<div class="sub">${escHtml(def.formRef || '')}</div>
-<table>
-  <tr><td><strong>Inspector:</strong></td><td>${escHtml(record.completed_by_name || '—')}</td>
-      <td><strong>Location:</strong></td><td>${escHtml(record.building || '—')}</td></tr>
-  <tr><td><strong>Date:</strong></td><td>${d}</td>
-      <td><strong>Time:</strong></td><td>${t}</td></tr>
-</table>
-${itemsHTML}
-${record.notes ? `<div class="notes"><strong>Notes:</strong><br>${escHtml(record.notes).replace(/\n/g,'<br>')}</div>` : ''}
-<div class="footer">INITIAL: Completed in accordance with ${escHtml(def.formRef || 'PM Checklist')} &nbsp;&nbsp; Date: ${d} &nbsp;&nbsp; Time: ${t}</div>
-</body></html>`);
-  w.document.close();
-  w.setTimeout(() => w.print(), 400);
+    inner = `
+      <h1>${escHtml(def.subtitle || def.title)}</h1>
+      <div class="sub">${escHtml(def.formRef || '')}</div>
+      <table>
+        <tr><td><strong>Inspector:</strong></td><td>${escHtml(record.completed_by_name || '—')}</td>
+            <td><strong>Location:</strong></td><td>${escHtml(record.building || '—')}</td></tr>
+        <tr><td><strong>Date:</strong></td><td>${d}</td>
+            <td><strong>Time:</strong></td><td>${t}</td></tr>
+      </table>
+      ${itemsHTML}
+      ${record.notes ? `<div class="notes"><strong>Notes:</strong><br>${escHtml(record.notes).replace(/\n/g,'<br>')}</div>` : ''}
+      <div class="footer">INITIAL: Completed in accordance with ${escHtml(def.formRef || 'PM Checklist')} &nbsp;&nbsp; Date: ${d} &nbsp;&nbsp; Time: ${t}</div>`;
+  }
+
+  sharePdfFromHtml(inner, PM_CSS, filename, def.title, { margin: 12 })
+    .catch(err => { if (err.name !== 'AbortError') showToast('Export failed: ' + err.message, 'error'); });
 }
 
 /* ── Pesticides ──────────────────────────────────────────────────────────── */
@@ -8783,21 +8793,19 @@ function initPondsReportPanel() {
     el('ponds-report-today').addEventListener('click', () => { el('ponds-report-date').value = todayISO(); renderPondsActiveTab(); });
     el('ponds-report-date').addEventListener('change', renderPondsActiveTab);
 
-    el('ponds-report-print-btn').addEventListener('click', () => {
+    el('ponds-report-print-btn').addEventListener('click', async () => {
       const card = el('report-ponds-output').querySelector('.report-card');
-      if (!card) return showToast('No report to print', 'error');
-      let printArea = document.getElementById('print-area');
-      if (!printArea) {
-        printArea = document.createElement('div');
-        printArea.id = 'print-area';
-        document.body.appendChild(printArea);
+      if (!card) return showToast('No report to export', 'error');
+      const btn = el('ponds-report-print-btn');
+      btn.disabled = true;
+      try {
+        const date = el('ponds-report-date').value || todayISO();
+        await sharePdfFromHtml(card.outerHTML, REPORT_PDF_CSS, `Ponds_Report_${date}`, 'Ponds Report');
+      } catch (err) {
+        if (err.name !== 'AbortError') showToast('Export failed: ' + err.message, 'error');
+      } finally {
+        btn.disabled = false;
       }
-      delete printArea.dataset.printType;
-      printArea.innerHTML = card.outerHTML;
-      setTimeout(() => {
-        window.print();
-        window.addEventListener('afterprint', () => { printArea.innerHTML = ''; }, { once: true });
-      }, 100);
     });
 
     // Reset to gauges tab on re-open
@@ -9004,17 +9012,8 @@ el('export-modal').addEventListener('click', e => {
   if (e.target === el('export-modal')) el('export-modal').classList.add('hidden');
 });
 
-function triggerBlobDownload(blob, filename) {
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-}
 
-el('export-csv-btn').addEventListener('click', () => {
+el('export-csv-btn').addEventListener('click', async () => {
   el('export-modal').classList.add('hidden');
 
   if (exportContext === 'piezometers-status') {
@@ -9024,7 +9023,7 @@ el('export-csv-btn').addEventListener('click', () => {
       const method = [p.plopper_sounder, p.wet_dry_moist].filter(Boolean).join(' / ');
       lines.push([p.pool||'', p.piezometer_name, p.dtw_reading??'', method, p.operator||'', p.reading_date?.slice(0,10)||''].map(csvEsc).join(','));
     });
-    triggerBlobDownload(new Blob([lines.join('\r\n')], { type: 'text/csv' }), `Piezometers_${piezRepStart}_${piezRepEnd}.csv`);
+    await shareFile(new Blob([lines.join('\r\n')], { type: 'text/csv' }), `Piezometers_${piezRepStart}_${piezRepEnd}.csv`, 'Piezometer Readings');
     return;
   }
 
@@ -9040,7 +9039,7 @@ el('export-csv-btn').addEventListener('click', () => {
       const diff = d1 !== '' && d2 !== '' ? (d2 - d1).toFixed(2) : '';
       lines.push([p.pool||'', p.piezometer_name, d1, d2, diff].join(','));
     });
-    triggerBlobDownload(new Blob([lines.join('\r\n')], { type: 'text/csv' }), `Piezometers_Compare_${s1}_${s2}.csv`);
+    await shareFile(new Blob([lines.join('\r\n')], { type: 'text/csv' }), `Piezometers_Compare_${s1}_${s2}.csv`, 'Piezometer Comparison');
     return;
   }
 
@@ -9055,7 +9054,7 @@ el('export-csv-btn').addEventListener('click', () => {
         r.dripper_oil??'', r.motor_oil??'', r.pge_kwh??'', r.notes||'',
       ].map(csvEsc).join(','));
     });
-    triggerBlobDownload(new Blob([lines.join('\r\n')], { type: 'text/csv' }), `WellReadings_${date}.csv`);
+    await shareFile(new Blob([lines.join('\r\n')], { type: 'text/csv' }), `WellReadings_${date}.csv`, 'Well Readings');
     return;
   }
 
@@ -9068,7 +9067,7 @@ el('export-csv-btn').addEventListener('click', () => {
       const atf = dripper != null ? Math.max(0, fillTo - dripper).toFixed(2) : '';
       lines.push([r.area||'', r.common_name, dripper != null ? dripper.toFixed(2) : '', atf, r.reading_date ? String(r.reading_date).slice(0,10) : ''].map(csvEsc).join(','));
     });
-    triggerBlobDownload(new Blob([lines.join('\r\n')], { type: 'text/csv' }), `DripperOil.csv`);
+    await shareFile(new Blob([lines.join('\r\n')], { type: 'text/csv' }), `DripperOil.csv`, 'Dripper Oil Levels');
     return;
   }
 
@@ -9081,7 +9080,7 @@ el('export-csv-btn').addEventListener('click', () => {
   trucks.forEach(v => lines.push([v.vehicle_number, v.make, v.model, ac(v), v.odometer_miles ?? ''].join(',')));
   lines.push('', 'HEAVY EQUIPMENT', 'Unit #,Make,Model,Operator,Odometer,Engine Hours');
   heavy.forEach(v => lines.push([v.vehicle_number, v.make, v.model, ac(v), v.odometer_miles ?? '', v.engine_hours ?? ''].join(',')));
-  triggerBlobDownload(new Blob([lines.join('\r\n')], { type: 'text/csv' }), `CVC_Mileage_${reportsYear}_${reportsMonth}.csv`);
+  await shareFile(new Blob([lines.join('\r\n')], { type: 'text/csv' }), `CVC_Mileage_${reportsYear}_${reportsMonth}.csv`, 'CVC Mileage');
 });
 
 el('export-xlsx-btn').addEventListener('click', async () => {
@@ -9092,7 +9091,7 @@ el('export-xlsx-btn').addEventListener('click', async () => {
       const url = `/api/reports/piezometers/export?start_date=${piezRepStart}&end_date=${piezRepEnd}&token=${token}`;
       const res = await fetch(url);
       if (!res.ok) throw new Error('Export failed');
-      triggerBlobDownload(await res.blob(), `Piezometers_${piezRepStart}_${piezRepEnd}.xlsx`);
+      await shareFile(await res.blob(), `Piezometers_${piezRepStart}_${piezRepEnd}.xlsx`, 'Piezometer Readings');
       return;
     }
     if (exportContext === 'piezometers-compare') {
@@ -9102,7 +9101,7 @@ el('export-xlsx-btn').addEventListener('click', async () => {
       const url = `/api/reports/piezometers/compare/export?s1=${s1}&e1=${e1}&s2=${s2}&e2=${e2}&token=${token}`;
       const res = await fetch(url);
       if (!res.ok) throw new Error('Export failed');
-      triggerBlobDownload(await res.blob(), `Piezometers_Compare_${s1}_${s2}.xlsx`);
+      await shareFile(await res.blob(), `Piezometers_Compare_${s1}_${s2}.xlsx`, 'Piezometer Comparison');
       return;
     }
     if (exportContext === 'wells-daily') {
@@ -9111,7 +9110,7 @@ el('export-xlsx-btn').addEventListener('click', async () => {
       const url = `/api/reports/wells/daily/export?date=${date}&token=${token}`;
       const res = await fetch(url);
       if (!res.ok) throw new Error('Export failed');
-      triggerBlobDownload(await res.blob(), `WellReadings_${date}.xlsx`);
+      await shareFile(await res.blob(), `WellReadings_${date}.xlsx`, 'Well Readings');
       return;
     }
     if (exportContext === 'wells-dripper') {
@@ -9120,7 +9119,7 @@ el('export-xlsx-btn').addEventListener('click', async () => {
       const url = `/api/reports/wells/dripper/export?fill_to=${fillTo}&token=${token}`;
       const res = await fetch(url);
       if (!res.ok) throw new Error('Export failed');
-      triggerBlobDownload(await res.blob(), `DripperOil.xlsx`);
+      await shareFile(await res.blob(), `DripperOil.xlsx`, 'Dripper Oil Levels');
       return;
     }
     // vehicles
@@ -9128,9 +9127,9 @@ el('export-xlsx-btn').addEventListener('click', async () => {
     const url = `/api/reports/mileage/export?format=xlsx&year=${reportsYear}&month=${reportsMonth}&token=${token}`;
     const res = await fetch(url);
     if (!res.ok) throw new Error('Export failed');
-    triggerBlobDownload(await res.blob(), `CVC_Mileage_${reportsYear}_${reportsMonth}.xlsx`);
+    await shareFile(await res.blob(), `CVC_Mileage_${reportsYear}_${reportsMonth}.xlsx`, 'CVC Mileage');
   } catch (err) {
-    showToast('Export failed: ' + err.message, 'error');
+    if (err.name !== 'AbortError') showToast('Export failed: ' + err.message, 'error');
   }
 });
 
@@ -9355,40 +9354,41 @@ async function renderPiezCompareReport() {
   }
 }
 
-el('export-pdf-btn').addEventListener('click', () => {
-  let printArea = document.getElementById('print-area');
-  if (!printArea) {
-    printArea = document.createElement('div');
-    printArea.id = 'print-area';
-    document.body.appendChild(printArea);
-  }
-
-  if (exportContext === 'wells-dripper') {
-    el('export-modal').classList.add('hidden');
-    const card = el('report-wells-output').querySelector('.report-card');
-    if (card) printReportPortrait(card.outerHTML);
-    return;
-  }
-
-  if (exportContext === 'wells-daily') {
-    delete printArea.dataset.printType;
-    const card = el('report-wells-output').querySelector('.report-card');
-    printArea.innerHTML = card ? card.outerHTML : '';
-  } else if (exportContext === 'piezometers-status' || exportContext === 'piezometers-compare') {
-    delete printArea.dataset.printType;
-    const rendered = el('report-piez-output').querySelector('.report-card');
-    printArea.innerHTML = rendered ? rendered.outerHTML : '';
-  } else {
-    printArea.dataset.printType = 'vehicle';
-    printArea.innerHTML = buildMileageHTML(lastReportRows, reportsYear, reportsMonth);
-  }
-
+el('export-pdf-btn').addEventListener('click', async () => {
   el('export-modal').classList.add('hidden');
-  document.body.style.overflow = ''; // ensure scroll-lock is released before print dialog
-  setTimeout(() => {
-    window.print();
-    window.addEventListener('afterprint', () => { printArea.innerHTML = ''; }, { once: true });
-  }, 100);
+  document.body.style.overflow = '';
+  const btn = el('export-pdf-btn');
+  btn.disabled = true;
+  try {
+    if (exportContext === 'wells-dripper') {
+      const card = el('report-wells-output').querySelector('.report-card');
+      if (!card) throw new Error('No report to export');
+      await sharePdfFromHtml(card.outerHTML, REPORT_PDF_CSS, 'DripperOil', 'Dripper Oil Levels');
+    } else if (exportContext === 'wells-daily') {
+      const card = el('report-wells-output').querySelector('.report-card');
+      if (!card) throw new Error('No report to export');
+      const date = el('well-report-date').value;
+      await sharePdfFromHtml(card.outerHTML, REPORT_PDF_CSS, `WellReadings_${date}`, 'Well Readings');
+    } else if (exportContext === 'piezometers-status') {
+      const card = el('report-piez-output').querySelector('.report-card');
+      if (!card) throw new Error('No report to export');
+      await sharePdfFromHtml(card.outerHTML, REPORT_PDF_CSS, `Piezometers_${piezRepStart}_${piezRepEnd}`, 'Piezometer Readings');
+    } else if (exportContext === 'piezometers-compare') {
+      const card = el('report-piez-output').querySelector('.report-card');
+      if (!card) throw new Error('No report to export');
+      const s1 = el('piez-cmp-start1').value, s2 = el('piez-cmp-start2').value;
+      await sharePdfFromHtml(card.outerHTML, REPORT_PDF_CSS, `Piezometers_Compare_${s1}_${s2}`, 'Piezometer Comparison');
+    } else {
+      // vehicles / mileage — wider landscape sheet
+      const html = buildMileageHTML(lastReportRows, reportsYear, reportsMonth);
+      await sharePdfFromHtml(html, REPORT_PDF_CSS, `CVC_Mileage_${reportsYear}_${reportsMonth}`,
+        'CVC Mileage', { orientation: 'landscape', format: 'letter', widthPx: 1056 });
+    }
+  } catch (err) {
+    if (err.name !== 'AbortError') showToast('Export failed: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false;
+  }
 });
 
 /* ── Lock body scroll when any modal is open (prevents background scroll on iOS) ── */
@@ -10893,27 +10893,6 @@ async function saveSignIn(bodyEl) {
 }
 
 // ── PDF Export ────────────────────────────────────────────────────────────────
-// Print-window CSS (mirrors the .sf-* rules in style.css for the isolated print doc)
-const SAFETY_PRINT_CSS = `
-  *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:Arial,sans-serif;font-size:10pt;color:#111;background:#fff;padding:20px 24px}
-  .sf-report-header{display:flex;align-items:center;gap:14px;border-bottom:2px solid #333;padding-bottom:10px;margin-bottom:14px}
-  .sf-logo{height:60px;width:auto}
-  .sf-title{font-size:1.7rem;font-weight:800;color:#111;line-height:1.05}
-  .sf-sub{font-size:0.95rem;color:#555}
-  .sf-meta-table{width:100%;border-collapse:collapse;margin-bottom:14px;font-size:0.86rem}
-  .sf-meta-table th{text-align:left;color:#555;font-weight:700;padding:4px 8px 4px 0;white-space:nowrap;vertical-align:top}
-  .sf-meta-table td{padding:4px 16px 4px 0;color:#111;vertical-align:top}
-  .sf-attend-table{width:100%;border-collapse:collapse;margin-top:6px}
-  .sf-attend-table th{background:#f0f0f0;border:1px solid #bbb;padding:5px 7px;font-size:0.78rem;text-align:left;color:#222}
-  .sf-attend-table td{border:1px solid #bbb;padding:5px 7px;font-size:0.82rem;height:34px;vertical-align:middle;color:#111}
-  .sf-attend-table td.num{width:30px;text-align:center;color:#888}
-  .sf-attend-table td.sig{width:180px}
-  .sf-attend-table td.sig img{height:28px;max-width:170px;filter:brightness(0)}
-  .sf-attend-table td.dt{width:90px;white-space:nowrap;font-size:0.78rem}
-  .sf-footer{margin-top:14px;font-size:0.78rem;color:#666}
-  @media print{@page{margin:0}body{padding:15mm}.sf-attend-table tr{page-break-inside:avoid}}`;
-
 function buildSafetySheetHtml(meeting, attendees) {
   const fmtDate  = d => d ? localDateStr(d, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }) : '—';
   const fmtShort = d => d ? localDateStr(d, { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
@@ -10968,8 +10947,7 @@ function exportSafetyMeetingPDF(meeting, attendees) {
       <button class="btn btn-secondary btn-sm" id="sf-rp-close">&times; Close</button>
       <span class="report-preview-bar-title">Safety Sign In</span>
       <div style="display:flex;gap:8px;flex-shrink:0">
-        <button class="btn btn-secondary btn-sm" id="sf-rp-print">&#128424; Print</button>
-        <button class="btn btn-save btn-sm" id="sf-rp-share">&#8679; Share</button>
+        <button class="btn btn-save btn-sm" id="sf-rp-share">&#8679; Share / Export</button>
       </div>
     </div>
     <div class="report-preview-scroll">
@@ -10979,42 +10957,16 @@ function exportSafetyMeetingPDF(meeting, attendees) {
 
   modal.querySelector('#sf-rp-close').addEventListener('click', () => modal.remove());
 
-  // Print: isolated window so the app's flex/fixed layout can't blank the page
-  modal.querySelector('#sf-rp-print').addEventListener('click', () => {
-    const pw = window.open('', '_blank');
-    if (!pw) { showToast('Allow pop-ups to print', 'error'); return; }
-    pw.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${escHtml(filename)}</title>
-      <style>${SAFETY_PRINT_CSS}</style></head><body>${contentHtml}</body></html>`);
-    pw.document.close();
-  });
-
   // Share: render to a real PDF blob and hand off to the OS share sheet
   modal.querySelector('#sf-rp-share').addEventListener('click', async () => {
     const b = modal.querySelector('#sf-rp-share');
     b.disabled = true; b.textContent = 'Generating…';
     try {
-      const blob = await html2pdf()
-        .set({
-          margin: 8,
-          filename: `${filename}.pdf`,
-          image: { type: 'jpeg', quality: 0.92 },
-          html2canvas: { scale: 2, useCORS: true, logging: false },
-          jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-        })
-        .from(modal.querySelector('#sf-rp-body'))
-        .outputPdf('blob');
-      const file = new File([blob], `${filename}.pdf`, { type: 'application/pdf' });
-      if (navigator.canShare && navigator.canShare({ files: [file] })) {
-        await navigator.share({ files: [file], title: 'Safety Sign In' });
-      } else {
-        const url = URL.createObjectURL(blob);
-        Object.assign(document.createElement('a'), { href: url, download: `${filename}.pdf` }).click();
-        URL.revokeObjectURL(url);
-      }
+      await sharePdfFromElement(modal.querySelector('#sf-rp-body'), filename, 'Safety Sign In');
     } catch (err) {
       if (err.name !== 'AbortError') showToast('Share failed: ' + err.message, 'error');
     } finally {
-      b.disabled = false; b.innerHTML = '&#8679; Share';
+      b.disabled = false; b.innerHTML = '&#8679; Share / Export';
     }
   });
 }
@@ -12635,28 +12587,6 @@ function recalcDripper() {
   if (totalEl) totalEl.textContent = total.toFixed(2);
 }
 
-function printReportPortrait(htmlContent) {
-  const w = window.open('', '_blank');
-  if (!w) { showToast('Allow pop-ups to print', 'error'); return; }
-  w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8">
-    <style>
-      @page { size: letter portrait; margin: 0.4in 0.5in; }
-      body { font-family: Arial, sans-serif; color: #000; font-size: 10pt; }
-      .report-title { font-size: 14pt; font-weight: 700; text-align: center; margin: 0 0 3px; }
-      .report-subtitle { font-size: 9pt; text-align: center; color: #444; margin: 0 0 10px; }
-      .report-section-title { font-size: 8pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; margin: 10px 0 3px; border-bottom: 1px solid #000; padding-bottom: 2px; }
-      table { width: 100%; border-collapse: collapse; font-size: 9.5pt; margin-bottom: 4px; }
-      th { text-align: left; padding: 2px 5px; font-size: 8pt; font-weight: 700; text-transform: uppercase; border-bottom: 1.5px solid #000; }
-      td { padding: 2px 5px; border-bottom: 0.5px solid #ddd; }
-      .report-num { text-align: right; }
-      .dripper-check, .dripper-area-all { display: none !important; }
-      [style*="border-top:2px"] { border-top: 2px solid #000 !important; padding-top: 10px; }
-      @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
-    </style>
-  </head><body>${htmlContent}</body></html>`);
-  w.document.close();
-  setTimeout(() => { w.print(); w.close(); }, 300);
-}
 
 /* ── Init ────────────────────────────────────────────────────────────────── */
 checkDBStatus();
