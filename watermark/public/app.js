@@ -3419,6 +3419,18 @@ async function sharePdfFromHtml(innerHtml, cssText, filename, title, opts = {}) 
   document.body.appendChild(holder);
   try {
     await waitForImages(holder);
+    // html2canvas ignores object-fit — explicitly clamp .ir-photo to preserve
+    // aspect ratio so photos don't stretch when rendered to PDF.
+    const maxPhotoW = (opts.widthPx || 794) - 40;
+    const maxPhotoH = 340;
+    holder.querySelectorAll('.ir-photo').forEach(img => {
+      if (!img.naturalWidth || !img.naturalHeight) return;
+      const ratio = img.naturalWidth / img.naturalHeight;
+      let w = Math.min(img.naturalWidth, maxPhotoW);
+      let h = w / ratio;
+      if (h > maxPhotoH) { h = maxPhotoH; w = h * ratio; }
+      img.style.cssText += `;width:${Math.round(w)}px;height:${Math.round(h)}px;max-width:none;max-height:none;object-fit:unset`;
+    });
     await sharePdfFromElement(holder.querySelector('.pdf-root'), filename, title, opts);
   } finally {
     holder.remove();
@@ -3445,15 +3457,17 @@ const REPORT_PDF_CSS = `
 const MILEAGE_PDF_CSS = `
   body { font-family: Arial, sans-serif; color: #000; margin: 0; }
   .report-card { background: #fff; color: #000; }
-  .report-title { font-size: 13pt; font-weight: 700; text-align: center; margin: 0 0 2px; }
-  .report-subtitle { font-size: 8pt; text-align: center; color: #444; margin: 0 0 6px; }
-  .report-section-title { font-size: 7.5pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; margin: 7px 0 2px; border-bottom: 1px solid #000; padding-bottom: 1px; }
-  table { width: 100%; border-collapse: collapse; font-size: 7.5pt; margin-bottom: 3px; }
-  th { text-align: left; padding: 1px 4px; font-size: 6.8pt; font-weight: 700; text-transform: uppercase; border-bottom: 1px solid #000; }
-  td { padding: 1px 4px; border-bottom: 0.5px solid #ddd; }
+  .pdf-logo { height: 32px !important; }
+  .pdf-logo-row { margin-bottom: 4px !important; }
+  .report-title { font-size: 12pt; font-weight: 700; text-align: center; margin: 0 0 2px; }
+  .report-subtitle { font-size: 7.5pt; text-align: center; color: #444; margin: 0 0 4px; }
+  .report-section-title { font-size: 6.5pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; margin: 4px 0 1px; border-bottom: 1px solid #000; padding-bottom: 1px; }
+  table { width: 100%; border-collapse: collapse; font-size: 6.5pt; margin-bottom: 2px; }
+  th { text-align: left; padding: 1px 3px; font-size: 6pt; font-weight: 700; text-transform: uppercase; border-bottom: 1px solid #000; }
+  td { padding: 1px 3px; border-bottom: 0.5px solid #ddd; }
   tr { page-break-inside: avoid; }
   .report-num { text-align: right; }
-  .report-empty { font-size: 7.5pt; color: #666; padding: 2px 0; }`;
+  .report-empty { font-size: 6.5pt; color: #666; padding: 2px 0; }`;
 
 function showMaintenanceReportPreview({ reportLabel, title, rows, description, mapSrc, gps, photoUris, filename }) {
   document.getElementById('issue-report-modal')?.remove();
