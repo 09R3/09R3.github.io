@@ -2398,6 +2398,33 @@ app.patch('/api/equipment-issues/:id', requireAuth, async (req, res) => {
   }
 });
 
+// ── My Assignments ────────────────────────────────────────────────────────────
+app.get('/api/my-assignments', requireAuth, async (req, res) => {
+  const full_name = req.user.full_name;
+  try {
+    const { rows } = await pool.query(`
+      SELECT 'well' AS issue_type, issue_id, well_name AS entity_name,
+             description, status, reported_date, created_at
+      FROM well_issues
+      WHERE assigned_to ILIKE $1 AND status != 'resolved'
+      UNION ALL
+      SELECT 'building', issue_id, building_name,
+             description, status, reported_date, created_at
+      FROM building_issues
+      WHERE assigned_to ILIKE $1 AND status != 'resolved'
+      UNION ALL
+      SELECT 'equipment', issue_id, equipment_name,
+             description, status, reported_date, created_at
+      FROM equipment_issues
+      WHERE assigned_to ILIKE $1 AND status != 'resolved'
+      ORDER BY created_at DESC
+    `, [full_name]);
+    res.json(rows);
+  } catch (err) {
+    handleErr(res, err);
+  }
+});
+
 // ── Canal Issues ──────────────────────────────────────────────────────────────
 app.get('/api/canal-issues', requireAuth, async (req, res) => {
   const includeResolved = req.query.include_resolved === 'true';

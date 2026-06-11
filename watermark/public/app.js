@@ -620,6 +620,7 @@ function onLogin(user) {
   showScreen('dashboard');
   loadDashboardStats();
   refreshPendingSync();
+  loadAssignmentBadge();
 }
 
 /* ── Pending Sync Buttons ────────────────────────────────────────────────── */
@@ -3877,6 +3878,7 @@ const MAINT_PANEL_NAMES = {
   swaps:          'Equipment Swaps',
   pms:            'PM Records',
   'canal-issues': 'Canal Issues',
+  assigned:       'Assigned to Me',
 };
 function openMaintPanel(panelId) {
   el('maint-main').classList.add('hidden');
@@ -3891,6 +3893,7 @@ function openMaintPanel(panelId) {
   if (panelId === 'swaps')        initMaintSwapsPanel();
   if (panelId === 'pms')          initMaintPMsPanel();
   if (panelId === 'canal-issues') initMaintCanalPanel();
+  if (panelId === 'assigned')     initMaintAssignedPanel();
 }
 
 function closeMaintPanel() {
@@ -3931,6 +3934,118 @@ document.querySelectorAll('[data-maint-panel]').forEach(btn => {
 });
 
 // .maint-back-btn buttons removed from HTML — navigation handled by setPanelNav()
+
+/* ── Assigned Items + Bell Notification ──────────────────────────────────── */
+const ASSIGN_TYPE_LABEL = { well: 'Well Issue', building: 'Building Issue', equipment: 'Equipment Issue' };
+const ASSIGN_TYPE_PANEL = { well: 'wells', building: 'buildings', equipment: 'equipment' };
+
+function updateBellBadge(items) {
+  const lastChecked = localStorage.getItem('wm-assign-checked') || '1970-01-01T00:00:00.000Z';
+  const newCount = (items || []).filter(i => (i.created_at || '') > lastChecked).length;
+  setBadge('bell-badge', newCount);
+}
+
+async function loadAssignmentBadge() {
+  try {
+    const items = await api('GET', '/api/my-assignments');
+    updateBellBadge(items);
+    setBadge('maint-badge-assigned', items.length);
+  } catch { /* non-critical */ }
+}
+
+function openAssignModal() {
+  el('assign-modal').classList.remove('hidden');
+  renderAssignModal();
+}
+
+function closeAssignModal() {
+  el('assign-modal').classList.add('hidden');
+}
+
+async function renderAssignModal() {
+  const body = el('assign-modal-body');
+  body.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  const lastChecked = localStorage.getItem('wm-assign-checked') || '1970-01-01T00:00:00.000Z';
+  localStorage.setItem('wm-assign-checked', new Date().toISOString());
+  try {
+    const items = await api('GET', '/api/my-assignments');
+    setBadge('bell-badge', 0);
+    setBadge('maint-badge-assigned', items.length);
+    if (!items.length) {
+      body.innerHTML = '<div class="placeholder-msg">No items assigned to you.</div>';
+      return;
+    }
+    body.innerHTML = items.map(i => {
+      const isNew = (i.created_at || '') > lastChecked;
+      const statusClass = (i.status || 'open').replace('_', '-');
+      return `<div class="assign-item${isNew ? ' assign-new' : ''}">
+        <div class="assign-item-type">${ASSIGN_TYPE_LABEL[i.issue_type] || i.issue_type}</div>
+        <div class="assign-item-desc">${escHtml(i.entity_name || '')}${i.description ? ' — ' + escHtml(i.description.slice(0, 80)) : ''}</div>
+        <div class="assign-item-meta">
+          <span class="status-pill ${statusClass}">${(i.status || 'open').replace('_', ' ')}</span>
+          ${i.reported_date ? `<span>${localDateStr(i.reported_date, { month: 'short', day: 'numeric' })}</span>` : ''}
+          <button class="btn btn-secondary btn-sm assign-view-btn" data-panel="${escHtml(ASSIGN_TYPE_PANEL[i.issue_type] || 'equipment')}">View</button>
+        </div>
+      </div>`;
+    }).join('');
+  } catch {
+    body.innerHTML = '<div class="placeholder-msg">Failed to load.</div>';
+  }
+}
+
+// Bell button and modal close wired once at startup
+el('header-bell-btn').addEventListener('click', openAssignModal);
+el('assign-modal-close').addEventListener('click', closeAssignModal);
+el('assign-modal').addEventListener('click', e => {
+  if (e.target === el('assign-modal')) closeAssignModal();
+  const btn = e.target.closest('.assign-view-btn');
+  if (btn) {
+    closeAssignModal();
+    showScreen('maintenance');
+    openMaintPanel(btn.dataset.panel);
+  }
+});
+
+function initMaintAssignedPanel() {
+  const panel = el('maint-panel-assigned');
+  const listEl = el('assigned-panel-list');
+  // Wire delegated click once (first open)
+  if (!panel.dataset.listenerAdded) {
+    panel.dataset.listenerAdded = '1';
+    listEl.addEventListener('click', e => {
+      const btn = e.target.closest('[data-go-panel]');
+      if (btn) openMaintPanel(btn.dataset.goPanel);
+    });
+  }
+  loadAssignedPanel(listEl);
+}
+
+async function loadAssignedPanel(listEl) {
+  listEl.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const items = await api('GET', '/api/my-assignments');
+    updateBellBadge(items);
+    setBadge('maint-badge-assigned', items.length);
+    if (!items.length) {
+      listEl.innerHTML = '<div class="placeholder-msg">No items assigned to you.</div>';
+      return;
+    }
+    listEl.innerHTML = items.map(i => {
+      const statusClass = (i.status || 'open').replace('_', '-');
+      return `<div class="assign-item">
+        <div class="assign-item-type">${ASSIGN_TYPE_LABEL[i.issue_type] || i.issue_type}</div>
+        <div class="assign-item-desc">${escHtml(i.entity_name || '')}${i.description ? ' — ' + escHtml(i.description.slice(0, 100)) : ''}</div>
+        <div class="assign-item-meta">
+          <span class="status-pill ${statusClass}">${(i.status || 'open').replace('_', ' ')}</span>
+          ${i.reported_date ? `<span>${localDateStr(i.reported_date, { month: 'short', day: 'numeric' })}</span>` : ''}
+          <button class="btn btn-secondary btn-sm" data-go-panel="${escHtml(ASSIGN_TYPE_PANEL[i.issue_type] || 'equipment')}">View Issue</button>
+        </div>
+      </div>`;
+    }).join('');
+  } catch {
+    listEl.innerHTML = '<div class="placeholder-msg">Failed to load.</div>';
+  }
+}
 
 async function initMaintVehiclesPanel() {
   maintType = 'vehicle';
