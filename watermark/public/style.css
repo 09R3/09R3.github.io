@@ -3131,7 +3131,8 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
   display: block; width: 100%; height: 110px;
   border: 1px dashed var(--border); border-radius: 8px;
   touch-action: none; cursor: crosshair;
-  background: var(--surface);
+  /* White pad so the always-black ink is visible while signing in either theme */
+  background: #fff;
 }
 .safety-attend-table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 0.88rem; }
 .safety-attend-table th {
@@ -3140,7 +3141,10 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
   font-size: 0.8rem; color: var(--text-dim);
 }
 .safety-attend-table td { padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
-.safety-attend-table img { height: 40px; max-width: 120px; }
+/* Signatures are stored as black ink on transparent. Invert to white in dark
+   mode (default) so they're visible on the dark table; show black in light mode. */
+.safety-attend-table img { height: 40px; max-width: 120px; filter: invert(1); }
+[data-theme="light"] .safety-attend-table img { filter: none; }
 .safety-meeting-item { border: 1px solid var(--border); border-radius: 10px; margin-bottom: 10px; overflow: hidden; }
 .safety-meeting-header { display: flex; align-items: center; gap: 10px; padding: 12px 14px; cursor: pointer; }
 .safety-meeting-header:hover { background: var(--surface-raised); }
@@ -3156,6 +3160,24 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
 }
 .safety-attend-count { font-size: 0.82rem; color: var(--text-dim); }
 .safety-signin-card { max-width: 420px; width: 100%; }
+
+/* Safety Sign-In export sheet (rendered inside .ir-content white page) */
+.sf-report-header { display: flex; align-items: center; gap: 14px; border-bottom: 2px solid #333; padding-bottom: 10px; margin-bottom: 14px; }
+.sf-logo { height: 60px; width: auto; }
+.sf-title { font-size: 1.7rem; font-weight: 800; color: #111; line-height: 1.05; }
+.sf-sub { font-size: 0.95rem; color: #555; }
+.sf-meta-table { width: 100%; border-collapse: collapse; margin-bottom: 14px; font-size: 0.86rem; }
+.sf-meta-table th { text-align: left; color: #555; font-weight: 700; padding: 4px 8px 4px 0; white-space: nowrap; vertical-align: top; }
+.sf-meta-table td { padding: 4px 16px 4px 0; color: #111; vertical-align: top; }
+.sf-attend-table { width: 100%; border-collapse: collapse; margin-top: 6px; }
+.sf-attend-table th { background: #f0f0f0; border: 1px solid #bbb; padding: 5px 7px; font-size: 0.78rem; text-align: left; color: #222; }
+.sf-attend-table td { border: 1px solid #bbb; padding: 5px 7px; font-size: 0.82rem; height: 34px; vertical-align: middle; color: #111; }
+.sf-attend-table td.num { width: 30px; text-align: center; color: #888; }
+.sf-attend-table td.sig { width: 180px; }
+/* Force black ink in the export regardless of how the signature was stored */
+.sf-attend-table td.sig img { height: 28px; max-width: 170px; filter: brightness(0); }
+.sf-attend-table td.dt { width: 90px; white-space: nowrap; font-size: 0.78rem; }
+.sf-footer { margin-top: 14px; font-size: 0.78rem; color: #666; }
 
 /* ── Assigned Items / Bell ───────────────────────────────────────────────── */
 .header-bell-btn {

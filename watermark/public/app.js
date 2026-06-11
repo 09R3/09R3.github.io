@@ -3279,12 +3279,19 @@ async function shareMaintenanceReport(issueId, item, cfg) {
     let gps = cfg.getGPS ? cfg.getGPS(issue) : null;
     if (!gps && cfg.resolveGPS) gps = await cfg.resolveGPS(photoBlobs);
 
-    // Optional GPS map with pin
+    // Optional GPS map with pin.
+    // Use a Web Mercator (EPSG:3857) bbox so the GPS point falls exactly at the
+    // image pixel center where the pin is drawn. A geographic (4326) bbox renders
+    // in Mercator, making equal-degree lat/lon intervals map to unequal pixel
+    // distances — which shifts the pin off the true location.
     let mapSrc = null;
     if (gps) {
-      const pad = 0.0015;
-      const bbox = `${gps.lon-pad},${gps.lat-pad},${gps.lon+pad},${gps.lat+pad}`;
-      const esriUrl = `https://server.arcgisonline.com/arcgis/rest/services/World_Imagery/MapServer/export?bbox=${bbox}&bboxSR=4326&size=600,300&imageSR=96&f=image`;
+      const R = 6378137;
+      const mx = R * gps.lon * Math.PI / 180;
+      const my = R * Math.log(Math.tan(Math.PI / 4 + gps.lat * Math.PI / 360));
+      const padX = 250, padY = 125; // metres; 2:1 matches the 600×300 px image
+      const bbox = `${mx-padX},${my-padY},${mx+padX},${my+padY}`;
+      const esriUrl = `https://server.arcgisonline.com/arcgis/rest/services/World_Imagery/MapServer/export?bbox=${bbox}&bboxSR=3857&size=600,300&imageSR=3857&f=image`;
       try {
         const resp = await fetch(esriUrl);
         if (resp.ok) mapSrc = await addPinToMapImage(await blobToDataUri(await resp.blob()), 600, 300);
@@ -3374,7 +3381,34 @@ function showMaintenanceReportPreview({ reportLabel, title, rows, description, m
     );
   });
 
-  modal.querySelector('#rp-print').addEventListener('click', () => window.print());
+  modal.querySelector('#rp-print').addEventListener('click', () => {
+    // Open an isolated window so the app's flex/fixed layout can't blank the page
+    const pw = window.open('', '_blank');
+    if (!pw) { showToast('Allow pop-ups to print', 'error'); return; }
+    const bodyHtml = modal.querySelector('#ir-body').innerHTML;
+    pw.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8">
+      <title>${escHtml(title)}</title>
+      <style>
+        *{box-sizing:border-box;margin:0;padding:0}
+        body{font-family:Arial,sans-serif;font-size:10pt;color:#111;background:#fff;padding:20px 24px}
+        .ir-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px;padding-bottom:10px;border-bottom:2px solid #333}
+        .ir-title{font-size:1.1rem;font-weight:700;color:#111}
+        .ir-meta{font-size:0.74rem;color:#666;white-space:nowrap;padding-top:2px}
+        .ir-table{width:100%;border-collapse:collapse;margin-bottom:14px;font-size:0.84rem}
+        .ir-table th{text-align:left;width:130px;padding:4px 10px 4px 0;color:#555;font-weight:600;vertical-align:top}
+        .ir-table td{padding:4px 0;color:#111}
+        .ir-section{margin-top:14px;padding-top:10px;border-top:1px solid #ddd}
+        .ir-section-label{font-weight:700;font-size:0.74rem;text-transform:uppercase;letter-spacing:.06em;color:#555;margin-bottom:6px}
+        .ir-text{font-size:0.87rem;color:#222;white-space:pre-wrap}
+        .ir-map{width:100%;max-width:620px;border-radius:4px;display:block;margin-bottom:4px}
+        .ir-coords{font-size:0.73rem;color:#1a73e8;text-decoration:underline}
+        .ir-photos{display:flex;flex-direction:column;gap:12px}
+        .ir-photo{width:100%;max-width:620px;border-radius:4px;display:block}
+        @media print{@page{margin:0}body{padding:15mm}.ir-photo{page-break-inside:avoid}}
+      </style>
+    </head><body>${bodyHtml}</body></html>`);
+    pw.document.close();
+  });
 
   modal.querySelector('#rp-share').addEventListener('click', async () => {
     const shareBtn = modal.querySelector('#rp-share');
@@ -10778,7 +10812,11 @@ function closeSafetySigninModal() {
 }
 
 function initSigCanvas(canvas, ctx) {
-  ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--text').trim() || '#000';
+  // Always draw black ink on a transparent canvas (the element has a white CSS
+  // background so strokes are visible while signing in either theme). Stored
+  // PNG is black-on-transparent: in-app dark mode inverts it to white, light
+  // mode shows it black, and the PDF export forces black via brightness(0).
+  ctx.strokeStyle = '#000';
   ctx.lineWidth   = 2;
   ctx.lineCap     = 'round';
   ctx.lineJoin    = 'round';
@@ -10849,67 +10887,130 @@ async function saveSignIn(bodyEl) {
 }
 
 // ── PDF Export ────────────────────────────────────────────────────────────────
-function exportSafetyMeetingPDF(meeting, attendees) {
-  const w = window.open('', '_blank');
-  if (!w) { showToast('Allow pop-ups to export PDF', 'error'); return; }
+// Print-window CSS (mirrors the .sf-* rules in style.css for the isolated print doc)
+const SAFETY_PRINT_CSS = `
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:Arial,sans-serif;font-size:10pt;color:#111;background:#fff;padding:20px 24px}
+  .sf-report-header{display:flex;align-items:center;gap:14px;border-bottom:2px solid #333;padding-bottom:10px;margin-bottom:14px}
+  .sf-logo{height:60px;width:auto}
+  .sf-title{font-size:1.7rem;font-weight:800;color:#111;line-height:1.05}
+  .sf-sub{font-size:0.95rem;color:#555}
+  .sf-meta-table{width:100%;border-collapse:collapse;margin-bottom:14px;font-size:0.86rem}
+  .sf-meta-table th{text-align:left;color:#555;font-weight:700;padding:4px 8px 4px 0;white-space:nowrap;vertical-align:top}
+  .sf-meta-table td{padding:4px 16px 4px 0;color:#111;vertical-align:top}
+  .sf-attend-table{width:100%;border-collapse:collapse;margin-top:6px}
+  .sf-attend-table th{background:#f0f0f0;border:1px solid #bbb;padding:5px 7px;font-size:0.78rem;text-align:left;color:#222}
+  .sf-attend-table td{border:1px solid #bbb;padding:5px 7px;font-size:0.82rem;height:34px;vertical-align:middle;color:#111}
+  .sf-attend-table td.num{width:30px;text-align:center;color:#888}
+  .sf-attend-table td.sig{width:180px}
+  .sf-attend-table td.sig img{height:28px;max-width:170px;filter:brightness(0)}
+  .sf-attend-table td.dt{width:90px;white-space:nowrap;font-size:0.78rem}
+  .sf-footer{margin-top:14px;font-size:0.78rem;color:#666}
+  @media print{@page{margin:0}body{padding:15mm}.sf-attend-table tr{page-break-inside:avoid}}`;
 
-  const fmtDate = d => d ? localDateStr(d, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }) : '—';
+function buildSafetySheetHtml(meeting, attendees) {
+  const fmtDate  = d => d ? localDateStr(d, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }) : '—';
   const fmtShort = d => d ? localDateStr(d, { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
-  const esc = s => String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const esc = escHtml;
 
-  const rows = attendees.map((a, i) => `
-    <tr>
-      <td class="num">${i + 1}</td>
-      <td>${esc(a.full_name)}</td>
-      <td class="sig-cell">${a.signature_data ? `<img src="${esc(a.signature_data)}" alt="">` : ''}</td>
-      <td class="date-cell">${fmtShort(a.signed_date)}</td>
-    </tr>`).join('');
+  // Only render rows for the actual attendees (no blank padding)
+  const rows = attendees.length
+    ? attendees.map((a, i) => `<tr>
+        <td class="num">${i + 1}</td>
+        <td>${esc(a.full_name)}</td>
+        <td class="sig">${a.signature_data ? `<img src="${esc(a.signature_data)}" alt="">` : ''}</td>
+        <td class="dt">${fmtShort(a.signed_date)}</td>
+      </tr>`).join('')
+    : `<tr><td colspan="4" style="text-align:center;color:#999;padding:14px">No attendees recorded</td></tr>`;
 
-  // Fill remaining rows to ~20 total for a clean sheet
-  const empty = Math.max(0, 20 - attendees.length);
-  const blankRows = Array(empty).fill(0).map((_, i) =>
-    `<tr><td class="num">${attendees.length + i + 1}</td><td></td><td class="sig-cell"></td><td class="date-cell"></td></tr>`
-  ).join('');
-
-  w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8">
-    <title>Safety Meeting Sign-In — ${esc(meeting.topic)}</title>
-    <style>
-      * { box-sizing: border-box; margin: 0; padding: 0; }
-      body { font-family: Arial, sans-serif; font-size: 10pt; color: #000; padding: 20px 24px; }
-      h1 { font-size: 13pt; margin-bottom: 4px; }
-      .org { font-size: 9pt; color: #555; margin-bottom: 12px; }
-      .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px; margin-bottom: 14px; border: 1px solid #ccc; padding: 8px 10px; border-radius: 4px; }
-      .meta-item { font-size: 9.5pt; }
-      .meta-label { font-weight: bold; color: #333; }
-      table { width: 100%; border-collapse: collapse; margin-top: 6px; }
-      th { background: #f0f0f0; border: 1px solid #bbb; padding: 5px 7px; font-size: 9pt; text-align: left; }
-      td { border: 1px solid #bbb; padding: 5px 7px; font-size: 9.5pt; height: 32px; vertical-align: middle; }
-      td.num { width: 30px; text-align: center; color: #888; font-size: 8.5pt; }
-      td.sig-cell { width: 180px; }
-      td.sig-cell img { height: 26px; max-width: 170px; }
-      td.date-cell { width: 90px; font-size: 8.5pt; }
-      .footer { margin-top: 16px; font-size: 8pt; color: #888; }
-      @media print { @page { margin: 15mm; } button { display: none !important; } }
-    </style>
-  </head><body>
-    <h1>Safety Meeting Sign-In Sheet</h1>
-    <div class="org">Kern County Water Agency</div>
-    <div class="meta">
-      <div class="meta-item"><span class="meta-label">Date:</span> ${fmtDate(meeting.meeting_date)}</div>
-      <div class="meta-item"><span class="meta-label">Time:</span> ${meeting.meeting_time ? meeting.meeting_time.slice(0,5) : '—'}</div>
-      <div class="meta-item"><span class="meta-label">Topic:</span> ${esc(meeting.topic)}</div>
-      <div class="meta-item"><span class="meta-label">Presented By:</span> ${esc(meeting.presented_by || '—')}</div>
-      ${meeting.link ? `<div class="meta-item" style="grid-column:1/-1"><span class="meta-label">Reference:</span> ${esc(meeting.link)}</div>` : ''}
-      ${meeting.notes ? `<div class="meta-item" style="grid-column:1/-1"><span class="meta-label">Notes:</span> ${esc(meeting.notes)}</div>` : ''}
+  return `
+    <div class="sf-report-header">
+      <img class="sf-logo" src="/icons/kcwa-seal-192.png" alt="KCWA">
+      <div class="sf-titles">
+        <div class="sf-title">Safety Sign In</div>
+        <div class="sf-sub">Kern County Water Agency</div>
+      </div>
     </div>
-    <table>
-      <thead><tr><th>#</th><th>Print Name</th><th>Signature</th><th>Date</th></tr></thead>
-      <tbody>${rows}${blankRows}</tbody>
+    <table class="sf-meta-table">
+      <tr><th>Date</th><td>${fmtDate(meeting.meeting_date)}</td><th>Time</th><td>${meeting.meeting_time ? meeting.meeting_time.slice(0,5) : '—'}</td></tr>
+      <tr><th>Topic</th><td>${esc(meeting.topic)}</td><th>Presented By</th><td>${esc(meeting.presented_by || '—')}</td></tr>
+      ${meeting.link  ? `<tr><th>Reference</th><td colspan="3">${esc(meeting.link)}</td></tr>` : ''}
+      ${meeting.notes ? `<tr><th>Notes</th><td colspan="3">${esc(meeting.notes)}</td></tr>` : ''}
     </table>
-    <div class="footer">Total Attendees: ${attendees.length} &nbsp;|&nbsp; Exported: ${new Date().toLocaleString()}</div>
-  </body></html>`);
-  w.document.close();
-  w.setTimeout(() => w.print(), 400);
+    <table class="sf-attend-table">
+      <thead><tr><th>#</th><th>Print Name</th><th>Signature</th><th>Date</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <div class="sf-footer">Total Attendees: ${attendees.length} &nbsp;|&nbsp; Generated: ${new Date().toLocaleDateString()}</div>`;
+}
+
+function exportSafetyMeetingPDF(meeting, attendees) {
+  document.getElementById('safety-report-modal')?.remove();
+
+  // Filename: MM-DD-YYYY-Safety-Meeting
+  const raw = meeting.meeting_date ? String(meeting.meeting_date).slice(0, 10) : '';
+  const [yr, mo, dy] = raw ? raw.split('-') : ['', '', ''];
+  const filename = raw ? `${mo}-${dy}-${yr}-Safety-Meeting` : 'Safety-Meeting';
+
+  const contentHtml = buildSafetySheetHtml(meeting, attendees);
+
+  const modal = document.createElement('div');
+  modal.id = 'safety-report-modal';
+  modal.className = 'report-preview-overlay';
+  modal.innerHTML = `
+    <div class="report-preview-bar">
+      <button class="btn btn-secondary btn-sm" id="sf-rp-close">&times; Close</button>
+      <span class="report-preview-bar-title">Safety Sign In</span>
+      <div style="display:flex;gap:8px;flex-shrink:0">
+        <button class="btn btn-secondary btn-sm" id="sf-rp-print">&#128424; Print</button>
+        <button class="btn btn-save btn-sm" id="sf-rp-share">&#8679; Share</button>
+      </div>
+    </div>
+    <div class="report-preview-scroll">
+      <div class="ir-content sf-content" id="sf-rp-body">${contentHtml}</div>
+    </div>`;
+  document.body.appendChild(modal);
+
+  modal.querySelector('#sf-rp-close').addEventListener('click', () => modal.remove());
+
+  // Print: isolated window so the app's flex/fixed layout can't blank the page
+  modal.querySelector('#sf-rp-print').addEventListener('click', () => {
+    const pw = window.open('', '_blank');
+    if (!pw) { showToast('Allow pop-ups to print', 'error'); return; }
+    pw.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${escHtml(filename)}</title>
+      <style>${SAFETY_PRINT_CSS}</style></head><body>${contentHtml}</body></html>`);
+    pw.document.close();
+  });
+
+  // Share: render to a real PDF blob and hand off to the OS share sheet
+  modal.querySelector('#sf-rp-share').addEventListener('click', async () => {
+    const b = modal.querySelector('#sf-rp-share');
+    b.disabled = true; b.textContent = 'Generating…';
+    try {
+      const blob = await html2pdf()
+        .set({
+          margin: 8,
+          filename: `${filename}.pdf`,
+          image: { type: 'jpeg', quality: 0.92 },
+          html2canvas: { scale: 2, useCORS: true, logging: false },
+          jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+        })
+        .from(modal.querySelector('#sf-rp-body'))
+        .outputPdf('blob');
+      const file = new File([blob], `${filename}.pdf`, { type: 'application/pdf' });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: 'Safety Sign In' });
+      } else {
+        const url = URL.createObjectURL(blob);
+        Object.assign(document.createElement('a'), { href: url, download: `${filename}.pdf` }).click();
+        URL.revokeObjectURL(url);
+      }
+    } catch (err) {
+      if (err.name !== 'AbortError') showToast('Share failed: ' + err.message, 'error');
+    } finally {
+      b.disabled = false; b.innerHTML = '&#8679; Share';
+    }
+  });
 }
 
 /* ── Global Search ───────────────────────────────────────────────────────── */
