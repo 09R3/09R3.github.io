@@ -3759,7 +3759,7 @@ app.get('/api/reports/wells/history', requireAuth, async (req, res) => {
 });
 
 app.get('/api/reports/wells/dripper/export', async (req, res) => {
-  const { fill_to, token } = req.query;
+  const { fill_to, token, wells } = req.query;
   const fillTo = parseFloat(fill_to) || 12;
   if (token) {
     const t = downloadTokens.get(token);
@@ -3772,6 +3772,10 @@ app.get('/api/reports/wells/dripper/export', async (req, res) => {
       return res.status(403).json({ error: 'Forbidden' });
   }
   try {
+    // Parse optional well_id filter (comma-separated integers from client checkboxes)
+    const wellIds = wells ? wells.split(',').map(Number).filter(n => Number.isInteger(n) && n > 0) : [];
+    const whereExtra = wellIds.length > 0 ? `AND w.well_id = ANY($1::int[])` : '';
+    const queryParams = wellIds.length > 0 ? [wellIds] : [];
     const { rows } = await pool.query(`
       SELECT w.well_id, w.common_name, w.area, r.dripper_oil, r.reading_date
       FROM wells w
@@ -3782,24 +3786,24 @@ app.get('/api/reports/wells/dripper/export', async (req, res) => {
       ) r ON true
       WHERE LOWER(w.well_type) LIKE '%operational%'
         AND LOWER(COALESCE(w.status,'')) NOT IN ('inactive','removed')
+        ${whereExtra}
       ORDER BY w.area NULLS LAST, w.common_name
-    `);
+    `, queryParams);
+    let xlsxTotal = 0;
+    const dataRows = rows.map(r => {
+      const dripper = r.dripper_oil != null ? Number(r.dripper_oil) : null;
+      const atf = dripper != null ? Math.max(0, fillTo - dripper) : null;
+      if (atf != null) xlsxTotal += atf;
+      return [r.area || '', r.common_name, dripper != null ? dripper : '', atf != null ? atf : '', r.reading_date ? r.reading_date.toISOString().slice(0,10) : ''];
+    });
     const wb = XLSX.utils.book_new();
     const data = [
       ['Dripper Oil Levels', `Fill target: ${fillTo} gal`],
       [],
       ['Area', 'Well', 'Dripper Oil (gal)', 'Amt to Full (gal)', 'Last Read'],
-      ...rows.map(r => {
-        const dripper = r.dripper_oil != null ? Number(r.dripper_oil) : null;
-        const atf = dripper != null ? Math.max(0, fillTo - dripper) : '';
-        return [
-          r.area || '',
-          r.common_name,
-          dripper != null ? dripper : '',
-          atf,
-          r.reading_date ? r.reading_date.toISOString().slice(0,10) : '',
-        ];
-      }),
+      ...dataRows,
+      [],
+      [`Total oil needed (${rows.length} wells)`, '', '', xlsxTotal.toFixed(2), ''],
     ];
     const ws = XLSX.utils.aoa_to_sheet(data);
     ws['!cols'] = [{ wch: 16 }, { wch: 26 }, { wch: 16 }, { wch: 16 }, { wch: 12 }];

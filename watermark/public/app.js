@@ -3440,6 +3440,8 @@ async function sharePdfFromHtml(innerHtml, cssText, filename, title, opts = {}) 
 // Shared light-theme CSS for tabular report-card PDFs (wells, piezometers,
 // ponds, mileage). page-break-inside:avoid keeps table rows whole across pages.
 const REPORT_PDF_CSS = `
+  /* resolve CSS vars that may appear in card.outerHTML inline styles */
+  .pdf-root { --green:#16a34a; --text-dim:#6b7280; --border:#e5e7eb; --red-light:#ef4444; --accent:#3b82f6; }
   body { font-family: Arial, sans-serif; color: #000; font-size: 10pt; margin: 0; }
   .report-card { background: #fff; color: #000; }
   .report-title { font-size: 14pt; font-weight: 700; text-align: center; margin: 0 0 3px; }
@@ -9110,12 +9112,17 @@ el('export-csv-btn').addEventListener('click', async () => {
   if (exportContext === 'wells-dripper') {
     const csvEsc = v => (v == null || v === '') ? '' : /[,"\n]/.test(String(v)) ? `"${String(v).replace(/"/g,'""')}"` : String(v);
     const fillTo = parseInt(el('well-dripper-amount').value) || 12;
+    const checkedIds = getCheckedDripperIds();
+    const exportRows = checkedIds.size > 0 ? lastWellDripperRows.filter(r => checkedIds.has(String(r.well_id))) : lastWellDripperRows;
     const lines = [`Dripper Oil Levels,Fill target: ${fillTo} gal`, '', 'Area,Well,Dripper Oil (gal),Amt to Full (gal),Last Read'];
-    lastWellDripperRows.forEach(r => {
+    let csvTotal = 0;
+    exportRows.forEach(r => {
       const dripper = r.dripper_oil != null ? Number(r.dripper_oil) : null;
-      const atf = dripper != null ? Math.max(0, fillTo - dripper).toFixed(2) : '';
-      lines.push([r.area||'', r.common_name, dripper != null ? dripper.toFixed(2) : '', atf, r.reading_date ? String(r.reading_date).slice(0,10) : ''].map(csvEsc).join(','));
+      const atf = dripper != null ? Math.max(0, fillTo - dripper) : null;
+      if (atf != null) csvTotal += atf;
+      lines.push([r.area||'', r.common_name, dripper != null ? dripper.toFixed(2) : '', atf != null ? atf.toFixed(2) : '', r.reading_date ? String(r.reading_date).slice(0,10) : ''].map(csvEsc).join(','));
     });
+    lines.push('', `Total oil needed (${exportRows.length} wells),,,${csvTotal.toFixed(2)},`);
     await shareFile(new Blob([lines.join('\r\n')], { type: 'text/csv' }), `DripperOil.csv`, 'Dripper Oil Levels');
     return;
   }
@@ -9164,8 +9171,10 @@ el('export-xlsx-btn').addEventListener('click', async () => {
     }
     if (exportContext === 'wells-dripper') {
       const fillTo = el('well-dripper-amount').value || 12;
+      const checkedIds = [...getCheckedDripperIds()];
       const { token } = await api('POST', '/api/reports/download-token', {});
-      const url = `/api/reports/wells/dripper/export?fill_to=${fillTo}&token=${token}`;
+      const wellsParam = checkedIds.length > 0 ? `&wells=${checkedIds.join(',')}` : '';
+      const url = `/api/reports/wells/dripper/export?fill_to=${fillTo}&token=${token}${wellsParam}`;
       const res = await fetch(url);
       if (!res.ok) throw new Error('Export failed');
       await shareFile(await res.blob(), `DripperOil.xlsx`, 'Dripper Oil Levels');
@@ -9410,9 +9419,11 @@ el('export-pdf-btn').addEventListener('click', async () => {
   btn.disabled = true;
   try {
     if (exportContext === 'wells-dripper') {
-      const card = el('report-wells-output').querySelector('.report-card');
-      if (!card) throw new Error('No report to export');
-      await sharePdfFromHtml(card.outerHTML, REPORT_PDF_CSS, 'DripperOil', 'Dripper Oil Levels');
+      if (!lastWellDripperRows.length) throw new Error('No report data to export');
+      const fillTo = parseInt(el('well-dripper-amount').value) || 12;
+      const checkedIds = getCheckedDripperIds();
+      const exportRows = checkedIds.size > 0 ? lastWellDripperRows.filter(r => checkedIds.has(String(r.well_id))) : lastWellDripperRows;
+      await sharePdfFromHtml(buildDripperPdfHtml(exportRows, fillTo), REPORT_PDF_CSS, 'DripperOil', 'Dripper Oil Levels');
     } else if (exportContext === 'wells-daily') {
       const card = el('report-wells-output').querySelector('.report-card');
       if (!card) throw new Error('No report to export');
@@ -12541,6 +12552,49 @@ async function renderWellDetailReport() {
 
 let lastWellDripperRows = [];
 
+function getCheckedDripperIds() {
+  return new Set([...document.querySelectorAll('.dripper-check:checked')]
+    .map(cb => cb.closest('.dripper-row').dataset.wellId));
+}
+
+// Build clean (no CSS vars, no checkboxes) HTML for the dripper PDF export.
+function buildDripperPdfHtml(rows, fillTo) {
+  const fmtDate = s => s ? localDateStr(s, { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
+  const areas = [...new Set(rows.map(r => r.area || 'Other'))];
+  let total = 0;
+  let html = `<div class="report-card">
+    <div class="report-title">Dripper Oil Levels</div>
+    <div class="report-subtitle">Fill target: ${fillTo} gal — ${rows.length} well${rows.length !== 1 ? 's' : ''}</div>`;
+  areas.forEach(area => {
+    const aRows = rows.filter(r => (r.area || 'Other') === area);
+    html += `<div class="report-section-title">${escHtml(area)}</div>
+      <table class="report-table"><thead><tr>
+        <th>Well</th>
+        <th class="report-num">Dripper Oil (gal)</th>
+        <th class="report-num">Amt to Full (gal)</th>
+        <th>Last Read</th>
+      </tr></thead><tbody>`;
+    aRows.forEach(r => {
+      const dripper = r.dripper_oil != null ? Number(r.dripper_oil) : null;
+      const atf = dripper != null ? Math.max(0, fillTo - dripper) : null;
+      if (atf != null) total += atf;
+      html += `<tr>
+        <td>${escHtml(r.common_name)}</td>
+        <td class="report-num">${dripper != null ? dripper.toFixed(2) + ' gal' : '<span style="color:#6b7280">No reading</span>'}</td>
+        <td class="report-num">${atf != null ? atf.toFixed(2) + ' gal' : '—'}</td>
+        <td>${fmtDate(r.reading_date)}</td>
+      </tr>`;
+    });
+    html += '</tbody></table>';
+  });
+  html += `<div style="padding:14px 4px 4px;display:flex;align-items:center;gap:10px;border-top:2px solid #000;margin-top:12px">
+    <span style="font-weight:600">Total oil needed:</span>
+    <span style="font-size:1.15rem;font-weight:700;color:#16a34a">${total.toFixed(2)}</span>
+    <span style="color:#6b7280;font-size:0.85rem">gal</span>
+  </div></div>`;
+  return html;
+}
+
 async function renderWellDripperReport() {
   const out = el('report-wells-output');
   out.innerHTML = '<div class="placeholder-msg">Loading…</div>';
@@ -12566,7 +12620,7 @@ async function renderWellDripperReport() {
       html += `<div class="report-section-title">${escHtml(area)}</div>
         <table class="report-table" data-area-idx="${areaIdx}">
           <thead><tr>
-            <th style="width:28px"><input type="checkbox" class="dripper-area-all" data-area-idx="${areaIdx}" title="Select all in this area" style="width:16px;height:16px;cursor:pointer;accent-color:var(--green)"></th>
+            <th style="width:28px"><input type="checkbox" class="dripper-area-all" data-area-idx="${areaIdx}" title="Select wells under 5 gal in this area" style="width:16px;height:16px;cursor:pointer;accent-color:var(--green)"></th>
             <th>Well</th>
             <th class="report-num">Dripper Oil (gal)</th>
             <th class="report-num">Amt to Full (gal)</th>
@@ -12579,7 +12633,7 @@ async function renderWellDripperReport() {
         const dripCell = dripper != null
           ? dripper.toFixed(2) + ' gal'
           : `<span style="color:var(--text-dim)">No reading</span>`;
-        html += `<tr class="dripper-row" data-dripper-oil="${dripper != null ? dripper : ''}">
+        html += `<tr class="dripper-row" data-well-id="${r.well_id}" data-dripper-oil="${dripper != null ? dripper : ''}">
           <td><input type="checkbox" class="dripper-check" style="width:18px;height:18px;cursor:pointer;accent-color:var(--green)" ${dripper == null ? 'disabled' : ''}></td>
           <td>${escHtml(r.common_name)}</td>
           <td class="report-num">${dripCell}</td>
@@ -12604,17 +12658,27 @@ async function renderWellDripperReport() {
     out.addEventListener('change', e => {
       if (e.target.classList.contains('dripper-area-all')) {
         const table = e.target.closest('table');
-        table.querySelectorAll('.dripper-check:not(:disabled)').forEach(cb => { cb.checked = e.target.checked; });
+        // Select only wells with dripper oil < 5 gal (toggle: all-under-5 checked → uncheck all)
+        const under5 = [...table.querySelectorAll('.dripper-row')].filter(row => {
+          const v = parseFloat(row.dataset.dripperOil);
+          return !isNaN(v) && v < 5;
+        });
+        const allUnder5Checked = under5.length > 0 && under5.every(r => r.querySelector('.dripper-check').checked);
+        under5.forEach(r => { r.querySelector('.dripper-check').checked = !allUnder5Checked; });
+        e.target.checked = !allUnder5Checked && under5.length > 0;
+        e.target.indeterminate = false;
         recalcDripper();
       } else if (e.target.classList.contains('dripper-check')) {
-        // Sync area-all checkbox state
         const table = e.target.closest('table');
-        const allCbs = table.querySelectorAll('.dripper-check:not(:disabled)');
-        const checkedCount = table.querySelectorAll('.dripper-check:not(:disabled):checked').length;
+        const under5 = [...table.querySelectorAll('.dripper-row')].filter(row => {
+          const v = parseFloat(row.dataset.dripperOil);
+          return !isNaN(v) && v < 5;
+        });
+        const checkedUnder5 = under5.filter(r => r.querySelector('.dripper-check').checked).length;
         const areaAll = table.querySelector('.dripper-area-all');
         if (areaAll) {
-          areaAll.indeterminate = checkedCount > 0 && checkedCount < allCbs.length;
-          areaAll.checked = checkedCount === allCbs.length && allCbs.length > 0;
+          areaAll.indeterminate = checkedUnder5 > 0 && checkedUnder5 < under5.length;
+          areaAll.checked = under5.length > 0 && checkedUnder5 === under5.length;
         }
         recalcDripper();
       }
