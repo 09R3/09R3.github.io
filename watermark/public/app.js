@@ -3382,6 +3382,18 @@ async function shareFile(blob, filename, title) {
 
 // Render an in-DOM element to a PDF blob and share it.
 async function sharePdfFromElement(element, filename, title, opts = {}) {
+  // html2canvas doesn't support object-fit — clamp .ir-photo elements to their
+  // natural aspect ratio so photos don't stretch to fill their container width.
+  const maxW = (element.offsetWidth || 754) - 20;
+  const maxH = 340;
+  element.querySelectorAll('.ir-photo').forEach(img => {
+    if (!img.naturalWidth || !img.naturalHeight) return;
+    const ratio = img.naturalWidth / img.naturalHeight;
+    let w = Math.min(img.naturalWidth, maxW);
+    let h = w / ratio;
+    if (h > maxH) { h = maxH; w = h * ratio; }
+    img.style.cssText += `;width:${Math.round(w)}px;height:${Math.round(h)}px;max-width:none;max-height:none;object-fit:unset`;
+  });
   const blob = await html2pdf()
     .set({
       margin: opts.margin ?? 8,
@@ -3419,18 +3431,6 @@ async function sharePdfFromHtml(innerHtml, cssText, filename, title, opts = {}) 
   document.body.appendChild(holder);
   try {
     await waitForImages(holder);
-    // html2canvas ignores object-fit — explicitly clamp .ir-photo to preserve
-    // aspect ratio so photos don't stretch when rendered to PDF.
-    const maxPhotoW = (opts.widthPx || 794) - 40;
-    const maxPhotoH = 340;
-    holder.querySelectorAll('.ir-photo').forEach(img => {
-      if (!img.naturalWidth || !img.naturalHeight) return;
-      const ratio = img.naturalWidth / img.naturalHeight;
-      let w = Math.min(img.naturalWidth, maxPhotoW);
-      let h = w / ratio;
-      if (h > maxPhotoH) { h = maxPhotoH; w = h * ratio; }
-      img.style.cssText += `;width:${Math.round(w)}px;height:${Math.round(h)}px;max-width:none;max-height:none;object-fit:unset`;
-    });
     await sharePdfFromElement(holder.querySelector('.pdf-root'), filename, title, opts);
   } finally {
     holder.remove();
@@ -3457,7 +3457,6 @@ const REPORT_PDF_CSS = `
 const MILEAGE_PDF_CSS = `
   body { font-family: Arial, sans-serif; color: #000; margin: 0; }
   .report-card { background: #fff; color: #000; }
-  .pdf-logo { height: 32px !important; }
   .pdf-logo-row { margin-bottom: 4px !important; }
   .report-title { font-size: 12pt; font-weight: 700; text-align: center; margin: 0 0 2px; }
   .report-subtitle { font-size: 7.5pt; text-align: center; color: #444; margin: 0 0 4px; }
