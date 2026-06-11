@@ -34,6 +34,7 @@ applyTheme(localStorage.getItem('watermark-theme') || 'dark');
 /* ── State ───────────────────────────────────────────────────────────────── */
 let currentUser   = null;
 let currentScreen = null;
+let _usersList    = null;
 
 // Pumping plant state
 const pp = {
@@ -1885,6 +1886,33 @@ function createVehicleItem(v, dateInput, timeInput) {
   return div;
 }
 
+/* ── Shared helpers for assignment dropdowns ─────────────────────────────── */
+async function loadUsersList() {
+  if (_usersList) return _usersList;
+  _usersList = await api('GET', '/api/users/list').catch(() => []);
+  return _usersList;
+}
+
+function userSelectOptions(currentValue) {
+  const users = _usersList || [];
+  let html = '<option value="">— Unassigned —</option>';
+  users.forEach(u => {
+    const sel = u.full_name === currentValue ? ' selected' : '';
+    html += `<option value="${escHtml(u.full_name)}"${sel}>${escHtml(u.full_name)}</option>`;
+  });
+  // Keep legacy free-text value visible even if not in active users list
+  if (currentValue && !users.find(u => u.full_name === currentValue)) {
+    html += `<option value="${escHtml(currentValue)}" selected>${escHtml(currentValue)}</option>`;
+  }
+  return html;
+}
+
+function populateAssignedSelect(selId) {
+  const sel = el(selId);
+  if (!sel) return;
+  sel.innerHTML = userSelectOptions('');
+}
+
 /* ── Well Issues ─────────────────────────────────────────────────────────── */
 let wellIssuesLoaded  = false;
 let wellIssues        = [];
@@ -1898,6 +1926,7 @@ function initMaintWellsPanel() {
   wellIssuesLoaded = true;
   el('well-issue-date').value = todayISO();
   loadWellIssues();
+  loadUsersList().then(() => populateAssignedSelect('well-issue-assigned')).catch(() => {});
   // Populate well dropdown
   api('GET', '/api/wells/operational').then(wells => {
     const sel = el('well-issue-select');
@@ -2035,7 +2064,7 @@ function renderWellIssues(items) {
           </div>
           <div class="form-group">
             <label>Assigned To</label>
-            <input type="text" class="ctrl-input issue-assigned" value="${escHtml(issue.assigned_to || '')}" placeholder="Optional">
+            <select class="ctrl-select issue-assigned">${userSelectOptions(issue.assigned_to)}</select>
           </div>
           <div class="form-group">
             <label>Attachments</label>
@@ -2224,6 +2253,7 @@ function initMaintBuildingsPanel() {
 
   el('bldg-issue-date').value = todayISO();
   loadBldgIssues();
+  loadUsersList().then(() => populateAssignedSelect('bldg-issue-assigned')).catch(() => {});
   // Load sites for new-issue form
   api('GET', '/api/sites').then(sites => {
     const sel = el('bldg-issue-site');
@@ -2333,7 +2363,7 @@ function renderBldgIssues(items) {
           </div>
           <div class="form-group">
             <label>Assigned To</label>
-            <input type="text" class="ctrl-input issue-assigned" value="${escHtml(issue.assigned_to || '')}" placeholder="Optional">
+            <select class="ctrl-select issue-assigned">${userSelectOptions(issue.assigned_to)}</select>
           </div>
           <div class="form-group">
             <label>Attachments</label>
@@ -2533,6 +2563,7 @@ function initMaintEquipmentPanel() {
   el('equip-issue-date').value = todayISO();
   loadEquipIssues();
   loadEquipForNewIssue(equipNewType);
+  loadUsersList().then(() => populateAssignedSelect('equip-issue-assigned')).catch(() => {});
 }
 
 async function loadEquipIssues() {
@@ -2621,7 +2652,7 @@ function renderEquipIssues(items) {
           </div>
           <div class="form-group">
             <label>Assigned To</label>
-            <input type="text" class="ctrl-input issue-assigned" value="${escHtml(issue.assigned_to || '')}" placeholder="Optional">
+            <select class="ctrl-select issue-assigned">${userSelectOptions(issue.assigned_to)}</select>
           </div>
           <div class="form-group">
             <label>Attachments</label>
