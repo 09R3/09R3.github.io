@@ -143,6 +143,13 @@ const pool = new Pool({
   max: 10,
 });
 
+// Reading timestamps are stored as DATE + TIME WITHOUT TIME ZONE (Pacific local
+// time). Set session timezone on every connection so PostgreSQL interprets those
+// naive timestamps as Pacific when computing intervals against NOW().
+pool.on('connect', client => {
+  client.query("SET timezone = 'America/Los_Angeles'");
+});
+
 // ── Auto-migration ────────────────────────────────────────────────────────────
 pool.query(`
   CREATE TABLE IF NOT EXISTS bug_reports (
