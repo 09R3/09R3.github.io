@@ -17,7 +17,14 @@ let _scadaChartRange = '1h';
 let _scadaLastUpdate = 0;   // epoch ms of last good data
 let _scadaStatusTimer = null;
 
-const SCADA_CDN = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js';
+// Chart.js + the date-fns time adapter are bundled locally (under /vendor) so the
+// trend charts work offline as part of the PWA shell — no CDN dependency.
+const SCADA_VENDOR = [
+  '/vendor/chart.umd.js',
+  '/vendor/chartjs-adapter-date-fns.bundle.min.js',
+];
+// Line colors, matching the standalone dashboard palette (first = primary blue).
+const SCADA_SERIES_COLORS = ['#38b6ff', '#2ecc71', '#f1c40f', '#e67e22', '#9b59b6', '#e74c3c', '#1abc9c', '#fd79a8'];
 
 /* ── Entry point (called by showScreen) ──────────────────────────────────── */
 async function initScadaScreen() {
@@ -112,8 +119,8 @@ function renderScadaOverview() {
       if (isOn(scadaVal(scadaPumpPath(site, p, 'MTR.Cntrl.Fail')))) faulted++;
     });
     const dot = faulted ? 'alarm' : (running ? 'ok' : 'idle');
-    const fb  = fmtSensor('FBLvl', scadaVal(scadaSensorPath(site, 'FBLvl')));
-    const air = fmtSensor('AirPSI', scadaVal(scadaSensorPath(site, 'AirPSI')));
+    const fb = fmtSensor('FBLvl', scadaVal(scadaSensorPath(site, 'FBLvl')));
+    const ab = fmtSensor('ABLvl', scadaVal(scadaSensorPath(site, 'ABLvl')));
     return `
       <button class="scada-site-card" data-scada-site="${site.id}">
         <div class="scada-site-row">
@@ -123,7 +130,7 @@ function renderScadaOverview() {
         </div>
         <div class="scada-site-sensors">
           <span>Forebay <strong>${fb}</strong> ft</span>
-          <span>Air <strong>${air}</strong> psi</span>
+          <span>Afterbay <strong>${ab}</strong> ft</span>
         </div>
       </button>`;
   }).join('');
@@ -243,42 +250,97 @@ function patchScadaDetail() {
   });
 }
 
-/* ── Trend chart (Chart.js, lazy-loaded) ──────────────────────────────────── */
-function loadScript(src) {
-  return new Promise((resolve, reject) => {
-    if (window.Chart) return resolve();
+/* ── Trend chart (Chart.js, lazy-loaded from /vendor) ──────────────────────── */
+// Load the bundled scripts once, in order (adapter depends on Chart being global).
+let _scadaVendorLoaded = null;
+function loadScadaVendor() {
+  if (window.Chart) return Promise.resolve();
+  if (_scadaVendorLoaded) return _scadaVendorLoaded;
+  const loadOne = src => new Promise((resolve, reject) => {
     const s = document.createElement('script');
-    s.src = src; s.onload = resolve; s.onerror = () => reject(new Error('Failed to load chart library'));
+    s.src = src; s.onload = resolve;
+    s.onerror = () => reject(new Error('Failed to load chart library'));
     document.head.appendChild(s);
   });
+  _scadaVendorLoaded = SCADA_VENDOR.reduce(
+    (chain, src) => chain.then(() => loadOne(src)), Promise.resolve());
+  return _scadaVendorLoaded;
 }
+
+// Pull theme colors from CSS vars so the chart matches WaterMark's light/dark mode
+// while keeping the clean, thin-line styling of the standalone dashboard.
+function scadaThemeColors() {
+  const cs = getComputedStyle(document.documentElement);
+  const v = (name, fb) => (cs.getPropertyValue(name).trim() || fb);
+  return {
+    text: v('--text', '#dce8f2'),
+    dim:  v('--text-dim', '#7d96aa'),
+    grid: v('--border', '#1f3447'),
+    surface: v('--surface', '#18293a'),
+  };
+}
+
+const SCADA_STATUS_RE = /\.(Run|Fail|Enable)$/;
 
 async function renderScadaChart(tagPath, range) {
   const canvas = el('scada-chart-canvas');
   if (!canvas) return;
   _scadaChartTag = tagPath;
   try {
-    await loadScript(SCADA_CDN);
+    await loadScadaVendor();
     const data = await api('GET', `/api/scada/history?tag=${encodeURIComponent(tagPath)}&range=${encodeURIComponent(range)}`);
     if (_scadaChartTag !== tagPath) return; // selection changed while loading
+
+    const c = scadaThemeColors();
+    const color = SCADA_SERIES_COLORS[0];
+    const ctx = canvas.getContext('2d');
+    // Soft top-down fill under the line, fading to transparent. Scriptable so the
+    // gradient is built from the real chart area once Chart.js has laid it out.
+    const fill = (context) => {
+      const { ctx: cx, chartArea } = context.chart;
+      if (!chartArea) return color + '20';
+      const g = cx.createLinearGradient(0, chartArea.top, 0, chartArea.bottom);
+      g.addColorStop(0, color + '40');
+      g.addColorStop(1, color + '00');
+      return g;
+    };
+
     const points = data.map(([t, v]) => ({ x: t, y: v }));
+    const stepped = SCADA_STATUS_RE.test(tagPath);
     if (_scadaChart) { _scadaChart.destroy(); _scadaChart = null; }
-    _scadaChart = new window.Chart(canvas.getContext('2d'), {
+    _scadaChart = new window.Chart(ctx, {
       type: 'line',
       data: { datasets: [{
-        data: points, borderColor: '#4a90d9', borderWidth: 1.5,
-        pointRadius: 0, tension: 0.25, fill: false,
-        stepped: /\.(Run|Fail|Enable)$/.test(tagPath),
+        data: points,
+        borderColor: color,
+        backgroundColor: fill,
+        borderWidth: 1.8,
+        pointRadius: 0,
+        tension: stepped ? 0 : 0.25,
+        stepped,
+        fill: true,
       }] },
       options: {
         responsive: true, maintainAspectRatio: false, animation: false,
-        plugins: { legend: { display: false } },
+        interaction: { mode: 'nearest', axis: 'x', intersect: false },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: c.surface, titleColor: c.text, bodyColor: c.text,
+            borderColor: c.grid, borderWidth: 1,
+          },
+        },
         scales: {
-          x: { type: 'linear',
-               ticks: { callback: v => new Date(v).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                        maxTicksLimit: 6, color: '#888' },
-               grid: { color: 'rgba(128,128,128,0.12)' } },
-          y: { ticks: { color: '#888' }, grid: { color: 'rgba(128,128,128,0.12)' } },
+          x: {
+            type: 'time',
+            time: { tooltipFormat: 'MMM d, h:mm a' },
+            ticks: { color: c.dim, maxTicksLimit: 8, autoSkip: true },
+            grid: { color: c.grid },
+          },
+          y: {
+            ticks: { color: c.dim },
+            grid: { color: c.grid },
+          },
         },
       },
     });

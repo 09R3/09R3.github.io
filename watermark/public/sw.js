@@ -1,5 +1,6 @@
-const CACHE = 'watermark-v2.57';
-const SHELL = ['/', '/app.js', '/scada.js', '/style.css', '/manifest.json'];
+const CACHE = 'watermark-v2.58';
+const SHELL = ['/', '/app.js', '/scada.js', '/style.css', '/manifest.json',
+  '/vendor/chart.umd.js', '/vendor/chartjs-adapter-date-fns.bundle.min.js'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)));
