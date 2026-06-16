@@ -16,8 +16,7 @@ REPO_URL="https://github.com/09r3/09r3.github.io"
 BRANCH="Watermark-beta"
 CONTAINER_NAME="watermark-beta"
 IMAGE_NAME="watermark-beta"
-HOST_PORT=3066          # port exposed on Unraid (production uses 3067)
-CONTAINER_PORT=4000     # port inside the container (matches PORT in .env)
+HOST_PORT=3066          # port the app listens on (written to .env as PORT)
 UPLOADS_SHARE="/mnt/user/watermark-uploads"     # Unraid share for photo/PDF uploads
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -46,7 +45,7 @@ if [ ! -f "$ENV_FILE" ]; then
         -o "$ENV_FILE" 2>/dev/null \
     || {
         # Fallback: write a minimal template if curl fails
-        cat > "$ENV_FILE" <<'EOF'
+        cat > "$ENV_FILE" <<EOF
 # PostgreSQL connection — use the same credentials as your production instance.
 # IMPORTANT — if Postgres runs on the SAME Unraid machine, do NOT use "localhost".
 # Use your server's LAN IP (e.g. 192.168.1.100) or 172.17.0.1 (Docker bridge default).
@@ -55,7 +54,7 @@ DB_PORT=5432
 DB_NAME=your_database
 DB_USER=your_username
 DB_PASSWORD=your_password
-PORT=4000
+PORT=${HOST_PORT}
 
 # Optional: use a different secret here to keep beta sessions separate from prod.
 # SESSION_SECRET=change_me_beta
@@ -71,6 +70,13 @@ EOF
     echo "  └─────────────────────────────────────────────────┘"
     echo ""
     exit 0
+fi
+
+# ── 2b. Ensure PORT in .env matches HOST_PORT ────────────────────────────────
+if grep -q '^PORT=' "$ENV_FILE"; then
+    sed -i "s/^PORT=.*/PORT=${HOST_PORT}/" "$ENV_FILE"
+else
+    echo "PORT=${HOST_PORT}" >> "$ENV_FILE"
 fi
 
 # ── 3. Stop and remove existing container ────────────────────────────────────
@@ -126,7 +132,7 @@ docker run \
     --detach \
     --name "$CONTAINER_NAME" \
     --restart unless-stopped \
-    --publish "${HOST_PORT}:${CONTAINER_PORT}" \
+    --network host \
     --env-file "$ENV_FILE" \
     --volume "${UPLOADS_SHARE}:/app/uploads" \
     "$IMAGE_NAME" \
