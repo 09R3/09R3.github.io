@@ -105,15 +105,37 @@ async function scadaGetCurrent(tagPaths) {
 }
 
 // Aggregated history for one tag. mean for analog, max for status bits.
-async function scadaGetHistory(tagPath, rangeStr) {
+// Pick aggregation window automatically from span (targets ~200–300 points).
+function calcAggEvery(startMs, endMs) {
+  const hrs = (endMs - startMs) / 3600000;
+  if (hrs <= 2)       return '30s';
+  if (hrs <= 12)      return '2m';
+  if (hrs <= 48)      return '5m';
+  if (hrs <= 7 * 24)  return '30m';
+  if (hrs <= 30 * 24) return '2h';
+  return '6h';
+}
+
+// rangeOpts: preset string ('1h'…'30d') OR { start: ISO, end: ISO } for custom.
+async function scadaGetHistory(tagPath, rangeOpts) {
   const qApi = getInfluxQuery();
   if (!qApi) throw new Error('InfluxDB not configured');
-  const start = { '1h': '-1h', '6h': '-6h', '24h': '-24h', '7d': '-7d' }[rangeStr] || '-1h';
-  const every = { '1h': '30s', '6h': '2m', '24h': '5m', '7d': '30m' }[rangeStr] || '30s';
   const isStatus = /\.(Run|Fail|Enable)$/.test(tagPath);
+  let rangeClause, every;
+  if (typeof rangeOpts === 'object') {
+    const s = new Date(rangeOpts.start); const e = new Date(rangeOpts.end);
+    if (isNaN(s) || isNaN(e)) throw new Error('invalid custom range');
+    rangeClause = `range(start: ${s.toISOString()}, stop: ${e.toISOString()})`;
+    every = calcAggEvery(s.getTime(), e.getTime());
+  } else {
+    const startMap = { '1h':'-1h','6h':'-6h','24h':'-24h','7d':'-7d','30d':'-30d' };
+    const everyMap = { '1h':'30s','6h':'2m','24h':'5m','7d':'30m','30d':'2h' };
+    rangeClause = `range(start: ${startMap[rangeOpts] || '-1h'})`;
+    every = everyMap[rangeOpts] || '30s';
+  }
   const flux = `
     from(bucket: "${INFLUX_BUCKET}")
-      |> range(start: ${start})
+      |> ${rangeClause}
       |> filter(fn: (r) => r._measurement == "plc_tags" and r.tag == "${tagPath}" and r._field == "value")
       |> aggregateWindow(every: ${every}, fn: ${isStatus ? 'max' : 'mean'}, createEmpty: false)`;
   const points = [];
@@ -124,10 +146,18 @@ async function scadaGetHistory(tagPath, rangeStr) {
   return points;
 }
 
-async function scadaGetRuntime(tagPaths, rangeStr) {
+async function scadaGetRuntime(tagPaths, rangeOpts) {
   const qApi = getInfluxQuery();
   if (!qApi) throw new Error('InfluxDB not configured');
-  const start = { '1h': '-1h', '6h': '-6h', '24h': '-24h', '7d': '-7d' }[rangeStr] || '-24h';
+  let rangeClause;
+  if (typeof rangeOpts === 'object') {
+    const s = new Date(rangeOpts.start); const e = new Date(rangeOpts.end);
+    if (isNaN(s) || isNaN(e)) throw new Error('invalid custom range');
+    rangeClause = `range(start: ${s.toISOString()}, stop: ${e.toISOString()})`;
+  } else {
+    const startMap = { '1h':'-1h','6h':'-6h','24h':'-24h','7d':'-7d','30d':'-30d' };
+    rangeClause = `range(start: ${startMap[rangeOpts] || '-24h'})`;
+  }
   const result = {};
   const CHUNK = 10;
   for (let i = 0; i < tagPaths.length; i += CHUNK) {
@@ -135,7 +165,7 @@ async function scadaGetRuntime(tagPaths, rangeStr) {
     const filter = chunk.map(t => `r.tag == "${t}"`).join(' or ');
     const flux = `
       from(bucket: "${INFLUX_BUCKET}")
-        |> range(start: ${start})
+        |> ${rangeClause}
         |> filter(fn: (r) => r._measurement == "plc_tags" and r._field == "value")
         |> filter(fn: (r) => ${filter})
         |> integral(unit: 1s)`;
@@ -4697,21 +4727,21 @@ app.get('/api/scada/current', requireAuth, requireScadaAccess, async (req, res) 
   } catch (err) { handleErr(res, err); }
 });
 
-// Aggregated history. Single tag (?tag=...&range=1h) → array of [t,v] points.
-// Multiple tags (?tags=a,b,c&range=1h) → { series: { tag: [[t,v],...] } } for
-// stacking several readings on one chart. Capped at 8 series (chart palette).
+// History endpoint. Supports preset ranges and custom start/end.
+// Single:   ?tag=...&range=1h  OR  ?tag=...&start=ISO&end=ISO
+// Multi:    ?tags=a,b&range=7d  OR  ?tags=a,b&start=ISO&end=ISO  → { series }
 app.get('/api/scada/history', requireAuth, requireScadaAccess, async (req, res) => {
-  const { tag, tags, range } = req.query;
-  const r = String(range || '1h');
+  const { tag, tags, range, start, end } = req.query;
+  const rangeOpts = (start && end) ? { start: String(start), end: String(end) } : String(range || '1h');
   try {
     if (tags) {
       const list = String(tags).split(',').map(s => s.trim()).filter(Boolean).slice(0, 8);
       const series = {};
-      await Promise.all(list.map(async t => { series[t] = await scadaGetHistory(t, r); }));
+      await Promise.all(list.map(async t => { series[t] = await scadaGetHistory(t, rangeOpts); }));
       return res.json({ series });
     }
     if (!tag) return res.status(400).json({ error: 'tag required' });
-    res.json(await scadaGetHistory(String(tag), r));
+    res.json(await scadaGetHistory(String(tag), rangeOpts));
   } catch (err) { handleErr(res, err); }
 });
 
@@ -4719,13 +4749,14 @@ app.get('/api/scada/history', requireAuth, requireScadaAccess, async (req, res) 
 // Uses InfluxDB integral(unit:1s) on Run tags — no extra DB needed.
 app.get('/api/scada/runtime', requireAuth, requireScadaAccess, async (req, res) => {
   if (!SCADA_CONFIG) return res.status(503).json({ error: 'SCADA not configured' });
-  const { site: influxSite, range } = req.query;
+  const { site: influxSite, range, start, end } = req.query;
   if (!influxSite) return res.status(400).json({ error: 'site required' });
   const siteConfig = SCADA_CONFIG.sites.find(s => s.influxSite === String(influxSite));
   if (!siteConfig) return res.status(404).json({ error: 'site not found' });
+  const rangeOpts = (start && end) ? { start: String(start), end: String(end) } : String(range || '24h');
   const runPaths = siteConfig.pumps.map(p => `${influxSite}.${p}.MTR.Cntrl.Run`);
   try {
-    const raw = await scadaGetRuntime(runPaths, String(range || '24h'));
+    const raw = await scadaGetRuntime(runPaths, rangeOpts);
     const result = {};
     for (const p of siteConfig.pumps) result[p] = raw[`${influxSite}.${p}.MTR.Cntrl.Run`] ?? 0;
     res.json(result);

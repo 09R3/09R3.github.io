@@ -16,13 +16,17 @@ let _scadaLastUpdate = 0;
 let _scadaStatusTimer = null;
 
 // Trends — multi-select tags, plant selection, range — all persisted
-let _scadaTrendTags  = new Set(JSON.parse(localStorage.getItem('scadaTrendTags') || '[]'));
-let _scadaTrendPlant = localStorage.getItem('scadaTrendPlant') || '';
-let _scadaTrendRange = localStorage.getItem('scadaTrendRange') || '24h';
+let _scadaTrendTags         = new Set(JSON.parse(localStorage.getItem('scadaTrendTags') || '[]'));
+let _scadaTrendPlant        = localStorage.getItem('scadaTrendPlant') || '';
+let _scadaTrendRange        = localStorage.getItem('scadaTrendRange') || '24h';
+let _scadaTrendCustomStart  = localStorage.getItem('scadaTrendCustomStart') || '';
+let _scadaTrendCustomEnd    = localStorage.getItem('scadaTrendCustomEnd') || '';
 
 // Runtime — plant + range persisted
-let _scadaRuntimePlant = localStorage.getItem('scadaRuntimePlant') || '';
-let _scadaRuntimeRange = localStorage.getItem('scadaRuntimeRange') || '24h';
+let _scadaRuntimePlant       = localStorage.getItem('scadaRuntimePlant') || '';
+let _scadaRuntimeRange       = localStorage.getItem('scadaRuntimeRange') || '24h';
+let _scadaRuntimeCustomStart = localStorage.getItem('scadaRuntimeCustomStart') || '';
+let _scadaRuntimeCustomEnd   = localStorage.getItem('scadaRuntimeCustomEnd') || '';
 
 // ── Chart vendor (loaded once from /vendor, works offline) ───────────────────
 const SCADA_VENDOR = [
@@ -67,22 +71,36 @@ function scadaGradientFill(color) {
   };
 }
 
+// Converts a datetime-local string (local time) to a UTC ISO string for the API.
+function localDtToISO(dt) { return dt ? new Date(dt).toISOString() : ''; }
+
+// Build the range query string — preset ('1h'…'30d') or custom { start, end }.
+function scadaRangeQS(range) {
+  if (typeof range === 'object')
+    return `start=${encodeURIComponent(localDtToISO(range.start))}&end=${encodeURIComponent(localDtToISO(range.end))}`;
+  return `range=${encodeURIComponent(range)}`;
+}
+
 // Draw one or more tags on canvas. Single-series gets gradient fill; multi gets legend.
+// range: preset string OR { start, end } (datetime-local strings) for custom.
 async function drawScadaChart(canvas, tagPaths, range) {
   if (!canvas || !tagPaths.length) {
     if (_scadaChart) { _scadaChart.destroy(); _scadaChart = null; }
     return;
   }
-  const key = tagPaths.join('|') + '@' + range;
+  const isCustom = typeof range === 'object';
+  if (isCustom && (!range.start || !range.end)) return; // incomplete custom range
+  const key = tagPaths.join('|') + '@' + (isCustom ? `${range.start}~${range.end}` : range);
   _scadaChartKey = key;
   try {
     await loadScadaVendor();
+    const qs = scadaRangeQS(range);
     let series;
     if (tagPaths.length === 1) {
-      const arr = await api('GET', `/api/scada/history?tag=${encodeURIComponent(tagPaths[0])}&range=${encodeURIComponent(range)}`);
+      const arr = await api('GET', `/api/scada/history?tag=${encodeURIComponent(tagPaths[0])}&${qs}`);
       series = { [tagPaths[0]]: arr };
     } else {
-      const r = await api('GET', `/api/scada/history?tags=${encodeURIComponent(tagPaths.join(','))}&range=${encodeURIComponent(range)}`);
+      const r = await api('GET', `/api/scada/history?tags=${encodeURIComponent(tagPaths.join(','))}&${qs}`);
       series = r.series || {};
     }
     if (_scadaChartKey !== key) return; // selection changed while fetching
@@ -442,6 +460,24 @@ function patchScadaPlantDetail() {
 }
 
 // ── Trends (plant pills + multi-select chips) ─────────────────────────────────
+const SCADA_PRESET_RANGES = ['1h','6h','24h','7d','30d'];
+
+function scadaRangeBtnsHtml(currentRange, idPrefix) {
+  return [...SCADA_PRESET_RANGES, 'custom'].map(r =>
+    `<button class="seg-btn${currentRange===r?' active':''}" data-range="${r}">${r === 'custom' ? 'Custom' : r}</button>`
+  ).join('');
+}
+
+function scadaCustomRangeHtml(startVal, endVal, idPrefix, hidden) {
+  return `<div class="scada-custom-range${hidden?' hidden':''}" id="${idPrefix}-custom">
+    <label class="scada-custom-label">From</label>
+    <input type="datetime-local" class="ctrl-input ctrl-input-sm" id="${idPrefix}-from" value="${startVal}">
+    <label class="scada-custom-label">To</label>
+    <input type="datetime-local" class="ctrl-input ctrl-input-sm" id="${idPrefix}-to" value="${endVal}">
+    <button class="btn btn-secondary btn-sm" id="${idPrefix}-apply">Apply</button>
+  </div>`;
+}
+
 function renderScadaTrends() {
   _scadaView = 'trends';
   const groups = scadaPlantGroups();
@@ -454,13 +490,12 @@ function renderScadaTrends() {
     </div>
     <div class="scada-trend-chips" id="scada-trend-chips"></div>
     <div class="scada-chart-controls">
-      <div class="seg-group" id="scada-trend-range">
-        ${['1h','6h','24h','7d'].map(r =>
-          `<button class="seg-btn${_scadaTrendRange===r?' active':''}" data-range="${r}">${r}</button>`).join('')}
-      </div>
+      <div class="seg-group" id="scada-trend-range">${scadaRangeBtnsHtml(_scadaTrendRange, 'scada-trend')}</div>
     </div>
+    ${scadaCustomRangeHtml(_scadaTrendCustomStart, _scadaTrendCustomEnd, 'scada-trend', _scadaTrendRange !== 'custom')}
     <div class="scada-chart-wrap"><canvas id="scada-trend-canvas" class="scada-chart-canvas"></canvas></div>
-    <p class="placeholder-msg" id="scada-trend-empty">Pick readings above to overlay on the chart.</p>`;
+    <p class="placeholder-msg" id="scada-trend-empty">Pick readings above to overlay on the chart.</p>
+    <button class="btn btn-secondary" id="scada-trend-clear" style="margin-top:10px;width:100%">Clear All Selections</button>`;
 
   wireScadaTabs();
 
@@ -470,8 +505,28 @@ function renderScadaTrends() {
       b.classList.add('active');
       _scadaTrendRange = b.dataset.range;
       localStorage.setItem('scadaTrendRange', _scadaTrendRange);
-      refreshScadaTrendChart();
+      el('scada-trend-custom').classList.toggle('hidden', _scadaTrendRange !== 'custom');
+      if (_scadaTrendRange !== 'custom') refreshScadaTrendChart();
     }));
+
+  el('scada-trend-apply').addEventListener('click', () => {
+    _scadaTrendCustomStart = el('scada-trend-from').value;
+    _scadaTrendCustomEnd   = el('scada-trend-to').value;
+    localStorage.setItem('scadaTrendCustomStart', _scadaTrendCustomStart);
+    localStorage.setItem('scadaTrendCustomEnd',   _scadaTrendCustomEnd);
+    refreshScadaTrendChart();
+  });
+
+  el('scada-trend-clear').addEventListener('click', () => {
+    _scadaTrendTags.clear();
+    localStorage.setItem('scadaTrendTags', '[]');
+    el('scada-trend-chips').querySelectorAll('.scada-trend-chip').forEach(c => c.classList.remove('selected'));
+    if (_scadaChart) { _scadaChart.destroy(); _scadaChart = null; }
+    const empty = el('scada-trend-empty');
+    if (empty) empty.classList.remove('hidden');
+    const wrap = el('scada-trend-canvas')?.closest('.scada-chart-wrap');
+    if (wrap) wrap.classList.add('hidden');
+  });
 
   el('scada-trend-pills').querySelectorAll('[data-plant]').forEach(pill =>
     pill.addEventListener('click', () => {
@@ -529,8 +584,12 @@ function refreshScadaTrendChart() {
   const wrap   = canvas?.closest('.scada-chart-wrap');
   if (empty) empty.classList.toggle('hidden', tags.length > 0);
   if (wrap)  wrap.classList.toggle('hidden', tags.length === 0);
-  if (tags.length) drawScadaChart(canvas, tags, _scadaTrendRange);
-  else if (_scadaChart) { _scadaChart.destroy(); _scadaChart = null; }
+  if (tags.length) {
+    const range = _scadaTrendRange === 'custom'
+      ? { start: _scadaTrendCustomStart, end: _scadaTrendCustomEnd }
+      : _scadaTrendRange;
+    drawScadaChart(canvas, tags, range);
+  } else if (_scadaChart) { _scadaChart.destroy(); _scadaChart = null; }
 }
 
 // ── Runtime (pump run-hours from InfluxDB integral) ───────────────────────────
@@ -544,10 +603,10 @@ function renderScadaRuntime() {
     <div class="scada-plant-pills" id="scada-runtime-pills">
       ${groups.map(g => `<button class="scada-plant-pill${g.key===_scadaRuntimePlant?' active':''}" data-plant="${g.key}">PP ${g.num}</button>`).join('')}
     </div>
-    <div class="seg-group" id="scada-runtime-range" style="margin-bottom:14px">
-      ${['1h','6h','24h','7d'].map(r =>
-        `<button class="seg-btn${_scadaRuntimeRange===r?' active':''}" data-range="${r}">${r}</button>`).join('')}
+    <div class="seg-group" id="scada-runtime-range" style="margin-bottom:8px">
+      ${scadaRangeBtnsHtml(_scadaRuntimeRange, 'scada-runtime')}
     </div>
+    ${scadaCustomRangeHtml(_scadaRuntimeCustomStart, _scadaRuntimeCustomEnd, 'scada-runtime', _scadaRuntimeRange !== 'custom')}
     <div id="scada-runtime-body"><div class="placeholder-msg">Loading…</div></div>`;
 
   wireScadaTabs();
@@ -558,8 +617,17 @@ function renderScadaRuntime() {
       b.classList.add('active');
       _scadaRuntimeRange = b.dataset.range;
       localStorage.setItem('scadaRuntimeRange', _scadaRuntimeRange);
-      loadScadaRuntime();
+      el('scada-runtime-custom').classList.toggle('hidden', _scadaRuntimeRange !== 'custom');
+      if (_scadaRuntimeRange !== 'custom') loadScadaRuntime();
     }));
+
+  el('scada-runtime-apply').addEventListener('click', () => {
+    _scadaRuntimeCustomStart = el('scada-runtime-from').value;
+    _scadaRuntimeCustomEnd   = el('scada-runtime-to').value;
+    localStorage.setItem('scadaRuntimeCustomStart', _scadaRuntimeCustomStart);
+    localStorage.setItem('scadaRuntimeCustomEnd',   _scadaRuntimeCustomEnd);
+    loadScadaRuntime();
+  });
 
   el('scada-runtime-pills').querySelectorAll('[data-plant]').forEach(pill =>
     pill.addEventListener('click', () => {
@@ -582,11 +650,22 @@ async function loadScadaRuntime() {
   if (!g) { rBody.innerHTML = '<div class="placeholder-msg">No data.</div>'; return; }
 
   const sites = g.b ? [g.a, g.b] : [g.a];
-  const maxHrs = rangeHours(_scadaRuntimeRange);
+  const runtimeRangeObj = _scadaRuntimeRange === 'custom'
+    ? { start: _scadaRuntimeCustomStart, end: _scadaRuntimeCustomEnd }
+    : null;
+  const maxHrs = runtimeRangeObj ? rangeHours(runtimeRangeObj) : rangeHours(_scadaRuntimeRange);
+
+  if (runtimeRangeObj && (!runtimeRangeObj.start || !runtimeRangeObj.end)) {
+    rBody.innerHTML = '<div class="placeholder-msg">Set start and end dates above, then tap Apply.</div>';
+    return;
+  }
 
   try {
+    const qs = runtimeRangeObj
+      ? `start=${encodeURIComponent(localDtToISO(runtimeRangeObj.start))}&end=${encodeURIComponent(localDtToISO(runtimeRangeObj.end))}`
+      : `range=${encodeURIComponent(_scadaRuntimeRange)}`;
     const results = await Promise.all(
-      sites.map(s => api('GET', `/api/scada/runtime?site=${encodeURIComponent(s.influxSite)}&range=${encodeURIComponent(_scadaRuntimeRange)}`))
+      sites.map(s => api('GET', `/api/scada/runtime?site=${encodeURIComponent(s.influxSite)}&${qs}`))
     );
 
     const cards = sites.flatMap((site, si) =>
@@ -611,5 +690,7 @@ async function loadScadaRuntime() {
 }
 
 function rangeHours(range) {
-  return { '1h': 1, '6h': 6, '24h': 24, '7d': 168 }[range] || 24;
+  if (typeof range === 'object' && range.start && range.end)
+    return Math.max(1, (new Date(range.end) - new Date(range.start)) / 3600000);
+  return { '1h': 1, '6h': 6, '24h': 24, '7d': 168, '30d': 720 }[range] || 24;
 }
