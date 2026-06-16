@@ -352,9 +352,22 @@ function sensorColHtml(site) {
       <div class="scada-sensor-unit">${escHtml(meta.unit || '')}</div>
     </div>`;
   }).join('');
+
+  const computed = (site.computedSensors || []).map(c => {
+    const paths = c.sum.map(s => scadaSensorPath(site, s));
+    const vals  = paths.map(p => scadaVal(p));
+    const total = vals.every(v => v != null) ? vals.reduce((a, b) => a + b, 0) : null;
+    const key   = paths.join(',');
+    return `<div class="scada-sensor-tile scada-sensor-computed">
+      <div class="scada-sensor-label">${escHtml(c.label)}</div>
+      <div class="scada-sensor-value" data-scada-computed="${escHtml(key)}">${total == null ? '—' : total.toFixed(2)}</div>
+      <div class="scada-sensor-unit">${escHtml(c.unit || '')}</div>
+    </div>`;
+  }).join('');
+
   return `<div class="scada-detail-col">
     <div class="scada-col-hdr">${escHtml(shortSiteName(site))}</div>
-    <div class="scada-sensor-grid">${tiles}</div>
+    <div class="scada-sensor-grid">${tiles}${computed}</div>
   </div>`;
 }
 
@@ -456,6 +469,10 @@ function patchScadaPlantDetail() {
   });
   body.querySelectorAll('[data-scada-fail]').forEach(elm =>
     elm.classList.toggle('hidden', !isOn(scadaVal(elm.dataset.scadaFail))));
+  body.querySelectorAll('[data-scada-computed]').forEach(elm => {
+    const vals = elm.dataset.scadaComputed.split(',').map(p => scadaVal(p));
+    elm.textContent = vals.every(v => v != null) ? vals.reduce((a, b) => a + b, 0).toFixed(2) : '—';
+  });
   body.querySelectorAll('[data-run-path]').forEach(card => {
     const run = isOn(scadaVal(card.dataset.runPath));
     card.classList.toggle('run', run);

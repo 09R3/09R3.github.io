@@ -12,7 +12,7 @@
     "AQFlw2": { "label": "DWR 2",           "unit": "cfs", "kind": "flow" }
   },
   "sites": [
-    { "id": "pp1a", "name": "CVC PP 1A", "influxSite": "CVC_PP1A", "pumps": ["A","B","C","D","E","F","G","H"], "sensors": ["FBLvl","ABLvl","DSLvl","TRLvl","AirPSI","InTmp","AQFlw","AQFlw2"] },
+    { "id": "pp1a", "name": "CVC PP 1A", "influxSite": "CVC_PP1A", "pumps": ["A","B","C","D","E","F","G","H"], "sensors": ["FBLvl","ABLvl","DSLvl","TRLvl","AirPSI","InTmp","AQFlw","AQFlw2"], "computedSensors": [{"label":"DWR Total","unit":"cfs","sum":["AQFlw","AQFlw2"]}] },
     { "id": "pp1b", "name": "CVC PP 1B", "influxSite": "CVC_PP1B", "pumps": ["A","B","C"], "pumpLabels": {"A":"K","B":"L","C":"M"} },
     { "id": "pp2a", "name": "CVC PP 2A", "influxSite": "CVC_PP2A", "pumps": ["A","B","C","D","E","F","G","H"] },
     { "id": "pp2b", "name": "CVC PP 2B", "influxSite": "CVC_PP2B", "pumps": ["A","B","C"], "pumpLabels": {"A":"K","B":"L","C":"M"} },

@@ -3384,6 +3384,7 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
 .scada-detail-col { flex: 1; min-width: 0; }
 .scada-col-hdr { font-size: 0.75rem; font-weight: 700; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; text-align: center; }
 .scada-sensor-tile[data-selectable], .scada-pump-card[data-selectable] { cursor: pointer; }
+.scada-sensor-computed { border-style: dashed; }
 .scada-sensor-tile.selected, .scada-pump-card.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .scada-pump-card.run { border-left: 3px solid #43a047; }
 .scada-pump-card.stop { border-left: 3px solid var(--border); }
