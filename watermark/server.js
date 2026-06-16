@@ -27,6 +27,9 @@ if (msalEnabled) {
   });
 }
 
+// All roles with supervisor-level access (declared here so routes below can reference it)
+const SUPERVISOR_ROLES = ['supervisor', 'admin', 'water-planner'];
+
 const app = express();
 app.use(express.json());
 app.use(cookieParser());
@@ -400,9 +403,6 @@ function requireRole(...roles) {
     next();
   };
 }
-
-// All roles with supervisor-level access
-const SUPERVISOR_ROLES = ['supervisor', 'admin', 'water-planner'];
 
 function isSuperiorTo(requestingRole, targetRole) {
   const rank = {
