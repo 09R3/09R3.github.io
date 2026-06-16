@@ -186,6 +186,22 @@ const POWER_CFG     = SCADA_CONFIG?.power || null;
 const POWER_BUCKET  = POWER_CFG?.bucket || process.env.POWER_BUCKET || 'power_meters';
 const POWER_MEAS    = POWER_CFG?.measurement || 'power_reading';
 
+// Power data is in its own bucket, possibly behind its own token/org/instance.
+// POWER_INFLUX_* override the SCADA connection when set; otherwise we reuse the
+// SCADA connection (same instance, just a different bucket). This covers all
+// cases: same token across buckets, a bucket-scoped power token, or a separate
+// InfluxDB entirely.
+let _powerInfluxQuery = null;
+function getPowerInfluxQuery() {
+  if (_powerInfluxQuery) return _powerInfluxQuery;
+  const url   = process.env.POWER_INFLUX_URL   || process.env.INFLUX_URL;
+  const token = process.env.POWER_INFLUX_TOKEN || process.env.INFLUX_TOKEN;
+  if (!url || !token) return null;
+  const org   = process.env.POWER_INFLUX_ORG   || process.env.INFLUX_ORG || 'scada-org';
+  _powerInfluxQuery = new InfluxDB({ url, token }).getQueryApi(org);
+  return _powerInfluxQuery;
+}
+
 function powerMeterIds() { return (POWER_CFG?.sites || []).map(s => s.meterId); }
 // Every field referenced by any group + fieldMeta — the full allow-list.
 function powerKnownFields() {
@@ -198,7 +214,7 @@ function powerKnownFields() {
 // Latest value of every field for the given meters. last() returns one point per
 // (meter_id, field) series, so no per-field filter is needed (avoids Flux depth limit).
 async function powerGetCurrent(meterIds) {
-  const qApi = getInfluxQuery();
+  const qApi = getPowerInfluxQuery();
   if (!qApi) throw new Error('InfluxDB not configured');
   const result = {};
   if (!meterIds.length) return result;
@@ -218,7 +234,7 @@ async function powerGetCurrent(meterIds) {
 
 // Aggregated history for one meter, grouped by field → { field: [[t,v]] }.
 async function powerGetHistory(meterId, fields, rangeOpts) {
-  const qApi = getInfluxQuery();
+  const qApi = getPowerInfluxQuery();
   if (!qApi) throw new Error('InfluxDB not configured');
   let rangeClause, every;
   if (typeof rangeOpts === 'object') {
