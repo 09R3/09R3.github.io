@@ -76,7 +76,7 @@ const upload = multer({
   },
 });
 
-app.post('/api/tools/upload', requireAuth, requireRole('supervisor', 'admin'),
+app.post('/api/tools/upload', requireAuth, requireRole(...SUPERVISOR_ROLES),
   upload.array('files', 20), (req, res) => {
     if (!req.files?.length) return res.status(400).json({ error: 'No valid files' });
     const cat = UPLOAD_CATEGORIES.includes(req.query.category)
@@ -92,7 +92,7 @@ app.post('/api/tools/upload', requireAuth, requireRole('supervisor', 'admin'),
   }
 );
 
-app.get('/api/tools/files', requireAuth, requireRole('supervisor', 'admin'), (req, res) => {
+app.get('/api/tools/files', requireAuth, requireRole(...SUPERVISOR_ROLES), (req, res) => {
   const cat     = req.query.category;
   const scanDir = cat && UPLOAD_CATEGORIES.includes(cat)
     ? path.join(UPLOADS_ROOT, cat) : UPLOADS_ROOT;
@@ -121,7 +121,7 @@ app.get('/api/tools/files', requireAuth, requireRole('supervisor', 'admin'), (re
   res.json(results);
 });
 
-app.delete('/api/tools/file', requireAuth, requireRole('supervisor', 'admin'), (req, res) => {
+app.delete('/api/tools/file', requireAuth, requireRole(...SUPERVISOR_ROLES), (req, res) => {
   const { relPath, filePath } = req.body;
   const target = relPath || filePath;
   if (!target) return res.status(400).json({ error: 'relPath required' });
@@ -401,8 +401,14 @@ function requireRole(...roles) {
   };
 }
 
+// All roles with supervisor-level access
+const SUPERVISOR_ROLES = ['supervisor', 'admin', 'water-planner'];
+
 function isSuperiorTo(requestingRole, targetRole) {
-  const rank = { admin: 3, supervisor: 2, operator: 1 };
+  const rank = {
+    admin: 3, supervisor: 2, 'water-planner': 2,
+    operator: 1, 'systems-operator': 1, 'heavy-equipment-operator': 1, 'pump-tech': 1, 'elec-tech': 1,
+  };
   return (rank[requestingRole] || 0) > (rank[targetRole] || 0);
 }
 
@@ -1011,7 +1017,7 @@ app.delete('/api/readings/vehicle-monthly/:id', requireAuth, (req, res) =>
   deleteReading(req, res, 'readings_vehicle_monthly', 'reading_id'));
 
 // ── Supervisor/Admin: Update readings ─────────────────────────────────────────
-app.put('/api/readings/pump-hours/:id', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+app.put('/api/readings/pump-hours/:id', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
   const { hour_reading, notes } = req.body;
   try {
     await pool.query(
@@ -1228,7 +1234,7 @@ app.get('/api/wells/by-run', requireAuth, async (req, res) => {
 
 // Middleware: allow supervisor/admin always, or any authed user if gps_selector_public is on
 async function requireGPSSelectorAccess(req, res, next) {
-  if (req.user.role === 'admin' || req.user.role === 'supervisor') return next();
+  if (SUPERVISOR_ROLES.includes(req.user.role)) return next();
   try {
     const { rows } = await pool.query(`SELECT value FROM app_settings WHERE key = 'gps_selector_public'`);
     if (rows[0]?.value === 'true') return next();
@@ -2806,7 +2812,7 @@ app.get('/api/settings/kf-widget', requireAuth, async (req, res) => {
   }
 });
 
-app.put('/api/settings/kf-widget', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+app.put('/api/settings/kf-widget', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
   const { start_date, end_date } = req.body;
   if (!start_date || !end_date) return res.status(400).json({ error: 'start_date and end_date required' });
   try {
@@ -3009,7 +3015,7 @@ app.delete('/api/maintenance/attachment/:id', requireAuth, async (req, res) => {
     );
     if (!rows.length) return res.status(404).json({ error: 'Not found' });
     const { rel_path, uploaded_by } = rows[0];
-    if (req.user.username !== uploaded_by && !['admin', 'supervisor'].includes(req.user.role)) {
+    if (req.user.username !== uploaded_by && !SUPERVISOR_ROLES.includes(req.user.role)) {
       return res.status(403).json({ error: 'Cannot delete another user\'s attachment' });
     }
     await pool.query(`DELETE FROM maintenance_attachments WHERE attachment_id = $1`, [parseInt(req.params.id)]);
@@ -3025,14 +3031,14 @@ app.delete('/api/maintenance/attachment/:id', requireAuth, async (req, res) => {
 const downloadTokens = new Map();
 
 // Issue a short-lived one-time download token (30s) — solves iOS PWA cookie issue
-app.post('/api/reports/download-token', requireAuth, requireRole('supervisor', 'admin'), (req, res) => {
+app.post('/api/reports/download-token', requireAuth, requireRole(...SUPERVISOR_ROLES), (req, res) => {
   const token = crypto.randomBytes(32).toString('hex');
   downloadTokens.set(token, { ...req.body, expires: Date.now() + 30000 });
   setTimeout(() => downloadTokens.delete(token), 30000);
   res.json({ token });
 });
 
-app.get('/api/reports/mileage', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+app.get('/api/reports/mileage', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
   const { year, month } = req.query;
   if (!year || !month) return res.status(400).json({ error: 'year and month required' });
   try {
@@ -3150,7 +3156,7 @@ app.get('/api/reports/mileage/export', async (req, res) => {
 });
 
 // ── KF Breakdown Report ───────────────────────────────────────────────────────
-app.get('/api/reports/kf-operators', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+app.get('/api/reports/kf-operators', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
   const { start_date, end_date } = req.query;
   if (!start_date || !end_date) return res.status(400).json({ error: 'start_date and end_date required' });
   try {
@@ -3186,7 +3192,7 @@ app.get('/api/reports/kf-operators', requireAuth, requireRole('supervisor', 'adm
 });
 
 // Vehicle last-service report
-app.get('/api/reports/vehicle-service', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+app.get('/api/reports/vehicle-service', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
   try {
     const { rows } = await pool.query(`
       SELECT
@@ -3234,7 +3240,7 @@ app.get('/api/reports/vehicle-service', requireAuth, requireRole('supervisor', '
 });
 
 // Piezometer readings report — latest reading per piezometer within date range
-app.get('/api/reports/piezometers', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+app.get('/api/reports/piezometers', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
   const { start_date, end_date } = req.query;
   if (!start_date || !end_date) return res.status(400).json({ error: 'start_date and end_date required' });
   try {
@@ -3262,7 +3268,7 @@ app.get('/api/reports/piezometers', requireAuth, requireRole('supervisor', 'admi
 });
 
 // Canal readings report — all readings for a date range
-app.get('/api/reports/canal', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+app.get('/api/reports/canal', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
   const { start_date, end_date } = req.query;
   if (!start_date || !end_date) return res.status(400).json({ error: 'start_date and end_date required' });
   try {
@@ -3444,7 +3450,7 @@ app.get('/api/reports/piezometers/compare/export', async (req, res) => {
 });
 
 // KF set-by-set breakdown
-app.get('/api/reports/kf-sets', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+app.get('/api/reports/kf-sets', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
   const { start_date, end_date } = req.query;
   if (!start_date || !end_date) return res.status(400).json({ error: 'start_date and end_date required' });
   try {
@@ -3469,7 +3475,7 @@ app.get('/api/reports/kf-sets', requireAuth, requireRole('supervisor', 'admin'),
 });
 
 // Open maintenance issues across all three categories
-app.get('/api/reports/maintenance-issues', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+app.get('/api/reports/maintenance-issues', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
   try {
     const { rows } = await pool.query(`
       SELECT 'Wells' AS category, issue_id,
@@ -3502,7 +3508,7 @@ app.get('/api/reports/maintenance-issues', requireAuth, requireRole('supervisor'
 // Issue look-up — all issues (open + resolved) across wells, buildings, and
 // equipment, tagged with their subject so the client can search/group by the
 // specific piece of equipment and see its full issue history.
-app.get('/api/reports/issues-all', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+app.get('/api/reports/issues-all', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
   try {
     const { rows } = await pool.query(`
       SELECT 'Wells' AS category, 'well' AS subject_type,
@@ -3539,7 +3545,7 @@ app.get('/api/reports/issues-all', requireAuth, requireRole('supervisor', 'admin
 });
 
 // PM Grid report — latest per-plant siphon breaker + air compressor records + positions
-app.get('/api/reports/pm-grid', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+app.get('/api/reports/pm-grid', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
   const { year, month } = req.query;
   let dateClause = '';
   const params = [];
@@ -3850,8 +3856,7 @@ app.get('/api/reports/wells/dripper', requireAuth, async (req, res) => {
 // List pesticides (active only for operators; all for supervisor/admin)
 app.get('/api/pesticides', requireAuth, async (req, res) => {
   try {
-    const supervisorRoles = ['supervisor', 'admin'];
-    const showAll = supervisorRoles.includes(req.user.role);
+    const showAll = SUPERVISOR_ROLES.includes(req.user.role);
     const { rows } = await pool.query(
       `SELECT pesticide_id, name, epa_reg_number, unit_of_measure, active, created_at
        FROM pesticides
@@ -3882,7 +3887,7 @@ app.post('/api/pesticides', requireAuth, async (req, res) => {
 });
 
 // Deactivate / reactivate a pesticide (supervisor/admin only)
-app.patch('/api/pesticides/:id', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+app.patch('/api/pesticides/:id', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
   const { active } = req.body;
   if (active === undefined) return res.status(400).json({ error: 'active required' });
   try {
@@ -4206,7 +4211,7 @@ app.post('/api/bug-reports', requireAuth, async (req, res) => {
   } catch (err) { handleErr(res, err); }
 });
 
-app.get('/api/bug-reports', requireAuth, requireRole('admin', 'supervisor'), async (req, res) => {
+app.get('/api/bug-reports', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
   try {
     const { rows } = await pool.query(
       `SELECT report_id, submitted_by, submitted_at, screen_area, severity,
@@ -4217,7 +4222,7 @@ app.get('/api/bug-reports', requireAuth, requireRole('admin', 'supervisor'), asy
   } catch (err) { handleErr(res, err); }
 });
 
-app.put('/api/bug-reports/:id/resolve', requireAuth, requireRole('admin', 'supervisor'), async (req, res) => {
+app.put('/api/bug-reports/:id/resolve', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
   const { resolved } = req.body;
   try {
     await pool.query(
@@ -4229,7 +4234,7 @@ app.put('/api/bug-reports/:id/resolve', requireAuth, requireRole('admin', 'super
 });
 
 // ── User Management ───────────────────────────────────────────────────────────
-app.get('/api/users', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+app.get('/api/users', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
   try {
     const { rows } = await pool.query(
       'SELECT user_id, username, full_name, role, initials, email, is_active FROM users ORDER BY full_name'
@@ -4267,8 +4272,8 @@ app.put('/api/users/:id', requireAuth, async (req, res) => {
   if ((role !== undefined || is_active !== undefined) && req.user.role !== 'admin') {
     return res.status(403).json({ error: 'Only admins can change role or active status' });
   }
-  // Operators can only edit themselves
-  if (req.user.role === 'operator' && req.user.user_id !== targetId) {
+  // Non-supervisor roles can only edit themselves
+  if (!SUPERVISOR_ROLES.includes(req.user.role) && req.user.user_id !== targetId) {
     return res.status(403).json({ error: 'Forbidden' });
   }
 
@@ -4376,7 +4381,7 @@ app.get('/api/settings/running-wells', requireAuth, async (req, res) => {
   }
 });
 
-app.put('/api/settings/running-wells', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+app.put('/api/settings/running-wells', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
   const { well_ids, pool_extras } = req.body;
   if (!Array.isArray(well_ids)) return res.status(400).json({ error: 'well_ids must be an array' });
   try {
@@ -4512,7 +4517,7 @@ app.post('/api/safety-meetings/:id/attend', requireAuth, async (req, res) => {
   } catch (err) { handleErr(res, err); }
 });
 
-app.delete('/api/safety-meetings/:id/attendees/:aid', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+app.delete('/api/safety-meetings/:id/attendees/:aid', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
   try {
     await pool.query('DELETE FROM safety_meeting_attendees WHERE attendee_id = $1 AND meeting_id = $2',
       [req.params.aid, req.params.id]);

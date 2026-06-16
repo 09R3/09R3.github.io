@@ -56,6 +56,17 @@ function todayISO() {
   return new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD in local time
 }
 
+const SUPERVISOR_ROLES = ['supervisor', 'admin', 'water-planner'];
+function isSupervisorLevel(role) { return SUPERVISOR_ROLES.includes(role ?? ''); }
+
+const ROLE_LABELS = {
+  admin: 'Admin', supervisor: 'Supervisor', operator: 'Operator',
+  'water-planner': 'Water Planner', 'systems-operator': 'Systems Operator',
+  'heavy-equipment-operator': 'Heavy Equipment Operator',
+  'pump-tech': 'Pump Tech', 'elec-tech': 'Elec Tech',
+};
+function formatRole(role) { return ROLE_LABELS[role] || role; }
+
 // Parse a YYYY-MM-DD string as local midnight (avoids UTC-offset day-behind bug)
 function localDateStr(isoDate, opts = { month: 'short', day: 'numeric', year: 'numeric' }) {
   if (!isoDate) return '—';
@@ -513,7 +524,7 @@ function showScreen(name) {
 
   // Block supervisor/admin-only screens for operators
   if (name === 'reports') {
-    if (!currentUser || (currentUser.role !== 'admin' && currentUser.role !== 'supervisor')) {
+    if (!currentUser || !isSupervisorLevel(currentUser.role)) {
       showScreen('dashboard');
       return;
     }
@@ -607,7 +618,7 @@ function onLogin(user) {
   el('dash-reports-tile').classList.add('hidden');
   el('settings-admin-section').classList.add('hidden');
   el('settings-widgets-section').classList.add('hidden');
-  if (user.role === 'admin' || user.role === 'supervisor') {
+  if (isSupervisorLevel(user.role)) {
     el('nav-reports-item').classList.remove('hidden');
     el('dash-reports-tile').classList.remove('hidden');
     el('settings-admin-section').classList.remove('hidden');
@@ -616,7 +627,7 @@ function onLogin(user) {
   // Populate account info on settings screen
   el('settings-full-name').textContent = user.full_name || '—';
   el('settings-username').textContent  = user.username;
-  el('settings-role').textContent      = user.role.charAt(0).toUpperCase() + user.role.slice(1);
+  el('settings-role').textContent      = formatRole(user.role);
 
   showScreen('dashboard');
   loadDashboardStats();
@@ -866,7 +877,7 @@ async function openHistoryModal(type, id, label) {
         const valCells = cols.map(c => `<td>${r[c.key] != null ? r[c.key] : '—'}</td>`).join('');
 
         const showDel = canDeleteAll ||
-          (role === 'supervisor' && isWithin24h(r.reading_date, r.reading_time)) ||
+          (isSupervisorLevel(role) && isWithin24h(r.reading_date, r.reading_time)) ||
           (r.entered_by === username && isWithin24h(r.reading_date, r.reading_time));
 
         const tr = document.createElement('tr');
@@ -6370,7 +6381,7 @@ async function loadBugReports() {
 let adminLoaded = false;
 
 async function initAdminScreen() {
-  if (!currentUser || (currentUser.role !== 'admin' && currentUser.role !== 'supervisor')) return;
+  if (!currentUser || !isSupervisorLevel(currentUser.role)) return;
   await loadUserList();
 }
 
@@ -6388,7 +6399,7 @@ async function loadUserList() {
           <div class="user-name">${u.full_name || u.username}</div>
           <div class="user-sub">@${u.username}${u.is_active ? '' : ' · Inactive'}</div>
         </div>
-        <span class="role-badge role-${u.role}">${u.role}</span>
+        <span class="role-badge role-${u.role}">${formatRole(u.role)}</span>
         ${currentUser.role === 'admin'
           ? `<button class="user-edit-btn" data-id="${u.user_id}">Edit</button>`
           : ''}
@@ -7833,7 +7844,7 @@ async function loadPestProductList() {
   try {
     const products = await api('GET', '/api/pesticides');
     if (!products.length) { list.innerHTML = '<div class="placeholder-msg">No products added yet.</div>'; return; }
-    const isSupervisor = currentUser && (currentUser.role === 'supervisor' || currentUser.role === 'admin');
+    const isSupervisor = currentUser && isSupervisorLevel(currentUser.role);
     list.innerHTML = products.map(p => `
       <div class="pest-product-item ${p.active ? '' : 'pest-product-inactive'}">
         <div class="pest-product-main">
@@ -9840,7 +9851,7 @@ async function initWellRunsScreen() {
     showToAll = s.public;
   } catch { /* ignore */ }
 
-  if (role === 'admin' || role === 'supervisor' || showToAll) {
+  if (isSupervisorLevel(role) || showToAll) {
     el('gps-loc-btn-wrap').classList.remove('hidden');
     el('gps-loc-open-btn').addEventListener('click', openGPSLocSelector);
   }

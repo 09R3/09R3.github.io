@@ -54,9 +54,14 @@
 [data-theme="light"] .status-badge.wr-old    { background: rgba(198,40,40,0.10);  color: #c62828; }
 
 /* Role badges */
-[data-theme="light"] .role-admin      { background: #f3e5f5; color: #6a1b9a; }
-[data-theme="light"] .role-supervisor { background: #e1f5fe; color: #01579b; }
-[data-theme="light"] .role-operator   { background: #e6f4ea; color: #1b5e20; }
+[data-theme="light"] .role-admin                    { background: #f3e5f5; color: #6a1b9a; }
+[data-theme="light"] .role-supervisor               { background: #e1f5fe; color: #01579b; }
+[data-theme="light"] .role-water-planner            { background: #e0f7fa; color: #006064; }
+[data-theme="light"] .role-operator                 { background: #e6f4ea; color: #1b5e20; }
+[data-theme="light"] .role-systems-operator         { background: #e0f2f1; color: #00695c; }
+[data-theme="light"] .role-heavy-equipment-operator { background: #fff3e0; color: #e65100; }
+[data-theme="light"] .role-pump-tech                { background: #fff8e1; color: #f57f17; }
+[data-theme="light"] .role-elec-tech                { background: #e8eaf6; color: #283593; }
 
 /* Important well name (#f5c542 is unreadable on light bg) */
 [data-theme="light"] .list-item-name.well-important { color: #b07800; }
@@ -873,9 +878,14 @@ input[type="date"].ctrl-input { min-height: 44px; }
   letter-spacing: 0.05em;
   flex-shrink: 0;
 }
-.role-admin      { background: #4a1a4a; color: #ce93d8; }
-.role-supervisor { background: #1a3a4a; color: #81d4fa; }
-.role-operator   { background: #1a3a1a; color: #a5d6a7; }
+.role-admin                    { background: #4a1a4a; color: #ce93d8; }
+.role-supervisor               { background: #1a3a4a; color: #81d4fa; }
+.role-water-planner            { background: #003a3e; color: #80deea; }
+.role-operator                 { background: #1a3a1a; color: #a5d6a7; }
+.role-systems-operator         { background: #00302c; color: #80cbc4; }
+.role-heavy-equipment-operator { background: #3e1f00; color: #ffcc80; }
+.role-pump-tech                { background: #3e2a00; color: #ffe082; }
+.role-elec-tech                { background: #1a1e40; color: #9fa8da; }
 .user-edit-btn {
   background: none;
   border: 1px solid var(--border);
