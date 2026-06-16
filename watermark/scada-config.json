@@ -23,5 +23,61 @@
     { "id": "pp6a", "name": "CVC PP 6A", "influxSite": "CVC_PP6A", "pumps": ["A","B","C","D","E","F","G","H"] },
     { "id": "pp6b", "name": "CVC PP 6B", "influxSite": "CVC_PP6B", "pumps": ["A","B","C","D"], "pumpLabels": {"A":"K","B":"L","C":"M","D":"N"} },
     { "id": "pp7a", "name": "CVC PP 7A", "influxSite": "CVC_PP7A", "pumps": ["A","B","C","D","E","F"] }
-  ]
+  ],
+
+  "_powerNote": "Power monitoring reads the `power_meters` bucket (measurement `power_reading`, tagged by meter_id) on the same InfluxDB the SCADA pollers use. If a field name below doesn't match your actual meter schema, just edit it here — no code changes needed.",
+  "power": {
+    "bucket": "power_meters",
+    "measurement": "power_reading",
+    "nominalVoltageLN": 120,
+    "nominalVoltageLL": 208,
+    "thresholds": {
+      "voltageImbalancePct": 2,
+      "currentImbalancePct": 10,
+      "pfMin": 0.85,
+      "voltageDeviationPct": 5,
+      "freqMin": 59.95,
+      "freqMax": 60.05,
+      "staleWarnSec": 120,
+      "staleAlarmSec": 300
+    },
+    "sites": [
+      { "id": "pp1a", "name": "PP 1A", "meterId": "Pumping_Plant_1A" },
+      { "id": "pp2a", "name": "PP 2A", "meterId": "Pumping_Plant_2A" },
+      { "id": "pp3a", "name": "PP 3A", "meterId": "Pumping_Plant_3A" },
+      { "id": "pp4a", "name": "PP 4A", "meterId": "Pumping_Plant_4A" },
+      { "id": "pp5a", "name": "PP 5A", "meterId": "Pumping_Plant_5A" },
+      { "id": "pp6a", "name": "PP 6A", "meterId": "Pumping_Plant_6A" },
+      { "id": "pp7a", "name": "PP 7A", "meterId": "Pumping_Plant_7A" }
+    ],
+    "groups": [
+      { "key": "active",    "label": "Active Power",    "unit": "kW",   "chart": "line", "members": ["P1","P2","P3","Psum_kW"], "total": "Psum_kW", "defaultRange": "24h" },
+      { "key": "voltageLN", "label": "Voltage (L-N)",   "unit": "V",    "chart": "line", "members": ["V1","V2","V3"], "defaultRange": "1h" },
+      { "key": "voltageLL", "label": "Voltage (L-L)",   "unit": "V",    "chart": "line", "members": ["V12","V23","V31"], "defaultRange": "1h" },
+      { "key": "current",   "label": "Current",         "unit": "A",    "chart": "line", "members": ["I1","I2","I3","Iavg_A"], "total": "Iavg_A", "defaultRange": "1h" },
+      { "key": "pf",        "label": "Power Factor",    "unit": "",     "chart": "line", "members": ["PF1","PF2","PF3","PF_total"], "total": "PF_total", "defaultRange": "1h", "yMin": 0, "yMax": 1 },
+      { "key": "frequency", "label": "Frequency",       "unit": "Hz",   "chart": "line", "members": ["Freq_Hz"], "total": "Freq_Hz", "defaultRange": "1h" },
+      { "key": "reactive",  "label": "Reactive Power",  "unit": "kVAR", "chart": "line", "members": ["Q1","Q2","Q3","Qsum_kvar"], "total": "Qsum_kvar", "defaultRange": "24h" },
+      { "key": "apparent",  "label": "Apparent Power",  "unit": "kVA",  "chart": "line", "members": ["S1","S2","S3","Ssum_kVA"], "total": "Ssum_kVA", "defaultRange": "24h" },
+      { "key": "demand",    "label": "Power Demand",    "unit": "",     "chart": "bar",  "members": ["DMD_P_kW","DMD_I1_A","DMD_I2_A","DMD_I3_A"], "defaultRange": "24h" }
+    ],
+    "fieldMeta": {
+      "P1": { "label": "P1", "unit": "kW" }, "P2": { "label": "P2", "unit": "kW" }, "P3": { "label": "P3", "unit": "kW" },
+      "Psum_kW": { "label": "Total", "unit": "kW" },
+      "V1": { "label": "V1", "unit": "V" }, "V2": { "label": "V2", "unit": "V" }, "V3": { "label": "V3", "unit": "V" },
+      "V12": { "label": "V12", "unit": "V" }, "V23": { "label": "V23", "unit": "V" }, "V31": { "label": "V31", "unit": "V" },
+      "I1": { "label": "I1", "unit": "A" }, "I2": { "label": "I2", "unit": "A" }, "I3": { "label": "I3", "unit": "A" },
+      "Iavg_A": { "label": "Avg", "unit": "A" },
+      "PF1": { "label": "PF1", "unit": "" }, "PF2": { "label": "PF2", "unit": "" }, "PF3": { "label": "PF3", "unit": "" },
+      "PF_total": { "label": "Total", "unit": "" },
+      "Freq_Hz": { "label": "Frequency", "unit": "Hz" },
+      "Q1": { "label": "Q1", "unit": "kVAR" }, "Q2": { "label": "Q2", "unit": "kVAR" }, "Q3": { "label": "Q3", "unit": "kVAR" },
+      "Qsum_kvar": { "label": "Total", "unit": "kVAR" },
+      "S1": { "label": "S1", "unit": "kVA" }, "S2": { "label": "S2", "unit": "kVA" }, "S3": { "label": "S3", "unit": "kVA" },
+      "Ssum_kVA": { "label": "Total", "unit": "kVA" },
+      "EP_IMP_kWh": { "label": "Import Energy", "unit": "kWh" },
+      "DMD_P_kW": { "label": "Demand P", "unit": "kW" },
+      "DMD_I1_A": { "label": "Demand I1", "unit": "A" }, "DMD_I2_A": { "label": "Demand I2", "unit": "A" }, "DMD_I3_A": { "label": "Demand I3", "unit": "A" }
+    }
+  }
 }

@@ -180,6 +180,7 @@ function stopScadaStream() {
   clearInterval(_scadaStatusTimer); _scadaStatusTimer = null;
   if (_scadaChart) { _scadaChart.destroy(); _scadaChart = null; _scadaChartKey = null; }
   _scadaDetailTag = null;
+  stopScadaPower();
 }
 
 function applyScadaCurrent(data) {
@@ -261,6 +262,7 @@ function scadaPlantGroups() {
 // ── Tabs ─────────────────────────────────────────────────────────────────────
 function scadaTabsHtml(active) {
   const tabs = [['overview','Overview'],['trends','Trends'],['runtime','Runtime']];
+  if (_scadaConfig?.power) tabs.push(['power','Power']);
   return `<div class="scada-tabs">${tabs.map(([k,l]) =>
     `<button class="scada-tab${active===k?' active':''}" data-scada-tab="${k}">${l}</button>`
   ).join('')}</div>`;
@@ -275,8 +277,10 @@ function showScadaTab(tab) {
   setPanelNav(el('screen-scada'), () => showScreen('dashboard'), 'SCADA Dashboard');
   if (_scadaChart) { _scadaChart.destroy(); _scadaChart = null; _scadaChartKey = null; }
   _scadaDetailTag = null;
+  stopScadaPower(); // tear down power timer + charts when leaving Power tab
   if (tab === 'trends') renderScadaTrends();
   else if (tab === 'runtime') renderScadaRuntime();
+  else if (tab === 'power') renderScadaPower();
   else renderScadaOverview();
 }
 
@@ -461,9 +465,10 @@ function patchScadaPlantDetail() {
 
 // ── Trends (plant pills + multi-select chips) ─────────────────────────────────
 const SCADA_PRESET_RANGES = ['1h','6h','24h','7d','30d'];
+const SCADA_POWER_RANGES  = ['15m','1h','6h','24h','7d'];
 
-function scadaRangeBtnsHtml(currentRange, idPrefix) {
-  return [...SCADA_PRESET_RANGES, 'custom'].map(r =>
+function scadaRangeBtnsHtml(currentRange, presets = SCADA_PRESET_RANGES) {
+  return [...presets, 'custom'].map(r =>
     `<button class="seg-btn${currentRange===r?' active':''}" data-range="${r}">${r === 'custom' ? 'Custom' : r}</button>`
   ).join('');
 }
@@ -490,7 +495,7 @@ function renderScadaTrends() {
     </div>
     <div class="scada-trend-chips" id="scada-trend-chips"></div>
     <div class="scada-chart-controls">
-      <div class="seg-group" id="scada-trend-range">${scadaRangeBtnsHtml(_scadaTrendRange, 'scada-trend')}</div>
+      <div class="seg-group" id="scada-trend-range">${scadaRangeBtnsHtml(_scadaTrendRange)}</div>
     </div>
     ${scadaCustomRangeHtml(_scadaTrendCustomStart, _scadaTrendCustomEnd, 'scada-trend', _scadaTrendRange !== 'custom')}
     <div class="scada-chart-wrap"><canvas id="scada-trend-canvas" class="scada-chart-canvas"></canvas></div>
@@ -604,7 +609,7 @@ function renderScadaRuntime() {
       ${groups.map(g => `<button class="scada-plant-pill${g.key===_scadaRuntimePlant?' active':''}" data-plant="${g.key}">PP ${g.num}</button>`).join('')}
     </div>
     <div class="seg-group" id="scada-runtime-range" style="margin-bottom:8px">
-      ${scadaRangeBtnsHtml(_scadaRuntimeRange, 'scada-runtime')}
+      ${scadaRangeBtnsHtml(_scadaRuntimeRange)}
     </div>
     ${scadaCustomRangeHtml(_scadaRuntimeCustomStart, _scadaRuntimeCustomEnd, 'scada-runtime', _scadaRuntimeRange !== 'custom')}
     <div id="scada-runtime-body"><div class="placeholder-msg">Loading…</div></div>`;
@@ -693,4 +698,429 @@ function rangeHours(range) {
   if (typeof range === 'object' && range.start && range.end)
     return Math.max(1, (new Date(range.end) - new Date(range.start)) / 3600000);
   return { '1h': 1, '6h': 6, '24h': 24, '7d': 168, '30d': 720 }[range] || 24;
+}
+
+/* ── Power monitoring tab ─────────────────────────────────────────────────────
+ * Reads the `power_meters` bucket via /api/scada/power/*. One pill per metered
+ * plant plus an "All Sites" comparison view. Live current values refresh every
+ * 60s; charts redraw on each refresh. All field names / thresholds come from
+ * _scadaConfig.power so the meter schema can change without touching this file.
+ * ──────────────────────────────────────────────────────────────────────────── */
+let _scadaPowerSite        = localStorage.getItem('scadaPowerSite') || 'all';
+let _scadaPowerRange       = localStorage.getItem('scadaPowerRange') || '24h';
+let _scadaPowerCustomStart = localStorage.getItem('scadaPowerCustomStart') || '';
+let _scadaPowerCustomEnd   = localStorage.getItem('scadaPowerCustomEnd') || '';
+let _scadaPowerCurrent     = {};       // { meterId: { field: { v, t } } }
+let _scadaPowerCharts      = [];       // active Chart.js instances on this tab
+let _scadaPowerTimer       = null;
+const POWER_REFRESH_MS = 60000;
+
+function stopScadaPower() {
+  clearInterval(_scadaPowerTimer); _scadaPowerTimer = null;
+  destroyPowerCharts();
+}
+function destroyPowerCharts() {
+  _scadaPowerCharts.forEach(c => { try { c.destroy(); } catch { /* */ } });
+  _scadaPowerCharts = [];
+}
+
+function powerCfg()       { return _scadaConfig.power; }
+function powerSites()     { return powerCfg().sites || []; }
+function powerThresholds(){ return powerCfg().thresholds || {}; }
+function powerFieldMeta(f){ return powerCfg().fieldMeta?.[f] || { label: f, unit: '' }; }
+
+// Latest value / freshest timestamp for a meter's field.
+function pv(meterId, field) { const o = _scadaPowerCurrent[meterId]?.[field]; return o ? o.v : null; }
+function powerAgeSec(meterId) {
+  const m = _scadaPowerCurrent[meterId];
+  if (!m) return null;
+  let max = null;
+  for (const k in m) if (m[k].t && (max == null || m[k].t > max)) max = m[k].t;
+  return max == null ? null : Math.max(0, Math.round((Date.now() - max) / 1000));
+}
+function fmtAge(sec) {
+  if (sec == null) return '—';
+  if (sec < 90) return sec + 's';
+  if (sec < 5400) return Math.round(sec / 60) + 'm';
+  return Math.round(sec / 3600) + 'h';
+}
+function fmtNum(v, dp = 1) { return v == null || isNaN(v) ? '—' : Number(v).toFixed(dp); }
+
+// (max-min)/|avg| as a percentage; null if fewer than two readings.
+function imbalancePct(vals) {
+  const xs = vals.filter(v => v != null && !isNaN(v));
+  if (xs.length < 2) return null;
+  const avg = xs.reduce((a, b) => a + b, 0) / xs.length;
+  if (!avg) return null;
+  return (Math.max(...xs) - Math.min(...xs)) / Math.abs(avg) * 100;
+}
+
+// Worst-case status + human-readable issue list for one meter.
+// Levels: 'na' (no data) < 'ok' < 'warn' < 'alarm'.
+function evalPowerSite(meterId) {
+  const th = powerThresholds(), f = k => pv(meterId, k);
+  const age = powerAgeSec(meterId);
+  if (age == null) return { level: 'na', issues: ['No data'], age: null };
+
+  let level = 'ok';
+  const order = { na: 0, ok: 1, warn: 2, alarm: 3 };
+  const bump = l => { if (order[l] > order[level]) level = l; };
+  const issues = [];
+
+  if (age > (th.staleAlarmSec ?? 300))      { bump('alarm'); issues.push('Stale ' + fmtAge(age)); }
+  else if (age > (th.staleWarnSec ?? 120))  { bump('warn');  issues.push('Stale ' + fmtAge(age)); }
+
+  const pf = f('PF_total');
+  if (pf != null && pf < (th.pfMin ?? 0.85)) { bump('warn'); issues.push('PF ' + pf.toFixed(2)); }
+
+  const fr = f('Freq_Hz');
+  if (fr != null && (fr < (th.freqMin ?? 59.95) || fr > (th.freqMax ?? 60.05))) {
+    bump('alarm'); issues.push(fr.toFixed(2) + ' Hz');
+  }
+
+  const dev = th.voltageDeviationPct ?? 5;
+  const nomLN = powerCfg().nominalVoltageLN, nomLL = powerCfg().nominalVoltageLL;
+  if (nomLN) for (const vf of ['V1','V2','V3']) {
+    const v = f(vf);
+    if (v != null && Math.abs(v - nomLN) / nomLN * 100 > dev) { bump('alarm'); issues.push(vf + ' ' + v.toFixed(0) + 'V'); }
+  }
+  if (nomLL) for (const vf of ['V12','V23','V31']) {
+    const v = f(vf);
+    if (v != null && Math.abs(v - nomLL) / nomLL * 100 > dev) { bump('alarm'); issues.push(vf + ' ' + v.toFixed(0) + 'V'); }
+  }
+
+  const vimb = imbalancePct([f('V1'), f('V2'), f('V3')]);
+  if (vimb != null && vimb > (th.voltageImbalancePct ?? 2)) { bump('warn'); issues.push('V imbal ' + vimb.toFixed(1) + '%'); }
+  const iimb = imbalancePct([f('I1'), f('I2'), f('I3')]);
+  if (iimb != null && iimb > (th.currentImbalancePct ?? 10)) { bump('warn'); issues.push('I imbal ' + iimb.toFixed(1) + '%'); }
+
+  for (const pf2 of ['P1','P2','P3']) {
+    const v = f(pf2);
+    if (v != null && v < 0) { bump('alarm'); issues.push(pf2 + ' backfeed'); }
+  }
+  return { level, issues, age, vimb, iimb };
+}
+
+const POWER_LEVEL_DOT = { ok: 'scada-dot-ok', warn: 'scada-dot-idle', alarm: 'scada-dot-alarm', na: 'scada-dot-na' };
+
+// ── Shell ──────────────────────────────────────────────────────────────────
+function renderScadaPower() {
+  _scadaView = 'power';
+  destroyPowerCharts();
+  const sites = powerSites();
+  if (_scadaPowerSite !== 'all' && !sites.some(s => s.id === _scadaPowerSite)) _scadaPowerSite = 'all';
+
+  const pills = `<button class="scada-plant-pill${_scadaPowerSite==='all'?' active':''}" data-power-site="all">All Sites</button>` +
+    sites.map(s => `<button class="scada-plant-pill${s.id===_scadaPowerSite?' active':''}" data-power-site="${s.id}">${escHtml(s.name)}</button>`).join('');
+
+  el('scada-body').innerHTML = scadaTabsHtml('power') + `
+    <div class="scada-plant-pills" id="scada-power-pills">${pills}</div>
+    <div class="seg-group" id="scada-power-range" style="margin-bottom:8px">
+      ${scadaRangeBtnsHtml(_scadaPowerRange, SCADA_POWER_RANGES)}
+    </div>
+    ${scadaCustomRangeHtml(_scadaPowerCustomStart, _scadaPowerCustomEnd, 'scada-power', _scadaPowerRange !== 'custom')}
+    <div id="scada-power-body"><div class="placeholder-msg">Loading…</div></div>`;
+
+  wireScadaTabs();
+
+  el('scada-power-pills').querySelectorAll('[data-power-site]').forEach(pill =>
+    pill.addEventListener('click', () => {
+      el('scada-power-pills').querySelectorAll('.scada-plant-pill').forEach(p => p.classList.remove('active'));
+      pill.classList.add('active');
+      _scadaPowerSite = pill.dataset.powerSite;
+      localStorage.setItem('scadaPowerSite', _scadaPowerSite);
+      loadScadaPower();
+    }));
+
+  el('scada-power-range').querySelectorAll('.seg-btn').forEach(b =>
+    b.addEventListener('click', () => {
+      el('scada-power-range').querySelectorAll('.seg-btn').forEach(x => x.classList.remove('active'));
+      b.classList.add('active');
+      _scadaPowerRange = b.dataset.range;
+      localStorage.setItem('scadaPowerRange', _scadaPowerRange);
+      el('scada-power-custom').classList.toggle('hidden', _scadaPowerRange !== 'custom');
+      if (_scadaPowerRange !== 'custom') loadScadaPower();
+    }));
+
+  el('scada-power-apply').addEventListener('click', () => {
+    _scadaPowerCustomStart = el('scada-power-from').value;
+    _scadaPowerCustomEnd   = el('scada-power-to').value;
+    localStorage.setItem('scadaPowerCustomStart', _scadaPowerCustomStart);
+    localStorage.setItem('scadaPowerCustomEnd',   _scadaPowerCustomEnd);
+    loadScadaPower();
+  });
+
+  loadScadaPower();
+  clearInterval(_scadaPowerTimer);
+  _scadaPowerTimer = setInterval(loadScadaPower, POWER_REFRESH_MS);
+}
+
+// Resolve the active range to either a preset string or { start, end }, or null
+// if a custom range is selected but not yet fully filled in.
+function powerActiveRange() {
+  if (_scadaPowerRange !== 'custom') return _scadaPowerRange;
+  if (!_scadaPowerCustomStart || !_scadaPowerCustomEnd) return null;
+  return { start: _scadaPowerCustomStart, end: _scadaPowerCustomEnd };
+}
+
+async function loadScadaPower() {
+  if (_scadaView !== 'power') return;
+  const body = el('scada-power-body');
+  if (!body) return;
+  try {
+    _scadaPowerCurrent = await api('GET', '/api/scada/power/current');
+  } catch (err) {
+    destroyPowerCharts();
+    body.innerHTML = `<div class="placeholder-msg">Power source unavailable.<br>
+      <span style="font-size:.85rem">${escHtml(err.message || '')}</span></div>`;
+    return;
+  }
+  if (_scadaView !== 'power') return;
+  if (_scadaPowerSite === 'all') renderPowerAll();
+  else renderPowerSite(powerSites().find(s => s.id === _scadaPowerSite));
+}
+
+// ── All Sites: comparison + per-site status ──────────────────────────────────
+function renderPowerAll() {
+  destroyPowerCharts();
+  const sites = powerSites();
+  const evals = sites.map(s => ({ site: s, ev: evalPowerSite(s.meterId) }));
+  const worst = evals.reduce((acc, e) => {
+    const order = { na: 0, ok: 1, warn: 2, alarm: 3 };
+    return order[e.ev.level] > order[acc] ? e.ev.level : acc;
+  }, 'ok');
+
+  const grid = evals.map(({ site, ev }) => {
+    const kw = pv(site.meterId, powerGroup('active')?.total || 'Psum_kW');
+    const badges = ev.issues.slice(0, 3).map(i => `<span class="power-badge">${escHtml(i)}</span>`).join('');
+    return `<button class="power-site-card power-lvl-${ev.level}" data-power-site="${site.id}">
+      <div class="power-site-top">
+        <span class="scada-dot ${POWER_LEVEL_DOT[ev.level]}"></span>
+        <span class="power-site-name">${escHtml(site.name)}</span>
+        <span class="power-site-kw">${fmtNum(kw, 0)}<small> kW</small></span>
+      </div>
+      <div class="power-site-badges">${badges || '<span class="power-badge ok">Normal</span>'}</div>
+    </button>`;
+  }).join('');
+
+  el('scada-power-body').innerHTML = `
+    ${powerSystemBanner(worst, evals.filter(e => e.ev.level === 'alarm' || e.ev.level === 'warn').length)}
+    <div class="scada-section-hdr">Total Active Power by Site (kW)</div>
+    <div class="scada-chart-wrap"><canvas id="power-compare-canvas" class="scada-chart-canvas"></canvas></div>
+    <div class="scada-section-hdr">Site Status</div>
+    <div class="power-site-grid">${grid}</div>`;
+
+  el('scada-power-body').querySelectorAll('[data-power-site]').forEach(c =>
+    c.addEventListener('click', () => {
+      _scadaPowerSite = c.dataset.powerSite;
+      localStorage.setItem('scadaPowerSite', _scadaPowerSite);
+      renderScadaPower();
+    }));
+
+  drawPowerCompareChart();
+}
+
+function powerSystemBanner(level, count) {
+  const label = level === 'alarm' ? 'ALARM' : level === 'warn' ? 'WARNING' : level === 'na' ? 'NO DATA' : 'ALL NORMAL';
+  const sub = level === 'ok' ? 'No active alerts' :
+    level === 'na' ? 'Awaiting meter data' : `${count} site${count === 1 ? '' : 's'} need attention`;
+  return `<div class="power-banner power-lvl-${level}">
+    <span class="scada-dot ${POWER_LEVEL_DOT[level]}"></span>
+    <span class="power-banner-label">${label}</span>
+    <span class="power-banner-sub">${escHtml(sub)}</span>
+  </div>`;
+}
+
+async function drawPowerCompareChart() {
+  const canvas = el('power-compare-canvas');
+  if (!canvas) return;
+  await loadScadaVendor();
+  if (!el('power-compare-canvas')) return;
+  const sites = powerSites();
+  const totalField = powerGroup('active')?.total || 'Psum_kW';
+  const c = scadaThemeColors();
+  const data = sites.map(s => pv(s.meterId, totalField) ?? 0);
+  const colors = sites.map(s => evalPowerSite(s.meterId).level === 'alarm' ? '#e53935'
+    : evalPowerSite(s.meterId).level === 'warn' ? '#d9a300' : SCADA_COLORS[0]);
+  const chart = new window.Chart(canvas.getContext('2d'), {
+    type: 'bar',
+    data: { labels: sites.map(s => s.name), datasets: [{ label: 'kW', data, backgroundColor: colors, borderRadius: 4 }] },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false,
+      plugins: { legend: { display: false },
+        tooltip: { backgroundColor: c.surface, titleColor: c.text, bodyColor: c.text, borderColor: c.grid, borderWidth: 1 } },
+      scales: { x: { ticks: { color: c.dim }, grid: { display: false } },
+                y: { beginAtZero: true, ticks: { color: c.dim }, grid: { color: c.grid } } },
+    },
+  });
+  _scadaPowerCharts.push(chart);
+}
+
+// ── Single site: diagnostics + stats + charts ────────────────────────────────
+function powerGroup(key) { return (powerCfg().groups || []).find(g => g.key === key); }
+
+async function renderPowerSite(site) {
+  destroyPowerCharts();
+  if (!site) { el('scada-power-body').innerHTML = '<div class="placeholder-msg">No data.</div>'; return; }
+  const m = site.meterId;
+  const ev = evalPowerSite(m);
+
+  // Diagnostic cards
+  const th = powerThresholds();
+  const pf = pv(m, 'PF_total'), fr = pv(m, 'Freq_Hz');
+  const vOut = ev.issues.some(i => /^V\d/.test(i));
+  const neg  = ['P1','P2','P3'].some(k => { const v = pv(m, k); return v != null && v < 0; });
+  const diag = [
+    powerDiagCard('Phase V Imbalance', ev.vimb == null ? '—' : ev.vimb.toFixed(1) + '%',
+      ev.vimb != null && ev.vimb > (th.voltageImbalancePct ?? 2) ? 'warn' : 'ok'),
+    powerDiagCard('Current Imbalance', ev.iimb == null ? '—' : ev.iimb.toFixed(1) + '%',
+      ev.iimb != null && ev.iimb > (th.currentImbalancePct ?? 10) ? 'warn' : 'ok'),
+    powerDiagCard('Power Factor', pf == null ? '—' : pf.toFixed(2),
+      pf != null && pf < (th.pfMin ?? 0.85) ? 'warn' : 'ok'),
+    powerDiagCard('Frequency', fr == null ? '—' : fr.toFixed(2) + ' Hz',
+      fr != null && (fr < (th.freqMin ?? 59.95) || fr > (th.freqMax ?? 60.05)) ? 'alarm' : 'ok'),
+    powerDiagCard('Voltage Range', vOut ? 'Out' : 'OK', vOut ? 'alarm' : 'ok'),
+    powerDiagCard('Power Flow', neg ? 'Backfeed' : 'Forward', neg ? 'alarm' : 'ok'),
+    powerDiagCard('Data', fmtAge(ev.age), ev.level === 'na' ? 'na'
+      : ev.age > (th.staleAlarmSec ?? 300) ? 'alarm' : ev.age > (th.staleWarnSec ?? 120) ? 'warn' : 'ok'),
+  ].join('');
+
+  // Key stat tiles
+  const stats = [
+    powerStatTile('Total Active', fmtNum(pv(m, 'Psum_kW'), 0), 'kW'),
+    powerStatTile('Total Reactive', fmtNum(pv(m, 'Qsum_kvar'), 0), 'kVAR'),
+    powerStatTile('Total Apparent', fmtNum(pv(m, 'Ssum_kVA'), 0), 'kVA'),
+    powerStatTile('Import Energy', fmtNum(pv(m, 'EP_IMP_kWh'), 0), 'kWh', 'power-energy-delta'),
+  ].join('');
+
+  const lineGroups = (powerCfg().groups || []).filter(g => g.chart !== 'bar');
+  const barGroups  = (powerCfg().groups || []).filter(g => g.chart === 'bar');
+  const chartCards = [...lineGroups, ...barGroups].map(g =>
+    `<div class="scada-section-hdr">${escHtml(g.label)}${g.unit ? ` (${escHtml(g.unit)})` : ''}</div>
+     <div class="scada-chart-wrap"><canvas id="power-chart-${g.key}" class="scada-chart-canvas"></canvas></div>`
+  ).join('');
+
+  el('scada-power-body').innerHTML = `
+    <div class="power-site-head">
+      <span class="scada-dot ${POWER_LEVEL_DOT[ev.level]}"></span>
+      <span class="power-site-headname">${escHtml(site.name)}</span>
+      <span class="power-updated">Updated ${fmtAge(ev.age)} ago</span>
+    </div>
+    <div class="power-diag-grid">${diag}</div>
+    <div class="scada-section-hdr">Live Readings</div>
+    <div class="power-stat-grid">${stats}</div>
+    ${chartCards}`;
+
+  const range = powerActiveRange();
+  if (range == null) {
+    [...lineGroups, ...barGroups].forEach(g => {
+      const cv = el('power-chart-' + g.key);
+      if (cv) cv.closest('.scada-chart-wrap').innerHTML = '<div class="placeholder-msg">Set a custom range above, then tap Apply.</div>';
+    });
+    return;
+  }
+  lineGroups.forEach(g => drawPowerLineChart(el('power-chart-' + g.key), g, m, range));
+  barGroups.forEach(g => drawPowerBarChart(el('power-chart-' + g.key), g, m));
+  loadPowerEnergyDelta(m, range);
+}
+
+function powerDiagCard(label, value, level) {
+  return `<div class="power-diag-card power-lvl-${level}">
+    <div class="power-diag-label">${escHtml(label)}</div>
+    <div class="power-diag-value">${escHtml(value)}</div>
+  </div>`;
+}
+function powerStatTile(label, value, unit, id) {
+  return `<div class="scada-sensor-tile">
+    <div class="scada-sensor-label">${escHtml(label)}</div>
+    <div class="scada-sensor-value"${id ? ` id="${id}"` : ''}>${escHtml(value)}</div>
+    <div class="scada-sensor-unit">${escHtml(unit)}</div>
+  </div>`;
+}
+
+// Import-energy delta over the selected range (last − first sample of EP_IMP_kWh).
+async function loadPowerEnergyDelta(meterId, range) {
+  try {
+    const qs = scadaRangeQS(range);
+    const r = await api('GET', `/api/scada/power/history?meter=${encodeURIComponent(meterId)}&fields=EP_IMP_kWh&${qs}`);
+    const pts = r.series?.EP_IMP_kWh || [];
+    const elx = el('power-energy-delta');
+    if (!elx || pts.length < 2) return;
+    const delta = pts[pts.length - 1][1] - pts[0][1];
+    elx.insertAdjacentHTML('afterend',
+      `<div class="power-energy-sub">+${fmtNum(delta, 0)} kWh this range</div>`);
+  } catch { /* non-critical */ }
+}
+
+async function drawPowerLineChart(canvas, group, meterId, range) {
+  if (!canvas) return;
+  try {
+    await loadScadaVendor();
+    if (!canvas.isConnected) return;
+    const qs = scadaRangeQS(range);
+    const r = await api('GET',
+      `/api/scada/power/history?meter=${encodeURIComponent(meterId)}&fields=${encodeURIComponent(group.members.join(','))}&${qs}`);
+    if (!canvas.isConnected) return;
+    const series = r.series || {};
+    const c = scadaThemeColors();
+    const single = group.members.length === 1;
+    const datasets = group.members.map((f, i) => {
+      const color = SCADA_COLORS[i % SCADA_COLORS.length];
+      const isTotal = f === group.total;
+      return {
+        label: powerFieldMeta(f).label,
+        data: (series[f] || []).map(([t, v]) => ({ x: t, y: v })),
+        borderColor: color,
+        backgroundColor: single ? scadaGradientFill(color) : color + '22',
+        borderWidth: isTotal ? 2.4 : 1.6, pointRadius: 0, tension: 0.25, fill: single,
+      };
+    });
+    const yScale = { ticks: { color: c.dim }, grid: { color: c.grid } };
+    if (group.yMin != null) yScale.min = group.yMin;
+    if (group.yMax != null) yScale.max = group.yMax;
+    const chart = new window.Chart(canvas.getContext('2d'), {
+      type: 'line', data: { datasets },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        interaction: { mode: 'nearest', axis: 'x', intersect: false },
+        plugins: {
+          legend: { display: !single, labels: { color: c.text, boxWidth: 12, usePointStyle: true } },
+          tooltip: { backgroundColor: c.surface, titleColor: c.text, bodyColor: c.text, borderColor: c.grid, borderWidth: 1 },
+        },
+        scales: {
+          x: { type: 'time', time: { tooltipFormat: 'MMM d, h:mm a' },
+               ticks: { color: c.dim, maxTicksLimit: 7, autoSkip: true }, grid: { color: c.grid } },
+          y: yScale,
+        },
+      },
+    });
+    _scadaPowerCharts.push(chart);
+  } catch (err) {
+    if (canvas.isConnected) canvas.closest('.scada-chart-wrap').innerHTML =
+      `<div class="placeholder-msg">Failed to load.</div>`;
+  }
+}
+
+// Demand is shown as a snapshot bar chart of current register values.
+async function drawPowerBarChart(canvas, group, meterId) {
+  if (!canvas) return;
+  await loadScadaVendor();
+  if (!canvas.isConnected) return;
+  const c = scadaThemeColors();
+  const labels = group.members.map(f => powerFieldMeta(f).label || f);
+  const data = group.members.map(f => pv(meterId, f) ?? 0);
+  const colors = group.members.map((_, i) => SCADA_COLORS[i % SCADA_COLORS.length]);
+  const chart = new window.Chart(canvas.getContext('2d'), {
+    type: 'bar',
+    data: { labels, datasets: [{ data, backgroundColor: colors, borderRadius: 4 }] },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false,
+      plugins: { legend: { display: false },
+        tooltip: { backgroundColor: c.surface, titleColor: c.text, bodyColor: c.text, borderColor: c.grid, borderWidth: 1,
+          callbacks: { label: ctx => `${ctx.parsed.y} ${powerFieldMeta(group.members[ctx.dataIndex]).unit || ''}` } } },
+      scales: { x: { ticks: { color: c.dim }, grid: { display: false } },
+                y: { beginAtZero: true, ticks: { color: c.dim }, grid: { color: c.grid } } },
+    },
+  });
+  _scadaPowerCharts.push(chart);
 }

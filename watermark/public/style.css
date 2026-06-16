@@ -3416,6 +3416,61 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
 .scada-runtime-bar-track { height: 5px; background: var(--surface2); border-radius: 3px; overflow: hidden; }
 .scada-runtime-bar { height: 100%; background: var(--accent); border-radius: 3px; transition: width 0.4s; }
 
+/* ── SCADA Power tab ─────────────────────────────────────────────────────── */
+.scada-dot-na { background: var(--text-dim); opacity: 0.5; }
+
+/* Status level accents (shared by banner, site cards, diagnostic cards) */
+.power-lvl-ok    { --power-accent: #43a047; }
+.power-lvl-warn  { --power-accent: #d9a300; }
+.power-lvl-alarm { --power-accent: #e53935; }
+.power-lvl-na    { --power-accent: var(--text-dim); }
+
+.power-banner {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-left: 4px solid var(--power-accent); border-radius: 10px;
+  padding: 12px 14px; margin-bottom: 14px;
+}
+.power-banner-label { font-weight: 800; font-size: 0.95rem; letter-spacing: 0.04em; color: var(--power-accent); }
+.power-banner-sub   { font-size: 0.82rem; color: var(--text-dim); margin-left: auto; text-align: right; }
+
+.power-site-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.power-site-card {
+  display: block; text-align: left; cursor: pointer; color: var(--text);
+  background: var(--surface); border: 1px solid var(--border);
+  border-left: 4px solid var(--power-accent); border-radius: 8px; padding: 10px 12px;
+}
+.power-site-card:active { background: var(--surface2); }
+.power-site-top { display: flex; align-items: center; gap: 6px; }
+.power-site-name { font-weight: 700; font-size: 0.88rem; flex: 1; }
+.power-site-kw { font-size: 1.05rem; font-weight: 700; white-space: nowrap; }
+.power-site-kw small { font-size: 0.65rem; color: var(--text-dim); font-weight: 600; }
+.power-site-badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.power-badge {
+  font-size: 0.66rem; font-weight: 600; padding: 2px 7px; border-radius: 9px;
+  background: var(--surface2); color: var(--power-accent, var(--text-dim));
+  border: 1px solid var(--border);
+}
+.power-badge.ok { color: #43a047; }
+
+.power-site-head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.power-site-headname { font-weight: 700; font-size: 1.05rem; flex: 1; }
+.power-updated { font-size: 0.78rem; color: var(--text-dim); }
+
+.power-diag-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px;
+}
+.power-diag-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-left: 3px solid var(--power-accent); border-radius: 8px; padding: 8px 10px;
+}
+.power-diag-label { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-dim); }
+.power-diag-value { font-size: 1.05rem; font-weight: 700; margin-top: 3px; color: var(--power-accent); }
+.power-lvl-ok .power-diag-value { color: var(--text); }
+
+.power-stat-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.power-energy-sub { font-size: 0.68rem; color: #43a047; margin-top: 2px; }
+
 /* ── Print ───────────────────────────────────────────────────────────────── */
 @media print {
   html, body, #app-shell {

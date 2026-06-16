@@ -177,6 +177,76 @@ async function scadaGetRuntime(tagPaths, rangeOpts) {
   return result;
 }
 
+// ── Power monitoring (power_meters bucket) ─────────────────────────────────────
+// Power data lives in its own bucket/measurement, tagged by meter_id (one per
+// pumping plant). Same InfluxDB connection as the SCADA pollers. All field names,
+// units, and thresholds are config-driven (scada-config.json → power) so the
+// meter schema can change without touching code.
+const POWER_CFG     = SCADA_CONFIG?.power || null;
+const POWER_BUCKET  = POWER_CFG?.bucket || process.env.POWER_BUCKET || 'power_meters';
+const POWER_MEAS    = POWER_CFG?.measurement || 'power_reading';
+
+function powerMeterIds() { return (POWER_CFG?.sites || []).map(s => s.meterId); }
+// Every field referenced by any group + fieldMeta — the full allow-list.
+function powerKnownFields() {
+  const set = new Set();
+  for (const g of (POWER_CFG?.groups || [])) (g.members || []).forEach(m => set.add(m));
+  for (const k of Object.keys(POWER_CFG?.fieldMeta || {})) set.add(k);
+  return set;
+}
+
+// Latest value of every field for the given meters. last() returns one point per
+// (meter_id, field) series, so no per-field filter is needed (avoids Flux depth limit).
+async function powerGetCurrent(meterIds) {
+  const qApi = getInfluxQuery();
+  if (!qApi) throw new Error('InfluxDB not configured');
+  const result = {};
+  if (!meterIds.length) return result;
+  const meterFilter = meterIds.map(m => `r.meter_id == "${m}"`).join(' or ');
+  const flux = `
+    from(bucket: "${POWER_BUCKET}")
+      |> range(start: -15m)
+      |> filter(fn: (r) => r._measurement == "${POWER_MEAS}")
+      |> filter(fn: (r) => ${meterFilter})
+      |> last()`;
+  for await (const { values, tableMeta } of qApi.iterateRows(flux)) {
+    const row = tableMeta.toObject(values);
+    (result[row.meter_id] ||= {})[row._field] = { v: row._value, t: new Date(row._time).getTime() };
+  }
+  return result;
+}
+
+// Aggregated history for one meter, grouped by field → { field: [[t,v]] }.
+async function powerGetHistory(meterId, fields, rangeOpts) {
+  const qApi = getInfluxQuery();
+  if (!qApi) throw new Error('InfluxDB not configured');
+  let rangeClause, every;
+  if (typeof rangeOpts === 'object') {
+    const s = new Date(rangeOpts.start), e = new Date(rangeOpts.end);
+    if (isNaN(s) || isNaN(e)) throw new Error('invalid custom range');
+    rangeClause = `range(start: ${s.toISOString()}, stop: ${e.toISOString()})`;
+    every = calcAggEvery(s.getTime(), e.getTime());
+  } else {
+    const startMap = { '15m':'-15m','1h':'-1h','6h':'-6h','24h':'-24h','7d':'-7d','30d':'-30d' };
+    const everyMap = { '15m':'10s','1h':'30s','6h':'2m','24h':'5m','7d':'30m','30d':'2h' };
+    rangeClause = `range(start: ${startMap[rangeOpts] || '-24h'})`;
+    every = everyMap[rangeOpts] || '5m';
+  }
+  const fieldFilter = fields.map(f => `r._field == "${f}"`).join(' or ');
+  const flux = `
+    from(bucket: "${POWER_BUCKET}")
+      |> ${rangeClause}
+      |> filter(fn: (r) => r._measurement == "${POWER_MEAS}" and r.meter_id == "${meterId}")
+      |> filter(fn: (r) => ${fieldFilter})
+      |> aggregateWindow(every: ${every}, fn: mean, createEmpty: false)`;
+  const series = {};
+  for await (const { values, tableMeta } of qApi.iterateRows(flux)) {
+    const row = tableMeta.toObject(values);
+    (series[row._field] ||= []).push([new Date(row._time).getTime(), row._value]);
+  }
+  return series;
+}
+
 
 const UPLOADS_ROOT = process.env.UPLOADS_PATH || '/app/uploads';
 fs.mkdirSync(UPLOADS_ROOT, { recursive: true });
@@ -4760,6 +4830,39 @@ app.get('/api/scada/runtime', requireAuth, requireScadaAccess, async (req, res) 
     const result = {};
     for (const p of siteConfig.pumps) result[p] = raw[`${influxSite}.${p}.MTR.Cntrl.Run`] ?? 0;
     res.json(result);
+  } catch (err) { handleErr(res, err); }
+});
+
+// ── Power monitoring API ─────────────────────────────────────────────────────
+// Latest value of every power field, for one meter (?meter=) or all meters.
+// Shape: { meterId: { field: { v, t } } }.
+app.get('/api/scada/power/current', requireAuth, requireScadaAccess, async (req, res) => {
+  if (!POWER_CFG) return res.status(503).json({ error: 'Power monitoring not configured' });
+  const all = powerMeterIds();
+  let meters = all;
+  if (req.query.meter) {
+    meters = all.filter(m => m === String(req.query.meter));
+    if (!meters.length) return res.status(404).json({ error: 'meter not found' });
+  }
+  try {
+    res.json(await powerGetCurrent(meters));
+  } catch (err) { handleErr(res, err); }
+});
+
+// History for one meter. ?meter=...&fields=P1,P2,Psum_kW&range=24h (or &start=&end=).
+// Returns { series: { field: [[t,v]] } }. Meter + fields validated against config.
+app.get('/api/scada/power/history', requireAuth, requireScadaAccess, async (req, res) => {
+  if (!POWER_CFG) return res.status(503).json({ error: 'Power monitoring not configured' });
+  const { meter, fields, range, start, end } = req.query;
+  if (!meter || !powerMeterIds().includes(String(meter)))
+    return res.status(400).json({ error: 'valid meter required' });
+  const known = powerKnownFields();
+  const fieldList = String(fields || '').split(',').map(s => s.trim())
+    .filter(f => known.has(f)).slice(0, 12);
+  if (!fieldList.length) return res.status(400).json({ error: 'valid fields required' });
+  const rangeOpts = (start && end) ? { start: String(start), end: String(end) } : String(range || '24h');
+  try {
+    res.json({ series: await powerGetHistory(String(meter), fieldList, rangeOpts) });
   } catch (err) { handleErr(res, err); }
 });
 
