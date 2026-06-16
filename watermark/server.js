@@ -124,7 +124,30 @@ async function scadaGetHistory(tagPath, rangeStr) {
   return points;
 }
 
-// ── File Uploads ──────────────────────────────────────────────────────────────
+async function scadaGetRuntime(tagPaths, rangeStr) {
+  const qApi = getInfluxQuery();
+  if (!qApi) throw new Error('InfluxDB not configured');
+  const start = { '1h': '-1h', '6h': '-6h', '24h': '-24h', '7d': '-7d' }[rangeStr] || '-24h';
+  const result = {};
+  const CHUNK = 10;
+  for (let i = 0; i < tagPaths.length; i += CHUNK) {
+    const chunk = tagPaths.slice(i, i + CHUNK);
+    const filter = chunk.map(t => `r.tag == "${t}"`).join(' or ');
+    const flux = `
+      from(bucket: "${INFLUX_BUCKET}")
+        |> range(start: ${start})
+        |> filter(fn: (r) => r._measurement == "plc_tags" and r._field == "value")
+        |> filter(fn: (r) => ${filter})
+        |> integral(unit: 1s)`;
+    for await (const { values, tableMeta } of qApi.iterateRows(flux)) {
+      const row = tableMeta.toObject(values);
+      if (row.tag) result[row.tag] = (row._value || 0) / 3600;
+    }
+  }
+  return result;
+}
+
+
 const UPLOADS_ROOT = process.env.UPLOADS_PATH || '/app/uploads';
 fs.mkdirSync(UPLOADS_ROOT, { recursive: true });
 
@@ -4689,6 +4712,23 @@ app.get('/api/scada/history', requireAuth, requireScadaAccess, async (req, res) 
     }
     if (!tag) return res.status(400).json({ error: 'tag required' });
     res.json(await scadaGetHistory(String(tag), r));
+  } catch (err) { handleErr(res, err); }
+});
+
+// Run-hour totals for all pumps at one site (used by Runtime tab).
+// Uses InfluxDB integral(unit:1s) on Run tags — no extra DB needed.
+app.get('/api/scada/runtime', requireAuth, requireScadaAccess, async (req, res) => {
+  if (!SCADA_CONFIG) return res.status(503).json({ error: 'SCADA not configured' });
+  const { site: influxSite, range } = req.query;
+  if (!influxSite) return res.status(400).json({ error: 'site required' });
+  const siteConfig = SCADA_CONFIG.sites.find(s => s.influxSite === String(influxSite));
+  if (!siteConfig) return res.status(404).json({ error: 'site not found' });
+  const runPaths = siteConfig.pumps.map(p => `${influxSite}.${p}.MTR.Cntrl.Run`);
+  try {
+    const raw = await scadaGetRuntime(runPaths, String(range || '24h'));
+    const result = {};
+    for (const p of siteConfig.pumps) result[p] = raw[`${influxSite}.${p}.MTR.Cntrl.Run`] ?? 0;
+    res.json(result);
   } catch (err) { handleErr(res, err); }
 });
 

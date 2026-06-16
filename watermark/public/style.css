@@ -3358,6 +3358,54 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
 }
 .scada-trend-chip.selected { background: var(--accent); border-color: var(--accent); color: #fff; }
 
+/* ── SCADA Overview: paired plant cards ──────────────────────────────────── */
+.scada-overview-grid { display: flex; flex-direction: column; gap: 10px; }
+.scada-plant-card {
+  display: block; width: 100%; text-align: left; cursor: pointer;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 10px; padding: 14px; color: var(--text);
+}
+.scada-plant-card:active { background: var(--surface2); }
+.scada-plant-title { font-weight: 700; font-size: 0.95rem; margin-bottom: 10px; }
+.scada-plant-sides { display: flex; align-items: flex-start; gap: 0; }
+.scada-plant-side { flex: 1; min-width: 0; padding: 0 8px; }
+.scada-plant-side:first-child { padding-left: 0; }
+.scada-plant-side:last-child { padding-right: 0; }
+.scada-plant-solo .scada-plant-side { padding: 0; }
+.scada-plant-divider { width: 1px; background: var(--border); align-self: stretch; margin: 0 2px; flex-shrink: 0; }
+.scada-side-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.scada-side-label { font-weight: 700; font-size: 0.82rem; flex: 1; }
+.scada-mini-row { display: flex; justify-content: space-between; gap: 4px; font-size: 0.8rem; color: var(--text-dim); margin-bottom: 3px; }
+.scada-mini-row strong { color: var(--text); white-space: nowrap; }
+
+/* ── SCADA Plant detail: side-by-side sensor columns ────────────────────── */
+.scada-detail-split { display: flex; gap: 12px; margin-bottom: 4px; }
+.scada-detail-col { flex: 1; min-width: 0; }
+.scada-col-hdr { font-size: 0.75rem; font-weight: 700; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; text-align: center; }
+.scada-sensor-tile[data-selectable], .scada-pump-card[data-selectable] { cursor: pointer; }
+.scada-sensor-tile.selected, .scada-pump-card.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.scada-pump-card.run { border-left: 3px solid #43a047; }
+.scada-pump-card.stop { border-left: 3px solid var(--border); }
+.scada-chart-range { margin-bottom: 8px; }
+
+/* ── SCADA plant pills (Trends + Runtime) ────────────────────────────────── */
+.scada-plant-pills { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.scada-plant-pill {
+  padding: 6px 14px; min-height: 36px;
+  border: 1px solid var(--border); border-radius: 16px;
+  background: var(--surface); color: var(--text-dim);
+  font-size: 0.85rem; font-weight: 600; cursor: pointer;
+}
+.scada-plant-pill.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* ── SCADA Runtime tab ───────────────────────────────────────────────────── */
+.scada-runtime-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.scada-runtime-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+.scada-runtime-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.scada-runtime-hrs { font-size: 1.1rem; font-weight: 700; }
+.scada-runtime-bar-track { height: 5px; background: var(--surface2); border-radius: 3px; overflow: hidden; }
+.scada-runtime-bar { height: 100%; background: var(--accent); border-radius: 3px; transition: width 0.4s; }
+
 /* ── Print ───────────────────────────────────────────────────────────────── */
 @media print {
   html, body, #app-shell {
