@@ -770,33 +770,32 @@ function evalPowerSite(meterId) {
   if (age > (th.staleAlarmSec ?? 300))      { bump('alarm'); issues.push('Stale ' + fmtAge(age)); }
   else if (age > (th.staleWarnSec ?? 120))  { bump('warn');  issues.push('Stale ' + fmtAge(age)); }
 
-  const pf = f('PF_total');
+  const pf = f('pf');
   if (pf != null && pf < (th.pfMin ?? 0.85)) { bump('warn'); issues.push('PF ' + pf.toFixed(2)); }
 
-  const fr = f('Freq_Hz');
+  const fr = f('freq_hz');
   if (fr != null && (fr < (th.freqMin ?? 59.95) || fr > (th.freqMax ?? 60.05))) {
     bump('alarm'); issues.push(fr.toFixed(2) + ' Hz');
   }
 
+  // Use averages for voltage deviation — per-phase L-N can vary significantly
+  // on medium-voltage systems and would produce false alarms if checked raw.
   const dev = th.voltageDeviationPct ?? 5;
   const nomLN = powerCfg().nominalVoltageLN, nomLL = powerCfg().nominalVoltageLL;
-  if (nomLN) for (const vf of ['V1','V2','V3']) {
-    const v = f(vf);
-    if (v != null && Math.abs(v - nomLN) / nomLN * 100 > dev) { bump('alarm'); issues.push(vf + ' ' + v.toFixed(0) + 'V'); }
-  }
-  if (nomLL) for (const vf of ['V12','V23','V31']) {
-    const v = f(vf);
-    if (v != null && Math.abs(v - nomLL) / nomLL * 100 > dev) { bump('alarm'); issues.push(vf + ' ' + v.toFixed(0) + 'V'); }
-  }
+  const vnavg = f('vnavg_v'), viavg = f('viavg_v');
+  if (nomLN && vnavg != null && Math.abs(vnavg - nomLN) / nomLN * 100 > dev)
+    { bump('alarm'); issues.push('Avg L-N ' + vnavg.toFixed(0) + 'V'); }
+  if (nomLL && viavg != null && Math.abs(viavg - nomLL) / nomLL * 100 > dev)
+    { bump('alarm'); issues.push('Avg L-L ' + viavg.toFixed(0) + 'V'); }
 
-  const vimb = imbalancePct([f('V1'), f('V2'), f('V3')]);
+  const vimb = imbalancePct([f('v1'), f('v2'), f('v3')]);
   if (vimb != null && vimb > (th.voltageImbalancePct ?? 2)) { bump('warn'); issues.push('V imbal ' + vimb.toFixed(1) + '%'); }
-  const iimb = imbalancePct([f('I1'), f('I2'), f('I3')]);
+  const iimb = imbalancePct([f('i1'), f('i2'), f('i3')]);
   if (iimb != null && iimb > (th.currentImbalancePct ?? 10)) { bump('warn'); issues.push('I imbal ' + iimb.toFixed(1) + '%'); }
 
-  for (const pf2 of ['P1','P2','P3']) {
-    const v = f(pf2);
-    if (v != null && v < 0) { bump('alarm'); issues.push(pf2 + ' backfeed'); }
+  for (const ph of ['p1','p2','p3']) {
+    const v = f(ph);
+    if (v != null && v < 0) { bump('alarm'); issues.push(ph.toUpperCase() + ' backfeed'); }
   }
   return { level, issues, age, vimb, iimb };
 }
@@ -937,7 +936,7 @@ async function drawPowerCompareChart() {
   await loadScadaVendor();
   if (!el('power-compare-canvas')) return;
   const sites = powerSites();
-  const totalField = powerGroup('active')?.total || 'Psum_kW';
+  const totalField = powerGroup('active')?.total || 'psum_kw';
   const c = scadaThemeColors();
   const data = sites.map(s => pv(s.meterId, totalField) ?? 0);
   const colors = sites.map(s => evalPowerSite(s.meterId).level === 'alarm' ? '#e53935'
@@ -967,9 +966,9 @@ async function renderPowerSite(site) {
 
   // Diagnostic cards
   const th = powerThresholds();
-  const pf = pv(m, 'PF_total'), fr = pv(m, 'Freq_Hz');
-  const vOut = ev.issues.some(i => /^V\d/.test(i));
-  const neg  = ['P1','P2','P3'].some(k => { const v = pv(m, k); return v != null && v < 0; });
+  const pf = pv(m, 'pf'), fr = pv(m, 'freq_hz');
+  const vOut = ev.issues.some(i => /^Avg L/.test(i));
+  const neg  = ['p1','p2','p3'].some(k => { const v = pv(m, k); return v != null && v < 0; });
   const diag = [
     powerDiagCard('Phase V Imbalance', ev.vimb == null ? '—' : ev.vimb.toFixed(1) + '%',
       ev.vimb != null && ev.vimb > (th.voltageImbalancePct ?? 2) ? 'warn' : 'ok'),
@@ -987,10 +986,10 @@ async function renderPowerSite(site) {
 
   // Key stat tiles
   const stats = [
-    powerStatTile('Total Active', fmtNum(pv(m, 'Psum_kW'), 0), 'kW'),
-    powerStatTile('Total Reactive', fmtNum(pv(m, 'Qsum_kvar'), 0), 'kVAR'),
-    powerStatTile('Total Apparent', fmtNum(pv(m, 'Ssum_kVA'), 0), 'kVA'),
-    powerStatTile('Import Energy', fmtNum(pv(m, 'EP_IMP_kWh'), 0), 'kWh', 'power-energy-delta'),
+    powerStatTile('Total Active', fmtNum(pv(m, 'psum_kw'), 0), 'kW'),
+    powerStatTile('Total Reactive', fmtNum(pv(m, 'qsum_kvar'), 0), 'kVAR'),
+    powerStatTile('Total Apparent', fmtNum(pv(m, 'ssum_kva'), 0), 'kVA'),
+    powerStatTile('Import Energy', fmtNum(pv(m, 'ep_imp_kwh'), 0), 'kWh', 'power-energy-delta'),
   ].join('');
 
   const lineGroups = (powerCfg().groups || []).filter(g => g.chart !== 'bar');
@@ -1042,7 +1041,7 @@ function powerStatTile(label, value, unit, id) {
 async function loadPowerEnergyDelta(meterId, range) {
   try {
     const qs = scadaRangeQS(range);
-    const r = await api('GET', `/api/scada/power/history?meter=${encodeURIComponent(meterId)}&fields=EP_IMP_kWh&${qs}`);
+    const r = await api('GET', `/api/scada/power/history?meter=${encodeURIComponent(meterId)}&fields=ep_imp_kwh&${qs}`);
     const pts = r.series?.EP_IMP_kWh || [];
     const elx = el('power-energy-delta');
     if (!elx || pts.length < 2) return;
