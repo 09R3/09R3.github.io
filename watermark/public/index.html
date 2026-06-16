@@ -129,7 +129,7 @@
         Sign in with Microsoft 365
       </a>
       <div id="ms-login-error" class="error-msg hidden"></div>
-      <div class="login-version">v 2.53</div>
+      <div class="login-version">v 2.54</div>
     </div>
   </div>
 </div>
@@ -266,6 +266,10 @@
       <li class="nav-item" id="nav-admin-item"><button class="nav-btn" data-screen="admin">
         <span class="nav-btn-icon"><span class="app-icon" style="width:22px;height:22px;-webkit-mask-image:url(/marv-site/icons/icon-settings.svg);mask-image:url(/marv-site/icons/icon-settings.svg)"></span></span>
         Settings
+      </button></li>
+      <li class="nav-item hidden" id="nav-scada-item"><button class="nav-btn" data-screen="scada">
+        <span class="nav-btn-icon"><span class="app-icon" style="width:22px;height:22px;-webkit-mask-image:url(/marv-site/icons/icon-pumping-plant.svg);mask-image:url(/marv-site/icons/icon-pumping-plant.svg)"></span></span>
+        SCADA Dashboard
       </button></li>
       <li><button class="nav-btn" data-screen="hr">
         <span class="nav-btn-icon"><span class="app-icon" style="width:22px;height:22px;-webkit-mask-image:url(/marv-site/icons/icon-pm-records.svg);mask-image:url(/marv-site/icons/icon-pm-records.svg)"></span></span>
@@ -469,6 +473,12 @@
             <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-usage.svg);mask-image:url(/marv-site/icons/icon-usage.svg)"></span>
           </div>
           <span class="dash-label">Charts</span>
+        </button>
+        <button class="dash-tile hidden" id="dash-scada-tile" data-screen="scada">
+          <div class="dash-icon-wrap">
+            <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-pumping-plant.svg);mask-image:url(/marv-site/icons/icon-pumping-plant.svg)"></span>
+          </div>
+          <span class="dash-label">SCADA Dashboard</span>
         </button>
       </div>
     </div>
@@ -1735,7 +1745,7 @@
     <div id="settings-panel-appinfo" class="settings-panel hidden">
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 2.53</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 2.54</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>
@@ -2407,6 +2417,14 @@
 
   </div><!-- /screen-charts -->
 
+  <!-- ── SCADA Dashboard ───────────────────────────────────────────────────── -->
+  <div id="screen-scada" class="screen-content">
+    <div id="scada-status-bar" class="scada-status-bar hidden"></div>
+    <div id="scada-body" class="scada-body">
+      <div class="placeholder-msg">Loading…</div>
+    </div>
+  </div><!-- /screen-scada -->
+
 </div><!-- /app-shell -->
 
 
@@ -2613,6 +2631,7 @@
 <div id="toast" class="toast hidden"></div>
 
 <script src="app.js"></script>
+<script src="scada.js"></script>
 <!-- Safety Meeting Sign-in Modal -->
 <div id="safety-signin-modal" class="modal-overlay hidden">
   <div class="modal-card safety-signin-card">

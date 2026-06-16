@@ -1,0 +1,27 @@
+{
+  "pollMs": 5000,
+  "defaultSensors": ["FBLvl", "ABLvl", "DSLvl", "TRLvl", "AirPSI", "InTmp"],
+  "sensorMeta": {
+    "FBLvl":  { "label": "Forebay Level",   "unit": "ft",  "kind": "level" },
+    "ABLvl":  { "label": "Afterbay Level",  "unit": "ft",  "kind": "level" },
+    "DSLvl":  { "label": "Downstream Level", "unit": "ft", "kind": "level" },
+    "TRLvl":  { "label": "Trash Rack Lvl",  "unit": "ft",  "kind": "level" },
+    "AirPSI": { "label": "Air Pressure",    "unit": "psi", "kind": "pressure" },
+    "InTmp":  { "label": "Bldg Temp",       "unit": "°F", "kind": "temp" }
+  },
+  "sites": [
+    { "id": "pp1a", "name": "CVC PP 1A", "influxSite": "CVC_PP1A", "pumps": ["A","B","C","D","E","F","G","H"] },
+    { "id": "pp1b", "name": "CVC PP 1B", "influxSite": "CVC_PP1B", "pumps": ["A","B","C"], "pumpLabels": {"A":"K","B":"L","C":"M"} },
+    { "id": "pp2a", "name": "CVC PP 2A", "influxSite": "CVC_PP2A", "pumps": ["A","B","C","D","E","F","G","H"] },
+    { "id": "pp2b", "name": "CVC PP 2B", "influxSite": "CVC_PP2B", "pumps": ["A","B","C"], "pumpLabels": {"A":"K","B":"L","C":"M"} },
+    { "id": "pp3a", "name": "CVC PP 3A", "influxSite": "CVC_PP3A", "pumps": ["A","B","C","D","E","F","G","H","J"] },
+    { "id": "pp3b", "name": "CVC PP 3B", "influxSite": "CVC_PP3B", "pumps": ["A","B","C"], "pumpLabels": {"A":"K","B":"L","C":"M"} },
+    { "id": "pp4a", "name": "CVC PP 4A", "influxSite": "CVC_PP4A", "pumps": ["A","B","C","D","E","F","G","H","J"] },
+    { "id": "pp4b", "name": "CVC PP 4B", "influxSite": "CVC_PP4B", "pumps": ["A","B","C"], "pumpLabels": {"A":"K","B":"L","C":"M"} },
+    { "id": "pp5a", "name": "CVC PP 5A", "influxSite": "CVC_PP5A", "pumps": ["A","B","C","D","E","F","G","H","J"] },
+    { "id": "pp5b", "name": "CVC PP 5B", "influxSite": "CVC_PP5B", "pumps": ["A","B","C"], "pumpLabels": {"A":"K","B":"L","C":"M"} },
+    { "id": "pp6a", "name": "CVC PP 6A", "influxSite": "CVC_PP6A", "pumps": ["A","B","C","D","E","F","G","H"] },
+    { "id": "pp6b", "name": "CVC PP 6B", "influxSite": "CVC_PP6B", "pumps": ["A","B","C","D"], "pumpLabels": {"A":"K","B":"L","C":"M","D":"N"} },
+    { "id": "pp7a", "name": "CVC PP 7A", "influxSite": "CVC_PP7A", "pumps": ["A","B","C","D","E","F"] }
+  ]
+}

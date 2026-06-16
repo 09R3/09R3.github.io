@@ -9,6 +9,7 @@ const fs           = require('fs');
 const multer       = require('multer');
 const XLSX         = require('xlsx');
 const msal         = require('@azure/msal-node');
+const { InfluxDB } = require('@influxdata/influxdb-client');
 
 // ── Microsoft Entra ID (Azure AD) ────────────────────────────────────────────
 const msalEnabled = !!(
@@ -30,11 +31,97 @@ if (msalEnabled) {
 // All roles with supervisor-level access (declared here so routes below can reference it)
 const SUPERVISOR_ROLES = ['supervisor', 'admin', 'water-planner'];
 
+// Roles allowed to view the SCADA Dashboard. Admin-only for now; widen over time.
+const SCADA_ROLES = ['admin'];
+
 const app = express();
 app.use(express.json());
 app.use(cookieParser());
 app.set('trust proxy', 1);
 app.use(express.static(path.join(__dirname, 'public')));
+
+// ── SCADA Dashboard (InfluxDB) ─────────────────────────────────────────────────
+// Reads live PLC data from InfluxDB (written by the Python pollers). The browser
+// never sees Influx tag paths — only the config tree below (with the tag-path
+// builders kept server-side). Influx connection comes from .env; if it's missing,
+// the /api/scada/* routes return 503 and the UI shows "source unavailable".
+const SCADA_CONFIG = (() => {
+  try { return JSON.parse(fs.readFileSync(path.join(__dirname, 'scada-config.json'), 'utf8')); }
+  catch (e) { console.warn('SCADA config not loaded:', e.message); return null; }
+})();
+const INFLUX_BUCKET = process.env.INFLUX_BUCKET || 'plc-data';
+
+let _influxQuery = null;
+function getInfluxQuery() {
+  if (_influxQuery) return _influxQuery;
+  const url = process.env.INFLUX_URL, token = process.env.INFLUX_TOKEN;
+  if (!url || !token) return null;
+  _influxQuery = new InfluxDB({ url, token }).getQueryApi(process.env.INFLUX_ORG || 'scada-org');
+  return _influxQuery;
+}
+
+// Every display tag-path the UI needs: sensors (X.SCL.PV) + per-pump bits.
+function scadaAllTagPaths(config) {
+  const sensors = config.defaultSensors || [];
+  const tags = [];
+  for (const site of config.sites) {
+    const siteSensors = site.sensors || sensors;
+    for (const sensor of siteSensors) tags.push(`${site.influxSite}.${sensor}.SCL.PV`);
+    for (const pump of site.pumps) {
+      tags.push(
+        `${site.influxSite}.${pump}.MTR.Cntrl.Run`,
+        `${site.influxSite}.${pump}.MTR.Cntrl.Fail`,
+        `${site.influxSite}.${pump}.MTR.Spd.SCL.PV`,
+        `${site.influxSite}.${pump}.HP`,
+        `${site.influxSite}.${pump}.SBVlv.Cntrl.Enable`,
+      );
+    }
+  }
+  return tags;
+}
+
+// Latest value per tag. Chunks of 20 avoid Flux's "program nested too deep" error.
+async function scadaGetCurrent(tagPaths) {
+  const qApi = getInfluxQuery();
+  if (!qApi) throw new Error('InfluxDB not configured');
+  const CHUNK = 20;
+  const result = {};
+  for (let i = 0; i < tagPaths.length; i += CHUNK) {
+    const chunk = tagPaths.slice(i, i + CHUNK);
+    const filter = chunk.map(t => `r.tag == "${t}"`).join(' or ');
+    const flux = `
+      from(bucket: "${INFLUX_BUCKET}")
+        |> range(start: -5m)
+        |> filter(fn: (r) => r._measurement == "plc_tags" and r._field == "value")
+        |> filter(fn: (r) => ${filter})
+        |> last()`;
+    for await (const { values, tableMeta } of qApi.iterateRows(flux)) {
+      const row = tableMeta.toObject(values);
+      result[row.tag] = { v: row._value, t: new Date(row._time).getTime() };
+    }
+  }
+  return result;
+}
+
+// Aggregated history for one tag. mean for analog, max for status bits.
+async function scadaGetHistory(tagPath, rangeStr) {
+  const qApi = getInfluxQuery();
+  if (!qApi) throw new Error('InfluxDB not configured');
+  const start = { '1h': '-1h', '6h': '-6h', '24h': '-24h', '7d': '-7d' }[rangeStr] || '-1h';
+  const every = { '1h': '30s', '6h': '2m', '24h': '5m', '7d': '30m' }[rangeStr] || '30s';
+  const isStatus = /\.(Run|Fail|Enable)$/.test(tagPath);
+  const flux = `
+    from(bucket: "${INFLUX_BUCKET}")
+      |> range(start: ${start})
+      |> filter(fn: (r) => r._measurement == "plc_tags" and r.tag == "${tagPath}" and r._field == "value")
+      |> aggregateWindow(every: ${every}, fn: ${isStatus ? 'max' : 'mean'}, createEmpty: false)`;
+  const points = [];
+  for await (const { values, tableMeta } of qApi.iterateRows(flux)) {
+    const row = tableMeta.toObject(values);
+    points.push([new Date(row._time).getTime(), row._value]);
+  }
+  return points;
+}
 
 // ── File Uploads ──────────────────────────────────────────────────────────────
 const UPLOADS_ROOT = process.env.UPLOADS_PATH || '/app/uploads';
@@ -4523,6 +4610,49 @@ app.delete('/api/safety-meetings/:id/attendees/:aid', requireAuth, requireRole(.
       [req.params.aid, req.params.id]);
     res.json({ ok: true });
   } catch (err) { handleErr(res, err); }
+});
+
+// ── SCADA Dashboard API ─────────────────────────────────────────────────────
+// Gated to SCADA_ROLES (admin-only for now). Live data is network-only.
+
+// Site/tag tree for the frontend. No Influx tag paths leak — only display config.
+app.get('/api/scada/config', requireAuth, requireRole(...SCADA_ROLES), (req, res) => {
+  if (!SCADA_CONFIG) return res.status(503).json({ error: 'SCADA not configured' });
+  res.json(SCADA_CONFIG);
+});
+
+// Latest value of every display tag.
+app.get('/api/scada/current', requireAuth, requireRole(...SCADA_ROLES), async (req, res) => {
+  if (!SCADA_CONFIG) return res.status(503).json({ error: 'SCADA not configured' });
+  try {
+    res.json(await scadaGetCurrent(scadaAllTagPaths(SCADA_CONFIG)));
+  } catch (err) { handleErr(res, err); }
+});
+
+// Aggregated history for one tag. ?tag=CVC_PP4B.FBLvl.SCL.PV&range=1h
+app.get('/api/scada/history', requireAuth, requireRole(...SCADA_ROLES), async (req, res) => {
+  const { tag, range } = req.query;
+  if (!tag) return res.status(400).json({ error: 'tag required' });
+  try {
+    res.json(await scadaGetHistory(String(tag), String(range || '1h')));
+  } catch (err) { handleErr(res, err); }
+});
+
+// SSE: pushes latest values every pollMs. One interval per connection.
+app.get('/api/scada/stream', requireAuth, requireRole(...SCADA_ROLES), (req, res) => {
+  if (!SCADA_CONFIG) return res.status(503).end();
+  res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+  res.flushHeaders();
+  const tagPaths = scadaAllTagPaths(SCADA_CONFIG);
+  const push = async () => {
+    try {
+      const data = await scadaGetCurrent(tagPaths);
+      res.write(`event: current\ndata: ${JSON.stringify(data)}\n\n`);
+    } catch { res.write('event: sourceError\ndata: {}\n\n'); }
+  };
+  push();
+  const iv = setInterval(push, SCADA_CONFIG.pollMs || 5000);
+  req.on('close', () => clearInterval(iv));
 });
 
 // ── Start ─────────────────────────────────────────────────────────────────────

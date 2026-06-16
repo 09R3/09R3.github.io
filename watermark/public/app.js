@@ -59,6 +59,10 @@ function todayISO() {
 const SUPERVISOR_ROLES = ['supervisor', 'admin', 'water-planner'];
 function isSupervisorLevel(role) { return SUPERVISOR_ROLES.includes(role ?? ''); }
 
+// Roles allowed to see the SCADA Dashboard. Keep in sync with SCADA_ROLES in server.js.
+const SCADA_ROLES = ['admin'];
+function isScadaAllowed(role) { return SCADA_ROLES.includes(role ?? ''); }
+
 const ROLE_LABELS = {
   admin: 'Admin', supervisor: 'Supervisor', operator: 'Operator',
   'water-planner': 'Water Planner', 'systems-operator': 'Systems Operator',
@@ -489,6 +493,7 @@ el('set-map-modal').addEventListener('click', e => { if (e.target === el('set-ma
 
 /* ── Screen Navigation ───────────────────────────────────────────────────── */
 function showScreen(name) {
+  const prevScreen = currentScreen;
   document.querySelectorAll('.screen-content').forEach(s => s.classList.remove('active'));
   const target = el(`screen-${name}`);
   if (target) {
@@ -511,8 +516,14 @@ function showScreen(name) {
     charts:          'Charts',
     ponds:           'Ponds',
     safety:          'Safety',
+    scada:           'SCADA Dashboard',
   };
   closeDrawer();
+
+  // Stop the SCADA live stream when navigating away from its screen
+  if (prevScreen === 'scada' && name !== 'scada' && typeof stopScadaStream === 'function') {
+    stopScadaStream();
+  }
 
   // Add / update ‹ Back nav + swipe-back for non-dashboard screens.
   // Each sub-panel open/close will call setPanelNav again to update title + back target.
@@ -525,6 +536,13 @@ function showScreen(name) {
   // Block supervisor/admin-only screens for operators
   if (name === 'reports') {
     if (!currentUser || !isSupervisorLevel(currentUser.role)) {
+      showScreen('dashboard');
+      return;
+    }
+  }
+  // SCADA Dashboard is gated to admins for now (see SCADA_ROLES on server)
+  if (name === 'scada') {
+    if (!currentUser || !isScadaAllowed(currentUser.role)) {
       showScreen('dashboard');
       return;
     }
@@ -546,6 +564,7 @@ function showScreen(name) {
   if (name === 'charts')        initChartsScreen();
   if (name === 'ponds')         initPondsScreen();
   if (name === 'safety')        initSafetyScreen();
+  if (name === 'scada')         initScadaScreen();
 
   // Refresh time to current on every screen visit
   const screenTimeIds = {
@@ -624,6 +643,9 @@ function onLogin(user) {
     el('settings-admin-section').classList.remove('hidden');
     el('settings-widgets-section').classList.remove('hidden');
   }
+  // SCADA Dashboard — admin-only for now (see SCADA_ROLES)
+  el('nav-scada-item').classList.toggle('hidden', !isScadaAllowed(user.role));
+  el('dash-scada-tile').classList.toggle('hidden', !isScadaAllowed(user.role));
   // Populate account info on settings screen
   el('settings-full-name').textContent = user.full_name || '—';
   el('settings-username').textContent  = user.username;
