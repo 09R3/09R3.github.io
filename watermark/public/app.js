@@ -59,9 +59,21 @@ function todayISO() {
 const SUPERVISOR_ROLES = ['supervisor', 'admin', 'water-planner'];
 function isSupervisorLevel(role) { return SUPERVISOR_ROLES.includes(role ?? ''); }
 
-// Roles allowed to see the SCADA Dashboard. Keep in sync with SCADA_ROLES in server.js.
-const SCADA_ROLES = ['admin'];
-function isScadaAllowed(role) { return SCADA_ROLES.includes(role ?? ''); }
+// Roles allowed to see the SCADA Dashboard — fetched from the server (admin-managed
+// via Settings → SCADA Access). Defaults to admin until the fetch resolves. The
+// server is the real gate; this only drives nav/tile visibility + the screen guard.
+let scadaAllowedRoles = ['admin'];
+function isScadaAllowed(role) { return scadaAllowedRoles.includes(role ?? ''); }
+
+async function applyScadaVisibility(user) {
+  try {
+    const r = await api('GET', '/api/settings/scada-roles');
+    if (Array.isArray(r.roles)) scadaAllowedRoles = r.roles;
+  } catch { /* keep default */ }
+  const ok = isScadaAllowed(user.role);
+  el('nav-scada-item').classList.toggle('hidden', !ok);
+  el('dash-scada-tile').classList.toggle('hidden', !ok);
+}
 
 const ROLE_LABELS = {
   admin: 'Admin', supervisor: 'Supervisor', operator: 'Operator',
@@ -643,9 +655,11 @@ function onLogin(user) {
     el('settings-admin-section').classList.remove('hidden');
     el('settings-widgets-section').classList.remove('hidden');
   }
-  // SCADA Dashboard — admin-only for now (see SCADA_ROLES)
-  el('nav-scada-item').classList.toggle('hidden', !isScadaAllowed(user.role));
-  el('dash-scada-tile').classList.toggle('hidden', !isScadaAllowed(user.role));
+  // SCADA Dashboard — start hidden, reveal if this role is in the server allow-list
+  el('nav-scada-item').classList.add('hidden');
+  el('dash-scada-tile').classList.add('hidden');
+  el('settings-scada-roles-row')?.classList.toggle('hidden', user.role !== 'admin');
+  applyScadaVisibility(user);
   // Populate account info on settings screen
   el('settings-full-name').textContent = user.full_name || '—';
   el('settings-username').textContent  = user.username;
@@ -5343,6 +5357,7 @@ const SETTINGS_PANEL_NAMES = {
   'kf-widget':      'KF Widget',
   'running-wells':  'Running Wells',
   'gps-selector':   'GPS Location Selector',
+  'scada-roles':    'SCADA Access',
   appinfo:          'App Info',
   tools:            'Tools',
   bugreports:       'Bug Reports',
@@ -5359,6 +5374,7 @@ function openSettingsPanel(panelId) {
   if (panelId === 'kf-widget')      initKFWidgetPanel();
   if (panelId === 'running-wells')  initRunningWellsPanel();
   if (panelId === 'gps-selector')   initGPSSelectorSettingsPanel();
+  if (panelId === 'scada-roles')    initScadaRolesPanel();
   if (panelId === 'appinfo') {
     const ls = localStorage.getItem('watermark-last-sync');
     el('settings-last-sync').textContent = ls ? new Date(ls).toLocaleString() : 'Never';
@@ -6041,6 +6057,44 @@ el('gps-sel-save-btn').addEventListener('click', async () => {
   try {
     await api('PUT', '/api/settings/gps-selector', { public: isPublic });
     showToast('Setting saved', 'success');
+  } catch (err) {
+    showToast('Failed to save: ' + err.message, 'error');
+  }
+});
+
+/* ── SCADA Access (admin) ─────────────────────────────────────────────────── */
+// Roles offered as checkboxes, in display order. Admin is always on + locked.
+const SCADA_ROLE_OPTIONS = ['operator', 'systems-operator', 'heavy-equipment-operator',
+  'pump-tech', 'elec-tech', 'water-planner', 'supervisor', 'admin'];
+
+async function initScadaRolesPanel() {
+  const list = el('scada-roles-list');
+  let allowed = ['admin'];
+  try {
+    const r = await api('GET', '/api/settings/scada-roles');
+    if (Array.isArray(r.roles)) allowed = r.roles;
+  } catch { /* keep default */ }
+  list.innerHTML = SCADA_ROLE_OPTIONS.map(role => {
+    const checked = allowed.includes(role) ? 'checked' : '';
+    const locked  = role === 'admin' ? 'disabled' : '';
+    return `<label class="settings-row">
+      <span class="settings-label">${escHtml(formatRole(role))}${role === 'admin' ? ' (always)' : ''}</span>
+      <input type="checkbox" class="scada-role-cb" data-role="${role}" ${checked} ${locked}>
+    </label>`;
+  }).join('');
+}
+
+el('scada-roles-save-btn').addEventListener('click', async () => {
+  const roles = [...document.querySelectorAll('.scada-role-cb:checked')].map(c => c.dataset.role);
+  if (!roles.includes('admin')) roles.push('admin');
+  try {
+    const r = await api('PUT', '/api/settings/scada-roles', { roles });
+    if (Array.isArray(r.roles)) scadaAllowedRoles = r.roles;
+    // Reflect immediately for the current admin
+    const ok = isScadaAllowed(currentUser.role);
+    el('nav-scada-item').classList.toggle('hidden', !ok);
+    el('dash-scada-tile').classList.toggle('hidden', !ok);
+    showToast('SCADA access updated', 'success');
   } catch (err) {
     showToast('Failed to save: ' + err.message, 'error');
   }

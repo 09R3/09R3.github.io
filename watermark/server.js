@@ -31,7 +31,8 @@ if (msalEnabled) {
 // All roles with supervisor-level access (declared here so routes below can reference it)
 const SUPERVISOR_ROLES = ['supervisor', 'admin', 'water-planner'];
 
-// Roles allowed to view the SCADA Dashboard. Admin-only for now; widen over time.
+// Default SCADA Dashboard access if the `scada_roles` app_setting is unset.
+// The live allow-list is admin-managed via Settings (see getScadaRoles).
 const SCADA_ROLES = ['admin'];
 
 const app = express();
@@ -4613,16 +4614,60 @@ app.delete('/api/safety-meetings/:id/attendees/:aid', requireAuth, requireRole(.
 });
 
 // ── SCADA Dashboard API ─────────────────────────────────────────────────────
-// Gated to SCADA_ROLES (admin-only for now). Live data is network-only.
+// Access is driven by the `scada_roles` app_setting (admin-managed). Admin is
+// always allowed so the setting can never lock everyone out. Live data is
+// network-only.
+
+let _scadaRolesCache = null, _scadaRolesCacheAt = 0;
+async function getScadaRoles() {
+  if (_scadaRolesCache && Date.now() - _scadaRolesCacheAt < 10000) return _scadaRolesCache;
+  let roles = [...SCADA_ROLES]; // default ['admin']
+  try {
+    const { rows } = await pool.query(`SELECT value FROM app_settings WHERE key = 'scada_roles'`);
+    if (rows[0]?.value != null) {
+      roles = rows[0].value.split(',').map(s => s.trim()).filter(Boolean);
+    }
+  } catch { /* fall back to default */ }
+  if (!roles.includes('admin')) roles.push('admin');
+  _scadaRolesCache = roles; _scadaRolesCacheAt = Date.now();
+  return roles;
+}
+
+// Dynamic gate — reads the current allow-list (cached ~10s) per request.
+function requireScadaAccess(req, res, next) {
+  getScadaRoles()
+    .then(roles => roles.includes(req.user.role)
+      ? next()
+      : res.status(403).json({ error: 'Insufficient permissions' }))
+    .catch(err => handleErr(res, err));
+}
+
+// Read current SCADA allow-list (any authed user — drives nav visibility).
+app.get('/api/settings/scada-roles', requireAuth, async (req, res) => {
+  try { res.json({ roles: await getScadaRoles() }); } catch (err) { handleErr(res, err); }
+});
+
+// Update SCADA allow-list (admin only). 'admin' is always forced in.
+app.put('/api/settings/scada-roles', requireAuth, requireRole('admin'), async (req, res) => {
+  let roles = Array.isArray(req.body.roles) ? req.body.roles.map(String).filter(Boolean) : [];
+  if (!roles.includes('admin')) roles.push('admin');
+  try {
+    await pool.query(
+      `INSERT INTO app_settings (key, value, updated_at) VALUES ('scada_roles', $1, NOW())
+       ON CONFLICT (key) DO UPDATE SET value=$1, updated_at=NOW()`, [roles.join(',')]);
+    _scadaRolesCache = null; // invalidate so the change takes effect immediately
+    res.json({ ok: true, roles });
+  } catch (err) { handleErr(res, err); }
+});
 
 // Site/tag tree for the frontend. No Influx tag paths leak — only display config.
-app.get('/api/scada/config', requireAuth, requireRole(...SCADA_ROLES), (req, res) => {
+app.get('/api/scada/config', requireAuth, requireScadaAccess, (req, res) => {
   if (!SCADA_CONFIG) return res.status(503).json({ error: 'SCADA not configured' });
   res.json(SCADA_CONFIG);
 });
 
 // Latest value of every display tag.
-app.get('/api/scada/current', requireAuth, requireRole(...SCADA_ROLES), async (req, res) => {
+app.get('/api/scada/current', requireAuth, requireScadaAccess, async (req, res) => {
   if (!SCADA_CONFIG) return res.status(503).json({ error: 'SCADA not configured' });
   try {
     res.json(await scadaGetCurrent(scadaAllTagPaths(SCADA_CONFIG)));
@@ -4630,7 +4675,7 @@ app.get('/api/scada/current', requireAuth, requireRole(...SCADA_ROLES), async (r
 });
 
 // Aggregated history for one tag. ?tag=CVC_PP4B.FBLvl.SCL.PV&range=1h
-app.get('/api/scada/history', requireAuth, requireRole(...SCADA_ROLES), async (req, res) => {
+app.get('/api/scada/history', requireAuth, requireScadaAccess, async (req, res) => {
   const { tag, range } = req.query;
   if (!tag) return res.status(400).json({ error: 'tag required' });
   try {
@@ -4639,7 +4684,7 @@ app.get('/api/scada/history', requireAuth, requireRole(...SCADA_ROLES), async (r
 });
 
 // SSE: pushes latest values every pollMs. One interval per connection.
-app.get('/api/scada/stream', requireAuth, requireRole(...SCADA_ROLES), (req, res) => {
+app.get('/api/scada/stream', requireAuth, requireScadaAccess, (req, res) => {
   if (!SCADA_CONFIG) return res.status(503).end();
   res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
   res.flushHeaders();

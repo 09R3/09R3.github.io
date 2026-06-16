@@ -129,7 +129,7 @@
         Sign in with Microsoft 365
       </a>
       <div id="ms-login-error" class="error-msg hidden"></div>
-      <div class="login-version">v 2.54</div>
+      <div class="login-version">v 2.55</div>
     </div>
   </div>
 </div>
@@ -1630,6 +1630,9 @@
         <button class="settings-menu-row" data-panel="gps-selector">
           <span>GPS Location Selector</span><span class="settings-chevron">›</span>
         </button>
+        <button class="settings-menu-row hidden" id="settings-scada-roles-row" data-panel="scada-roles">
+          <span>SCADA Access</span><span class="settings-chevron">›</span>
+        </button>
         <div class="settings-menu-label">Admin</div>
         <button class="settings-menu-row" data-panel="bugreports">
           <span>Bug Reports</span><span class="settings-chevron">›</span>
@@ -1745,7 +1748,7 @@
     <div id="settings-panel-appinfo" class="settings-panel hidden">
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 2.54</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 2.55</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>
@@ -1993,6 +1996,21 @@
         </div>
       </div>
       <button id="gps-sel-save-btn" class="btn btn-save" style="margin:0 16px 16px;width:calc(100% - 32px)">Save</button>
+    </div>
+
+    <!-- SCADA Access panel (admin) -->
+    <div id="settings-panel-scada-roles" class="settings-panel hidden">
+      <div class="settings-section">
+        <div class="settings-card">
+          <div class="settings-pad">
+            <p style="font-size:0.85rem;color:var(--text-dim);margin:0 0 14px">
+              Choose which roles can see and open the SCADA Dashboard. Admin always has access. Changes apply to other users the next time they sign in.
+            </p>
+            <div id="scada-roles-list"></div>
+          </div>
+        </div>
+      </div>
+      <button id="scada-roles-save-btn" class="btn btn-save" style="margin:0 16px 16px;width:calc(100% - 32px)">Save</button>
     </div>
 
     <div id="settings-panel-usermgmt" class="settings-panel hidden">

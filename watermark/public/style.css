@@ -3261,6 +3261,10 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
   margin-top: 2px;
 }
 
+/* ── SCADA Access setting ──────────────────────────────────────────────────── */
+.scada-role-cb { width: 20px; height: 20px; accent-color: var(--accent); cursor: pointer; }
+.scada-role-cb:disabled { cursor: default; opacity: 0.6; }
+
 /* ── SCADA Dashboard ───────────────────────────────────────────────────────── */
 .scada-status-bar {
   background: #5a1a1a; color: #ef9a9a; border-radius: var(--radius-sm);
