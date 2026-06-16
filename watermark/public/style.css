@@ -3332,6 +3332,32 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
 }
 .scada-chart-canvas { width: 100% !important; height: 240px !important; }
 
+/* Top-level Overview | Trends toggle */
+.scada-tabs {
+  display: flex; gap: 6px; margin-bottom: 14px;
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 10px; padding: 4px;
+}
+.scada-tab {
+  flex: 1; padding: 8px 0; min-height: 40px;
+  border: none; background: transparent; cursor: pointer;
+  font-size: 0.9rem; font-weight: 600; color: var(--text-dim);
+  border-radius: 7px;
+}
+.scada-tab.active { background: var(--accent); color: #fff; }
+
+/* Trends view */
+.scada-trend-controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+.scada-trend-controls .ctrl-select { flex: 1; max-width: 260px; }
+.scada-trend-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.scada-trend-chip {
+  padding: 6px 12px; min-height: 36px;
+  border: 1px solid var(--border); border-radius: 16px;
+  background: var(--surface); color: var(--text-dim);
+  font-size: 0.82rem; cursor: pointer;
+}
+.scada-trend-chip.selected { background: var(--accent); border-color: var(--accent); color: #fff; }
+
 /* ── Print ───────────────────────────────────────────────────────────────── */
 @media print {
   html, body, #app-shell {

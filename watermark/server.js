@@ -4674,12 +4674,21 @@ app.get('/api/scada/current', requireAuth, requireScadaAccess, async (req, res) 
   } catch (err) { handleErr(res, err); }
 });
 
-// Aggregated history for one tag. ?tag=CVC_PP4B.FBLvl.SCL.PV&range=1h
+// Aggregated history. Single tag (?tag=...&range=1h) → array of [t,v] points.
+// Multiple tags (?tags=a,b,c&range=1h) → { series: { tag: [[t,v],...] } } for
+// stacking several readings on one chart. Capped at 8 series (chart palette).
 app.get('/api/scada/history', requireAuth, requireScadaAccess, async (req, res) => {
-  const { tag, range } = req.query;
-  if (!tag) return res.status(400).json({ error: 'tag required' });
+  const { tag, tags, range } = req.query;
+  const r = String(range || '1h');
   try {
-    res.json(await scadaGetHistory(String(tag), String(range || '1h')));
+    if (tags) {
+      const list = String(tags).split(',').map(s => s.trim()).filter(Boolean).slice(0, 8);
+      const series = {};
+      await Promise.all(list.map(async t => { series[t] = await scadaGetHistory(t, r); }));
+      return res.json({ series });
+    }
+    if (!tag) return res.status(400).json({ error: 'tag required' });
+    res.json(await scadaGetHistory(String(tag), r));
   } catch (err) { handleErr(res, err); }
 });
 

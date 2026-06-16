@@ -9,13 +9,19 @@
 
 let _scadaConfig  = null;   // { sites, sensorMeta, defaultSensors, pollMs }
 let _scadaCurrent = {};     // { tagPath: { v, t } }
-let _scadaView    = 'overview';   // 'overview' | siteId
+let _scadaView    = 'overview';   // 'overview' | 'trends' | siteId
 let _scadaES      = null;   // EventSource
 let _scadaChart   = null;   // Chart.js instance
-let _scadaChartTag = null;  // tag path currently charted
+let _scadaChartKey = null;  // identifies the series currently charted (race guard)
 let _scadaChartRange = '1h';
 let _scadaLastUpdate = 0;   // epoch ms of last good data
 let _scadaStatusTimer = null;
+
+// Trends view: persisted multi-select of tag paths (can span sites, like the
+// standalone dashboard), the site whose chips are shown, and the range.
+let _scadaTrendTags  = new Set(JSON.parse(localStorage.getItem('scadaTrendTags') || '[]'));
+let _scadaTrendSite  = localStorage.getItem('scadaTrendSite') || '';
+let _scadaTrendRange = localStorage.getItem('scadaTrendRange') || '24h';
 
 // Chart.js + the date-fns time adapter are bundled locally (under /vendor) so the
 // trend charts work offline as part of the PWA shell — no CDN dependency.
@@ -40,8 +46,27 @@ async function initScadaScreen() {
       return;
     }
   }
-  renderScadaOverview();
+  showScadaTab('overview');
   startScadaStream();
+}
+
+/* ── Top-level tabs: Overview | Trends ─────────────────────────────────────── */
+function scadaTabsHtml(active) {
+  return `<div class="scada-tabs">
+    <button class="scada-tab ${active === 'overview' ? 'active' : ''}" data-scada-tab="overview">Overview</button>
+    <button class="scada-tab ${active === 'trends' ? 'active' : ''}" data-scada-tab="trends">Trends</button>
+  </div>`;
+}
+
+function wireScadaTabs() {
+  el('scada-body').querySelectorAll('[data-scada-tab]').forEach(b =>
+    b.addEventListener('click', () => showScadaTab(b.dataset.scadaTab)));
+}
+
+function showScadaTab(tab) {
+  setPanelNav(el('screen-scada'), () => showScreen('dashboard'), 'SCADA Dashboard');
+  if (tab === 'trends') renderScadaTrends();
+  else renderScadaOverview();
 }
 
 /* ── Live stream (SSE) ────────────────────────────────────────────────────── */
@@ -65,7 +90,7 @@ function stopScadaStream() {
   if (_scadaES) { _scadaES.close(); _scadaES = null; }
   clearInterval(_scadaStatusTimer);
   _scadaStatusTimer = null;
-  if (_scadaChart) { _scadaChart.destroy(); _scadaChart = null; _scadaChartTag = null; }
+  if (_scadaChart) { _scadaChart.destroy(); _scadaChart = null; _scadaChartKey = null; }
 }
 
 function applyScadaCurrent(data) {
@@ -74,6 +99,7 @@ function applyScadaCurrent(data) {
   _scadaLastUpdate = Date.now();
   setScadaStatus(true);
   if (_scadaView === 'overview') renderScadaOverview();
+  else if (_scadaView === 'trends') { /* historical chart — leave it alone */ }
   else patchScadaDetail();
 }
 
@@ -107,6 +133,22 @@ function fmtSensor(sensor, v) {
   return Number(v).toFixed(2);
 }
 
+function scadaSiteByInflux(influx) { return _scadaConfig.sites.find(s => s.influxSite === influx); }
+
+// Human label for a tag path, e.g. "CVC PP 4B · Forebay Level" or "CVC PP 1A · Pump C RPM".
+function scadaTagLabel(path, withSite = true) {
+  const parts = path.split('.');
+  const site = scadaSiteByInflux(parts[0]);
+  const siteName = site ? site.name : parts[0];
+  let label = path;
+  if (parts.length === 4 && parts[2] === 'SCL' && parts[3] === 'PV') {
+    label = _scadaConfig.sensorMeta?.[parts[1]]?.label || parts[1];
+  } else if (parts[2] === 'MTR' && parts[3] === 'Spd') {
+    label = `Pump ${site ? pumpLabel(site, parts[1]) : parts[1]} RPM`;
+  }
+  return withSite ? `${siteName} · ${label}` : label;
+}
+
 /* ── Overview ─────────────────────────────────────────────────────────────── */
 function renderScadaOverview() {
   _scadaView = 'overview';
@@ -134,7 +176,8 @@ function renderScadaOverview() {
         </div>
       </button>`;
   }).join('');
-  body.innerHTML = `<div class="scada-overview-grid">${cards}</div>`;
+  body.innerHTML = scadaTabsHtml('overview') + `<div class="scada-overview-grid">${cards}</div>`;
+  wireScadaTabs();
   body.querySelectorAll('[data-scada-site]').forEach(c =>
     c.addEventListener('click', () => openScadaSite(c.dataset.scadaSite)));
 }
@@ -144,7 +187,7 @@ function openScadaSite(siteId) {
   const site = _scadaConfig.sites.find(s => s.id === siteId);
   if (!site) return;
   _scadaView = siteId;
-  setPanelNav(el('screen-scada'), renderScadaOverview, 'SCADA – ' + site.name);
+  setPanelNav(el('screen-scada'), () => showScadaTab('overview'), 'SCADA – ' + site.name);
   renderScadaDetail(site);
 }
 
@@ -282,49 +325,65 @@ function scadaThemeColors() {
 
 const SCADA_STATUS_RE = /\.(Run|Fail|Enable)$/;
 
-async function renderScadaChart(tagPath, range) {
-  const canvas = el('scada-chart-canvas');
+// Scriptable gradient fill for single-series charts (built from the real chart
+// area once Chart.js has laid it out, so it's correct before first paint).
+function scadaFill(color) {
+  return (context) => {
+    const { ctx, chartArea } = context.chart;
+    if (!chartArea) return color + '20';
+    const g = ctx.createLinearGradient(0, chartArea.top, 0, chartArea.bottom);
+    g.addColorStop(0, color + '40');
+    g.addColorStop(1, color + '00');
+    return g;
+  };
+}
+
+// Draw a line chart of one or more tag paths into `canvas`. Multiple paths are
+// overlaid for comparison (each its own color + legend entry).
+async function drawScadaChart(canvas, tagPaths, range) {
   if (!canvas) return;
-  _scadaChartTag = tagPath;
+  if (!tagPaths.length) { if (_scadaChart) { _scadaChart.destroy(); _scadaChart = null; } return; }
+  const key = tagPaths.join('|') + '@' + range;
+  _scadaChartKey = key;
   try {
     await loadScadaVendor();
-    const data = await api('GET', `/api/scada/history?tag=${encodeURIComponent(tagPath)}&range=${encodeURIComponent(range)}`);
-    if (_scadaChartTag !== tagPath) return; // selection changed while loading
+    let series;
+    if (tagPaths.length === 1) {
+      const arr = await api('GET', `/api/scada/history?tag=${encodeURIComponent(tagPaths[0])}&range=${encodeURIComponent(range)}`);
+      series = { [tagPaths[0]]: arr };
+    } else {
+      const resp = await api('GET', `/api/scada/history?tags=${encodeURIComponent(tagPaths.join(','))}&range=${encodeURIComponent(range)}`);
+      series = resp.series || {};
+    }
+    if (_scadaChartKey !== key) return; // selection changed while loading
 
     const c = scadaThemeColors();
-    const color = SCADA_SERIES_COLORS[0];
-    const ctx = canvas.getContext('2d');
-    // Soft top-down fill under the line, fading to transparent. Scriptable so the
-    // gradient is built from the real chart area once Chart.js has laid it out.
-    const fill = (context) => {
-      const { ctx: cx, chartArea } = context.chart;
-      if (!chartArea) return color + '20';
-      const g = cx.createLinearGradient(0, chartArea.top, 0, chartArea.bottom);
-      g.addColorStop(0, color + '40');
-      g.addColorStop(1, color + '00');
-      return g;
-    };
-
-    const points = data.map(([t, v]) => ({ x: t, y: v }));
-    const stepped = SCADA_STATUS_RE.test(tagPath);
-    if (_scadaChart) { _scadaChart.destroy(); _scadaChart = null; }
-    _scadaChart = new window.Chart(ctx, {
-      type: 'line',
-      data: { datasets: [{
-        data: points,
+    const single = tagPaths.length === 1;
+    const datasets = tagPaths.map((p, i) => {
+      const color = SCADA_SERIES_COLORS[i % SCADA_SERIES_COLORS.length];
+      const stepped = SCADA_STATUS_RE.test(p);
+      return {
+        label: scadaTagLabel(p),
+        data: (series[p] || []).map(([t, v]) => ({ x: t, y: v })),
         borderColor: color,
-        backgroundColor: fill,
+        backgroundColor: single ? scadaFill(color) : color + '22',
         borderWidth: 1.8,
         pointRadius: 0,
         tension: stepped ? 0 : 0.25,
         stepped,
-        fill: true,
-      }] },
+        fill: single,
+      };
+    });
+
+    if (_scadaChart) { _scadaChart.destroy(); _scadaChart = null; }
+    _scadaChart = new window.Chart(canvas.getContext('2d'), {
+      type: 'line',
+      data: { datasets },
       options: {
         responsive: true, maintainAspectRatio: false, animation: false,
         interaction: { mode: 'nearest', axis: 'x', intersect: false },
         plugins: {
-          legend: { display: false },
+          legend: { display: !single, labels: { color: c.text, boxWidth: 14, usePointStyle: true } },
           tooltip: {
             backgroundColor: c.surface, titleColor: c.text, bodyColor: c.text,
             borderColor: c.grid, borderWidth: 1,
@@ -347,4 +406,95 @@ async function renderScadaChart(tagPath, range) {
   } catch (err) {
     showToast(err.message || 'Chart failed to load', 'error');
   }
+}
+
+// Site-detail convenience wrapper — single tag into the detail canvas.
+function renderScadaChart(tagPath, range) {
+  return drawScadaChart(el('scada-chart-canvas'), [tagPath], range);
+}
+
+/* ── Trends view (multi-select chips, stack readings across sites) ─────────── */
+function renderScadaTrends() {
+  _scadaView = 'trends';
+  const sites = _scadaConfig.sites;
+  if (!_scadaTrendSite || !sites.some(s => s.id === _scadaTrendSite)) {
+    _scadaTrendSite = sites[0]?.id || '';
+  }
+  const siteOpts = sites.map(s =>
+    `<option value="${s.id}" ${s.id === _scadaTrendSite ? 'selected' : ''}>${escHtml(s.name)}</option>`).join('');
+
+  el('scada-body').innerHTML = scadaTabsHtml('trends') + `
+    <div class="scada-trend-controls">
+      <select id="scada-trend-site" class="ctrl-select ctrl-input-sm">${siteOpts}</select>
+      <div class="seg-group" id="scada-trend-range">
+        <button class="seg-btn" data-range="1h">1h</button>
+        <button class="seg-btn" data-range="6h">6h</button>
+        <button class="seg-btn" data-range="24h">24h</button>
+        <button class="seg-btn" data-range="7d">7d</button>
+      </div>
+    </div>
+    <div class="scada-trend-chips" id="scada-trend-chips"></div>
+    <div class="scada-chart-wrap"><canvas id="scada-trend-canvas" class="scada-chart-canvas"></canvas></div>
+    <p class="placeholder-msg" id="scada-trend-empty">Pick one or more readings above to plot. Selections from other sites stay on the chart for comparison.</p>`;
+
+  wireScadaTabs();
+
+  // Mark the active range button
+  el('scada-trend-range').querySelectorAll('.seg-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.range === _scadaTrendRange);
+    b.addEventListener('click', () => {
+      el('scada-trend-range').querySelectorAll('.seg-btn').forEach(x => x.classList.remove('active'));
+      b.classList.add('active');
+      _scadaTrendRange = b.dataset.range;
+      localStorage.setItem('scadaTrendRange', _scadaTrendRange);
+      refreshScadaTrendChart();
+    });
+  });
+
+  el('scada-trend-site').addEventListener('change', e => {
+    _scadaTrendSite = e.target.value;
+    localStorage.setItem('scadaTrendSite', _scadaTrendSite);
+    buildScadaTrendChips();
+  });
+
+  buildScadaTrendChips();
+  refreshScadaTrendChart();
+}
+
+// Chips for the currently selected site (sensors + each pump's RPM). Selecting a
+// chip toggles its tag in the persisted set; chips from other sites stay selected.
+function buildScadaTrendChips() {
+  const wrap = el('scada-trend-chips');
+  if (!wrap) return;
+  const site = _scadaConfig.sites.find(s => s.id === _scadaTrendSite);
+  if (!site) { wrap.innerHTML = ''; return; }
+  const sensors = site.sensors || _scadaConfig.defaultSensors || [];
+  const tags = [
+    ...sensors.map(s => scadaSensorPath(site, s)),
+    ...site.pumps.map(p => scadaPumpPath(site, p, 'MTR.Spd.SCL.PV')),
+  ];
+  wrap.innerHTML = tags.map(path =>
+    `<button class="scada-trend-chip ${_scadaTrendTags.has(path) ? 'selected' : ''}" data-trend-tag="${path}">
+       ${escHtml(scadaTagLabel(path, false))}
+     </button>`).join('');
+  wrap.querySelectorAll('[data-trend-tag]').forEach(chip =>
+    chip.addEventListener('click', () => {
+      const path = chip.dataset.trendTag;
+      if (_scadaTrendTags.has(path)) _scadaTrendTags.delete(path);
+      else if (_scadaTrendTags.size < 8) _scadaTrendTags.add(path);
+      else { showToast('Up to 8 readings at once', 'error'); return; }
+      localStorage.setItem('scadaTrendTags', JSON.stringify([..._scadaTrendTags]));
+      chip.classList.toggle('selected', _scadaTrendTags.has(path));
+      refreshScadaTrendChart();
+    }));
+}
+
+function refreshScadaTrendChart() {
+  const tags = [..._scadaTrendTags];
+  const empty = el('scada-trend-empty');
+  const wrap = el('scada-trend-canvas')?.closest('.scada-chart-wrap');
+  if (empty) empty.classList.toggle('hidden', tags.length > 0);
+  if (wrap) wrap.classList.toggle('hidden', tags.length === 0);
+  if (tags.length) drawScadaChart(el('scada-trend-canvas'), tags, _scadaTrendRange);
+  else if (_scadaChart) { _scadaChart.destroy(); _scadaChart = null; }
 }
