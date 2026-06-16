@@ -34,6 +34,7 @@ applyTheme(localStorage.getItem('watermark-theme') || 'dark');
 /* ── State ───────────────────────────────────────────────────────────────── */
 let currentUser   = null;
 let currentScreen = null;
+let _usersList    = null;
 
 // Pumping plant state
 const pp = {
@@ -54,6 +55,17 @@ function el(id) { return document.getElementById(id); }
 function todayISO() {
   return new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD in local time
 }
+
+const SUPERVISOR_ROLES = ['supervisor', 'admin', 'water-planner'];
+function isSupervisorLevel(role) { return SUPERVISOR_ROLES.includes(role ?? ''); }
+
+const ROLE_LABELS = {
+  admin: 'Admin', supervisor: 'Supervisor', operator: 'Operator',
+  'water-planner': 'Water Planner', 'systems-operator': 'Systems Operator',
+  'heavy-equipment-operator': 'Heavy Equipment Operator',
+  'pump-tech': 'Pump Tech', 'elec-tech': 'Elec Tech',
+};
+function formatRole(role) { return ROLE_LABELS[role] || role; }
 
 // Parse a YYYY-MM-DD string as local midnight (avoids UTC-offset day-behind bug)
 function localDateStr(isoDate, opts = { month: 'short', day: 'numeric', year: 'numeric' }) {
@@ -512,7 +524,7 @@ function showScreen(name) {
 
   // Block supervisor/admin-only screens for operators
   if (name === 'reports') {
-    if (!currentUser || (currentUser.role !== 'admin' && currentUser.role !== 'supervisor')) {
+    if (!currentUser || !isSupervisorLevel(currentUser.role)) {
       showScreen('dashboard');
       return;
     }
@@ -606,7 +618,7 @@ function onLogin(user) {
   el('dash-reports-tile').classList.add('hidden');
   el('settings-admin-section').classList.add('hidden');
   el('settings-widgets-section').classList.add('hidden');
-  if (user.role === 'admin' || user.role === 'supervisor') {
+  if (isSupervisorLevel(user.role)) {
     el('nav-reports-item').classList.remove('hidden');
     el('dash-reports-tile').classList.remove('hidden');
     el('settings-admin-section').classList.remove('hidden');
@@ -615,11 +627,12 @@ function onLogin(user) {
   // Populate account info on settings screen
   el('settings-full-name').textContent = user.full_name || '—';
   el('settings-username').textContent  = user.username;
-  el('settings-role').textContent      = user.role.charAt(0).toUpperCase() + user.role.slice(1);
+  el('settings-role').textContent      = formatRole(user.role);
 
   showScreen('dashboard');
   loadDashboardStats();
   refreshPendingSync();
+  loadAssignmentBadge();
 }
 
 /* ── Pending Sync Buttons ────────────────────────────────────────────────── */
@@ -680,6 +693,8 @@ async function loadDashboardStats() {
 function onLogout() {
   currentUser = null;
   localStorage.removeItem('watermark-user');
+  // Purge cached API data so it doesn't linger on shared devices (S-5)
+  navigator.serviceWorker?.controller?.postMessage({ type: 'clear-api-cache' });
   el('app-shell').classList.add('hidden');
   el('screen-login').classList.add('active');
   el('login-password').value = '';
@@ -711,6 +726,10 @@ async function checkAuth() {
     const cached = localStorage.getItem('watermark-user');
     if (isNetworkError && cached) {
       try { onLogin(JSON.parse(cached)); } catch { /* bad cache, ignore */ }
+    } else if (!isNetworkError) {
+      // Session rejected (expired/invalid) — purge cached API data (S-5)
+      localStorage.removeItem('watermark-user');
+      navigator.serviceWorker?.controller?.postMessage({ type: 'clear-api-cache' });
     }
     // Otherwise: not logged in — show login screen (already visible by default)
   }
@@ -858,7 +877,7 @@ async function openHistoryModal(type, id, label) {
         const valCells = cols.map(c => `<td>${r[c.key] != null ? r[c.key] : '—'}</td>`).join('');
 
         const showDel = canDeleteAll ||
-          (role === 'supervisor' && isWithin24h(r.reading_date, r.reading_time)) ||
+          (isSupervisorLevel(role) && isWithin24h(r.reading_date, r.reading_time)) ||
           (r.entered_by === username && isWithin24h(r.reading_date, r.reading_time));
 
         const tr = document.createElement('tr');
@@ -1878,16 +1897,47 @@ function createVehicleItem(v, dateInput, timeInput) {
   return div;
 }
 
+/* ── Shared helpers for assignment dropdowns ─────────────────────────────── */
+async function loadUsersList() {
+  if (_usersList) return _usersList;
+  _usersList = await api('GET', '/api/users/list').catch(() => []);
+  return _usersList;
+}
+
+function userSelectOptions(currentValue) {
+  const users = _usersList || [];
+  let html = '<option value="">— Unassigned —</option>';
+  users.forEach(u => {
+    const sel = u.full_name === currentValue ? ' selected' : '';
+    html += `<option value="${escHtml(u.full_name)}"${sel}>${escHtml(u.full_name)}</option>`;
+  });
+  // Keep legacy free-text value visible even if not in active users list
+  if (currentValue && !users.find(u => u.full_name === currentValue)) {
+    html += `<option value="${escHtml(currentValue)}" selected>${escHtml(currentValue)}</option>`;
+  }
+  return html;
+}
+
+function populateAssignedSelect(selId) {
+  const sel = el(selId);
+  if (!sel) return;
+  sel.innerHTML = userSelectOptions('');
+}
+
 /* ── Well Issues ─────────────────────────────────────────────────────────── */
 let wellIssuesLoaded  = false;
 let wellIssues        = [];
 let wellShowResolved  = false;
+let _wellFilterWell   = '';
+let _wellFilterArea   = '';
+let _wellFilterQ      = '';
 
 function initMaintWellsPanel() {
   if (wellIssuesLoaded) return;
   wellIssuesLoaded = true;
   el('well-issue-date').value = todayISO();
   loadWellIssues();
+  loadUsersList().then(() => populateAssignedSelect('well-issue-assigned')).catch(() => {});
   // Populate well dropdown
   api('GET', '/api/wells/operational').then(wells => {
     const sel = el('well-issue-select');
@@ -1900,16 +1950,66 @@ function initMaintWellsPanel() {
       sel.appendChild(opt);
     });
   }).catch(() => {});
+
+  // Wire filter bar
+  el('well-filter-well').addEventListener('change', () => {
+    _wellFilterWell = el('well-filter-well').value;
+    applyWellFilters();
+  });
+  el('well-filter-area').addEventListener('change', () => {
+    _wellFilterArea = el('well-filter-area').value;
+    applyWellFilters();
+  });
+  let _wfqTimer;
+  el('well-filter-q').addEventListener('input', () => {
+    clearTimeout(_wfqTimer);
+    _wfqTimer = setTimeout(() => {
+      _wellFilterQ = el('well-filter-q').value.trim();
+      applyWellFilters();
+    }, 250);
+  });
 }
 
 async function loadWellIssues() {
   try {
     wellIssues = await api('GET', `/api/well-issues?include_resolved=${wellShowResolved}`);
-    renderWellIssues();
+    populateWellFilterDropdowns();
+    applyWellFilters();
     updateWellBadge();
   } catch {
     el('well-issue-list').innerHTML = `<div class="placeholder-msg">Failed to load issues</div>`;
   }
+}
+
+function populateWellFilterDropdowns() {
+  const wellSel = el('well-filter-well');
+  const prevWell = wellSel.value;
+  const seenWells = new Map();
+  wellIssues.forEach(i => { if (i.well_id && !seenWells.has(i.well_id)) seenWells.set(i.well_id, i); });
+  const sortedWells = [...seenWells.values()].sort((a, b) => (a.well_name || '').localeCompare(b.well_name || ''));
+  wellSel.innerHTML = '<option value="">All Wells</option>' +
+    sortedWells.map(i => `<option value="${i.well_id}"${String(i.well_id) === prevWell ? ' selected' : ''}>${escHtml(i.well_area ? `${i.well_name} (${i.well_area})` : i.well_name || '')}</option>`).join('');
+
+  const areaSel = el('well-filter-area');
+  const prevArea = areaSel.value;
+  const areas = [...new Set(wellIssues.map(i => i.well_area).filter(Boolean))].sort();
+  areaSel.innerHTML = '<option value="">All Areas</option>' +
+    areas.map(a => `<option value="${escHtml(a)}"${a === prevArea ? ' selected' : ''}>${escHtml(a)}</option>`).join('');
+}
+
+function applyWellFilters() {
+  let items = wellIssues;
+  if (_wellFilterWell) items = items.filter(i => String(i.well_id) === _wellFilterWell);
+  if (_wellFilterArea) items = items.filter(i => i.well_area === _wellFilterArea);
+  if (_wellFilterQ) {
+    const q = _wellFilterQ.toLowerCase();
+    items = items.filter(i =>
+      [i.well_name, i.well_area, i.description, i.action_taken,
+       i.resolution_notes, i.assigned_to, i.entered_by_full_name, i.notes]
+        .some(f => (f || '').toLowerCase().includes(q))
+    );
+  }
+  renderWellIssues(items);
 }
 
 function updateWellBadge() {
@@ -1917,13 +2017,15 @@ function updateWellBadge() {
   setBadge('maint-badge-wells', count);
 }
 
-function renderWellIssues() {
+function renderWellIssues(items) {
+  items = items ?? wellIssues;
   const list = el('well-issue-list');
-  if (!wellIssues.length) {
-    list.innerHTML = `<div class="placeholder-msg">No ${wellShowResolved ? '' : 'open '}issues</div>`;
+  if (!items.length) {
+    const hasFilters = _wellFilterWell || _wellFilterArea || _wellFilterQ;
+    list.innerHTML = `<div class="placeholder-msg">${hasFilters ? 'No matching issues.' : `No ${wellShowResolved ? '' : 'open '}issues`}</div>`;
     return;
   }
-  list.innerHTML = wellIssues.map(issue => {
+  list.innerHTML = items.map(issue => {
     const statusClass = issue.status.replace('_', '-');
     const title   = issue.well_area ? `${issue.well_name} (${issue.well_area})` : (issue.well_name || 'Unknown Well');
     const snippet = (issue.description || '').slice(0, 80) + (issue.description?.length > 80 ? '…' : '');
@@ -1973,7 +2075,7 @@ function renderWellIssues() {
           </div>
           <div class="form-group">
             <label>Assigned To</label>
-            <input type="text" class="ctrl-input issue-assigned" value="${escHtml(issue.assigned_to || '')}" placeholder="Optional">
+            <select class="ctrl-select issue-assigned">${userSelectOptions(issue.assigned_to)}</select>
           </div>
           <div class="form-group">
             <label>Attachments</label>
@@ -2149,12 +2251,20 @@ el('well-issue-list').addEventListener('click', async e => {
 let bldgIssuesLoaded  = false;
 let bldgIssues        = [];
 let bldgShowResolved  = false;
+let _bldgFilterSite   = '';
+let _bldgFilterQ      = '';
 
 function initMaintBuildingsPanel() {
   if (bldgIssuesLoaded) return;
   bldgIssuesLoaded = true;
+
+  el('bldg-filter-site').addEventListener('change', () => { _bldgFilterSite = el('bldg-filter-site').value; applyBldgFilters(); });
+  let _bfqT;
+  el('bldg-filter-q').addEventListener('input', () => { clearTimeout(_bfqT); _bfqT = setTimeout(() => { _bldgFilterQ = el('bldg-filter-q').value.trim(); applyBldgFilters(); }, 250); });
+
   el('bldg-issue-date').value = todayISO();
   loadBldgIssues();
+  loadUsersList().then(() => populateAssignedSelect('bldg-issue-assigned')).catch(() => {});
   // Load sites for new-issue form
   api('GET', '/api/sites').then(sites => {
     const sel = el('bldg-issue-site');
@@ -2171,7 +2281,8 @@ function initMaintBuildingsPanel() {
 async function loadBldgIssues() {
   try {
     bldgIssues = await api('GET', `/api/building-issues?include_resolved=${bldgShowResolved}`);
-    renderBldgIssues();
+    populateBldgFilterDropdowns();
+    applyBldgFilters();
     updateBldgBadge();
   } catch {
     el('bldg-issue-list').innerHTML = `<div class="placeholder-msg">Failed to load issues</div>`;
@@ -2183,13 +2294,37 @@ function updateBldgBadge() {
   setBadge('maint-badge-buildings', count);
 }
 
-function renderBldgIssues() {
+function populateBldgFilterDropdowns() {
+  const sSel = el('bldg-filter-site');
+  const prev = sSel.value;
+  const sites = [...new Set(bldgIssues.map(i => i.site_name).filter(Boolean))].sort();
+  sSel.innerHTML = '<option value="">All Sites</option>' +
+    sites.map(s => `<option value="${escHtml(s)}"${s === prev ? ' selected' : ''}>${escHtml(s)}</option>`).join('');
+}
+
+function applyBldgFilters() {
+  let items = bldgIssues;
+  if (_bldgFilterSite) items = items.filter(i => i.site_name === _bldgFilterSite);
+  if (_bldgFilterQ) {
+    const q = _bldgFilterQ.toLowerCase();
+    items = items.filter(i =>
+      [i.site_name, i.building_name, i.description, i.action_taken,
+       i.resolution_notes, i.assigned_to, i.entered_by_full_name, i.notes]
+        .some(f => (f || '').toLowerCase().includes(q))
+    );
+  }
+  renderBldgIssues(items);
+}
+
+function renderBldgIssues(items) {
+  items = items ?? bldgIssues;
   const list = el('bldg-issue-list');
-  if (!bldgIssues.length) {
-    list.innerHTML = `<div class="placeholder-msg">No ${bldgShowResolved ? '' : 'open '}issues</div>`;
+  if (!items.length) {
+    const hasF = _bldgFilterSite || _bldgFilterQ;
+    list.innerHTML = `<div class="placeholder-msg">${hasF ? 'No matching issues.' : `No ${bldgShowResolved ? '' : 'open '}issues`}</div>`;
     return;
   }
-  list.innerHTML = bldgIssues.map(issue => {
+  list.innerHTML = items.map(issue => {
     const statusClass = issue.status.replace('_', '-');
     const title   = [issue.site_name, issue.building_name].filter(Boolean).join(' — ') || 'Unknown Building';
     const snippet = (issue.description || '').slice(0, 80) + (issue.description?.length > 80 ? '…' : '');
@@ -2239,7 +2374,7 @@ function renderBldgIssues() {
           </div>
           <div class="form-group">
             <label>Assigned To</label>
-            <input type="text" class="ctrl-input issue-assigned" value="${escHtml(issue.assigned_to || '')}" placeholder="Optional">
+            <select class="ctrl-select issue-assigned">${userSelectOptions(issue.assigned_to)}</select>
           </div>
           <div class="form-group">
             <label>Attachments</label>
@@ -2424,24 +2559,46 @@ el('bldg-issue-list').addEventListener('click', async e => {
 let equipIssuesLoaded = false;
 let equipIssues       = [];
 let equipShowResolved = false;
+let _equipFilterType  = '';
+let _equipFilterQ     = '';
 let equipNewType      = 'pump';
 
 function initMaintEquipmentPanel() {
   if (equipIssuesLoaded) return;
   equipIssuesLoaded = true;
+
+  el('equip-filter-type').addEventListener('change', () => { _equipFilterType = el('equip-filter-type').value; applyEquipFilters(); });
+  let _efqT;
+  el('equip-filter-q').addEventListener('input', () => { clearTimeout(_efqT); _efqT = setTimeout(() => { _equipFilterQ = el('equip-filter-q').value.trim(); applyEquipFilters(); }, 250); });
+
   el('equip-issue-date').value = todayISO();
   loadEquipIssues();
   loadEquipForNewIssue(equipNewType);
+  loadUsersList().then(() => populateAssignedSelect('equip-issue-assigned')).catch(() => {});
 }
 
 async function loadEquipIssues() {
   try {
     equipIssues = await api('GET', `/api/equipment-issues?include_resolved=${equipShowResolved}`);
-    renderEquipIssues();
+    applyEquipFilters();
     updateEquipBadge();
   } catch (err) {
     el('equip-issue-list').innerHTML = `<div class="placeholder-msg">Failed to load issues</div>`;
   }
+}
+
+function applyEquipFilters() {
+  let items = equipIssues;
+  if (_equipFilterType) items = items.filter(i => i.equipment_type === _equipFilterType);
+  if (_equipFilterQ) {
+    const q = _equipFilterQ.toLowerCase();
+    items = items.filter(i =>
+      [i.equipment_name, i.equipment_type, i.description, i.action_taken,
+       i.resolution_notes, i.assigned_to, i.entered_by_full_name, i.notes]
+        .some(f => (f || '').toLowerCase().includes(q))
+    );
+  }
+  renderEquipIssues(items);
 }
 
 function updateEquipBadge() {
@@ -2449,13 +2606,15 @@ function updateEquipBadge() {
   setBadge('maint-badge-equipment', count);
 }
 
-function renderEquipIssues() {
+function renderEquipIssues(items) {
+  items = items ?? equipIssues;
   const list = el('equip-issue-list');
-  if (!equipIssues.length) {
-    list.innerHTML = `<div class="placeholder-msg">No ${equipShowResolved ? '' : 'open '}issues</div>`;
+  if (!items.length) {
+    const hasF = _equipFilterType || _equipFilterQ;
+    list.innerHTML = `<div class="placeholder-msg">${hasF ? 'No matching issues.' : `No ${equipShowResolved ? '' : 'open '}issues`}</div>`;
     return;
   }
-  list.innerHTML = equipIssues.map(issue => {
+  list.innerHTML = items.map(issue => {
     const statusClass = issue.status.replace('_', '-');
     const snippet = (issue.description || '').slice(0, 80) + (issue.description?.length > 80 ? '…' : '');
     const entityName = (issue.equipment_name || issue.equipment_type || 'equip').replace(/[^a-zA-Z0-9-]/g,'_').replace(/_+/g,'_').replace(/^_|_$/,'').slice(0,30);
@@ -2504,7 +2663,7 @@ function renderEquipIssues() {
           </div>
           <div class="form-group">
             <label>Assigned To</label>
-            <input type="text" class="ctrl-input issue-assigned" value="${escHtml(issue.assigned_to || '')}" placeholder="Optional">
+            <select class="ctrl-select issue-assigned">${userSelectOptions(issue.assigned_to)}</select>
           </div>
           <div class="form-group">
             <label>Attachments</label>
@@ -2711,11 +2870,18 @@ el('equip-issue-list').addEventListener('click', async e => {
 let canalIssues       = [];
 let canalIssuesLoaded = false;
 let canalShowResolved = false;
+let _canalFilterPool  = '';
+let _canalFilterQ     = '';
 let canalNewPhotos    = []; // [{file, gps}] for new-issue form, gps is null until extracted
 
 function initMaintCanalPanel() {
   if (canalIssuesLoaded) return;
   canalIssuesLoaded = true;
+
+  el('canal-filter-pool').addEventListener('change', () => { _canalFilterPool = el('canal-filter-pool').value; applyCanalFilters(); });
+  let _cfqT;
+  el('canal-filter-q').addEventListener('input', () => { clearTimeout(_cfqT); _cfqT = setTimeout(() => { _canalFilterQ = el('canal-filter-q').value.trim(); applyCanalFilters(); }, 250); });
+
   el('canal-issue-date').value = todayISO();
   loadCanalIssues();
 }
@@ -2723,7 +2889,8 @@ function initMaintCanalPanel() {
 async function loadCanalIssues() {
   try {
     canalIssues = await api('GET', `/api/canal-issues?include_resolved=${canalShowResolved}`);
-    renderCanalIssues();
+    populateCanalFilterDropdowns();
+    applyCanalFilters();
     updateCanalBadge();
   } catch {
     el('canal-issue-list').innerHTML = `<div class="placeholder-msg">Failed to load issues</div>`;
@@ -2735,13 +2902,37 @@ function updateCanalBadge() {
   setBadge('maint-badge-canal', count);
 }
 
-function renderCanalIssues() {
+function populateCanalFilterDropdowns() {
+  const pSel = el('canal-filter-pool');
+  const prev = pSel.value;
+  const pools = [...new Set(canalIssues.map(i => i.pool).filter(Boolean))].sort((a, b) => Number(a) - Number(b));
+  pSel.innerHTML = '<option value="">All Pools</option>' +
+    pools.map(p => `<option value="${escHtml(p)}"${p === prev ? ' selected' : ''}>Pool ${escHtml(p)}</option>`).join('');
+}
+
+function applyCanalFilters() {
+  let items = canalIssues;
+  if (_canalFilterPool) items = items.filter(i => String(i.pool) === _canalFilterPool);
+  if (_canalFilterQ) {
+    const q = _canalFilterQ.toLowerCase();
+    items = items.filter(i =>
+      [i.pool ? `pool ${i.pool}` : '', i.description, i.action_taken,
+       i.resolution_notes, i.assigned_to, i.entered_by_full_name, i.notes]
+        .some(f => (f || '').toLowerCase().includes(q))
+    );
+  }
+  renderCanalIssues(items);
+}
+
+function renderCanalIssues(items) {
+  items = items ?? canalIssues;
   const list = el('canal-issue-list');
-  if (!canalIssues.length) {
-    list.innerHTML = `<div class="placeholder-msg">No ${canalShowResolved ? '' : 'open '}issues</div>`;
+  if (!items.length) {
+    const hasF = _canalFilterPool || _canalFilterQ;
+    list.innerHTML = `<div class="placeholder-msg">${hasF ? 'No matching issues.' : `No ${canalShowResolved ? '' : 'open '}issues`}</div>`;
     return;
   }
-  list.innerHTML = canalIssues.map(issue => {
+  list.innerHTML = items.map(issue => {
     const statusClass = issue.status.replace('_', '-');
     const title   = issue.pool ? `Pool ${escHtml(issue.pool)}` : 'Canal';
     const snippet = (issue.description || '').slice(0, 80) + (issue.description?.length > 80 ? '…' : '');
@@ -2849,21 +3040,25 @@ function renderCanalNewPhotoList() {
       ${p.gps ? `<button type="button" class="canal-aq-map-btn" data-idx="${i}" style="padding:2px 7px;font-size:0.8rem;border:1px solid var(--border);border-radius:6px;background:var(--surface2);cursor:pointer">&#127757;</button>` : ''}
       <button class="maint-aq-remove canal-new-aq-remove" data-idx="${i}">×</button>
     </div>`).join('');
-  listEl.querySelectorAll('.canal-new-aq-remove').forEach(btn => {
-    btn.addEventListener('click', e => {
-      e.stopPropagation();
-      canalNewPhotos.splice(parseInt(btn.dataset.idx), 1);
-      renderCanalNewPhotoList();
-    });
-  });
-  listEl.querySelectorAll('.canal-aq-map-btn').forEach(btn => {
-    btn.addEventListener('click', e => {
-      e.stopPropagation();
-      const p = canalNewPhotos[parseInt(btn.dataset.idx)];
-      if (p?.gps) openGPSMap(p.gps.lat, p.gps.lon);
-    });
-  });
 }
+
+// One delegated listener — render only sets innerHTML, so handlers can't
+// stack across re-renders as EXIF GPS results come in (E-1)
+el('canal-new-photo-list').addEventListener('click', e => {
+  const rm = e.target.closest('.canal-new-aq-remove');
+  if (rm) {
+    e.stopPropagation();
+    canalNewPhotos.splice(parseInt(rm.dataset.idx), 1);
+    renderCanalNewPhotoList();
+    return;
+  }
+  const mapBtn = e.target.closest('.canal-aq-map-btn');
+  if (mapBtn) {
+    e.stopPropagation();
+    const p = canalNewPhotos[parseInt(mapBtn.dataset.idx)];
+    if (p?.gps) openGPSMap(p.gps.lat, p.gps.lon);
+  }
+});
 
 // Photo picker for new issue (multiple)
 const canalNewPhotoInput = document.createElement('input');
@@ -3095,12 +3290,19 @@ async function shareMaintenanceReport(issueId, item, cfg) {
     let gps = cfg.getGPS ? cfg.getGPS(issue) : null;
     if (!gps && cfg.resolveGPS) gps = await cfg.resolveGPS(photoBlobs);
 
-    // Optional GPS map with pin
+    // Optional GPS map with pin.
+    // Use a Web Mercator (EPSG:3857) bbox so the GPS point falls exactly at the
+    // image pixel center where the pin is drawn. A geographic (4326) bbox renders
+    // in Mercator, making equal-degree lat/lon intervals map to unequal pixel
+    // distances — which shifts the pin off the true location.
     let mapSrc = null;
     if (gps) {
-      const pad = 0.0015;
-      const bbox = `${gps.lon-pad},${gps.lat-pad},${gps.lon+pad},${gps.lat+pad}`;
-      const esriUrl = `https://server.arcgisonline.com/arcgis/rest/services/World_Imagery/MapServer/export?bbox=${bbox}&bboxSR=4326&size=600,300&imageSR=96&f=image`;
+      const R = 6378137;
+      const mx = R * gps.lon * Math.PI / 180;
+      const my = R * Math.log(Math.tan(Math.PI / 4 + gps.lat * Math.PI / 360));
+      const padX = 250, padY = 125; // metres; 2:1 matches the 600×300 px image
+      const bbox = `${mx-padX},${my-padY},${mx+padX},${my+padY}`;
+      const esriUrl = `https://server.arcgisonline.com/arcgis/rest/services/World_Imagery/MapServer/export?bbox=${bbox}&bboxSR=3857&size=600,300&imageSR=3857&f=image`;
       try {
         const resp = await fetch(esriUrl);
         if (resp.ok) mapSrc = await addPinToMapImage(await blobToDataUri(await resp.blob()), 600, 300);
@@ -3108,13 +3310,18 @@ async function shareMaintenanceReport(issueId, item, cfg) {
       } catch { mapSrc = esriUrl; }
     }
 
+    // Filename: equipment name (well / building / equipment / pool) + date
+    const reportDate = issue.reported_date ? String(issue.reported_date).slice(0, 10) : todayISO();
+    const fileName = `${cfg.getTitle(issue)} ${reportDate}`
+      .replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '') || `${cfg.tableName}-${issueId}`;
+
     showMaintenanceReportPreview({
       reportLabel: cfg.reportLabel,
       title:       cfg.getTitle(issue),
       rows:        cfg.getRows(issue),
       description: issue.description || '',
       mapSrc, gps, photoUris,
-      filename:    `${cfg.tableName}-${issueId}`,
+      filename:    fileName,
     });
   } catch (err) {
     showToast('Failed to prepare report: ' + err.message, 'error');
@@ -3127,7 +3334,14 @@ async function shareMaintenanceReport(issueId, item, cfg) {
 function buildMaintenanceReportHtml({ reportLabel, title, rows, description, mapSrc, gps, photoUris }) {
   const lat = gps ? Number(gps.lat).toFixed(6) : null;
   const lon = gps ? Number(gps.lon).toFixed(6) : null;
+
+  // Location section: satellite map when GPS is available, first photo as fallback
+  const locationImg   = mapSrc || (photoUris.length ? photoUris[0] : null);
+  const photoFallback = !mapSrc && photoUris.length > 0;
+  const galleryPhotos = photoFallback ? photoUris.slice(1) : photoUris;
+
   return `
+    <div class="ir-logo-row"><img src="/icons/kcwa-seal-192.png" class="ir-logo" alt="KCWA"></div>
     <div class="ir-header">
       <div class="ir-title">${escHtml(reportLabel)} — ${escHtml(title)}</div>
       <div class="ir-meta">${new Date().toLocaleDateString()}</div>
@@ -3139,20 +3353,133 @@ function buildMaintenanceReportHtml({ reportLabel, title, rows, description, map
       <div class="ir-section-label">Description</div>
       <div class="ir-text">${escHtml(description).replace(/\n/g,'<br>')}</div>
     </div>
-    ${mapSrc ? `
+    ${locationImg ? `
     <div class="ir-section">
-      <div class="ir-section-label">Location</div>
-      <img src="${mapSrc}" class="ir-map" alt="Location map" crossorigin="anonymous">
-      <a href="#" class="ir-coords" data-lat="${lat}" data-lon="${lon}">${lat}, ${lon}</a>
+      <div class="ir-section-label">Location${photoFallback ? ' (site photo)' : ''}</div>
+      <img src="${locationImg}" class="${photoFallback ? 'ir-photo' : 'ir-map'}" alt="${photoFallback ? 'Site photo' : 'Location map'}" ${mapSrc ? 'crossorigin="anonymous"' : ''}>
+      ${gps ? `<a href="#" class="ir-coords" data-lat="${lat}" data-lon="${lon}">${lat}, ${lon}</a>` : ''}
     </div>` : ''}
-    ${photoUris.length ? `
+    ${galleryPhotos.length ? `
     <div class="ir-section">
-      <div class="ir-section-label">Photos (${photoUris.length})</div>
+      <div class="ir-section-label">Photos (${galleryPhotos.length})</div>
       <div class="ir-photos">
-        ${photoUris.map(uri => `<img src="${uri}" class="ir-photo" alt="">`).join('')}
+        ${galleryPhotos.map(uri => `<img src="${uri}" class="ir-photo" alt="">`).join('')}
       </div>
     </div>` : ''}`;
 }
+
+/* ── Share helpers ───────────────────────────────────────────────────────────
+   All exports (CSV / Excel / PDF) flow through these so the user gets the OS
+   share sheet (with Print, Save to Files, Mail, AirDrop, etc.) instead of a
+   forced download or print dialog. On platforms without file-share support
+   (most desktop browsers) they transparently fall back to a download. */
+
+// Share a ready-made file blob, or download it if sharing isn't available.
+async function shareFile(blob, filename, title) {
+  const file = new File([blob], filename, { type: blob.type || 'application/octet-stream' });
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file], title });
+      return;
+    } catch (err) {
+      if (err.name === 'AbortError') return; // user dismissed the sheet
+      // any other share error → fall through to download
+    }
+  }
+  const url = URL.createObjectURL(blob);
+  Object.assign(document.createElement('a'), { href: url, download: filename }).click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// Render an in-DOM element to a PDF blob and share it.
+async function sharePdfFromElement(element, filename, title, opts = {}) {
+  // html2canvas doesn't support object-fit — clamp .ir-photo elements to their
+  // natural aspect ratio so photos don't stretch to fill their container width.
+  const maxW = (element.offsetWidth || 754) - 20;
+  const maxH = 340;
+  element.querySelectorAll('.ir-photo').forEach(img => {
+    if (!img.naturalWidth || !img.naturalHeight) return;
+    const ratio = img.naturalWidth / img.naturalHeight;
+    let w = Math.min(img.naturalWidth, maxW);
+    let h = w / ratio;
+    if (h > maxH) { h = maxH; w = h * ratio; }
+    img.style.cssText += `;width:${Math.round(w)}px;height:${Math.round(h)}px;max-width:none;max-height:none;object-fit:unset`;
+  });
+  const blob = await html2pdf()
+    .set({
+      margin: opts.margin ?? 8,
+      image: { type: 'jpeg', quality: 0.92 },
+      html2canvas: { scale: 2, useCORS: true, backgroundColor: '#fff', logging: false },
+      jsPDF: { unit: 'mm', format: opts.format || 'a4', orientation: opts.orientation || 'portrait' },
+      pagebreak: { mode: ['css', 'legacy'] },
+    })
+    .from(element)
+    .outputPdf('blob');
+  await shareFile(blob, filename.endsWith('.pdf') ? filename : `${filename}.pdf`, title);
+}
+
+// Wait for all <img> in a freshly-built off-screen node to finish loading,
+// otherwise html2canvas can capture before the KCWA logo / map / photos paint.
+function waitForImages(root) {
+  const imgs = [...root.querySelectorAll('img')];
+  return Promise.all(imgs.map(img =>
+    (img.complete && img.naturalWidth)
+      ? Promise.resolve()
+      : new Promise(res => { img.onload = img.onerror = res; setTimeout(res, 3000); })
+  ));
+}
+
+// Render an HTML string with its own print CSS off-screen (always on a white
+// page, never the dark app theme) and share it as a PDF. A KCWA logo is added
+// at the top-left unless opts.noLogo is set.
+async function sharePdfFromHtml(innerHtml, cssText, filename, title, opts = {}) {
+  const logo = opts.noLogo ? '' :
+    `<div class="pdf-logo-row"><img src="/icons/kcwa-seal-192.png" class="pdf-logo" alt="KCWA"></div>`;
+  const logoCss = `.pdf-logo-row{margin-bottom:8px}.pdf-logo{height:46px;width:auto;display:block}`;
+  const holder = document.createElement('div');
+  holder.style.cssText = `position:fixed;left:-10000px;top:0;width:${opts.widthPx || 794}px;background:#fff;color:#000;`;
+  holder.innerHTML = `<style>${cssText}${logoCss}</style><div class="pdf-root">${logo}${innerHtml}</div>`;
+  document.body.appendChild(holder);
+  try {
+    await waitForImages(holder);
+    await sharePdfFromElement(holder.querySelector('.pdf-root'), filename, title, opts);
+  } finally {
+    holder.remove();
+  }
+}
+
+// Shared light-theme CSS for tabular report-card PDFs (wells, piezometers,
+// ponds, mileage). page-break-inside:avoid keeps table rows whole across pages.
+const REPORT_PDF_CSS = `
+  /* resolve CSS vars that may appear in card.outerHTML inline styles */
+  .pdf-root { --green:#16a34a; --text-dim:#6b7280; --border:#e5e7eb; --red-light:#ef4444; --accent:#3b82f6; }
+  body { font-family: Arial, sans-serif; color: #000; font-size: 10pt; margin: 0; }
+  .report-card { background: #fff; color: #000; }
+  .report-title { font-size: 14pt; font-weight: 700; text-align: center; margin: 0 0 3px; }
+  .report-subtitle { font-size: 9pt; text-align: center; color: #444; margin: 0 0 10px; }
+  .report-section-title { font-size: 8pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; margin: 10px 0 3px; border-bottom: 1px solid #000; padding-bottom: 2px; }
+  table { width: 100%; border-collapse: collapse; font-size: 9.5pt; margin-bottom: 4px; }
+  th { text-align: left; padding: 2px 5px; font-size: 8pt; font-weight: 700; text-transform: uppercase; border-bottom: 1.5px solid #000; }
+  td { padding: 2px 5px; border-bottom: 0.5px solid #ddd; }
+  tr { page-break-inside: avoid; }
+  .report-num { text-align: right; }
+  .dripper-check, .dripper-area-all { display: none !important; }
+  [style*="border-top:2px"] { border-top: 2px solid #000 !important; padding-top: 10px; }`;
+
+// Compact variant so the whole vehicle/mileage fleet fits one portrait page.
+const MILEAGE_PDF_CSS = `
+  body { font-family: Arial, sans-serif; color: #000; margin: 0; }
+  .report-card { background: #fff; color: #000; }
+  .pdf-logo-row { margin-bottom: 4px !important; }
+  .report-title { font-size: 12pt; font-weight: 700; text-align: center; margin: 0 0 2px; }
+  .report-subtitle { font-size: 7.5pt; text-align: center; color: #444; margin: 0 0 4px; }
+  .report-section-title { font-size: 6.5pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; margin: 4px 0 1px; border-bottom: 1px solid #000; padding-bottom: 1px; }
+  table { width: 100%; border-collapse: collapse; font-size: 6.5pt; margin-bottom: 2px; }
+  th { text-align: left; padding: 1px 3px; font-size: 6pt; font-weight: 700; text-transform: uppercase; border-bottom: 1px solid #000; }
+  td { padding: 1px 3px; border-bottom: 0.5px solid #ddd; }
+  tr { page-break-inside: avoid; }
+  .report-num { text-align: right; }
+  .report-empty { font-size: 6.5pt; color: #666; padding: 2px 0; }`;
 
 function showMaintenanceReportPreview({ reportLabel, title, rows, description, mapSrc, gps, photoUris, filename }) {
   document.getElementById('issue-report-modal')?.remove();
@@ -3165,8 +3492,7 @@ function showMaintenanceReportPreview({ reportLabel, title, rows, description, m
       <button class="btn btn-secondary btn-sm" id="rp-close">&times; Close</button>
       <span class="report-preview-bar-title">${escHtml(title)}</span>
       <div style="display:flex;gap:8px;flex-shrink:0">
-        <button class="btn btn-secondary btn-sm" id="rp-print">&#128424; Print</button>
-        <button class="btn btn-save btn-sm" id="rp-share">&#8679; Share</button>
+        <button class="btn btn-save btn-sm" id="rp-share">&#8679; Share / Export</button>
       </div>
     </div>
     <div class="report-preview-scroll">
@@ -3190,36 +3516,17 @@ function showMaintenanceReportPreview({ reportLabel, title, rows, description, m
     );
   });
 
-  modal.querySelector('#rp-print').addEventListener('click', () => window.print());
-
   modal.querySelector('#rp-share').addEventListener('click', async () => {
     const shareBtn = modal.querySelector('#rp-share');
     shareBtn.disabled = true;
     shareBtn.textContent = 'Generating…';
     try {
-      const blob = await html2pdf()
-        .set({
-          margin: 8,
-          filename: `${filename}.pdf`,
-          image: { type: 'jpeg', quality: 0.92 },
-          html2canvas: { scale: 2, useCORS: true, logging: false },
-          jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-        })
-        .from(modal.querySelector('#ir-body'))
-        .outputPdf('blob');
-      const file = new File([blob], `${filename}.pdf`, { type: 'application/pdf' });
-      if (navigator.canShare && navigator.canShare({ files: [file] })) {
-        await navigator.share({ files: [file], title: `${reportLabel} — ${title}` });
-      } else {
-        const url = URL.createObjectURL(blob);
-        Object.assign(document.createElement('a'), { href: url, download: `${filename}.pdf` }).click();
-        URL.revokeObjectURL(url);
-      }
+      await sharePdfFromElement(modal.querySelector('#ir-body'), filename, `${reportLabel} — ${title}`);
     } catch (err) {
       if (err.name !== 'AbortError') showToast('Share failed: ' + err.message, 'error');
     } finally {
       shareBtn.disabled = false;
-      shareBtn.textContent = '↑ Share';
+      shareBtn.innerHTML = '&#8679; Share';
     }
   });
 }
@@ -3316,15 +3623,43 @@ let maintVehiclesLoaded = false;
 // Vehicle record list state
 let vehRecords       = [];
 let vehShowResolved  = false;
+let _vehFilterVehicle = '';
+let _vehFilterType    = '';
+let _vehFilterQ       = '';
 
 async function loadVehRecords() {
   try {
     vehRecords = await api('GET', `/api/maintenance/vehicles-list?include_resolved=${vehShowResolved}`);
-    renderVehRecords();
+    populateVehFilterDropdowns();
+    applyVehFilters();
     setBadge('maint-badge-vehicles', vehRecords.filter(r => r.status === 'open' || r.status === 'in-progress').length);
   } catch {
     el('veh-record-list').innerHTML = '<div class="placeholder-msg">Failed to load records</div>';
   }
+}
+
+function populateVehFilterDropdowns() {
+  const vSel = el('veh-filter-vehicle');
+  const prev = vSel.value;
+  const seen = new Map();
+  vehRecords.forEach(r => { if (r.vehicle_number && !seen.has(r.vehicle_number)) seen.set(r.vehicle_number, r); });
+  const sorted = [...seen.values()].sort((a, b) => (a.vehicle_number || '').localeCompare(b.vehicle_number || ''));
+  vSel.innerHTML = '<option value="">All Vehicles</option>' +
+    sorted.map(r => `<option value="${escHtml(r.vehicle_number)}"${r.vehicle_number === prev ? ' selected' : ''}>${escHtml([r.vehicle_number, r.model].filter(Boolean).join(' — '))}</option>`).join('');
+}
+
+function applyVehFilters() {
+  let items = vehRecords;
+  if (_vehFilterVehicle) items = items.filter(r => r.vehicle_number === _vehFilterVehicle);
+  if (_vehFilterType)    items = items.filter(r => r.work_type === _vehFilterType);
+  if (_vehFilterQ) {
+    const q = _vehFilterQ.toLowerCase();
+    items = items.filter(r =>
+      [r.vehicle_number, r.model, r.work_type, r.description, r.performed_by, r.notes]
+        .some(f => (f || '').toLowerCase().includes(q))
+    );
+  }
+  renderVehRecords(items);
 }
 
 // Per-card pending files: Map<maintenance_id, [{file, fileType}]>
@@ -3499,14 +3834,16 @@ function renderVehCardQueue(id) {
   });
 }
 
-function renderVehRecords() {
+function renderVehRecords(items) {
+  items = items ?? vehRecords;
   const list = el('veh-record-list');
-  if (!vehRecords.length) {
-    list.innerHTML = `<div class="placeholder-msg">No ${vehShowResolved ? '' : 'open '}records</div>`;
+  if (!items.length) {
+    const hasF = _vehFilterVehicle || _vehFilterType || _vehFilterQ;
+    list.innerHTML = `<div class="placeholder-msg">${hasF ? 'No matching records.' : `No ${vehShowResolved ? '' : 'open '}records`}</div>`;
     return;
   }
   const statusLabel = { open: 'Open', 'in-progress': 'In Progress', resolved: 'Resolved' };
-  list.innerHTML = vehRecords.map(r => {
+  list.innerHTML = items.map(r => {
     const id = r.maintenance_id;
     const vehicleName = [r.vehicle_number, r.model].filter(Boolean).join(' — ');
     const snippet = (r.description || '').slice(0, 80) + ((r.description || '').length > 80 ? '…' : '');
@@ -3695,6 +4032,7 @@ const MAINT_PANEL_NAMES = {
   swaps:          'Equipment Swaps',
   pms:            'PM Records',
   'canal-issues': 'Canal Issues',
+  assigned:       'Assigned to Me',
 };
 function openMaintPanel(panelId) {
   el('maint-main').classList.add('hidden');
@@ -3709,6 +4047,7 @@ function openMaintPanel(panelId) {
   if (panelId === 'swaps')        initMaintSwapsPanel();
   if (panelId === 'pms')          initMaintPMsPanel();
   if (panelId === 'canal-issues') initMaintCanalPanel();
+  if (panelId === 'assigned')     initMaintAssignedPanel();
 }
 
 function closeMaintPanel() {
@@ -3750,12 +4089,134 @@ document.querySelectorAll('[data-maint-panel]').forEach(btn => {
 
 // .maint-back-btn buttons removed from HTML — navigation handled by setPanelNav()
 
+/* ── Assigned Items + Bell Notification ──────────────────────────────────── */
+const ASSIGN_TYPE_LABEL = { well: 'Well Issue', building: 'Building Issue', equipment: 'Equipment Issue' };
+const ASSIGN_TYPE_PANEL = { well: 'wells', building: 'buildings', equipment: 'equipment' };
+
+function updateBellBadge(items) {
+  const lastChecked = localStorage.getItem('wm-assign-checked') || '1970-01-01T00:00:00.000Z';
+  const newCount = (items || []).filter(i => (i.created_at || '') > lastChecked).length;
+  setBadge('bell-badge', newCount);
+}
+
+async function loadAssignmentBadge() {
+  try {
+    const items = await api('GET', '/api/my-assignments');
+    updateBellBadge(items);
+    setBadge('maint-badge-assigned', items.length);
+  } catch { /* non-critical */ }
+}
+
+// Bell button wired at top level (element is in the header, before app.js script tag)
+el('header-bell-btn').addEventListener('click', openAssignModal);
+
+let _assignModalInited = false;
+function openAssignModal() {
+  // Wire modal-internal listeners once on first open (modal HTML is after the script tag)
+  if (!_assignModalInited) {
+    _assignModalInited = true;
+    el('assign-modal-close').addEventListener('click', closeAssignModal);
+    el('assign-modal').addEventListener('click', e => {
+      if (e.target === el('assign-modal')) closeAssignModal();
+      const btn = e.target.closest('.assign-view-btn');
+      if (btn) {
+        closeAssignModal();
+        showScreen('maintenance');
+        openMaintPanel(btn.dataset.panel);
+      }
+    });
+  }
+  el('assign-modal').classList.remove('hidden');
+  renderAssignModal();
+}
+
+function closeAssignModal() {
+  el('assign-modal').classList.add('hidden');
+}
+
+async function renderAssignModal() {
+  const body = el('assign-modal-body');
+  body.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  const lastChecked = localStorage.getItem('wm-assign-checked') || '1970-01-01T00:00:00.000Z';
+  localStorage.setItem('wm-assign-checked', new Date().toISOString());
+  try {
+    const items = await api('GET', '/api/my-assignments');
+    setBadge('bell-badge', 0);
+    setBadge('maint-badge-assigned', items.length);
+    if (!items.length) {
+      body.innerHTML = '<div class="placeholder-msg">No items assigned to you.</div>';
+      return;
+    }
+    body.innerHTML = items.map(i => {
+      const isNew = (i.created_at || '') > lastChecked;
+      const statusClass = (i.status || 'open').replace('_', '-');
+      return `<div class="assign-item${isNew ? ' assign-new' : ''}">
+        <div class="assign-item-type">${ASSIGN_TYPE_LABEL[i.issue_type] || i.issue_type}</div>
+        <div class="assign-item-desc">${escHtml(i.entity_name || '')}${i.description ? ' — ' + escHtml(i.description.slice(0, 80)) : ''}</div>
+        <div class="assign-item-meta">
+          <span class="status-pill ${statusClass}">${(i.status || 'open').replace('_', ' ')}</span>
+          ${i.reported_date ? `<span>${localDateStr(i.reported_date, { month: 'short', day: 'numeric' })}</span>` : ''}
+          <button class="btn btn-secondary btn-sm assign-view-btn" data-panel="${escHtml(ASSIGN_TYPE_PANEL[i.issue_type] || 'equipment')}">View</button>
+        </div>
+      </div>`;
+    }).join('');
+  } catch {
+    body.innerHTML = '<div class="placeholder-msg">Failed to load.</div>';
+  }
+}
+
+function initMaintAssignedPanel() {
+  const panel = el('maint-panel-assigned');
+  const listEl = el('assigned-panel-list');
+  // Wire delegated click once (first open)
+  if (!panel.dataset.listenerAdded) {
+    panel.dataset.listenerAdded = '1';
+    listEl.addEventListener('click', e => {
+      const btn = e.target.closest('[data-go-panel]');
+      if (btn) openMaintPanel(btn.dataset.goPanel);
+    });
+  }
+  loadAssignedPanel(listEl);
+}
+
+async function loadAssignedPanel(listEl) {
+  listEl.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const items = await api('GET', '/api/my-assignments');
+    updateBellBadge(items);
+    setBadge('maint-badge-assigned', items.length);
+    if (!items.length) {
+      listEl.innerHTML = '<div class="placeholder-msg">No items assigned to you.</div>';
+      return;
+    }
+    listEl.innerHTML = items.map(i => {
+      const statusClass = (i.status || 'open').replace('_', '-');
+      return `<div class="assign-item">
+        <div class="assign-item-type">${ASSIGN_TYPE_LABEL[i.issue_type] || i.issue_type}</div>
+        <div class="assign-item-desc">${escHtml(i.entity_name || '')}${i.description ? ' — ' + escHtml(i.description.slice(0, 100)) : ''}</div>
+        <div class="assign-item-meta">
+          <span class="status-pill ${statusClass}">${(i.status || 'open').replace('_', ' ')}</span>
+          ${i.reported_date ? `<span>${localDateStr(i.reported_date, { month: 'short', day: 'numeric' })}</span>` : ''}
+          <button class="btn btn-secondary btn-sm" data-go-panel="${escHtml(ASSIGN_TYPE_PANEL[i.issue_type] || 'equipment')}">View Issue</button>
+        </div>
+      </div>`;
+    }).join('');
+  } catch {
+    listEl.innerHTML = '<div class="placeholder-msg">Failed to load.</div>';
+  }
+}
+
 async function initMaintVehiclesPanel() {
   maintType = 'vehicle';
   loadVehRecords();
 
   if (maintVehiclesLoaded) return;
   maintVehiclesLoaded = true;
+
+  el('veh-filter-vehicle').addEventListener('change', () => { _vehFilterVehicle = el('veh-filter-vehicle').value; applyVehFilters(); });
+  el('veh-filter-type').addEventListener('change',   () => { _vehFilterType    = el('veh-filter-type').value;    applyVehFilters(); });
+  let _vfqT;
+  el('veh-filter-q').addEventListener('input', () => { clearTimeout(_vfqT); _vfqT = setTimeout(() => { _vehFilterQ = el('veh-filter-q').value.trim(); applyVehFilters(); }, 250); });
 
   try {
     const vehicles = await api('GET', '/api/vehicles');
@@ -3856,6 +4317,11 @@ el('maint-site-select').addEventListener('change', async () => {
 /* ── Equipment Swaps ─────────────────────────────────────────────────────── */
 let swapCategory = 'siphon_breaker';
 let swapPanelLoaded = false;
+let swapHistory      = [];
+let _swapFilterCat   = '';
+let _swapFilterLoc   = '';
+let _swapFilterQ     = '';
+const SWAP_CAT_LABEL = { siphon_breaker: 'Siphon Breaker', motor: 'Motor', pp_pump: 'PP Pump', well_motor: 'Well Motor', well_meter: 'Well Meter' };
 
 function initMaintSwapsPanel() {
   if (swapPanelLoaded) return;
@@ -3863,6 +4329,72 @@ function initMaintSwapsPanel() {
   el('swap-date').value = todayISO();
   if (!el('swap-performed-by').value) el('swap-performed-by').value = currentUser?.full_name || '';
   loadSwapUnits(swapCategory);
+  loadSwapHistory();
+
+  el('swap-filter-cat').addEventListener('change', () => { _swapFilterCat = el('swap-filter-cat').value; applySwapFilters(); });
+  el('swap-filter-loc').addEventListener('change', () => { _swapFilterLoc = el('swap-filter-loc').value; applySwapFilters(); });
+  let _swqT;
+  el('swap-filter-q').addEventListener('input', () => { clearTimeout(_swqT); _swqT = setTimeout(() => { _swapFilterQ = el('swap-filter-q').value.trim(); applySwapFilters(); }, 250); });
+}
+
+async function loadSwapHistory() {
+  el('swap-history-list').innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    swapHistory = await api('GET', '/api/equipment-swaps');
+    populateSwapHistoryDropdowns();
+    applySwapFilters();
+  } catch {
+    el('swap-history-list').innerHTML = '<div class="placeholder-msg">Failed to load.</div>';
+  }
+}
+
+function populateSwapHistoryDropdowns() {
+  const lSel = el('swap-filter-loc');
+  const prev = lSel.value;
+  const locs = [...new Set(swapHistory.map(s => s.location).filter(Boolean))].sort();
+  lSel.innerHTML = '<option value="">All Locations</option>' +
+    locs.map(l => `<option value="${escHtml(l)}"${l === prev ? ' selected' : ''}>${escHtml(l)}</option>`).join('');
+}
+
+function applySwapFilters() {
+  let items = swapHistory;
+  if (_swapFilterCat) items = items.filter(s => s.category === _swapFilterCat);
+  if (_swapFilterLoc) items = items.filter(s => s.location === _swapFilterLoc);
+  if (_swapFilterQ) {
+    const q = _swapFilterQ.toLowerCase();
+    items = items.filter(s =>
+      [s.location, s.category, s.removed_description, s.installed_description, s.performed_by, s.notes]
+        .some(f => (f || '').toLowerCase().includes(q))
+    );
+  }
+  renderSwapHistory(items);
+}
+
+function renderSwapHistory(items) {
+  const list = el('swap-history-list');
+  if (!items.length) {
+    const hasF = _swapFilterCat || _swapFilterLoc || _swapFilterQ;
+    list.innerHTML = `<div class="placeholder-msg">${hasF ? 'No matching swaps.' : 'No swaps recorded.'}</div>`;
+    return;
+  }
+  list.innerHTML = items.map(s => `
+    <div class="equip-issue-item" style="padding:10px 14px">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
+        <div>
+          <div style="font-weight:600;font-size:0.9rem">${escHtml(s.location || '—')}</div>
+          <div style="font-size:0.78rem;color:var(--text-dim);margin:2px 0">${escHtml(SWAP_CAT_LABEL[s.category] || s.category || '—')}</div>
+          <div style="font-size:0.83rem;margin-top:4px">
+            <span style="color:var(--text-dim)">Removed:</span> ${escHtml(s.removed_description || '—')}
+          </div>
+          <div style="font-size:0.83rem;margin-top:2px">
+            <span style="color:var(--text-dim)">Installed:</span> ${escHtml(s.installed_description || '—')}
+          </div>
+          ${s.performed_by ? `<div style="font-size:0.78rem;color:var(--text-dim);margin-top:4px">By: ${escHtml(s.performed_by)}</div>` : ''}
+          ${s.notes ? `<div style="font-size:0.78rem;color:var(--text-dim);margin-top:2px;font-style:italic">${escHtml(s.notes)}</div>` : ''}
+        </div>
+        <div style="white-space:nowrap;font-size:0.78rem;color:var(--text-dim);flex-shrink:0">${(s.swap_date || '').slice(0,10)}</div>
+      </div>
+    </div>`).join('');
 }
 
 async function loadSwapUnits(category) {
@@ -3949,7 +4481,7 @@ el('swap-save-btn').addEventListener('click', async () => {
     el('swap-notes').value = '';
     el('swap-location-hint').classList.add('hidden');
     // Reload units so dropdowns reflect the updated statuses
-    if (!r.queued) loadSwapUnits(swapCategory);
+    if (!r.queued) { loadSwapUnits(swapCategory); loadSwapHistory(); }
   } catch (err) {
     showError('swap-error', err.message);
   } finally {
@@ -5250,17 +5782,14 @@ el('exif-back-btn').addEventListener('click', () => {
     renderChips(); renderTable(); updateStats();
   }
 
-  function exportCSV() {
+  async function exportCSV() {
     if (!exifRows.length) return;
     const cols = exifFields.filter(f => exifActive.has(f));
     const esc  = v => `"${String(v).replace(/"/g, '""')}"`;
     let csv = cols.map(esc).join(',') + '\n';
     for (const row of exifRows) csv += cols.map(f => esc(row[f] || '')).join(',') + '\n';
-    const a = Object.assign(document.createElement('a'), {
-      href: URL.createObjectURL(new Blob([csv], { type: 'text/csv' })),
-      download: `exif_${new Date().toISOString().slice(0,10)}.csv`,
-    });
-    a.click(); URL.revokeObjectURL(a.href);
+    await shareFile(new Blob([csv], { type: 'text/csv' }),
+      `exif_${new Date().toISOString().slice(0,10)}.csv`, 'EXIF GPS Data');
   }
 
   const dropzone = el('exif-dropzone');
@@ -5852,7 +6381,7 @@ async function loadBugReports() {
 let adminLoaded = false;
 
 async function initAdminScreen() {
-  if (!currentUser || (currentUser.role !== 'admin' && currentUser.role !== 'supervisor')) return;
+  if (!currentUser || !isSupervisorLevel(currentUser.role)) return;
   await loadUserList();
 }
 
@@ -5870,7 +6399,7 @@ async function loadUserList() {
           <div class="user-name">${u.full_name || u.username}</div>
           <div class="user-sub">@${u.username}${u.is_active ? '' : ' · Inactive'}</div>
         </div>
-        <span class="role-badge role-${u.role}">${u.role}</span>
+        <span class="role-badge role-${u.role}">${formatRole(u.role)}</span>
         ${currentUser.role === 'admin'
           ? `<button class="user-edit-btn" data-id="${u.user_id}">Edit</button>`
           : ''}
@@ -6843,81 +7372,73 @@ function showPMRecord(record, def) {
 
 // ── PM PDF Export ─────────────────────────────────────────────────────────────
 function exportPMRecordAsPDF(record, def) {
-  const w = window.open('', '_blank');
-  if (!w) { showToast('Allow pop-ups to export PDF', 'error'); return; }
   const d = localDateStr(record.completed_date, { month: 'long', day: 'numeric', year: 'numeric' });
   const t = record.completed_time?.slice(0, 5) || '';
+  const fileDate = record.completed_date ? String(record.completed_date).slice(0, 10) : '';
+  const filename = `${def.title} ${fileDate}`.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '');
+
+  const PM_CSS = `
+    body{font-family:Arial,sans-serif;font-size:12px;color:#000;margin:0}
+    h1{font-size:14px;margin:0 0 2px}
+    .sub{font-size:11px;color:#555;margin:0 0 12px}
+    table{border-collapse:collapse;margin-bottom:14px}
+    td{padding:2px 14px 2px 0;font-size:12px}
+    .item{margin:5px 0;line-height:1.5}
+    .pm-view-row{display:flex;gap:8px;padding:4px 0;border-bottom:1px solid #eee}
+    .pv-loc{font-weight:600;min-width:40px}.pv-note{color:#555;font-style:italic}
+    .pass{color:#388e3c}.fail{color:#d32f2f}.ac-group{margin-bottom:12px}
+    .ac-title{font-weight:700;font-size:11px;text-transform:uppercase;margin-bottom:4px}
+    .ac-row{display:flex;gap:6px;padding:2px 0}.ac-dot{width:10px;height:10px;border-radius:50%;margin-top:2px}
+    .ac-dot.pass{background:#388e3c}.ac-dot.fail{background:#d32f2f}.ac-dot.empty{background:#ccc}
+    .notes{margin-top:14px;border-top:1px solid #ccc;padding-top:10px}
+    .footer{margin-top:20px;border-top:2px solid #000;padding-top:8px;font-weight:bold}`;
+
+  let inner;
   if (def.customType) {
     const body = def.customType === 'siphon' ? renderSBRecordView(record) : renderACRecordView(record, def);
-    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8">
-<title>${escHtml(def.title)} — ${d}</title>
-<style>body{font-family:Arial,sans-serif;font-size:12px;margin:20px 40px;color:#000}
-h1{font-size:14px;margin:0 0 2px}.sub{font-size:11px;color:#555;margin:0 0 12px}
-table{border-collapse:collapse;margin-bottom:14px}td{padding:2px 14px 2px 0}
-.pm-view-row{display:flex;gap:8px;padding:4px 0;border-bottom:1px solid #eee}
-.pv-loc{font-weight:600;min-width:40px}.pv-note{color:#555;font-style:italic}
-.pass{color:#388e3c}.fail{color:#d32f2f}.ac-group{margin-bottom:12px}
-.ac-title{font-weight:700;font-size:11px;text-transform:uppercase;margin-bottom:4px}
-.ac-row{display:flex;gap:6px;padding:2px 0}.ac-dot{width:10px;height:10px;border-radius:50%;margin-top:2px}
-.ac-dot.pass{background:#388e3c}.ac-dot.fail{background:#d32f2f}.ac-dot.empty{background:#ccc}
-@media print{body{margin:10mm 15mm}}</style></head><body>
-<h1>${escHtml(def.title)}</h1>
-<table><tr><td><strong>Location:</strong></td><td>${escHtml(record.building||'—')}</td>
-<td><strong>Date:</strong></td><td>${d}${t?' · '+t:''}</td>
-<td><strong>By:</strong></td><td>${escHtml(record.completed_by_name||'—')}</td></tr></table>
-${body}
-${record.notes?`<div style="margin-top:14px;border-top:1px solid #ccc;padding-top:10px"><strong>Notes:</strong><br>${escHtml(record.notes).replace(/\n/g,'<br>')}</div>`:''}
-</body></html>`);
-    w.document.close();
-    setTimeout(() => w.print(), 400);
-    return;
-  }
-  let itemNum = 0;
-  const itemsHTML = def.items.map(item => {
-    if (item.condBuilding && item.condBuilding !== record.building) return '';
-    itemNum++;
-    const val = record.checklist[item.key];
-    let checked = false, extra = '';
-    if (item.type === 'twc' || item.type === 'twc-area') {
-      checked = val?.checked || false;
-      if (val?.value) extra = ` — <strong>${escHtml(val.value)}</strong>`;
-    } else if (item.type === 'text') {
-      extra = val ? `: <strong>${escHtml(val)}</strong>` : '';
-      checked = !!val;
-    } else {
-      checked = val === true;
-    }
-    const sym = checked ? '&#9745;' : '&#9744;';
-    return `<div class="item">${sym} <strong>${itemNum}.</strong> ${escHtml(item.label)}${extra}</div>`;
-  }).filter(Boolean).join('');
+    inner = `
+      <h1>${escHtml(def.title)}</h1>
+      <table><tr><td><strong>Location:</strong></td><td>${escHtml(record.building||'—')}</td>
+      <td><strong>Date:</strong></td><td>${d}${t?' · '+t:''}</td>
+      <td><strong>By:</strong></td><td>${escHtml(record.completed_by_name||'—')}</td></tr></table>
+      ${body}
+      ${record.notes?`<div class="notes"><strong>Notes:</strong><br>${escHtml(record.notes).replace(/\n/g,'<br>')}</div>`:''}`;
+  } else {
+    let itemNum = 0;
+    const itemsHTML = def.items.map(item => {
+      if (item.condBuilding && item.condBuilding !== record.building) return '';
+      itemNum++;
+      const val = record.checklist[item.key];
+      let checked = false, extra = '';
+      if (item.type === 'twc' || item.type === 'twc-area') {
+        checked = val?.checked || false;
+        if (val?.value) extra = ` — <strong>${escHtml(val.value)}</strong>`;
+      } else if (item.type === 'text') {
+        extra = val ? `: <strong>${escHtml(val)}</strong>` : '';
+        checked = !!val;
+      } else {
+        checked = val === true;
+      }
+      const sym = checked ? '&#9745;' : '&#9744;';
+      return `<div class="item">${sym} <strong>${itemNum}.</strong> ${escHtml(item.label)}${extra}</div>`;
+    }).filter(Boolean).join('');
 
-  w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8">
-<title>${escHtml(def.title)} — ${d}</title>
-<style>
-  body{font-family:Arial,sans-serif;font-size:12px;margin:20px 40px;color:#000}
-  h1{font-size:14px;margin:0 0 2px}
-  .sub{font-size:11px;color:#555;margin:0 0 12px}
-  table{border-collapse:collapse;margin-bottom:14px}
-  td{padding:2px 14px 2px 0;font-size:12px}
-  .item{margin:5px 0;line-height:1.5}
-  .notes{margin-top:14px;border-top:1px solid #ccc;padding-top:10px}
-  .footer{margin-top:20px;border-top:2px solid #000;padding-top:8px;font-weight:bold}
-  @media print{body{margin:10mm 15mm}}
-</style></head><body>
-<h1>${escHtml(def.subtitle || def.title)}</h1>
-<div class="sub">${escHtml(def.formRef || '')}</div>
-<table>
-  <tr><td><strong>Inspector:</strong></td><td>${escHtml(record.completed_by_name || '—')}</td>
-      <td><strong>Location:</strong></td><td>${escHtml(record.building || '—')}</td></tr>
-  <tr><td><strong>Date:</strong></td><td>${d}</td>
-      <td><strong>Time:</strong></td><td>${t}</td></tr>
-</table>
-${itemsHTML}
-${record.notes ? `<div class="notes"><strong>Notes:</strong><br>${escHtml(record.notes).replace(/\n/g,'<br>')}</div>` : ''}
-<div class="footer">INITIAL: Completed in accordance with ${escHtml(def.formRef || 'PM Checklist')} &nbsp;&nbsp; Date: ${d} &nbsp;&nbsp; Time: ${t}</div>
-</body></html>`);
-  w.document.close();
-  w.setTimeout(() => w.print(), 400);
+    inner = `
+      <h1>${escHtml(def.subtitle || def.title)}</h1>
+      <div class="sub">${escHtml(def.formRef || '')}</div>
+      <table>
+        <tr><td><strong>Inspector:</strong></td><td>${escHtml(record.completed_by_name || '—')}</td>
+            <td><strong>Location:</strong></td><td>${escHtml(record.building || '—')}</td></tr>
+        <tr><td><strong>Date:</strong></td><td>${d}</td>
+            <td><strong>Time:</strong></td><td>${t}</td></tr>
+      </table>
+      ${itemsHTML}
+      ${record.notes ? `<div class="notes"><strong>Notes:</strong><br>${escHtml(record.notes).replace(/\n/g,'<br>')}</div>` : ''}
+      <div class="footer">INITIAL: Completed in accordance with ${escHtml(def.formRef || 'PM Checklist')} &nbsp;&nbsp; Date: ${d} &nbsp;&nbsp; Time: ${t}</div>`;
+  }
+
+  sharePdfFromHtml(inner, PM_CSS, filename, def.title, { margin: 12 })
+    .catch(err => { if (err.name !== 'AbortError') showToast('Export failed: ' + err.message, 'error'); });
 }
 
 /* ── Pesticides ──────────────────────────────────────────────────────────── */
@@ -7323,7 +7844,7 @@ async function loadPestProductList() {
   try {
     const products = await api('GET', '/api/pesticides');
     if (!products.length) { list.innerHTML = '<div class="placeholder-msg">No products added yet.</div>'; return; }
-    const isSupervisor = currentUser && (currentUser.role === 'supervisor' || currentUser.role === 'admin');
+    const isSupervisor = currentUser && isSupervisorLevel(currentUser.role);
     list.innerHTML = products.map(p => `
       <div class="pest-product-item ${p.active ? '' : 'pest-product-inactive'}">
         <div class="pest-product-main">
@@ -8334,21 +8855,19 @@ function initPondsReportPanel() {
     el('ponds-report-today').addEventListener('click', () => { el('ponds-report-date').value = todayISO(); renderPondsActiveTab(); });
     el('ponds-report-date').addEventListener('change', renderPondsActiveTab);
 
-    el('ponds-report-print-btn').addEventListener('click', () => {
+    el('ponds-report-print-btn').addEventListener('click', async () => {
       const card = el('report-ponds-output').querySelector('.report-card');
-      if (!card) return showToast('No report to print', 'error');
-      let printArea = document.getElementById('print-area');
-      if (!printArea) {
-        printArea = document.createElement('div');
-        printArea.id = 'print-area';
-        document.body.appendChild(printArea);
+      if (!card) return showToast('No report to export', 'error');
+      const btn = el('ponds-report-print-btn');
+      btn.disabled = true;
+      try {
+        const date = el('ponds-report-date').value || todayISO();
+        await sharePdfFromHtml(card.outerHTML, REPORT_PDF_CSS, `Ponds_Report_${date}`, 'Ponds Report');
+      } catch (err) {
+        if (err.name !== 'AbortError') showToast('Export failed: ' + err.message, 'error');
+      } finally {
+        btn.disabled = false;
       }
-      delete printArea.dataset.printType;
-      printArea.innerHTML = card.outerHTML;
-      setTimeout(() => {
-        window.print();
-        window.addEventListener('afterprint', () => { printArea.innerHTML = ''; }, { once: true });
-      }, 100);
     });
 
     // Reset to gauges tab on re-open
@@ -8555,17 +9074,8 @@ el('export-modal').addEventListener('click', e => {
   if (e.target === el('export-modal')) el('export-modal').classList.add('hidden');
 });
 
-function triggerBlobDownload(blob, filename) {
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-}
 
-el('export-csv-btn').addEventListener('click', () => {
+el('export-csv-btn').addEventListener('click', async () => {
   el('export-modal').classList.add('hidden');
 
   if (exportContext === 'piezometers-status') {
@@ -8575,7 +9085,7 @@ el('export-csv-btn').addEventListener('click', () => {
       const method = [p.plopper_sounder, p.wet_dry_moist].filter(Boolean).join(' / ');
       lines.push([p.pool||'', p.piezometer_name, p.dtw_reading??'', method, p.operator||'', p.reading_date?.slice(0,10)||''].map(csvEsc).join(','));
     });
-    triggerBlobDownload(new Blob([lines.join('\r\n')], { type: 'text/csv' }), `Piezometers_${piezRepStart}_${piezRepEnd}.csv`);
+    await shareFile(new Blob([lines.join('\r\n')], { type: 'text/csv' }), `Piezometers_${piezRepStart}_${piezRepEnd}.csv`, 'Piezometer Readings');
     return;
   }
 
@@ -8591,7 +9101,7 @@ el('export-csv-btn').addEventListener('click', () => {
       const diff = d1 !== '' && d2 !== '' ? (d2 - d1).toFixed(2) : '';
       lines.push([p.pool||'', p.piezometer_name, d1, d2, diff].join(','));
     });
-    triggerBlobDownload(new Blob([lines.join('\r\n')], { type: 'text/csv' }), `Piezometers_Compare_${s1}_${s2}.csv`);
+    await shareFile(new Blob([lines.join('\r\n')], { type: 'text/csv' }), `Piezometers_Compare_${s1}_${s2}.csv`, 'Piezometer Comparison');
     return;
   }
 
@@ -8606,20 +9116,25 @@ el('export-csv-btn').addEventListener('click', () => {
         r.dripper_oil??'', r.motor_oil??'', r.pge_kwh??'', r.notes||'',
       ].map(csvEsc).join(','));
     });
-    triggerBlobDownload(new Blob([lines.join('\r\n')], { type: 'text/csv' }), `WellReadings_${date}.csv`);
+    await shareFile(new Blob([lines.join('\r\n')], { type: 'text/csv' }), `WellReadings_${date}.csv`, 'Well Readings');
     return;
   }
 
   if (exportContext === 'wells-dripper') {
     const csvEsc = v => (v == null || v === '') ? '' : /[,"\n]/.test(String(v)) ? `"${String(v).replace(/"/g,'""')}"` : String(v);
     const fillTo = parseInt(el('well-dripper-amount').value) || 12;
+    const checkedIds = getCheckedDripperIds();
+    const exportRows = checkedIds.size > 0 ? lastWellDripperRows.filter(r => checkedIds.has(String(r.well_id))) : lastWellDripperRows;
     const lines = [`Dripper Oil Levels,Fill target: ${fillTo} gal`, '', 'Area,Well,Dripper Oil (gal),Amt to Full (gal),Last Read'];
-    lastWellDripperRows.forEach(r => {
+    let csvTotal = 0;
+    exportRows.forEach(r => {
       const dripper = r.dripper_oil != null ? Number(r.dripper_oil) : null;
-      const atf = dripper != null ? Math.max(0, fillTo - dripper).toFixed(2) : '';
-      lines.push([r.area||'', r.common_name, dripper != null ? dripper.toFixed(2) : '', atf, r.reading_date ? String(r.reading_date).slice(0,10) : ''].map(csvEsc).join(','));
+      const atf = dripper != null ? Math.max(0, fillTo - dripper) : null;
+      if (atf != null) csvTotal += atf;
+      lines.push([r.area||'', r.common_name, dripper != null ? dripper.toFixed(2) : '', atf != null ? atf.toFixed(2) : '', r.reading_date ? String(r.reading_date).slice(0,10) : ''].map(csvEsc).join(','));
     });
-    triggerBlobDownload(new Blob([lines.join('\r\n')], { type: 'text/csv' }), `DripperOil.csv`);
+    lines.push('', `Total oil needed (${exportRows.length} wells),,,${csvTotal.toFixed(2)},`);
+    await shareFile(new Blob([lines.join('\r\n')], { type: 'text/csv' }), `DripperOil.csv`, 'Dripper Oil Levels');
     return;
   }
 
@@ -8632,7 +9147,7 @@ el('export-csv-btn').addEventListener('click', () => {
   trucks.forEach(v => lines.push([v.vehicle_number, v.make, v.model, ac(v), v.odometer_miles ?? ''].join(',')));
   lines.push('', 'HEAVY EQUIPMENT', 'Unit #,Make,Model,Operator,Odometer,Engine Hours');
   heavy.forEach(v => lines.push([v.vehicle_number, v.make, v.model, ac(v), v.odometer_miles ?? '', v.engine_hours ?? ''].join(',')));
-  triggerBlobDownload(new Blob([lines.join('\r\n')], { type: 'text/csv' }), `CVC_Mileage_${reportsYear}_${reportsMonth}.csv`);
+  await shareFile(new Blob([lines.join('\r\n')], { type: 'text/csv' }), `CVC_Mileage_${reportsYear}_${reportsMonth}.csv`, 'CVC Mileage');
 });
 
 el('export-xlsx-btn').addEventListener('click', async () => {
@@ -8643,7 +9158,7 @@ el('export-xlsx-btn').addEventListener('click', async () => {
       const url = `/api/reports/piezometers/export?start_date=${piezRepStart}&end_date=${piezRepEnd}&token=${token}`;
       const res = await fetch(url);
       if (!res.ok) throw new Error('Export failed');
-      triggerBlobDownload(await res.blob(), `Piezometers_${piezRepStart}_${piezRepEnd}.xlsx`);
+      await shareFile(await res.blob(), `Piezometers_${piezRepStart}_${piezRepEnd}.xlsx`, 'Piezometer Readings');
       return;
     }
     if (exportContext === 'piezometers-compare') {
@@ -8653,7 +9168,7 @@ el('export-xlsx-btn').addEventListener('click', async () => {
       const url = `/api/reports/piezometers/compare/export?s1=${s1}&e1=${e1}&s2=${s2}&e2=${e2}&token=${token}`;
       const res = await fetch(url);
       if (!res.ok) throw new Error('Export failed');
-      triggerBlobDownload(await res.blob(), `Piezometers_Compare_${s1}_${s2}.xlsx`);
+      await shareFile(await res.blob(), `Piezometers_Compare_${s1}_${s2}.xlsx`, 'Piezometer Comparison');
       return;
     }
     if (exportContext === 'wells-daily') {
@@ -8662,16 +9177,18 @@ el('export-xlsx-btn').addEventListener('click', async () => {
       const url = `/api/reports/wells/daily/export?date=${date}&token=${token}`;
       const res = await fetch(url);
       if (!res.ok) throw new Error('Export failed');
-      triggerBlobDownload(await res.blob(), `WellReadings_${date}.xlsx`);
+      await shareFile(await res.blob(), `WellReadings_${date}.xlsx`, 'Well Readings');
       return;
     }
     if (exportContext === 'wells-dripper') {
       const fillTo = el('well-dripper-amount').value || 12;
+      const checkedIds = [...getCheckedDripperIds()];
       const { token } = await api('POST', '/api/reports/download-token', {});
-      const url = `/api/reports/wells/dripper/export?fill_to=${fillTo}&token=${token}`;
+      const wellsParam = checkedIds.length > 0 ? `&wells=${checkedIds.join(',')}` : '';
+      const url = `/api/reports/wells/dripper/export?fill_to=${fillTo}&token=${token}${wellsParam}`;
       const res = await fetch(url);
       if (!res.ok) throw new Error('Export failed');
-      triggerBlobDownload(await res.blob(), `DripperOil.xlsx`);
+      await shareFile(await res.blob(), `DripperOil.xlsx`, 'Dripper Oil Levels');
       return;
     }
     // vehicles
@@ -8679,9 +9196,9 @@ el('export-xlsx-btn').addEventListener('click', async () => {
     const url = `/api/reports/mileage/export?format=xlsx&year=${reportsYear}&month=${reportsMonth}&token=${token}`;
     const res = await fetch(url);
     if (!res.ok) throw new Error('Export failed');
-    triggerBlobDownload(await res.blob(), `CVC_Mileage_${reportsYear}_${reportsMonth}.xlsx`);
+    await shareFile(await res.blob(), `CVC_Mileage_${reportsYear}_${reportsMonth}.xlsx`, 'CVC Mileage');
   } catch (err) {
-    showToast('Export failed: ' + err.message, 'error');
+    if (err.name !== 'AbortError') showToast('Export failed: ' + err.message, 'error');
   }
 });
 
@@ -8906,40 +9423,45 @@ async function renderPiezCompareReport() {
   }
 }
 
-el('export-pdf-btn').addEventListener('click', () => {
-  let printArea = document.getElementById('print-area');
-  if (!printArea) {
-    printArea = document.createElement('div');
-    printArea.id = 'print-area';
-    document.body.appendChild(printArea);
-  }
-
-  if (exportContext === 'wells-dripper') {
-    el('export-modal').classList.add('hidden');
-    const card = el('report-wells-output').querySelector('.report-card');
-    if (card) printReportPortrait(card.outerHTML);
-    return;
-  }
-
-  if (exportContext === 'wells-daily') {
-    delete printArea.dataset.printType;
-    const card = el('report-wells-output').querySelector('.report-card');
-    printArea.innerHTML = card ? card.outerHTML : '';
-  } else if (exportContext === 'piezometers-status' || exportContext === 'piezometers-compare') {
-    delete printArea.dataset.printType;
-    const rendered = el('report-piez-output').querySelector('.report-card');
-    printArea.innerHTML = rendered ? rendered.outerHTML : '';
-  } else {
-    printArea.dataset.printType = 'vehicle';
-    printArea.innerHTML = buildMileageHTML(lastReportRows, reportsYear, reportsMonth);
-  }
-
+el('export-pdf-btn').addEventListener('click', async () => {
   el('export-modal').classList.add('hidden');
-  document.body.style.overflow = ''; // ensure scroll-lock is released before print dialog
-  setTimeout(() => {
-    window.print();
-    window.addEventListener('afterprint', () => { printArea.innerHTML = ''; }, { once: true });
-  }, 100);
+  document.body.style.overflow = '';
+  const btn = el('export-pdf-btn');
+  btn.disabled = true;
+  try {
+    if (exportContext === 'wells-dripper') {
+      if (!lastWellDripperRows.length) throw new Error('No report data to export');
+      const fillTo = parseInt(el('well-dripper-amount').value) || 12;
+      const checkedIds = getCheckedDripperIds();
+      const exportRows = checkedIds.size > 0 ? lastWellDripperRows.filter(r => checkedIds.has(String(r.well_id))) : lastWellDripperRows;
+      await sharePdfFromHtml(buildDripperPdfHtml(exportRows, fillTo), REPORT_PDF_CSS, 'DripperOil', 'Dripper Oil Levels');
+    } else if (exportContext === 'wells-daily') {
+      const card = el('report-wells-output').querySelector('.report-card');
+      if (!card) throw new Error('No report to export');
+      const date = el('well-report-date').value;
+      await sharePdfFromHtml(card.outerHTML, REPORT_PDF_CSS, `WellReadings_${date}`, 'Well Readings');
+    } else if (exportContext === 'piezometers-status') {
+      const card = el('report-piez-output').querySelector('.report-card');
+      if (!card) throw new Error('No report to export');
+      await sharePdfFromHtml(card.outerHTML, REPORT_PDF_CSS, `Piezometers_${piezRepStart}_${piezRepEnd}`, 'Piezometer Readings');
+    } else if (exportContext === 'piezometers-compare') {
+      const card = el('report-piez-output').querySelector('.report-card');
+      if (!card) throw new Error('No report to export');
+      const s1 = el('piez-cmp-start1').value, s2 = el('piez-cmp-start2').value;
+      await sharePdfFromHtml(card.outerHTML, REPORT_PDF_CSS, `Piezometers_Compare_${s1}_${s2}`, 'Piezometer Comparison');
+    } else {
+      // vehicles / mileage — compact so the whole fleet fits one portrait page
+      const html = buildMileageHTML(lastReportRows, reportsYear, reportsMonth);
+      const monthName = new Date(reportsYear, reportsMonth - 1, 1).toLocaleDateString('en-US', { month: 'long' });
+      const fname = `${reportsMonth}-${monthName}-${String(reportsYear).slice(2)}-Mileage`;
+      await sharePdfFromHtml(html, MILEAGE_PDF_CSS, fname, 'CVC Mileage',
+        { orientation: 'portrait', format: 'letter', widthPx: 794, margin: 6 });
+    }
+  } catch (err) {
+    if (err.name !== 'AbortError') showToast('Export failed: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false;
+  }
 });
 
 /* ── Lock body scroll when any modal is open (prevents background scroll on iOS) ── */
@@ -9329,7 +9851,7 @@ async function initWellRunsScreen() {
     showToAll = s.public;
   } catch { /* ignore */ }
 
-  if (role === 'admin' || role === 'supervisor' || showToAll) {
+  if (isSupervisorLevel(role) || showToAll) {
     el('gps-loc-btn-wrap').classList.remove('hidden');
     el('gps-loc-open-btn').addEventListener('click', openGPSLocSelector);
   }
@@ -10369,7 +10891,11 @@ function closeSafetySigninModal() {
 }
 
 function initSigCanvas(canvas, ctx) {
-  ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--text').trim() || '#000';
+  // Always draw black ink on a transparent canvas (the element has a white CSS
+  // background so strokes are visible while signing in either theme). Stored
+  // PNG is black-on-transparent: in-app dark mode inverts it to white, light
+  // mode shows it black, and the PDF export forces black via brightness(0).
+  ctx.strokeStyle = '#000';
   ctx.lineWidth   = 2;
   ctx.lineCap     = 'round';
   ctx.lineJoin    = 'round';
@@ -10440,67 +10966,82 @@ async function saveSignIn(bodyEl) {
 }
 
 // ── PDF Export ────────────────────────────────────────────────────────────────
-function exportSafetyMeetingPDF(meeting, attendees) {
-  const w = window.open('', '_blank');
-  if (!w) { showToast('Allow pop-ups to export PDF', 'error'); return; }
-
-  const fmtDate = d => d ? localDateStr(d, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }) : '—';
+function buildSafetySheetHtml(meeting, attendees) {
+  const fmtDate  = d => d ? localDateStr(d, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }) : '—';
   const fmtShort = d => d ? localDateStr(d, { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
-  const esc = s => String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const esc = escHtml;
 
-  const rows = attendees.map((a, i) => `
-    <tr>
-      <td class="num">${i + 1}</td>
-      <td>${esc(a.full_name)}</td>
-      <td class="sig-cell">${a.signature_data ? `<img src="${esc(a.signature_data)}" alt="">` : ''}</td>
-      <td class="date-cell">${fmtShort(a.signed_date)}</td>
-    </tr>`).join('');
+  // Only render rows for the actual attendees (no blank padding)
+  const rows = attendees.length
+    ? attendees.map((a, i) => `<tr>
+        <td class="num">${i + 1}</td>
+        <td>${esc(a.full_name)}</td>
+        <td class="sig">${a.signature_data ? `<img src="${esc(a.signature_data)}" alt="">` : ''}</td>
+        <td class="dt">${fmtShort(a.signed_date)}</td>
+      </tr>`).join('')
+    : `<tr><td colspan="4" style="text-align:center;color:#999;padding:14px">No attendees recorded</td></tr>`;
 
-  // Fill remaining rows to ~20 total for a clean sheet
-  const empty = Math.max(0, 20 - attendees.length);
-  const blankRows = Array(empty).fill(0).map((_, i) =>
-    `<tr><td class="num">${attendees.length + i + 1}</td><td></td><td class="sig-cell"></td><td class="date-cell"></td></tr>`
-  ).join('');
-
-  w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8">
-    <title>Safety Meeting Sign-In — ${esc(meeting.topic)}</title>
-    <style>
-      * { box-sizing: border-box; margin: 0; padding: 0; }
-      body { font-family: Arial, sans-serif; font-size: 10pt; color: #000; padding: 20px 24px; }
-      h1 { font-size: 13pt; margin-bottom: 4px; }
-      .org { font-size: 9pt; color: #555; margin-bottom: 12px; }
-      .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px; margin-bottom: 14px; border: 1px solid #ccc; padding: 8px 10px; border-radius: 4px; }
-      .meta-item { font-size: 9.5pt; }
-      .meta-label { font-weight: bold; color: #333; }
-      table { width: 100%; border-collapse: collapse; margin-top: 6px; }
-      th { background: #f0f0f0; border: 1px solid #bbb; padding: 5px 7px; font-size: 9pt; text-align: left; }
-      td { border: 1px solid #bbb; padding: 5px 7px; font-size: 9.5pt; height: 32px; vertical-align: middle; }
-      td.num { width: 30px; text-align: center; color: #888; font-size: 8.5pt; }
-      td.sig-cell { width: 180px; }
-      td.sig-cell img { height: 26px; max-width: 170px; }
-      td.date-cell { width: 90px; font-size: 8.5pt; }
-      .footer { margin-top: 16px; font-size: 8pt; color: #888; }
-      @media print { @page { margin: 15mm; } button { display: none !important; } }
-    </style>
-  </head><body>
-    <h1>Safety Meeting Sign-In Sheet</h1>
-    <div class="org">Kern County Water Agency</div>
-    <div class="meta">
-      <div class="meta-item"><span class="meta-label">Date:</span> ${fmtDate(meeting.meeting_date)}</div>
-      <div class="meta-item"><span class="meta-label">Time:</span> ${meeting.meeting_time ? meeting.meeting_time.slice(0,5) : '—'}</div>
-      <div class="meta-item"><span class="meta-label">Topic:</span> ${esc(meeting.topic)}</div>
-      <div class="meta-item"><span class="meta-label">Presented By:</span> ${esc(meeting.presented_by || '—')}</div>
-      ${meeting.link ? `<div class="meta-item" style="grid-column:1/-1"><span class="meta-label">Reference:</span> ${esc(meeting.link)}</div>` : ''}
-      ${meeting.notes ? `<div class="meta-item" style="grid-column:1/-1"><span class="meta-label">Notes:</span> ${esc(meeting.notes)}</div>` : ''}
+  return `
+    <div class="sf-report-header">
+      <img class="sf-logo" src="/icons/kcwa-seal-192.png" alt="KCWA">
+      <div class="sf-titles">
+        <div class="sf-title">Safety Sign In</div>
+        <div class="sf-sub">Kern County Water Agency</div>
+      </div>
     </div>
-    <table>
-      <thead><tr><th>#</th><th>Print Name</th><th>Signature</th><th>Date</th></tr></thead>
-      <tbody>${rows}${blankRows}</tbody>
+    <table class="sf-meta-table">
+      <tr><th>Date</th><td>${fmtDate(meeting.meeting_date)}</td><th>Time</th><td>${meeting.meeting_time ? meeting.meeting_time.slice(0,5) : '—'}</td></tr>
+      <tr><th>Topic</th><td>${esc(meeting.topic)}</td><th>Presented By</th><td>${esc(meeting.presented_by || '—')}</td></tr>
+      ${meeting.link  ? `<tr><th>Reference</th><td colspan="3">${esc(meeting.link)}</td></tr>` : ''}
+      ${meeting.notes ? `<tr><th>Notes</th><td colspan="3">${esc(meeting.notes)}</td></tr>` : ''}
     </table>
-    <div class="footer">Total Attendees: ${attendees.length} &nbsp;|&nbsp; Exported: ${new Date().toLocaleString()}</div>
-  </body></html>`);
-  w.document.close();
-  w.setTimeout(() => w.print(), 400);
+    <table class="sf-attend-table">
+      <thead><tr><th>#</th><th>Print Name</th><th>Signature</th><th>Date</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <div class="sf-footer">Total Attendees: ${attendees.length} &nbsp;|&nbsp; Generated: ${new Date().toLocaleDateString()}</div>`;
+}
+
+function exportSafetyMeetingPDF(meeting, attendees) {
+  document.getElementById('safety-report-modal')?.remove();
+
+  // Filename: MM-DD-YYYY-Safety-Meeting
+  const raw = meeting.meeting_date ? String(meeting.meeting_date).slice(0, 10) : '';
+  const [yr, mo, dy] = raw ? raw.split('-') : ['', '', ''];
+  const filename = raw ? `${mo}-${dy}-${yr}-Safety-Meeting` : 'Safety-Meeting';
+
+  const contentHtml = buildSafetySheetHtml(meeting, attendees);
+
+  const modal = document.createElement('div');
+  modal.id = 'safety-report-modal';
+  modal.className = 'report-preview-overlay';
+  modal.innerHTML = `
+    <div class="report-preview-bar">
+      <button class="btn btn-secondary btn-sm" id="sf-rp-close">&times; Close</button>
+      <span class="report-preview-bar-title">Safety Sign In</span>
+      <div style="display:flex;gap:8px;flex-shrink:0">
+        <button class="btn btn-save btn-sm" id="sf-rp-share">&#8679; Share / Export</button>
+      </div>
+    </div>
+    <div class="report-preview-scroll">
+      <div class="ir-content sf-content" id="sf-rp-body">${contentHtml}</div>
+    </div>`;
+  document.body.appendChild(modal);
+
+  modal.querySelector('#sf-rp-close').addEventListener('click', () => modal.remove());
+
+  // Share: render to a real PDF blob and hand off to the OS share sheet
+  modal.querySelector('#sf-rp-share').addEventListener('click', async () => {
+    const b = modal.querySelector('#sf-rp-share');
+    b.disabled = true; b.textContent = 'Generating…';
+    try {
+      await sharePdfFromElement(modal.querySelector('#sf-rp-body'), filename, 'Safety Sign In');
+    } catch (err) {
+      if (err.name !== 'AbortError') showToast('Share failed: ' + err.message, 'error');
+    } finally {
+      b.disabled = false; b.innerHTML = '&#8679; Share / Export';
+    }
+  });
 }
 
 /* ── Global Search ───────────────────────────────────────────────────────── */
@@ -12022,6 +12563,49 @@ async function renderWellDetailReport() {
 
 let lastWellDripperRows = [];
 
+function getCheckedDripperIds() {
+  return new Set([...document.querySelectorAll('.dripper-check:checked')]
+    .map(cb => cb.closest('.dripper-row').dataset.wellId));
+}
+
+// Build clean (no CSS vars, no checkboxes) HTML for the dripper PDF export.
+function buildDripperPdfHtml(rows, fillTo) {
+  const fmtDate = s => s ? localDateStr(s, { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
+  const areas = [...new Set(rows.map(r => r.area || 'Other'))];
+  let total = 0;
+  let html = `<div class="report-card">
+    <div class="report-title">Dripper Oil Levels</div>
+    <div class="report-subtitle">Fill target: ${fillTo} gal — ${rows.length} well${rows.length !== 1 ? 's' : ''}</div>`;
+  areas.forEach(area => {
+    const aRows = rows.filter(r => (r.area || 'Other') === area);
+    html += `<div class="report-section-title">${escHtml(area)}</div>
+      <table class="report-table"><thead><tr>
+        <th>Well</th>
+        <th class="report-num">Dripper Oil (gal)</th>
+        <th class="report-num">Amt to Full (gal)</th>
+        <th>Last Read</th>
+      </tr></thead><tbody>`;
+    aRows.forEach(r => {
+      const dripper = r.dripper_oil != null ? Number(r.dripper_oil) : null;
+      const atf = dripper != null ? Math.max(0, fillTo - dripper) : null;
+      if (atf != null) total += atf;
+      html += `<tr>
+        <td>${escHtml(r.common_name)}</td>
+        <td class="report-num">${dripper != null ? dripper.toFixed(2) + ' gal' : '<span style="color:#6b7280">No reading</span>'}</td>
+        <td class="report-num">${atf != null ? atf.toFixed(2) + ' gal' : '—'}</td>
+        <td>${fmtDate(r.reading_date)}</td>
+      </tr>`;
+    });
+    html += '</tbody></table>';
+  });
+  html += `<div style="padding:14px 4px 4px;display:flex;align-items:center;gap:10px;border-top:2px solid #000;margin-top:12px">
+    <span style="font-weight:600">Total oil needed:</span>
+    <span style="font-size:1.15rem;font-weight:700;color:#16a34a">${total.toFixed(2)}</span>
+    <span style="color:#6b7280;font-size:0.85rem">gal</span>
+  </div></div>`;
+  return html;
+}
+
 async function renderWellDripperReport() {
   const out = el('report-wells-output');
   out.innerHTML = '<div class="placeholder-msg">Loading…</div>';
@@ -12047,7 +12631,7 @@ async function renderWellDripperReport() {
       html += `<div class="report-section-title">${escHtml(area)}</div>
         <table class="report-table" data-area-idx="${areaIdx}">
           <thead><tr>
-            <th style="width:28px"><input type="checkbox" class="dripper-area-all" data-area-idx="${areaIdx}" title="Select all in this area" style="width:16px;height:16px;cursor:pointer;accent-color:var(--green)"></th>
+            <th style="width:28px"><input type="checkbox" class="dripper-area-all" data-area-idx="${areaIdx}" title="Select wells under 5 gal in this area" style="width:16px;height:16px;cursor:pointer;accent-color:var(--green)"></th>
             <th>Well</th>
             <th class="report-num">Dripper Oil (gal)</th>
             <th class="report-num">Amt to Full (gal)</th>
@@ -12060,7 +12644,7 @@ async function renderWellDripperReport() {
         const dripCell = dripper != null
           ? dripper.toFixed(2) + ' gal'
           : `<span style="color:var(--text-dim)">No reading</span>`;
-        html += `<tr class="dripper-row" data-dripper-oil="${dripper != null ? dripper : ''}">
+        html += `<tr class="dripper-row" data-well-id="${r.well_id}" data-dripper-oil="${dripper != null ? dripper : ''}">
           <td><input type="checkbox" class="dripper-check" style="width:18px;height:18px;cursor:pointer;accent-color:var(--green)" ${dripper == null ? 'disabled' : ''}></td>
           <td>${escHtml(r.common_name)}</td>
           <td class="report-num">${dripCell}</td>
@@ -12085,17 +12669,27 @@ async function renderWellDripperReport() {
     out.addEventListener('change', e => {
       if (e.target.classList.contains('dripper-area-all')) {
         const table = e.target.closest('table');
-        table.querySelectorAll('.dripper-check:not(:disabled)').forEach(cb => { cb.checked = e.target.checked; });
+        // Select only wells with dripper oil < 5 gal (toggle: all-under-5 checked → uncheck all)
+        const under5 = [...table.querySelectorAll('.dripper-row')].filter(row => {
+          const v = parseFloat(row.dataset.dripperOil);
+          return !isNaN(v) && v < 5;
+        });
+        const allUnder5Checked = under5.length > 0 && under5.every(r => r.querySelector('.dripper-check').checked);
+        under5.forEach(r => { r.querySelector('.dripper-check').checked = !allUnder5Checked; });
+        e.target.checked = !allUnder5Checked && under5.length > 0;
+        e.target.indeterminate = false;
         recalcDripper();
       } else if (e.target.classList.contains('dripper-check')) {
-        // Sync area-all checkbox state
         const table = e.target.closest('table');
-        const allCbs = table.querySelectorAll('.dripper-check:not(:disabled)');
-        const checkedCount = table.querySelectorAll('.dripper-check:not(:disabled):checked').length;
+        const under5 = [...table.querySelectorAll('.dripper-row')].filter(row => {
+          const v = parseFloat(row.dataset.dripperOil);
+          return !isNaN(v) && v < 5;
+        });
+        const checkedUnder5 = under5.filter(r => r.querySelector('.dripper-check').checked).length;
         const areaAll = table.querySelector('.dripper-area-all');
         if (areaAll) {
-          areaAll.indeterminate = checkedCount > 0 && checkedCount < allCbs.length;
-          areaAll.checked = checkedCount === allCbs.length && allCbs.length > 0;
+          areaAll.indeterminate = checkedUnder5 > 0 && checkedUnder5 < under5.length;
+          areaAll.checked = under5.length > 0 && checkedUnder5 === under5.length;
         }
         recalcDripper();
       }
@@ -12119,28 +12713,6 @@ function recalcDripper() {
   if (totalEl) totalEl.textContent = total.toFixed(2);
 }
 
-function printReportPortrait(htmlContent) {
-  const w = window.open('', '_blank');
-  if (!w) { showToast('Allow pop-ups to print', 'error'); return; }
-  w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8">
-    <style>
-      @page { size: letter portrait; margin: 0.4in 0.5in; }
-      body { font-family: Arial, sans-serif; color: #000; font-size: 10pt; }
-      .report-title { font-size: 14pt; font-weight: 700; text-align: center; margin: 0 0 3px; }
-      .report-subtitle { font-size: 9pt; text-align: center; color: #444; margin: 0 0 10px; }
-      .report-section-title { font-size: 8pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; margin: 10px 0 3px; border-bottom: 1px solid #000; padding-bottom: 2px; }
-      table { width: 100%; border-collapse: collapse; font-size: 9.5pt; margin-bottom: 4px; }
-      th { text-align: left; padding: 2px 5px; font-size: 8pt; font-weight: 700; text-transform: uppercase; border-bottom: 1.5px solid #000; }
-      td { padding: 2px 5px; border-bottom: 0.5px solid #ddd; }
-      .report-num { text-align: right; }
-      .dripper-check, .dripper-area-all { display: none !important; }
-      [style*="border-top:2px"] { border-top: 2px solid #000 !important; padding-top: 10px; }
-      @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
-    </style>
-  </head><body>${htmlContent}</body></html>`);
-  w.document.close();
-  setTimeout(() => { w.print(); w.close(); }, 300);
-}
 
 /* ── Init ────────────────────────────────────────────────────────────────── */
 checkDBStatus();

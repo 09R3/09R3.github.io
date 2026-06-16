@@ -54,9 +54,14 @@
 [data-theme="light"] .status-badge.wr-old    { background: rgba(198,40,40,0.10);  color: #c62828; }
 
 /* Role badges */
-[data-theme="light"] .role-admin      { background: #f3e5f5; color: #6a1b9a; }
-[data-theme="light"] .role-supervisor { background: #e1f5fe; color: #01579b; }
-[data-theme="light"] .role-operator   { background: #e6f4ea; color: #1b5e20; }
+[data-theme="light"] .role-admin                    { background: #f3e5f5; color: #6a1b9a; }
+[data-theme="light"] .role-supervisor               { background: #e1f5fe; color: #01579b; }
+[data-theme="light"] .role-water-planner            { background: #e0f7fa; color: #006064; }
+[data-theme="light"] .role-operator                 { background: #e6f4ea; color: #1b5e20; }
+[data-theme="light"] .role-systems-operator         { background: #e0f2f1; color: #00695c; }
+[data-theme="light"] .role-heavy-equipment-operator { background: #fff3e0; color: #e65100; }
+[data-theme="light"] .role-pump-tech                { background: #fff8e1; color: #f57f17; }
+[data-theme="light"] .role-elec-tech                { background: #e8eaf6; color: #283593; }
 
 /* Important well name (#f5c542 is unreadable on light bg) */
 [data-theme="light"] .list-item-name.well-important { color: #b07800; }
@@ -873,9 +878,14 @@ input[type="date"].ctrl-input { min-height: 44px; }
   letter-spacing: 0.05em;
   flex-shrink: 0;
 }
-.role-admin      { background: #4a1a4a; color: #ce93d8; }
-.role-supervisor { background: #1a3a4a; color: #81d4fa; }
-.role-operator   { background: #1a3a1a; color: #a5d6a7; }
+.role-admin                    { background: #4a1a4a; color: #ce93d8; }
+.role-supervisor               { background: #1a3a4a; color: #81d4fa; }
+.role-water-planner            { background: #003a3e; color: #80deea; }
+.role-operator                 { background: #1a3a1a; color: #a5d6a7; }
+.role-systems-operator         { background: #00302c; color: #80cbc4; }
+.role-heavy-equipment-operator { background: #3e1f00; color: #ffcc80; }
+.role-pump-tech                { background: #3e2a00; color: #ffe082; }
+.role-elec-tech                { background: #1a1e40; color: #9fa8da; }
 .user-edit-btn {
   background: none;
   border: 1px solid var(--border);
@@ -2200,7 +2210,22 @@ input[type="date"].ctrl-input { min-height: 44px; }
 .ir-map   { width: 100%; max-width: 620px; border-radius: 4px; display: block; margin-bottom: 4px; }
 .ir-coords { font-size: 0.73rem; color: #1a73e8; text-decoration: underline; }
 .ir-photos { display: flex; flex-direction: column; gap: 12px; }
-.ir-photo  { width: 100%; max-width: 620px; border-radius: 4px; display: block; }
+/* Keep original aspect ratio, bound the size so portrait phone photos don't
+   blow up, and keep each photo whole across PDF page breaks. */
+.ir-photo  {
+  max-width: 100%;
+  max-height: 360px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: 4px;
+  display: block;
+  page-break-inside: avoid;
+  break-inside: avoid;
+}
+/* KCWA logo header (top-left) shared by report PDFs */
+.ir-logo-row, .pdf-logo-row { margin-bottom: 10px; }
+.ir-logo, .pdf-logo { height: 46px; width: auto; display: block; }
 /* Print: hide everything except the issue report modal (when printing one).
    Also exclude #print-area so the standard print path still works. */
 @media print {
@@ -3131,7 +3156,8 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
   display: block; width: 100%; height: 110px;
   border: 1px dashed var(--border); border-radius: 8px;
   touch-action: none; cursor: crosshair;
-  background: var(--surface);
+  /* White pad so the always-black ink is visible while signing in either theme */
+  background: #fff;
 }
 .safety-attend-table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 0.88rem; }
 .safety-attend-table th {
@@ -3140,7 +3166,10 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
   font-size: 0.8rem; color: var(--text-dim);
 }
 .safety-attend-table td { padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
-.safety-attend-table img { height: 40px; max-width: 120px; }
+/* Signatures are stored as black ink on transparent. Invert to white in dark
+   mode (default) so they're visible on the dark table; show black in light mode. */
+.safety-attend-table img { height: 40px; max-width: 120px; filter: invert(1); }
+[data-theme="light"] .safety-attend-table img { filter: none; }
 .safety-meeting-item { border: 1px solid var(--border); border-radius: 10px; margin-bottom: 10px; overflow: hidden; }
 .safety-meeting-header { display: flex; align-items: center; gap: 10px; padding: 12px 14px; cursor: pointer; }
 .safety-meeting-header:hover { background: var(--surface-raised); }
@@ -3156,6 +3185,81 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
 }
 .safety-attend-count { font-size: 0.82rem; color: var(--text-dim); }
 .safety-signin-card { max-width: 420px; width: 100%; }
+
+/* Safety Sign-In export sheet (rendered inside .ir-content white page) */
+.sf-report-header { display: flex; align-items: center; gap: 14px; border-bottom: 2px solid #333; padding-bottom: 10px; margin-bottom: 14px; }
+.sf-logo { height: 60px; width: auto; }
+.sf-title { font-size: 1.7rem; font-weight: 800; color: #111; line-height: 1.05; }
+.sf-sub { font-size: 0.95rem; color: #555; }
+.sf-meta-table { width: 100%; border-collapse: collapse; margin-bottom: 14px; font-size: 0.86rem; }
+.sf-meta-table th { text-align: left; color: #555; font-weight: 700; padding: 4px 8px 4px 0; white-space: nowrap; vertical-align: top; }
+.sf-meta-table td { padding: 4px 16px 4px 0; color: #111; vertical-align: top; }
+.sf-attend-table { width: 100%; border-collapse: collapse; margin-top: 6px; }
+.sf-attend-table th { background: #f0f0f0; border: 1px solid #bbb; padding: 5px 7px; font-size: 0.78rem; text-align: left; color: #222; }
+.sf-attend-table td { border: 1px solid #bbb; padding: 5px 7px; font-size: 0.82rem; height: 34px; vertical-align: middle; color: #111; }
+.sf-attend-table td.num { width: 30px; text-align: center; color: #888; }
+.sf-attend-table td.sig { width: 180px; }
+/* Force black ink in the export regardless of how the signature was stored */
+.sf-attend-table td.sig img { height: 28px; max-width: 170px; filter: brightness(0); }
+.sf-attend-table td.dt { width: 90px; white-space: nowrap; font-size: 0.78rem; }
+.sf-footer { margin-top: 14px; font-size: 0.78rem; color: #666; }
+
+/* ── Assigned Items / Bell ───────────────────────────────────────────────── */
+.header-bell-btn {
+  position: relative;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  width: 36px; height: 36px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; flex-shrink: 0;
+  transition: background var(--transition), border-color var(--transition);
+  color: var(--text);
+  padding: 0;
+}
+.header-bell-btn:hover { background: var(--surface3); border-color: var(--accent); }
+.bell-badge {
+  position: absolute;
+  top: -3px; right: -3px;
+  background: #e53e3e;
+  color: #fff;
+  border-radius: 10px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  padding: 1px 5px;
+  min-width: 16px;
+  text-align: center;
+  line-height: 14px;
+  pointer-events: none;
+}
+.assign-modal-card { max-width: 480px; width: 100%; }
+.assign-item {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.assign-item.assign-new { border-color: var(--accent); background: var(--surface2); }
+.assign-item-type {
+  font-size: 0.73rem;
+  color: var(--text-dim);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.assign-item-desc { font-size: 0.9rem; font-weight: 500; }
+.assign-item-meta {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
 
 /* ── Print ───────────────────────────────────────────────────────────────── */
 @media print {

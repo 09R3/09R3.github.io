@@ -129,7 +129,7 @@
         Sign in with Microsoft 365
       </a>
       <div id="ms-login-error" class="error-msg hidden"></div>
-      <div class="login-version">v 2.39</div>
+      <div class="login-version">v 2.53</div>
     </div>
   </div>
 </div>
@@ -191,6 +191,10 @@
     <div class="header-right">
       <button class="header-search-btn" id="header-search-btn" title="Search">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/></svg>
+      </button>
+      <button class="header-bell-btn" id="header-bell-btn" title="Assigned Items">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+        <span class="bell-badge hidden" id="bell-badge">0</span>
       </button>
       <button class="header-theme-btn" id="theme-toggle-btn" title="Switch to light mode"><span class="app-icon" style="width:20px;height:20px;-webkit-mask-image:url(/marv-site/icons/icon-moon.svg);mask-image:url(/marv-site/icons/icon-moon.svg)" aria-hidden="true"></span></button>
       <button class="header-refresh-btn" id="header-refresh-btn" title="Refresh">
@@ -598,6 +602,13 @@
           </div>
           <span class="dash-label">PMs</span>
         </button>
+        <button class="dash-tile" data-maint-panel="assigned">
+          <div class="dash-icon-wrap">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/><polyline points="9 11 12 14 22 4"/></svg>
+          </div>
+          <span class="dash-label">Assigned to Me</span>
+          <span class="maint-badge hidden" id="maint-badge-assigned">0</span>
+        </button>
       </div>
     </div>
 
@@ -789,7 +800,7 @@
         </div>
         <div class="form-group">
           <label>Assigned To</label>
-          <input type="text" id="equip-issue-assigned" class="ctrl-input" placeholder="Optional">
+          <select id="equip-issue-assigned" class="ctrl-select"><option value="">— Unassigned —</option></select>
         </div>
         <div id="equip-new-error" class="error-msg hidden"></div>
         <div class="two-col">
@@ -848,7 +859,7 @@
         </div>
         <div class="form-group">
           <label>Assigned To</label>
-          <input type="text" id="bldg-issue-assigned" class="ctrl-input" placeholder="Optional">
+          <select id="bldg-issue-assigned" class="ctrl-select"><option value="">— Unassigned —</option></select>
         </div>
         <div id="bldg-new-error" class="error-msg hidden"></div>
         <div class="two-col">
@@ -904,7 +915,7 @@
         </div>
         <div class="form-group">
           <label>Assigned To</label>
-          <input type="text" id="well-issue-assigned" class="ctrl-input" placeholder="Optional">
+          <select id="well-issue-assigned" class="ctrl-select"><option value="">— Unassigned —</option></select>
         </div>
         <div id="well-new-error" class="error-msg hidden"></div>
         <div class="two-col">
@@ -1090,6 +1101,11 @@
       <!-- Issue list -->
       <div id="canal-issue-list"></div>
     </div><!-- /maint-panel-canal-issues -->
+
+    <!-- Assigned to Me Panel -->
+    <div id="maint-panel-assigned" class="maint-panel hidden">
+      <div id="assigned-panel-list"></div>
+    </div><!-- /maint-panel-assigned -->
 
   </div><!-- /screen-maintenance -->
 
@@ -1509,7 +1525,7 @@
           <button class="seg-btn active" data-val="gauges">Staff Gauges</button>
           <button class="seg-btn" data-val="gates">Gate Readings</button>
         </div>
-        <button class="btn btn-secondary btn-sm" id="ponds-report-print-btn" style="margin-left:auto">Print</button>
+        <button class="btn btn-secondary btn-sm" id="ponds-report-print-btn" style="margin-left:auto"><span class="app-icon" style="width:14px;height:14px;-webkit-mask-image:url(/marv-site/icons/icon-download.svg);mask-image:url(/marv-site/icons/icon-download.svg)"></span> Share</button>
       </div>
       <!-- Date nav -->
       <div class="report-toolbar">
@@ -1719,7 +1735,7 @@
     <div id="settings-panel-appinfo" class="settings-panel hidden">
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 2.39</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 2.53</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>
@@ -2001,6 +2017,11 @@
               <label>Role</label>
               <select id="um-role" class="ctrl-select">
                 <option value="operator">Operator</option>
+                <option value="systems-operator">Systems Operator</option>
+                <option value="heavy-equipment-operator">Heavy Equipment Operator</option>
+                <option value="pump-tech">Pump Maintenance Technician</option>
+                <option value="elec-tech">Electrical Control Technician</option>
+                <option value="water-planner">Water Planner</option>
                 <option value="supervisor">Supervisor</option>
                 <option value="admin">Admin</option>
               </select>
@@ -2500,7 +2521,7 @@
       <div class="export-actions">
         <button class="btn btn-secondary export-fmt-btn" id="export-csv-btn"><span class="app-icon" style="width:16px;height:16px;-webkit-mask-image:url(/marv-site/icons/icon-invoice.svg);mask-image:url(/marv-site/icons/icon-invoice.svg)"></span> CSV</button>
         <button class="btn btn-secondary export-fmt-btn" id="export-xlsx-btn"><span class="app-icon" style="width:16px;height:16px;-webkit-mask-image:url(/marv-site/icons/icon-download.svg);mask-image:url(/marv-site/icons/icon-download.svg)"></span> Excel</button>
-        <button class="btn btn-primary   export-fmt-btn" id="export-pdf-btn"><span class="app-icon" style="width:16px;height:16px;-webkit-mask-image:url(/marv-site/icons/icon-print.svg);mask-image:url(/marv-site/icons/icon-print.svg)"></span> Print / PDF</button>
+        <button class="btn btn-primary   export-fmt-btn" id="export-pdf-btn"><span class="app-icon" style="width:16px;height:16px;-webkit-mask-image:url(/marv-site/icons/icon-print.svg);mask-image:url(/marv-site/icons/icon-print.svg)"></span> PDF</button>
       </div>
     </div>
   </div>
@@ -2634,6 +2655,19 @@
         <button class="btn btn-secondary" id="rlo-skip" style="flex:1">Skip</button>
         <button class="btn btn-save" id="rlo-use" style="flex:1">Use This Location</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- Assigned Items modal -->
+<div id="assign-modal" class="modal-overlay hidden">
+  <div class="modal-card assign-modal-card">
+    <div class="modal-header">
+      <h2>Assigned to Me</h2>
+      <button class="modal-close" id="assign-modal-close">&times;</button>
+    </div>
+    <div class="modal-body" id="assign-modal-body">
+      <div class="placeholder-msg">Loading…</div>
     </div>
   </div>
 </div>

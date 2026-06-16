@@ -27,6 +27,9 @@ if (msalEnabled) {
   });
 }
 
+// All roles with supervisor-level access (declared here so routes below can reference it)
+const SUPERVISOR_ROLES = ['supervisor', 'admin', 'water-planner'];
+
 const app = express();
 app.use(express.json());
 app.use(cookieParser());
@@ -58,19 +61,25 @@ const multerStorage = multer.diskStorage({
     const ext  = path.extname(file.originalname).toLowerCase();
     const base = path.basename(file.originalname, ext)
                      .replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 60);
-    cb(null, `${base}${ext}`);
+    // Unique suffix prevents same-name uploads overwriting each other (S-7)
+    cb(null, `${base}-${Date.now().toString(36)}${ext}`);
   },
 });
+// Extensions must match the mimetype whitelist — mimetype alone is
+// client-controlled, and an .html file declared as image/png would be
+// served back as a real page by express.static (S-6)
+const UPLOAD_OK_EXT = new Set(['.jpg', '.jpeg', '.png', '.heic', '.heif', '.webp', '.pdf']);
 const upload = multer({
   storage: multerStorage,
   limits: { fileSize: 50 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    const ok = /^image\/(jpeg|jpg|png|heic|heif|webp)|application\/pdf$/.test(file.mimetype);
-    cb(null, ok);
+    const extOk  = UPLOAD_OK_EXT.has(path.extname(file.originalname).toLowerCase());
+    const mimeOk = /^image\/(jpeg|jpg|png|heic|heif|webp)$|^application\/pdf$/.test(file.mimetype);
+    cb(null, extOk && mimeOk);
   },
 });
 
-app.post('/api/tools/upload', requireAuth, requireRole('supervisor', 'admin'),
+app.post('/api/tools/upload', requireAuth, requireRole(...SUPERVISOR_ROLES),
   upload.array('files', 20), (req, res) => {
     if (!req.files?.length) return res.status(400).json({ error: 'No valid files' });
     const cat = UPLOAD_CATEGORIES.includes(req.query.category)
@@ -86,7 +95,7 @@ app.post('/api/tools/upload', requireAuth, requireRole('supervisor', 'admin'),
   }
 );
 
-app.get('/api/tools/files', requireAuth, requireRole('supervisor', 'admin'), (req, res) => {
+app.get('/api/tools/files', requireAuth, requireRole(...SUPERVISOR_ROLES), (req, res) => {
   const cat     = req.query.category;
   const scanDir = cat && UPLOAD_CATEGORIES.includes(cat)
     ? path.join(UPLOADS_ROOT, cat) : UPLOADS_ROOT;
@@ -115,7 +124,7 @@ app.get('/api/tools/files', requireAuth, requireRole('supervisor', 'admin'), (re
   res.json(results);
 });
 
-app.delete('/api/tools/file', requireAuth, requireRole('supervisor', 'admin'), (req, res) => {
+app.delete('/api/tools/file', requireAuth, requireRole(...SUPERVISOR_ROLES), (req, res) => {
   const { relPath, filePath } = req.body;
   const target = relPath || filePath;
   if (!target) return res.status(400).json({ error: 'relPath required' });
@@ -123,7 +132,7 @@ app.delete('/api/tools/file', requireAuth, requireRole('supervisor', 'admin'), (
   if (!abs.startsWith(path.resolve(UPLOADS_ROOT)))
     return res.status(403).json({ error: 'Invalid path' });
   try { fs.unlinkSync(abs); res.json({ ok: true }); }
-  catch (err) { res.status(500).json({ error: err.message }); }
+  catch (err) { handleErr(res, err); }
 });
 
 // ── Database ──────────────────────────────────────────────────────────────────
@@ -135,6 +144,13 @@ const pool = new Pool({
   password: process.env.DB_PASSWORD,
   connectionTimeoutMillis: 5000,
   max: 10,
+});
+
+// Reading timestamps are stored as DATE + TIME WITHOUT TIME ZONE (Pacific local
+// time). Set session timezone on every connection so PostgreSQL interprets those
+// naive timestamps as Pacific when computing intervals against NOW().
+pool.on('connect', client => {
+  client.query("SET timezone = 'America/Los_Angeles'");
 });
 
 // ── Auto-migration ────────────────────────────────────────────────────────────
@@ -353,6 +369,8 @@ const sessions = new Map();
 app.use('/uploads', (req, res, next) => {
   const session = sessions.get(req.cookies?.fo_session);
   if (!session || Date.now() > session.expires) return res.status(401).send('Unauthorized');
+  // Browser must never reinterpret an upload as a different content type (S-6)
+  res.set('X-Content-Type-Options', 'nosniff');
   next();
 }, express.static(UPLOADS_ROOT));
 
@@ -387,7 +405,10 @@ function requireRole(...roles) {
 }
 
 function isSuperiorTo(requestingRole, targetRole) {
-  const rank = { admin: 3, supervisor: 2, operator: 1 };
+  const rank = {
+    admin: 3, supervisor: 2, 'water-planner': 2,
+    operator: 1, 'systems-operator': 1, 'heavy-equipment-operator': 1, 'pump-tech': 1, 'elec-tech': 1,
+  };
   return (rank[requestingRole] || 0) > (rank[targetRole] || 0);
 }
 
@@ -399,10 +420,50 @@ function dateString(d) {
   return new Date(d).toISOString().split('T')[0];
 }
 
+// Log full error server-side; never leak DB/schema details to the client (S-3)
+function handleErr(res, err) {
+  console.error(err);
+  res.status(500).json({ error: 'Server error. Check Docker logs for more information.' });
+}
+
+// ── Login rate limiting (S-2) ─────────────────────────────────────────────────
+// 5 failed attempts per username+IP per 15 min. Cleared by a successful login
+// or by an admin changing that user's password (instant unlock).
+const LOGIN_MAX_FAILURES = 5;
+const LOGIN_WINDOW_MS    = 15 * 60 * 1000;
+const loginFailures = new Map(); // 'username|ip' → { count, windowStart }
+
+function loginBlocked(username, ip) {
+  const key = `${username.toLowerCase()}|${ip}`;
+  const e = loginFailures.get(key);
+  if (!e) return false;
+  if (Date.now() - e.windowStart > LOGIN_WINDOW_MS) { loginFailures.delete(key); return false; }
+  return e.count >= LOGIN_MAX_FAILURES;
+}
+
+function recordLoginFailure(username, ip) {
+  const key = `${username.toLowerCase()}|${ip}`;
+  const e = loginFailures.get(key);
+  if (!e || Date.now() - e.windowStart > LOGIN_WINDOW_MS) {
+    loginFailures.set(key, { count: 1, windowStart: Date.now() });
+  } else {
+    e.count++;
+  }
+}
+
+function clearLoginFailures(username) {
+  const prefix = `${username.toLowerCase()}|`;
+  for (const k of [...loginFailures.keys()]) if (k.startsWith(prefix)) loginFailures.delete(k);
+}
+
 // ── Auth Routes ───────────────────────────────────────────────────────────────
 app.post('/auth/login', async (req, res) => {
   const { username, password } = req.body || {};
   if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
+
+  if (loginBlocked(username, req.ip)) {
+    return res.status(429).json({ error: 'Too many failed attempts. Try again in 15 minutes, or have an admin reset your password.' });
+  }
 
   try {
     const { rows } = await pool.query(
@@ -410,7 +471,10 @@ app.post('/auth/login', async (req, res) => {
       [username]
     );
     const user = rows[0];
-    if (!user) return res.status(401).json({ error: 'Invalid username or password' });
+    if (!user) {
+      recordLoginFailure(username, req.ip);
+      return res.status(401).json({ error: 'Invalid username or password' });
+    }
 
     // Support both bcrypt hashes and legacy plaintext passwords
     let valid = false;
@@ -425,7 +489,12 @@ app.post('/auth/login', async (req, res) => {
       }
     }
 
-    if (!valid) return res.status(401).json({ error: 'Invalid username or password' });
+    if (!valid) {
+      recordLoginFailure(username, req.ip);
+      return res.status(401).json({ error: 'Invalid username or password' });
+    }
+
+    clearLoginFailures(username);
 
     const sessionUser = {
       user_id: user.user_id,
@@ -435,7 +504,7 @@ app.post('/auth/login', async (req, res) => {
       initials: user.initials || user.username.slice(0, 2).toUpperCase(),
     };
     const token = createSession(sessionUser);
-    res.cookie('fo_session', token, { httpOnly: true, secure: req.secure, maxAge: SESSION_TTL });
+    res.cookie('fo_session', token, { httpOnly: true, secure: req.secure, sameSite: 'lax', maxAge: SESSION_TTL });
     res.json({ user: sessionUser });
   } catch (err) {
     console.error('Login error:', err);
@@ -484,7 +553,7 @@ app.get('/auth/microsoft/callback', async (req, res) => {
     if (!rows.length) return res.redirect('/?ms_error=no_account');
 
     const token = createSession(rows[0]);
-    res.cookie('fo_session', token, { httpOnly: true, secure: req.secure, maxAge: SESSION_TTL });
+    res.cookie('fo_session', token, { httpOnly: true, secure: req.secure, sameSite: 'lax', maxAge: SESSION_TTL });
     res.redirect('/');
   } catch (err) {
     console.error('MS auth error:', err.message);
@@ -547,7 +616,7 @@ app.get('/api/sites', requireAuth, async (req, res) => {
     );
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -562,7 +631,7 @@ app.get('/api/buildings', requireAuth, async (req, res) => {
     );
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -596,7 +665,7 @@ app.get('/api/pump-positions', requireAuth, async (req, res) => {
     `, [building_id]);
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -620,7 +689,7 @@ app.get('/api/pump-positions/all', requireAuth, async (req, res) => {
     `);
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -650,7 +719,7 @@ app.get('/api/air-compressors', requireAuth, async (req, res) => {
     `, [building_id]);
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -680,7 +749,7 @@ app.get('/api/pge-meters', requireAuth, async (req, res) => {
     `, [building_id]);
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -710,7 +779,7 @@ app.get('/api/power-monitors', requireAuth, async (req, res) => {
     `, [building_id]);
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -822,7 +891,7 @@ app.get('/api/pp-site-data', requireAuth, async (req, res) => {
       powerMonitors: power_monitors,
     })));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -889,7 +958,7 @@ app.post('/api/readings/pumping-plant', requireAuth, async (req, res) => {
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('Save pumping plant error:', err);
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   } finally {
     client.release();
   }
@@ -922,7 +991,7 @@ async function deleteReading(req, res, table, idCol) {
     await pool.query(`DELETE FROM ${table} WHERE ${idCol} = $1`, [id]);
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 }
 
@@ -948,7 +1017,7 @@ app.delete('/api/readings/vehicle-monthly/:id', requireAuth, (req, res) =>
   deleteReading(req, res, 'readings_vehicle_monthly', 'reading_id'));
 
 // ── Supervisor/Admin: Update readings ─────────────────────────────────────────
-app.put('/api/readings/pump-hours/:id', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+app.put('/api/readings/pump-hours/:id', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
   const { hour_reading, notes } = req.body;
   try {
     await pool.query(
@@ -957,7 +1026,7 @@ app.put('/api/readings/pump-hours/:id', requireAuth, requireRole('supervisor', '
     );
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -969,7 +1038,7 @@ app.get('/api/well-sets', requireAuth, async (req, res) => {
     );
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -1015,7 +1084,7 @@ app.get('/api/wells/kf', requireAuth, async (req, res) => {
     `, [start_date || null, end_date || null]);
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -1055,7 +1124,7 @@ app.get('/api/wells/operational', requireAuth, async (req, res) => {
     `);
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -1083,7 +1152,7 @@ app.post('/api/readings/kf-monthly', requireAuth, async (req, res) => {
     }
     res.json({ ok: true, kf_reading_id: rows[0].kf_reading_id });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -1118,7 +1187,7 @@ app.get('/api/piezometers', requireAuth, async (req, res) => {
     `);
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -1141,7 +1210,7 @@ app.post('/api/readings/piezometer', requireAuth, async (req, res) => {
     );
     res.json({ ok: true, piezometer_reading_id: rows[0].piezometer_reading_id });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -1159,13 +1228,13 @@ app.get('/api/wells/by-run', requireAuth, async (req, res) => {
        ORDER BY state_well_number, common_name`, [run]);
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
 // Middleware: allow supervisor/admin always, or any authed user if gps_selector_public is on
 async function requireGPSSelectorAccess(req, res, next) {
-  if (req.user.role === 'admin' || req.user.role === 'supervisor') return next();
+  if (SUPERVISOR_ROLES.includes(req.user.role)) return next();
   try {
     const { rows } = await pool.query(`SELECT value FROM app_settings WHERE key = 'gps_selector_public'`);
     if (rows[0]?.value === 'true') return next();
@@ -1183,7 +1252,7 @@ app.patch('/api/wells/:id/gps', requireAuth, requireGPSSelectorAccess, async (re
       [gps_latitude, gps_longitude, req.params.id]);
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -1197,7 +1266,7 @@ app.patch('/api/piezometers/:id/gps', requireAuth, requireGPSSelectorAccess, asy
       [gps_latitude, gps_longitude, req.params.id]);
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -1230,7 +1299,7 @@ app.get('/api/wells/dwr', requireAuth, async (req, res) => {
     `);
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -1264,7 +1333,7 @@ app.post('/api/readings/run-dwr', requireAuth, async (req, res) => {
     }
     res.json({ reading_id: rows[0].reading_id });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -1355,7 +1424,7 @@ app.get('/api/search', requireAuth, async (req, res) => {
     `, [like]);
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -1372,7 +1441,7 @@ app.get('/api/wells', requireAuth, async (req, res) => {
     );
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -1394,7 +1463,7 @@ app.post('/api/readings/well', requireAuth, async (req, res) => {
     );
     res.json({ ok: true, reading_id: rows[0].reading_id });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -1428,7 +1497,7 @@ app.get('/api/canal-structures', requireAuth, async (req, res) => {
     `);
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -1450,7 +1519,7 @@ app.post('/api/readings/canal', requireAuth, async (req, res) => {
     );
     res.json({ ok: true, reading_id: rows[0].reading_id });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -1600,7 +1669,7 @@ app.get('/api/ponds', requireAuth, async (req, res) => {
     `);
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -1616,7 +1685,7 @@ app.post('/api/readings/staff-gauge', requireAuth, async (req, res) => {
     );
     res.json({ ok: true, reading_id: rows[0].reading_id });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -1633,7 +1702,7 @@ app.post('/api/readings/pond-gate', requireAuth, async (req, res) => {
     );
     res.json({ ok: true, reading_id: rows[0].reading_id });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -1647,14 +1716,14 @@ app.get('/api/ponds/list', requireAuth, async (req, res) => {
   try {
     const { rows } = await pool.query('SELECT pond_id, name FROM ponds ORDER BY name');
     res.json(rows);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { handleErr(res, err); }
 });
 
 app.get('/api/outlets/list', requireAuth, async (req, res) => {
   try {
     const { rows } = await pool.query('SELECT outlet_id, name FROM river_outlets WHERE active = true ORDER BY name');
     res.json(rows);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { handleErr(res, err); }
 });
 
 app.get('/api/ponds/:id/polygon', requireAuth, async (req, res) => {
@@ -1695,7 +1764,7 @@ app.get('/api/ponds/:id/polygon', requireAuth, async (req, res) => {
       gate_markers: gateRes.rows.map(r => ({ lat: r.gate_lat, lon: r.gate_lon, label: r.name })),
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -1737,7 +1806,7 @@ app.get('/api/outlets/:id/polygon', requireAuth, async (req, res) => {
       gate_markers: gateRes.rows.map(r => ({ lat: r.gate_lat, lon: r.gate_lon, label: r.name })),
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -1795,7 +1864,7 @@ app.get('/api/ponds/polygons', requireAuth, async (req, res) => {
       centroid:      JSON.parse(r.centroid_geojson),
     })));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -1882,7 +1951,7 @@ app.get('/api/history', requireAuth, async (req, res) => {
     }
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -1899,7 +1968,7 @@ app.get('/api/history-all', requireAuth, async (req, res) => {
     );
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -1958,7 +2027,7 @@ app.delete('/api/history/:type/:id', requireAuth, async (req, res) => {
     }
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -2005,7 +2074,7 @@ app.get('/api/vehicles', requireAuth, async (req, res) => {
     `);
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -2058,7 +2127,7 @@ app.get('/api/equipment/:type', requireAuth, async (req, res) => {
     }
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -2076,7 +2145,7 @@ app.get('/api/siphon-breakers/units', requireAuth, async (req, res) => {
     const spares = rows.filter(r => r.status?.toLowerCase() === 'spare');
     res.json({ active, spares });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -2118,7 +2187,7 @@ app.post('/api/siphon-breakers/swap', requireAuth, async (req, res) => {
     res.json({ ok: true, location });
   } catch (err) {
     await client.query('ROLLBACK');
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   } finally {
     client.release();
   }
@@ -2147,7 +2216,7 @@ app.get('/api/well-issues', requireAuth, async (req, res) => {
     `, [includeResolved]);
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -2168,7 +2237,7 @@ app.post('/api/well-issues', requireAuth, async (req, res) => {
         reported_date || null, assigned_to || null, notes || null, req.user.username]);
     res.json({ ok: true, issue_id: rows[0].issue_id });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -2194,7 +2263,7 @@ app.patch('/api/well-issues/:id', requireAuth, async (req, res) => {
         po_number ?? null, cost ?? null, assigned_to ?? null, notes ?? null, id]);
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -2219,7 +2288,7 @@ app.get('/api/building-issues', requireAuth, async (req, res) => {
     `, [includeResolved]);
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -2240,7 +2309,7 @@ app.post('/api/building-issues', requireAuth, async (req, res) => {
         description, reported_date || null, assigned_to || null, notes || null, req.user.username]);
     res.json({ ok: true, issue_id: rows[0].issue_id });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -2266,7 +2335,7 @@ app.patch('/api/building-issues/:id', requireAuth, async (req, res) => {
         po_number ?? null, cost ?? null, assigned_to ?? null, notes ?? null, id]);
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -2291,7 +2360,7 @@ app.get('/api/equipment-issues', requireAuth, async (req, res) => {
     `, [includeResolved]);
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -2312,7 +2381,7 @@ app.post('/api/equipment-issues', requireAuth, async (req, res) => {
         reported_date || null, assigned_to || null, notes || null, req.user.username]);
     res.json({ ok: true, issue_id: rows[0].issue_id });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -2338,7 +2407,34 @@ app.patch('/api/equipment-issues/:id', requireAuth, async (req, res) => {
         po_number ?? null, cost ?? null, assigned_to ?? null, notes ?? null, id]);
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
+  }
+});
+
+// ── My Assignments ────────────────────────────────────────────────────────────
+app.get('/api/my-assignments', requireAuth, async (req, res) => {
+  const full_name = req.user.full_name;
+  try {
+    const { rows } = await pool.query(`
+      SELECT 'well' AS issue_type, issue_id, well_name AS entity_name,
+             description, status, reported_date, created_at
+      FROM well_issues
+      WHERE assigned_to ILIKE $1 AND status != 'resolved'
+      UNION ALL
+      SELECT 'building', issue_id, building_name,
+             description, status, reported_date, created_at
+      FROM building_issues
+      WHERE assigned_to ILIKE $1 AND status != 'resolved'
+      UNION ALL
+      SELECT 'equipment', issue_id, equipment_name,
+             description, status, reported_date, created_at
+      FROM equipment_issues
+      WHERE assigned_to ILIKE $1 AND status != 'resolved'
+      ORDER BY created_at DESC
+    `, [full_name]);
+    res.json(rows);
+  } catch (err) {
+    handleErr(res, err);
   }
 });
 
@@ -2360,7 +2456,7 @@ app.get('/api/canal-issues', requireAuth, async (req, res) => {
     `, [includeResolved]);
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -2377,7 +2473,7 @@ app.post('/api/canal-issues', requireAuth, async (req, res) => {
         gps_lon != null ? parseFloat(gps_lon) : null]);
     res.json(rows[0]);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -2404,7 +2500,7 @@ app.patch('/api/canal-issues/:id', requireAuth, async (req, res) => {
         gps_lon != null ? parseFloat(gps_lon) : null]);
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -2458,7 +2554,24 @@ app.get('/api/equipment-swap-units/:category', requireAuth, async (req, res) => 
     const spares = rows.filter(r => r.status?.toLowerCase() !== 'active');
     res.json({ active, spares });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
+  }
+});
+
+app.get('/api/equipment-swaps', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT swap_id, category, swap_date, location,
+             item_removed_id, item_installed_id,
+             removed_description, installed_description,
+             performed_by, notes, entered_by, created_at
+      FROM equipment_swaps
+      ORDER BY swap_date DESC, created_at DESC
+      LIMIT 500
+    `);
+    res.json(rows);
+  } catch (err) {
+    handleErr(res, err);
   }
 });
 
@@ -2547,7 +2660,7 @@ app.post('/api/equipment-swaps', requireAuth, async (req, res) => {
     res.json({ ok: true, location });
   } catch (err) {
     await client.query('ROLLBACK');
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   } finally {
     client.release();
   }
@@ -2578,7 +2691,7 @@ app.get('/api/maintenance/badge-counts', requireAuth, async (req, res) => {
       canal:     parseInt(counts.canal)     || 0,
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -2601,7 +2714,7 @@ app.get('/api/maintenance/vehicles-list', requireAuth, async (req, res) => {
     `, [includeResolved]);
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -2618,7 +2731,7 @@ app.patch('/api/maintenance/vehicle/:id', requireAuth, async (req, res) => {
     );
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -2682,7 +2795,7 @@ app.get('/api/dashboard/stats', requireAuth, async (req, res) => {
       wells_due_today:  parseInt(wells.rows[0].unread_today),
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -2695,11 +2808,11 @@ app.get('/api/settings/kf-widget', requireAuth, async (req, res) => {
     const m = Object.fromEntries(rows.map(r => [r.key, r.value]));
     res.json({ start_date: m['kf_widget_start'] || null, end_date: m['kf_widget_end'] || null });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
-app.put('/api/settings/kf-widget', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+app.put('/api/settings/kf-widget', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
   const { start_date, end_date } = req.body;
   if (!start_date || !end_date) return res.status(400).json({ error: 'start_date and end_date required' });
   try {
@@ -2712,7 +2825,7 @@ app.put('/api/settings/kf-widget', requireAuth, requireRole('supervisor', 'admin
     );
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -2728,7 +2841,7 @@ app.post('/api/readings/vehicle-monthly', requireAuth, async (req, res) => {
     );
     res.json({ ok: true, reading_id: rows[0].reading_id });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -2753,7 +2866,7 @@ app.post('/api/maintenance/equipment', requireAuth, async (req, res) => {
     );
     res.json({ ok: true, maintenance_id: rows[0].maintenance_id });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -2779,7 +2892,7 @@ app.post('/api/maintenance/vehicle', requireAuth, async (req, res) => {
     );
     res.json({ ok: true, maintenance_id: rows[0].maintenance_id });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -2803,7 +2916,7 @@ app.post('/api/maintenance/building', requireAuth, async (req, res) => {
     );
     res.json({ ok: true, record_id: rows[0].record_id });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -2851,7 +2964,7 @@ app.get('/api/maintenance/history', requireAuth, async (req, res) => {
     }
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -2872,7 +2985,7 @@ app.post('/api/maintenance/attachment', requireAuth,
       res.json({ ok: true, attachment_id: rows[0].attachment_id, rel_path: rel });
     } catch (err) {
       try { fs.unlinkSync(req.file.path); } catch {}
-      res.status(500).json({ error: err.message });
+      handleErr(res, err);
     }
   }
 );
@@ -2890,7 +3003,7 @@ app.get('/api/maintenance/attachments', requireAuth, async (req, res) => {
     );
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -2902,7 +3015,7 @@ app.delete('/api/maintenance/attachment/:id', requireAuth, async (req, res) => {
     );
     if (!rows.length) return res.status(404).json({ error: 'Not found' });
     const { rel_path, uploaded_by } = rows[0];
-    if (req.user.username !== uploaded_by && !['admin', 'supervisor'].includes(req.user.role)) {
+    if (req.user.username !== uploaded_by && !SUPERVISOR_ROLES.includes(req.user.role)) {
       return res.status(403).json({ error: 'Cannot delete another user\'s attachment' });
     }
     await pool.query(`DELETE FROM maintenance_attachments WHERE attachment_id = $1`, [parseInt(req.params.id)]);
@@ -2910,7 +3023,7 @@ app.delete('/api/maintenance/attachment/:id', requireAuth, async (req, res) => {
     if (fs.existsSync(abs)) fs.unlinkSync(abs);
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -2918,14 +3031,14 @@ app.delete('/api/maintenance/attachment/:id', requireAuth, async (req, res) => {
 const downloadTokens = new Map();
 
 // Issue a short-lived one-time download token (30s) — solves iOS PWA cookie issue
-app.post('/api/reports/download-token', requireAuth, requireRole('supervisor', 'admin'), (req, res) => {
-  const token = crypto.randomBytes(16).toString('hex');
+app.post('/api/reports/download-token', requireAuth, requireRole(...SUPERVISOR_ROLES), (req, res) => {
+  const token = crypto.randomBytes(32).toString('hex');
   downloadTokens.set(token, { ...req.body, expires: Date.now() + 30000 });
   setTimeout(() => downloadTokens.delete(token), 30000);
   res.json({ token });
 });
 
-app.get('/api/reports/mileage', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+app.get('/api/reports/mileage', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
   const { year, month } = req.query;
   if (!year || !month) return res.status(400).json({ error: 'year and month required' });
   try {
@@ -2944,7 +3057,7 @@ app.get('/api/reports/mileage', requireAuth, requireRole('supervisor', 'admin'),
     );
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -3038,12 +3151,12 @@ app.get('/api/reports/mileage/export', async (req, res) => {
 
     res.status(400).json({ error: 'Invalid format' });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
 // ── KF Breakdown Report ───────────────────────────────────────────────────────
-app.get('/api/reports/kf-operators', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+app.get('/api/reports/kf-operators', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
   const { start_date, end_date } = req.query;
   if (!start_date || !end_date) return res.status(400).json({ error: 'start_date and end_date required' });
   try {
@@ -3074,12 +3187,12 @@ app.get('/api/reports/kf-operators', requireAuth, requireRole('supervisor', 'adm
     const distinctRead = rows[0]?.distinct_read ? parseInt(rows[0].distinct_read) : 0;
     res.json({ rows, distinctRead, totalWells });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
 // Vehicle last-service report
-app.get('/api/reports/vehicle-service', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+app.get('/api/reports/vehicle-service', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
   try {
     const { rows } = await pool.query(`
       SELECT
@@ -3122,12 +3235,12 @@ app.get('/api/reports/vehicle-service', requireAuth, requireRole('supervisor', '
     `);
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
 // Piezometer readings report — latest reading per piezometer within date range
-app.get('/api/reports/piezometers', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+app.get('/api/reports/piezometers', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
   const { start_date, end_date } = req.query;
   if (!start_date || !end_date) return res.status(400).json({ error: 'start_date and end_date required' });
   try {
@@ -3151,11 +3264,11 @@ app.get('/api/reports/piezometers', requireAuth, requireRole('supervisor', 'admi
       ORDER BY p.pool NULLS LAST, p.sort_order, p.piezometer_name
     `, [start_date, end_date]);
     res.json(rows);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { handleErr(res, err); }
 });
 
 // Canal readings report — all readings for a date range
-app.get('/api/reports/canal', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+app.get('/api/reports/canal', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
   const { start_date, end_date } = req.query;
   if (!start_date || !end_date) return res.status(400).json({ error: 'start_date and end_date required' });
   try {
@@ -3172,7 +3285,7 @@ app.get('/api/reports/canal', requireAuth, requireRole('supervisor', 'admin'), a
       ORDER BY r.reading_date, r.reading_time, cs.structure_name
     `, [start_date, end_date]);
     res.json(rows);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { handleErr(res, err); }
 });
 
 app.get('/api/reports/ponds', requireAuth, async (req, res) => {
@@ -3192,7 +3305,7 @@ app.get('/api/reports/ponds', requireAuth, async (req, res) => {
       ORDER BY pl.sort_order, p.sort_order
     `, [date]);
     res.json({ gauges });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { handleErr(res, err); }
 });
 
 app.get('/api/reports/ponds/gates', requireAuth, async (req, res) => {
@@ -3229,7 +3342,7 @@ app.get('/api/reports/ponds/gates', requireAuth, async (req, res) => {
                pc.sort_order, pc.name, pg.sort_order, pg.label
     `, [date]);
     res.json(rows);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { handleErr(res, err); }
 });
 
 // Piezometer status/compare XLSX export (token-authenticated)
@@ -3282,7 +3395,7 @@ app.get('/api/reports/piezometers/export', async (req, res) => {
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="Piezometers_${start_date}_${end_date}.xlsx"`);
     return res.send(buf);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { handleErr(res, err); }
 });
 
 app.get('/api/reports/piezometers/compare/export', async (req, res) => {
@@ -3333,11 +3446,11 @@ app.get('/api/reports/piezometers/compare/export', async (req, res) => {
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="Piezometers_Compare_${s1}_${s2}.xlsx"`);
     return res.send(buf);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { handleErr(res, err); }
 });
 
 // KF set-by-set breakdown
-app.get('/api/reports/kf-sets', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+app.get('/api/reports/kf-sets', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
   const { start_date, end_date } = req.query;
   if (!start_date || !end_date) return res.status(400).json({ error: 'start_date and end_date required' });
   try {
@@ -3357,12 +3470,12 @@ app.get('/api/reports/kf-sets', requireAuth, requireRole('supervisor', 'admin'),
     `, [start_date, end_date]);
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
 // Open maintenance issues across all three categories
-app.get('/api/reports/maintenance-issues', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+app.get('/api/reports/maintenance-issues', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
   try {
     const { rows } = await pool.query(`
       SELECT 'Wells' AS category, issue_id,
@@ -3388,14 +3501,14 @@ app.get('/api/reports/maintenance-issues', requireAuth, requireRole('supervisor'
     `);
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
 // Issue look-up — all issues (open + resolved) across wells, buildings, and
 // equipment, tagged with their subject so the client can search/group by the
 // specific piece of equipment and see its full issue history.
-app.get('/api/reports/issues-all', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+app.get('/api/reports/issues-all', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
   try {
     const { rows } = await pool.query(`
       SELECT 'Wells' AS category, 'well' AS subject_type,
@@ -3427,12 +3540,12 @@ app.get('/api/reports/issues-all', requireAuth, requireRole('supervisor', 'admin
     `);
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
 // PM Grid report — latest per-plant siphon breaker + air compressor records + positions
-app.get('/api/reports/pm-grid', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+app.get('/api/reports/pm-grid', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
   const { year, month } = req.query;
   let dateClause = '';
   const params = [];
@@ -3478,7 +3591,7 @@ app.get('/api/reports/pm-grid', requireAuth, requireRole('supervisor', 'admin'),
     acRes.rows.forEach(r => { acRecords[r.building] = r; });
     res.json({ sbRecords, acRecords, positions: posRes.rows });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -3495,7 +3608,7 @@ app.get('/api/reports/wells/list', requireAuth, async (req, res) => {
     `);
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -3541,7 +3654,7 @@ app.get('/api/reports/wells/daily', requireAuth, async (req, res) => {
     `, [date]);
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -3623,7 +3736,7 @@ app.get('/api/reports/wells/daily/export', async (req, res) => {
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="WellReadings_${exportDate}.xlsx"`);
     return res.send(buf);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { handleErr(res, err); }
 });
 
 app.get('/api/reports/wells/history', requireAuth, async (req, res) => {
@@ -3654,12 +3767,12 @@ app.get('/api/reports/wells/history', requireAuth, async (req, res) => {
       dtw_readings:  dtwRes.rows,
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
 app.get('/api/reports/wells/dripper/export', async (req, res) => {
-  const { fill_to, token } = req.query;
+  const { fill_to, token, wells } = req.query;
   const fillTo = parseFloat(fill_to) || 12;
   if (token) {
     const t = downloadTokens.get(token);
@@ -3672,6 +3785,10 @@ app.get('/api/reports/wells/dripper/export', async (req, res) => {
       return res.status(403).json({ error: 'Forbidden' });
   }
   try {
+    // Parse optional well_id filter (comma-separated integers from client checkboxes)
+    const wellIds = wells ? wells.split(',').map(Number).filter(n => Number.isInteger(n) && n > 0) : [];
+    const whereExtra = wellIds.length > 0 ? `AND w.well_id = ANY($1::int[])` : '';
+    const queryParams = wellIds.length > 0 ? [wellIds] : [];
     const { rows } = await pool.query(`
       SELECT w.well_id, w.common_name, w.area, r.dripper_oil, r.reading_date
       FROM wells w
@@ -3682,24 +3799,24 @@ app.get('/api/reports/wells/dripper/export', async (req, res) => {
       ) r ON true
       WHERE LOWER(w.well_type) LIKE '%operational%'
         AND LOWER(COALESCE(w.status,'')) NOT IN ('inactive','removed')
+        ${whereExtra}
       ORDER BY w.area NULLS LAST, w.common_name
-    `);
+    `, queryParams);
+    let xlsxTotal = 0;
+    const dataRows = rows.map(r => {
+      const dripper = r.dripper_oil != null ? Number(r.dripper_oil) : null;
+      const atf = dripper != null ? Math.max(0, fillTo - dripper) : null;
+      if (atf != null) xlsxTotal += atf;
+      return [r.area || '', r.common_name, dripper != null ? dripper : '', atf != null ? atf : '', r.reading_date ? r.reading_date.toISOString().slice(0,10) : ''];
+    });
     const wb = XLSX.utils.book_new();
     const data = [
       ['Dripper Oil Levels', `Fill target: ${fillTo} gal`],
       [],
       ['Area', 'Well', 'Dripper Oil (gal)', 'Amt to Full (gal)', 'Last Read'],
-      ...rows.map(r => {
-        const dripper = r.dripper_oil != null ? Number(r.dripper_oil) : null;
-        const atf = dripper != null ? Math.max(0, fillTo - dripper) : '';
-        return [
-          r.area || '',
-          r.common_name,
-          dripper != null ? dripper : '',
-          atf,
-          r.reading_date ? r.reading_date.toISOString().slice(0,10) : '',
-        ];
-      }),
+      ...dataRows,
+      [],
+      [`Total oil needed (${rows.length} wells)`, '', '', xlsxTotal.toFixed(2), ''],
     ];
     const ws = XLSX.utils.aoa_to_sheet(data);
     ws['!cols'] = [{ wch: 16 }, { wch: 26 }, { wch: 16 }, { wch: 16 }, { wch: 12 }];
@@ -3708,7 +3825,7 @@ app.get('/api/reports/wells/dripper/export', async (req, res) => {
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="DripperOil.xlsx"`);
     return res.send(buf);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { handleErr(res, err); }
 });
 
 app.get('/api/reports/wells/dripper', requireAuth, async (req, res) => {
@@ -3730,7 +3847,7 @@ app.get('/api/reports/wells/dripper', requireAuth, async (req, res) => {
     `);
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -3739,8 +3856,7 @@ app.get('/api/reports/wells/dripper', requireAuth, async (req, res) => {
 // List pesticides (active only for operators; all for supervisor/admin)
 app.get('/api/pesticides', requireAuth, async (req, res) => {
   try {
-    const supervisorRoles = ['supervisor', 'admin'];
-    const showAll = supervisorRoles.includes(req.user.role);
+    const showAll = SUPERVISOR_ROLES.includes(req.user.role);
     const { rows } = await pool.query(
       `SELECT pesticide_id, name, epa_reg_number, unit_of_measure, active, created_at
        FROM pesticides
@@ -3749,7 +3865,7 @@ app.get('/api/pesticides', requireAuth, async (req, res) => {
     );
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -3766,12 +3882,12 @@ app.post('/api/pesticides', requireAuth, async (req, res) => {
     );
     res.json(rows[0]);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
 // Deactivate / reactivate a pesticide (supervisor/admin only)
-app.patch('/api/pesticides/:id', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+app.patch('/api/pesticides/:id', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
   const { active } = req.body;
   if (active === undefined) return res.status(400).json({ error: 'active required' });
   try {
@@ -3782,7 +3898,7 @@ app.patch('/api/pesticides/:id', requireAuth, requireRole('supervisor', 'admin')
     if (!rows.length) return res.status(404).json({ error: 'Not found' });
     res.json(rows[0]);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -3802,7 +3918,7 @@ app.get('/api/pesticide-usage', requireAuth, async (req, res) => {
     );
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -3819,7 +3935,7 @@ app.post('/api/pesticide-usage', requireAuth, async (req, res) => {
     );
     res.json(rows[0]);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -3837,7 +3953,7 @@ app.patch('/api/pesticide-usage/:id', requireAuth, async (req, res) => {
     if (!rows.length) return res.status(404).json({ error: 'Not found' });
     res.json(rows[0]);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -3857,7 +3973,7 @@ app.get('/api/pest-tasks', requireAuth, async (req, res) => {
            ORDER BY created_at ASC`);
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -3871,7 +3987,7 @@ app.post('/api/pest-tasks', requireAuth, async (req, res) => {
       [description, req.user.full_name]);
     res.json(rows[0]);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -3890,7 +4006,7 @@ app.patch('/api/pest-tasks/:id', requireAuth, async (req, res) => {
     if (!rows.length) return res.status(404).json({ error: 'Not found' });
     res.json(rows[0]);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -3913,7 +4029,7 @@ app.get('/api/pesticide-usage/monthly', requireAuth, async (req, res) => {
     );
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -3931,7 +4047,7 @@ app.get('/api/pm-records/last-completed', requireAuth, async (req, res) => {
     );
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -3955,7 +4071,7 @@ app.get('/api/pm-records', requireAuth, async (req, res) => {
     );
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -3971,7 +4087,7 @@ app.post('/api/pm-records', requireAuth, async (req, res) => {
     );
     res.json(rows[0]);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -3993,9 +4109,10 @@ app.post('/api/auth/change-password', requireAuth, async (req, res) => {
     if (!valid) return res.status(401).json({ error: 'Current password is incorrect' });
     const hashed = await bcrypt.hash(new_password, 10);
     await pool.query('UPDATE users SET password = $1 WHERE user_id = $2', [hashed, req.user.user_id]);
+    clearLoginFailures(req.user.username);
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -4075,7 +4192,7 @@ app.get('/api/readings/today', requireAuth, async (req, res) => {
     `, [username]);
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -4091,10 +4208,10 @@ app.post('/api/bug-reports', requireAuth, async (req, res) => {
        is_repeatable ?? false, description.trim(), app_version || null]
     );
     res.json({ ok: true, report_id: rows[0].report_id });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { handleErr(res, err); }
 });
 
-app.get('/api/bug-reports', requireAuth, requireRole('admin', 'supervisor'), async (req, res) => {
+app.get('/api/bug-reports', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
   try {
     const { rows } = await pool.query(
       `SELECT report_id, submitted_by, submitted_at, screen_area, severity,
@@ -4102,10 +4219,10 @@ app.get('/api/bug-reports', requireAuth, requireRole('admin', 'supervisor'), asy
        FROM bug_reports ORDER BY resolved ASC, submitted_at DESC`
     );
     res.json(rows);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { handleErr(res, err); }
 });
 
-app.put('/api/bug-reports/:id/resolve', requireAuth, requireRole('admin', 'supervisor'), async (req, res) => {
+app.put('/api/bug-reports/:id/resolve', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
   const { resolved } = req.body;
   try {
     await pool.query(
@@ -4113,18 +4230,18 @@ app.put('/api/bug-reports/:id/resolve', requireAuth, requireRole('admin', 'super
       [resolved, resolved ? req.user.username : null, resolved ? new Date() : null, parseInt(req.params.id)]
     );
     res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { handleErr(res, err); }
 });
 
 // ── User Management ───────────────────────────────────────────────────────────
-app.get('/api/users', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+app.get('/api/users', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
   try {
     const { rows } = await pool.query(
       'SELECT user_id, username, full_name, role, initials, email, is_active FROM users ORDER BY full_name'
     );
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -4143,7 +4260,7 @@ app.post('/api/users', requireAuth, requireRole('admin'), async (req, res) => {
     res.json({ ok: true, user_id: rows[0].user_id });
   } catch (err) {
     if (err.code === '23505') return res.status(400).json({ error: 'Username already exists' });
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -4155,8 +4272,8 @@ app.put('/api/users/:id', requireAuth, async (req, res) => {
   if ((role !== undefined || is_active !== undefined) && req.user.role !== 'admin') {
     return res.status(403).json({ error: 'Only admins can change role or active status' });
   }
-  // Operators can only edit themselves
-  if (req.user.role === 'operator' && req.user.user_id !== targetId) {
+  // Non-supervisor roles can only edit themselves
+  if (!SUPERVISOR_ROLES.includes(req.user.role) && req.user.user_id !== targetId) {
     return res.status(403).json({ error: 'Forbidden' });
   }
 
@@ -4173,7 +4290,7 @@ app.put('/api/users/:id', requireAuth, async (req, res) => {
     );
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -4187,10 +4304,13 @@ app.put('/api/users/:id/password', requireAuth, async (req, res) => {
   }
   try {
     const hashed = await bcrypt.hash(password, 10);
-    await pool.query('UPDATE users SET password = $1 WHERE user_id = $2', [hashed, targetId]);
+    const { rows } = await pool.query(
+      'UPDATE users SET password = $1 WHERE user_id = $2 RETURNING username', [hashed, targetId]);
+    // Password reset instantly clears any login lockout for this user (S-2)
+    if (rows[0]) clearLoginFailures(rows[0].username);
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -4226,7 +4346,7 @@ app.get('/api/dashboard/kf-by-set', requireAuth, async (req, res) => {
 
     res.json({ sets: rows, kf_start: kfStart, kf_end: kfEnd });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -4235,7 +4355,7 @@ app.get('/api/settings/gps-selector', requireAuth, async (req, res) => {
   try {
     const { rows } = await pool.query(`SELECT value FROM app_settings WHERE key = 'gps_selector_public'`);
     res.json({ public: rows[0]?.value === 'true' });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { handleErr(res, err); }
 });
 
 app.put('/api/settings/gps-selector', requireAuth, requireRole('admin'), async (req, res) => {
@@ -4245,7 +4365,7 @@ app.put('/api/settings/gps-selector', requireAuth, requireRole('admin'), async (
       `INSERT INTO app_settings (key, value, updated_at) VALUES ('gps_selector_public', $1, NOW())
        ON CONFLICT (key) DO UPDATE SET value=$1, updated_at=NOW()`, [val]);
     res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { handleErr(res, err); }
 });
 
 // ── Running Wells Settings ────────────────────────────────────────────────────
@@ -4257,11 +4377,11 @@ app.get('/api/settings/running-wells', requireAuth, async (req, res) => {
     const pool_extras = Array.isArray(raw) ? {} : (raw.pool_extras  || {});
     res.json({ well_ids: ids, pool_extras });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
-app.put('/api/settings/running-wells', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+app.put('/api/settings/running-wells', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
   const { well_ids, pool_extras } = req.body;
   if (!Array.isArray(well_ids)) return res.status(400).json({ error: 'well_ids must be an array' });
   try {
@@ -4272,7 +4392,7 @@ app.put('/api/settings/running-wells', requireAuth, requireRole('supervisor', 'a
     );
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -4334,7 +4454,7 @@ app.get('/api/dashboard/running-wells', requireAuth, async (req, res) => {
       pool_extras,
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    handleErr(res, err);
   }
 });
 
@@ -4353,7 +4473,7 @@ app.get('/api/safety-meetings', requireAuth, async (req, res) => {
       ORDER BY m.meeting_date DESC, m.created_at DESC
     `, q ? [`%${q}%`] : []);
     res.json(rows);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { handleErr(res, err); }
 });
 
 app.post('/api/safety-meetings', requireAuth, async (req, res) => {
@@ -4367,7 +4487,7 @@ app.post('/api/safety-meetings', requireAuth, async (req, res) => {
        link || null, notes || null, req.user.user_id]
     );
     res.json({ ok: true, meeting_id: rows[0].meeting_id });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { handleErr(res, err); }
 });
 
 app.get('/api/safety-meetings/:id', requireAuth, async (req, res) => {
@@ -4381,7 +4501,7 @@ app.get('/api/safety-meetings/:id', requireAuth, async (req, res) => {
       [req.params.id]
     );
     res.json({ ...meeting, attendees });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { handleErr(res, err); }
 });
 
 app.post('/api/safety-meetings/:id/attend', requireAuth, async (req, res) => {
@@ -4394,15 +4514,15 @@ app.post('/api/safety-meetings/:id/attend', requireAuth, async (req, res) => {
       [req.params.id, full_name, signature_data || null, signed_date || null]
     );
     res.json({ ok: true, attendee_id: rows[0].attendee_id });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { handleErr(res, err); }
 });
 
-app.delete('/api/safety-meetings/:id/attendees/:aid', requireAuth, requireRole('supervisor', 'admin'), async (req, res) => {
+app.delete('/api/safety-meetings/:id/attendees/:aid', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
   try {
     await pool.query('DELETE FROM safety_meeting_attendees WHERE attendee_id = $1 AND meeting_id = $2',
       [req.params.aid, req.params.id]);
     res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { handleErr(res, err); }
 });
 
 // ── Start ─────────────────────────────────────────────────────────────────────
