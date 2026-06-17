@@ -11392,7 +11392,7 @@ function renderSafetyMeetingBody(body, data) {
       <div class="safety-attend-list"></div>
     </div>`;
 
-  renderSafetyAttendees(body.querySelector('.safety-attend-list'), data.attendees || []);
+  renderSafetyAttendees(body.querySelector('.safety-attend-list'), data.attendees || [], data.meeting_id, body);
 
   body.querySelector('.safety-signin-btn').addEventListener('click', () => {
     openSafetySigninModal(data.meeting_id, body);
@@ -11402,20 +11402,42 @@ function renderSafetyMeetingBody(body, data) {
   });
 }
 
-function renderSafetyAttendees(listEl, attendees) {
+function renderSafetyAttendees(listEl, attendees, meetingId, bodyEl) {
+  const canDel = meetingId && bodyEl && isSupervisorLevel(currentUser?.role);
   if (!attendees.length) {
     listEl.innerHTML = '<div class="placeholder-msg" style="padding:12px 0">No attendees yet.</div>';
     return;
   }
   listEl.innerHTML = `<table class="safety-attend-table">
-    <thead><tr><th>#</th><th>Print Name</th><th>Signature</th><th>Date</th></tr></thead>
+    <thead><tr><th>#</th><th>Print Name</th><th>Signature</th><th>Date</th>${canDel ? '<th></th>' : ''}</tr></thead>
     <tbody>${attendees.map((a, i) => `<tr>
       <td style="color:var(--text-dim);font-size:0.82rem">${i + 1}</td>
       <td>${escHtml(a.full_name)}</td>
       <td>${a.signature_data ? `<img src="${escHtml(a.signature_data)}" alt="signature">` : '<span style="color:var(--text-dim)">—</span>'}</td>
       <td style="white-space:nowrap">${a.signed_date ? localDateStr(a.signed_date, { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}</td>
+      ${canDel ? `<td><button class="safety-attend-del" data-aid="${a.attendee_id}" title="Delete">✕</button></td>` : ''}
     </tr>`).join('')}</tbody>
   </table>`;
+
+  if (canDel) {
+    listEl.querySelectorAll('.safety-attend-del').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        if (!confirm('Remove this attendance record?')) return;
+        try {
+          await api('DELETE', `/api/safety-meetings/${meetingId}/attendees/${btn.dataset.aid}`);
+          const data = await api('GET', `/api/safety-meetings/${meetingId}`);
+          renderSafetyAttendees(listEl, data.attendees || [], meetingId, bodyEl);
+          const item = bodyEl.closest('.safety-meeting-item');
+          if (item) {
+            const countEl = item.querySelector('.safety-attend-count');
+            if (countEl) countEl.textContent = `${data.attendees.length} attendee${data.attendees.length !== 1 ? 's' : ''}`;
+          }
+        } catch (err) {
+          showToast('Failed to delete: ' + (err.message || 'Unknown error'));
+        }
+      });
+    });
+  }
 }
 
 // ── Sign-in Modal ─────────────────────────────────────────────────────────────
@@ -11447,11 +11469,10 @@ function openSafetySigninModal(meetingId, bodyEl) {
       const isOther = el('safety-signin-name-sel').value === '__other__';
       el('safety-signin-name-other').style.display = isOther ? '' : 'none';
     });
-    el('safety-signin-save').addEventListener('click', () => saveSignIn(bodyEl));
+    el('safety-signin-save').onclick = () => saveSignIn(bodyEl);
   } else {
     // Clear canvas on re-open
     _sigCtx.clearRect(0, 0, _sigCanvas.width, _sigCanvas.height);
-    // Store latest bodyEl for save callback
     el('safety-signin-save').onclick = () => saveSignIn(bodyEl);
   }
 
@@ -11522,8 +11543,10 @@ async function saveSignIn(bodyEl) {
 
   const btn = el('safety-signin-save');
   btn.disabled = true;
+  btn.textContent = 'Saving…';
   try {
-    await api('POST', `/api/safety-meetings/${_safetySigninMeetingId}/attend`, {
+    const meetingId = _safetySigninMeetingId;
+    await api('POST', `/api/safety-meetings/${meetingId}/attend`, {
       full_name:      name,
       signature_data: sigData || null,
       signed_date:    el('safety-signin-date').value,
@@ -11531,8 +11554,8 @@ async function saveSignIn(bodyEl) {
     closeSafetySigninModal();
     showToast('Signed in successfully');
     // Reload attendees in the expanded body
-    const data = await api('GET', `/api/safety-meetings/${_safetySigninMeetingId}`);
-    renderSafetyAttendees(bodyEl.querySelector('.safety-attend-list'), data.attendees || []);
+    const data = await api('GET', `/api/safety-meetings/${meetingId}`);
+    renderSafetyAttendees(bodyEl.querySelector('.safety-attend-list'), data.attendees || [], meetingId, bodyEl);
     // Update the attendee count badge in the header
     const item = bodyEl.closest('.safety-meeting-item');
     if (item) {
@@ -11540,10 +11563,10 @@ async function saveSignIn(bodyEl) {
       if (countEl) countEl.textContent = `${data.attendees.length} attendee${data.attendees.length !== 1 ? 's' : ''}`;
     }
   } catch (err) {
+    btn.disabled = false;
+    btn.textContent = 'Save';
     errEl.textContent = err.message;
     errEl.classList.remove('hidden');
-  } finally {
-    btn.disabled = false;
   }
 }
 
