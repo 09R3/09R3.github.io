@@ -129,7 +129,7 @@
         Sign in with Microsoft 365
       </a>
       <div id="ms-login-error" class="error-msg hidden"></div>
-      <div class="login-version">v 2.66</div>
+      <div class="login-version">v 2.67</div>
     </div>
   </div>
 </div>
@@ -605,6 +605,13 @@
           </div>
           <span class="dash-label">Canal Issues</span>
           <span class="maint-badge hidden" id="maint-badge-canal">0</span>
+        </button>
+        <button class="dash-tile" data-maint-panel="dirt-work">
+          <div class="dash-icon-wrap">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 18h18M3 6l9 6 9-6M3 12h18"/></svg>
+          </div>
+          <span class="dash-label">Dirt Work</span>
+          <span class="maint-badge hidden" id="maint-badge-dirt-work">0</span>
         </button>
         <button class="dash-tile" data-maint-panel="pms">
           <div class="dash-icon-wrap">
@@ -1111,6 +1118,90 @@
       <!-- Issue list -->
       <div id="canal-issue-list"></div>
     </div><!-- /maint-panel-canal-issues -->
+
+    <!-- Dirt Work Issues panel -->
+    <div id="maint-panel-dirt-work" class="maint-panel hidden">
+      <div class="issue-toolbar">
+        <button class="btn btn-secondary btn-sm" id="dirt-show-resolved-btn">Show Resolved</button>
+        <button class="btn btn-save btn-sm" id="dirt-new-issue-btn">+ New Issue</button>
+      </div>
+
+      <div class="issue-filter-bar">
+        <select id="dirt-filter-pool" class="ctrl-select"><option value="">All Pools</option></select>
+        <select id="dirt-filter-type" class="ctrl-select"><option value="">All Types</option></select>
+        <input type="search" id="dirt-filter-q" class="ctrl-input" placeholder="Search…">
+      </div>
+
+      <div id="dirt-new-issue-form" class="form-card hidden">
+        <div class="two-col">
+          <div class="form-group">
+            <label>Pool</label>
+            <select id="dirt-issue-pool" class="ctrl-select">
+              <option value="">Select pool…</option>
+              <option value="1">Pool 1</option>
+              <option value="2">Pool 2</option>
+              <option value="3">Pool 3</option>
+              <option value="4">Pool 4</option>
+              <option value="5">Pool 5</option>
+              <option value="6">Pool 6</option>
+              <option value="7">Pool 7</option>
+              <option value="8">Pool 8</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Work Type</label>
+            <select id="dirt-issue-type" class="ctrl-select">
+              <option value="">Select type…</option>
+              <option value="Grading">Grading</option>
+              <option value="Washout">Washout</option>
+              <option value="Berm Work">Berm Work</option>
+              <option value="Vegetation Removal">Vegetation Removal</option>
+              <option value="Other">Other</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Description</label>
+          <textarea id="dirt-issue-desc" class="ctrl-textarea" rows="3" placeholder="Describe the issue…"></textarea>
+        </div>
+        <div class="form-group">
+          <label>Location Notes</label>
+          <input type="text" id="dirt-issue-location" class="ctrl-input" placeholder="e.g. Pool 3 – north berm">
+        </div>
+        <div class="form-group">
+          <label>Assigned To</label>
+          <select id="dirt-issue-assigned" class="ctrl-select"></select>
+        </div>
+        <div class="form-group">
+          <label>Reported Date</label>
+          <input type="date" id="dirt-issue-date" class="ctrl-input ctrl-input-sm">
+        </div>
+        <div class="form-group">
+          <label>GPS Location</label>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <button type="button" class="btn btn-secondary btn-sm" id="dirt-new-loc-btn">&#x1F4CD; Use My Location</button>
+            <button type="button" class="btn btn-secondary btn-sm hidden" id="dirt-new-map-btn">&#x1F5FA; View / Change on Map</button>
+            <span id="dirt-new-coords" style="font-size:0.78rem;color:var(--text-dim)"></span>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Photo(s)</label>
+          <button type="button" class="btn btn-secondary btn-sm" id="dirt-new-photo-btn">Add Photo(s)</button>
+          <div id="dirt-new-photo-list" style="margin-top:6px"></div>
+        </div>
+        <div class="form-group">
+          <label>Notes</label>
+          <textarea id="dirt-issue-notes" class="ctrl-textarea" rows="2" placeholder="Additional notes…"></textarea>
+        </div>
+        <div id="dirt-new-error" class="error-msg hidden"></div>
+        <div class="two-col">
+          <button class="btn btn-secondary" id="dirt-cancel-btn">Cancel</button>
+          <button class="btn btn-save" id="dirt-submit-btn">Submit Issue</button>
+        </div>
+      </div>
+
+      <div id="dirt-issue-list"></div>
+    </div><!-- /maint-panel-dirt-work -->
 
     <!-- Assigned to Me Panel -->
     <div id="maint-panel-assigned" class="maint-panel hidden">
@@ -1748,7 +1839,7 @@
     <div id="settings-panel-appinfo" class="settings-panel hidden">
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 2.66</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 2.67</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>
@@ -2593,11 +2684,13 @@
 <div id="gps-map-modal" class="modal-overlay hidden">
   <div class="modal-card" style="width:calc(100% - 24px);max-width:none">
     <div class="modal-header">
-      <span>Photo Location</span>
+      <span id="gps-map-title">Photo Location</span>
       <button class="modal-close" id="gps-map-close">&#x2715;</button>
     </div>
+    <div id="gps-map-pick-hint" class="hidden" style="font-size:0.78rem;color:var(--text-dim);margin-bottom:6px">Tap map to move the pin to the correct location.</div>
     <div id="gps-map-container" style="height:min(520px,65vh);width:100%;border-radius:8px;overflow:hidden;margin-top:8px"></div>
     <div id="gps-map-coords" style="font-size:0.75rem;text-align:center;margin-top:6px;color:var(--text-dim)"></div>
+    <button id="gps-map-confirm" class="btn btn-save hidden" style="width:100%;margin-top:10px">Confirm Location</button>
   </div>
 </div>
 

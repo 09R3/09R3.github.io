@@ -3256,6 +3256,414 @@ el('canal-issue-list').addEventListener('click', async e => {
   }
 });
 
+// ── Dirt Work Issues ─────────────────────────────────────────────────────────
+let dirtWorkIssues    = [];
+let dirtWorkLoaded    = false;
+let dirtWorkShowResolved = false;
+let _dirtFilterPool   = '';
+let _dirtFilterType   = '';
+let _dirtFilterQ      = '';
+let dirtWorkNewLat    = null;
+let dirtWorkNewLon    = null;
+let dirtWorkNewPhotos = [];
+
+function initMaintDirtWorkPanel() {
+  if (dirtWorkLoaded) return;
+  dirtWorkLoaded = true;
+
+  el('dirt-filter-pool').addEventListener('change', () => { _dirtFilterPool = el('dirt-filter-pool').value; applyDirtFilters(); });
+  el('dirt-filter-type').addEventListener('change', () => { _dirtFilterType = el('dirt-filter-type').value; applyDirtFilters(); });
+  let _dqT;
+  el('dirt-filter-q').addEventListener('input', () => {
+    clearTimeout(_dqT);
+    _dqT = setTimeout(() => { _dirtFilterQ = el('dirt-filter-q').value.trim(); applyDirtFilters(); }, 250);
+  });
+
+  el('dirt-issue-date').value = todayISO();
+  el('dirt-issue-assigned').innerHTML = userSelectOptions('');
+
+  el('dirt-new-issue-btn').addEventListener('click', () => {
+    el('dirt-new-issue-form').classList.remove('hidden');
+    el('dirt-new-issue-btn').classList.add('hidden');
+  });
+
+  el('dirt-cancel-btn').addEventListener('click', () => {
+    el('dirt-new-issue-form').classList.add('hidden');
+    el('dirt-new-issue-btn').classList.remove('hidden');
+    el('dirt-new-error').classList.add('hidden');
+    resetDirtNewForm();
+  });
+
+  el('dirt-new-loc-btn').addEventListener('click', () => {
+    if (!navigator.geolocation) return showToast('Geolocation not available', 'error');
+    el('dirt-new-loc-btn').disabled = true;
+    navigator.geolocation.getCurrentPosition(pos => {
+      dirtWorkNewLat = pos.coords.latitude;
+      dirtWorkNewLon = pos.coords.longitude;
+      el('dirt-new-coords').textContent = `${dirtWorkNewLat.toFixed(6)}, ${dirtWorkNewLon.toFixed(6)}`;
+      el('dirt-new-map-btn').classList.remove('hidden');
+      el('dirt-new-loc-btn').disabled = false;
+    }, () => {
+      showToast('Could not get location', 'error');
+      el('dirt-new-loc-btn').disabled = false;
+    });
+  });
+
+  el('dirt-new-map-btn').addEventListener('click', () => {
+    const lat = dirtWorkNewLat ?? 36.5;
+    const lon = dirtWorkNewLon ?? -119.5;
+    openGPSMapPick(lat, lon, (newLat, newLon) => {
+      dirtWorkNewLat = newLat;
+      dirtWorkNewLon = newLon;
+      el('dirt-new-coords').textContent = `${newLat.toFixed(6)}, ${newLon.toFixed(6)}`;
+    });
+  });
+
+  // Photo picker for new issue
+  const dirtNewPhotoInput = document.createElement('input');
+  dirtNewPhotoInput.type = 'file';
+  dirtNewPhotoInput.accept = 'image/*';
+  dirtNewPhotoInput.multiple = true;
+  dirtNewPhotoInput.style.display = 'none';
+  document.body.appendChild(dirtNewPhotoInput);
+
+  el('dirt-new-photo-btn').addEventListener('click', () => dirtNewPhotoInput.click());
+
+  dirtNewPhotoInput.addEventListener('change', async () => {
+    const files = [...dirtNewPhotoInput.files];
+    dirtNewPhotoInput.value = '';
+    if (!files.length) return;
+    const entries = files.map(f => ({ file: f, gps: null }));
+    dirtWorkNewPhotos.push(...entries);
+    renderDirtNewPhotoList();
+    await Promise.all(entries.map(async entry => {
+      entry.gps = await readExifGPS(entry.file);
+      if (entry.gps) renderDirtNewPhotoList();
+    }));
+  });
+
+  el('dirt-new-photo-list').addEventListener('click', e => {
+    const rm = e.target.closest('.maint-aq-remove');
+    if (rm) {
+      dirtWorkNewPhotos.splice(parseInt(rm.dataset.idx), 1);
+      renderDirtNewPhotoList();
+    }
+  });
+
+  el('dirt-submit-btn').addEventListener('click', async () => {
+    clearError('dirt-new-error');
+    const desc = el('dirt-issue-desc').value.trim();
+    if (!desc) return showError('dirt-new-error', 'Description is required');
+    el('dirt-submit-btn').disabled = true;
+    try {
+      const photoGPS = dirtWorkNewPhotos.find(p => p.gps)?.gps ?? null;
+      const lat = dirtWorkNewLat ?? photoGPS?.lat ?? null;
+      const lon = dirtWorkNewLon ?? photoGPS?.lon ?? null;
+      const body = {
+        pool:           el('dirt-issue-pool').value || null,
+        work_type:      el('dirt-issue-type').value || null,
+        description:    desc,
+        location_notes: el('dirt-issue-location').value.trim() || null,
+        assigned_to:    el('dirt-issue-assigned').value || null,
+        reported_date:  el('dirt-issue-date').value || null,
+        notes:          el('dirt-issue-notes').value.trim() || null,
+        gps_lat:        lat,
+        gps_lon:        lon,
+      };
+      const newIssue = await api('POST', '/api/dirt-work-issues', body);
+      if (dirtWorkNewPhotos.length) {
+        const entityName = `dirt-pool${body.pool || 'x'}`;
+        const pending = dirtWorkNewPhotos.map(p => ({ file: p.file, fileType: 'photo' }));
+        await doUploadIssueAttachments(newIssue.issue_id, 'dirt_work_issues', pending, entityName);
+      }
+      el('dirt-new-issue-form').classList.add('hidden');
+      el('dirt-new-issue-btn').classList.remove('hidden');
+      resetDirtNewForm();
+      dirtWorkLoaded = false;
+      await loadDirtWorkIssues();
+      showToast('Issue submitted', 'success');
+      refreshMaintenanceBadges();
+    } catch (err) {
+      showError('dirt-new-error', err.message);
+    } finally {
+      el('dirt-submit-btn').disabled = false;
+    }
+  });
+
+  el('dirt-show-resolved-btn').addEventListener('click', () => {
+    dirtWorkShowResolved = !dirtWorkShowResolved;
+    el('dirt-show-resolved-btn').textContent = dirtWorkShowResolved ? 'Hide Resolved' : 'Show Resolved';
+    dirtWorkLoaded = false;
+    loadDirtWorkIssues();
+  });
+
+  loadDirtWorkIssues();
+}
+
+function resetDirtNewForm() {
+  dirtWorkNewPhotos = [];
+  dirtWorkNewLat = null;
+  dirtWorkNewLon = null;
+  el('dirt-issue-pool').value = '';
+  el('dirt-issue-type').value = '';
+  el('dirt-issue-desc').value = '';
+  el('dirt-issue-location').value = '';
+  el('dirt-issue-assigned').value = '';
+  el('dirt-issue-date').value = todayISO();
+  el('dirt-issue-notes').value = '';
+  el('dirt-new-coords').textContent = '';
+  el('dirt-new-map-btn').classList.add('hidden');
+  renderDirtNewPhotoList();
+}
+
+function renderDirtNewPhotoList() {
+  const listEl = el('dirt-new-photo-list');
+  if (!dirtWorkNewPhotos.length) { listEl.innerHTML = ''; return; }
+  listEl.innerHTML = dirtWorkNewPhotos.map((p, i) => `
+    <div class="maint-aq-item">
+      <span class="maint-aq-badge">PIC</span>
+      <span style="flex:1;font-size:0.8rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(p.file.name)}</span>
+      <button class="maint-aq-remove" data-idx="${i}">×</button>
+    </div>`).join('');
+}
+
+async function loadDirtWorkIssues() {
+  try {
+    dirtWorkIssues = await api('GET', `/api/dirt-work-issues?include_resolved=${dirtWorkShowResolved}`);
+    populateDirtFilterDropdowns();
+    applyDirtFilters();
+  } catch {
+    el('dirt-issue-list').innerHTML = `<div class="placeholder-msg">Failed to load.</div>`;
+  }
+}
+
+function populateDirtFilterDropdowns() {
+  const pSel = el('dirt-filter-pool');
+  const prevPool = pSel.value;
+  const pools = [...new Set(dirtWorkIssues.map(i => i.pool).filter(Boolean))].sort((a, b) => Number(a) - Number(b));
+  pSel.innerHTML = '<option value="">All Pools</option>' +
+    pools.map(p => `<option value="${escHtml(p)}"${p === prevPool ? ' selected' : ''}>Pool ${escHtml(p)}</option>`).join('');
+
+  const tSel = el('dirt-filter-type');
+  const prevType = tSel.value;
+  const types = [...new Set(dirtWorkIssues.map(i => i.work_type).filter(Boolean))].sort();
+  tSel.innerHTML = '<option value="">All Types</option>' +
+    types.map(t => `<option value="${escHtml(t)}"${t === prevType ? ' selected' : ''}>${escHtml(t)}</option>`).join('');
+}
+
+function applyDirtFilters() {
+  let items = dirtWorkIssues;
+  if (_dirtFilterPool) items = items.filter(i => String(i.pool) === _dirtFilterPool);
+  if (_dirtFilterType) items = items.filter(i => i.work_type === _dirtFilterType);
+  if (_dirtFilterQ) {
+    const q = _dirtFilterQ.toLowerCase();
+    items = items.filter(i =>
+      [i.pool ? `pool ${i.pool}` : '', i.work_type, i.description, i.location_notes,
+       i.action_taken, i.resolution_notes, i.assigned_to, i.entered_by_full_name, i.notes]
+        .some(f => (f || '').toLowerCase().includes(q))
+    );
+  }
+  renderDirtWorkIssues(items);
+}
+
+function renderDirtWorkIssues(items) {
+  const list = el('dirt-issue-list');
+  if (!items.length) {
+    const hasF = _dirtFilterPool || _dirtFilterType || _dirtFilterQ;
+    list.innerHTML = `<div class="placeholder-msg">${hasF ? 'No matching issues.' : `No ${dirtWorkShowResolved ? '' : 'open '}issues.`}</div>`;
+    return;
+  }
+  list.innerHTML = items.map(issue => {
+    const statusClass = issue.status.replace('_', '-');
+    const poolLabel   = issue.pool ? `Pool ${escHtml(issue.pool)}` : 'No Pool';
+    const typeLabel   = issue.work_type ? ` — ${escHtml(issue.work_type)}` : '';
+    const snippet     = (issue.description || '').slice(0, 80) + (issue.description?.length > 80 ? '…' : '');
+    const entityName  = `dirt-pool${issue.pool || 'x'}`.slice(0, 30);
+    const hasGPS      = issue.gps_lat != null && issue.gps_lon != null;
+    return `
+      <div class="equip-issue-item" data-issue-id="${issue.issue_id}" data-entity-name="${entityName}">
+        <div class="equip-issue-header">
+          <div class="equip-issue-meta">
+            <div class="equip-issue-name">${poolLabel}${typeLabel}</div>
+            <div class="equip-issue-snippet">${escHtml(snippet)}</div>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+            <span class="status-pill ${statusClass}">${issue.status.replace('_',' ')}</span>
+            <span class="equip-issue-date">${issue.reported_date?.slice(0,10) || ''}</span>
+          </div>
+        </div>
+        <div class="equip-issue-body hidden">
+          <div class="form-group">
+            <label>Pool</label>
+            <div style="font-size:0.9rem;padding:6px 0">${issue.pool ? `Pool ${escHtml(issue.pool)}` : '—'}</div>
+          </div>
+          <div class="form-group">
+            <label>Work Type</label>
+            <div style="font-size:0.9rem;padding:6px 0">${escHtml(issue.work_type || '—')}</div>
+          </div>
+          <div class="form-group">
+            <label>Description</label>
+            <div style="font-size:0.9rem;padding:6px 0">${escHtml(issue.description || '')}</div>
+          </div>
+          ${issue.location_notes ? `<div class="form-group"><label>Location Notes</label><div style="font-size:0.9rem;padding:6px 0">${escHtml(issue.location_notes)}</div></div>` : ''}
+          <div class="form-group">
+            <label>Assigned To</label>
+            <select class="ctrl-select issue-assigned">${userSelectOptions(issue.assigned_to)}</select>
+          </div>
+          <div class="form-group">
+            <label>Status</label>
+            <select class="ctrl-select issue-status-select">
+              <option value="open"        ${issue.status==='open'        ?'selected':''}>Open</option>
+              <option value="in_progress" ${issue.status==='in_progress' ?'selected':''}>In Progress</option>
+              <option value="resolved"    ${issue.status==='resolved'    ?'selected':''}>Resolved</option>
+            </select>
+          </div>
+          <div class="form-group issue-action-group" style="${issue.status==='in_progress' ? '' : 'display:none'}">
+            <label>Action Taken</label>
+            <textarea class="ctrl-textarea issue-action-taken" rows="2" placeholder="Describe the action being taken…">${escHtml(issue.action_taken || '')}</textarea>
+          </div>
+          <div class="issue-res-group" style="${issue.status==='resolved' ? '' : 'display:none'}">
+            <div class="form-group">
+              <label>Resolution Notes</label>
+              <textarea class="ctrl-textarea issue-res-notes" rows="2" placeholder="Describe how it was resolved…">${escHtml(issue.resolution_notes || '')}</textarea>
+            </div>
+            <div class="form-group">
+              <label>PO Number</label>
+              <input type="text" class="ctrl-input issue-po-number" value="${escHtml(issue.po_number || '')}" placeholder="Optional">
+            </div>
+            <div class="form-group">
+              <label>Cost ($)</label>
+              <input type="number" class="ctrl-input issue-cost" value="${issue.cost != null ? issue.cost : ''}" placeholder="0.00" min="0" step="0.01">
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Notes</label>
+            <textarea class="ctrl-textarea issue-notes" rows="2" placeholder="Additional notes…">${escHtml(issue.notes || '')}</textarea>
+          </div>
+          <div class="form-group">
+            <div class="maint-attach-btns">
+              <button type="button" class="btn btn-secondary btn-sm issue-pic-btn">${icon('photo')} Photo(s)</button>
+              ${hasGPS ? `<button type="button" class="btn btn-secondary btn-sm dirt-map-btn" data-lat="${issue.gps_lat}" data-lon="${issue.gps_lon}">&#127757; Map</button>
+              <button type="button" class="btn btn-secondary btn-sm dirt-pick-btn" data-lat="${issue.gps_lat}" data-lon="${issue.gps_lon}">&#128204; Update Location</button>` : `<button type="button" class="btn btn-secondary btn-sm dirt-pick-btn" data-lat="" data-lon="">&#128204; Set Location</button>`}
+              ${Number(issue.attachment_count) > 0 ? `<button type="button" class="btn btn-secondary btn-sm issue-files-btn">${icon('attachments')} ${issue.attachment_count} file${issue.attachment_count > 1 ? 's' : ''}</button>` : ''}
+            </div>
+            <div class="maint-attach-queue issue-attach-queue hidden"></div>
+            <div class="maint-hist-attach-area issue-files-area hidden"></div>
+          </div>
+          <div class="error-msg hidden issue-update-error"></div>
+          <button class="btn btn-save issue-save-btn" style="width:100%" data-table="dirt_work_issues">Save Changes</button>
+        </div>
+      </div>`;
+  }).join('');
+
+  // Wire status-change visibility for action/resolution groups
+  list.querySelectorAll('.issue-status-select').forEach(sel => {
+    sel.addEventListener('change', () => {
+      const body = sel.closest('.equip-issue-body');
+      body.querySelector('.issue-action-group').style.display = sel.value === 'in_progress' ? '' : 'none';
+      body.querySelector('.issue-res-group').style.display    = sel.value === 'resolved'    ? '' : 'none';
+    });
+  });
+}
+
+// Issue list interactions for dirt work (delegated)
+el('dirt-issue-list').addEventListener('click', async e => {
+  const item = e.target.closest('.equip-issue-item');
+  if (!item) return;
+
+  if (e.target.closest('.equip-issue-header')) {
+    item.querySelector('.equip-issue-body').classList.toggle('hidden');
+    return;
+  }
+
+  if (e.target.classList.contains('issue-pic-btn')) {
+    issueCardActiveId = item.dataset.issueId;
+    issueCardActiveTable = 'dirt_work_issues';
+    issuePicInput.click();
+    return;
+  }
+
+  if (e.target.classList.contains('dirt-map-btn')) {
+    openGPSMap(parseFloat(e.target.dataset.lat), parseFloat(e.target.dataset.lon));
+    return;
+  }
+
+  if (e.target.classList.contains('dirt-pick-btn')) {
+    const lat = parseFloat(e.target.dataset.lat) || 36.5;
+    const lon = parseFloat(e.target.dataset.lon) || -119.5;
+    const issueId = item.dataset.issueId;
+    openGPSMapPick(lat, lon, async (newLat, newLon) => {
+      try {
+        await api('PATCH', `/api/dirt-work-issues/${issueId}`, { gps_lat: newLat, gps_lon: newLon });
+        dirtWorkLoaded = false;
+        await loadDirtWorkIssues();
+        showToast('Location updated', 'success');
+      } catch (err) { showToast(err.message, 'error'); }
+    });
+    return;
+  }
+
+  if (e.target.classList.contains('issue-files-btn')) {
+    const area = item.querySelector('.issue-files-area');
+    if (!area.classList.contains('hidden')) { area.classList.add('hidden'); return; }
+    area.classList.remove('hidden');
+    if (area.dataset.loaded) return;
+    area.innerHTML = '<div style="font-size:0.8rem;color:var(--text-dim)">Loading…</div>';
+    try {
+      const atts = await api('GET', `/api/maintenance/attachments?table_name=dirt_work_issues&record_id=${item.dataset.issueId}`);
+      area.dataset.loaded = '1';
+      if (!atts.length) { area.innerHTML = '<div class="maint-att-empty">No files</div>'; return; }
+      area.innerHTML = atts.map(a => {
+        const isPdf = a.mime_type === 'application/pdf' || a.original_name.endsWith('.pdf');
+        const url   = `/uploads/${a.rel_path.split('/').map(encodeURIComponent).join('/')}`;
+        return `<div class="maint-att-item" data-url="${url}" data-pdf="${isPdf}" data-name="${a.original_name.replace(/"/g,'&quot;')}">
+          <div class="maint-att-thumb">${isPdf ? `<span class="maint-att-pdf-icon">${icon('invoice', 28)}</span>` : `<img src="${url}" loading="lazy" alt="">`}</div>
+          <span class="maint-att-type-badge">PIC</span>
+          <div class="maint-att-name">${a.original_name}</div>
+        </div>`;
+      }).join('');
+      area.querySelectorAll('.maint-att-item').forEach(card =>
+        card.addEventListener('click', () => openAttachmentPreview(card.dataset.url, card.dataset.name, card.dataset.pdf === 'true'))
+      );
+    } catch (err) { area.innerHTML = `<div class="maint-att-empty" style="color:var(--red-light)">${err.message}</div>`; }
+    return;
+  }
+
+  if (e.target.classList.contains('issue-save-btn')) {
+    const issueId     = item.dataset.issueId;
+    const status      = item.querySelector('.issue-status-select').value;
+    const actionTaken = item.querySelector('.issue-action-taken').value.trim() || null;
+    const resNotes    = item.querySelector('.issue-res-notes').value.trim()    || null;
+    const poNumber    = item.querySelector('.issue-po-number')?.value.trim()   || null;
+    const costVal     = item.querySelector('.issue-cost')?.value;
+    const cost        = costVal !== '' ? parseFloat(costVal) : null;
+    const notes       = item.querySelector('.issue-notes').value.trim()        || null;
+    const assignedTo  = item.querySelector('.issue-assigned').value             || null;
+    const errEl       = item.querySelector('.issue-update-error');
+    errEl.classList.add('hidden');
+    e.target.disabled = true;
+    try {
+      const pending = issueCardFiles.get(issueId) || [];
+      await api('PATCH', `/api/dirt-work-issues/${issueId}`, {
+        status, action_taken: actionTaken, resolution_notes: resNotes,
+        po_number: poNumber, cost, notes, assigned_to: assignedTo,
+      });
+      if (pending.length) {
+        await doUploadIssueAttachments(issueId, 'dirt_work_issues', pending, item.dataset.entityName);
+        issueCardFiles.delete(issueId);
+      }
+      dirtWorkLoaded = false;
+      await loadDirtWorkIssues();
+      showToast('Issue updated', 'success');
+      refreshMaintenanceBadges();
+    } catch (err) {
+      errEl.textContent = err.message;
+      errEl.classList.remove('hidden');
+      e.target.disabled = false;
+    }
+  }
+});
+
 // ── Issue Share / Report ──────────────────────────────────────────────────────
 
 function blobToDataUri(blob) {
@@ -3648,6 +4056,44 @@ function openGPSMap(lat, lon) {
 
 el('gps-map-close').addEventListener('click', () => {
   el('gps-map-modal').classList.add('hidden');
+  _cancelGPSMapPick();
+});
+
+// GPS Map pick mode — lets callers request a tap-to-place interaction
+let _gpsPickCallback = null;
+let _gpsPickClickHandler = null;
+
+function _cancelGPSMapPick() {
+  if (_gpsPickClickHandler && gpsLeafletMap) {
+    gpsLeafletMap.off('click', _gpsPickClickHandler);
+    _gpsPickClickHandler = null;
+  }
+  _gpsPickCallback = null;
+  el('gps-map-title').textContent = 'Photo Location';
+  el('gps-map-pick-hint').classList.add('hidden');
+  el('gps-map-confirm').classList.add('hidden');
+}
+
+function openGPSMapPick(lat, lon, callback) {
+  openGPSMap(lat, lon);
+  _gpsPickCallback = callback;
+  el('gps-map-title').textContent = 'Pick Location';
+  el('gps-map-pick-hint').classList.remove('hidden');
+  el('gps-map-confirm').classList.remove('hidden');
+  _gpsPickClickHandler = e => {
+    gpsLeafletMarker.setLatLng(e.latlng);
+    el('gps-map-coords').textContent = `${e.latlng.lat.toFixed(6)}, ${e.latlng.lng.toFixed(6)}`;
+  };
+  gpsLeafletMap.on('click', _gpsPickClickHandler);
+}
+
+el('gps-map-confirm').addEventListener('click', () => {
+  if (_gpsPickCallback && gpsLeafletMarker) {
+    const ll = gpsLeafletMarker.getLatLng();
+    _gpsPickCallback(ll.lat, ll.lng);
+  }
+  el('gps-map-modal').classList.add('hidden');
+  _cancelGPSMapPick();
 });
 
 /* ── Maintenance ─────────────────────────────────────────────────────────── */
@@ -4068,6 +4514,7 @@ const MAINT_PANEL_NAMES = {
   swaps:          'Equipment Swaps',
   pms:            'PM Records',
   'canal-issues': 'Canal Issues',
+  'dirt-work':    'Dirt Work',
   assigned:       'Assigned to Me',
 };
 function openMaintPanel(panelId) {
@@ -4083,6 +4530,7 @@ function openMaintPanel(panelId) {
   if (panelId === 'swaps')        initMaintSwapsPanel();
   if (panelId === 'pms')          initMaintPMsPanel();
   if (panelId === 'canal-issues') initMaintCanalPanel();
+  if (panelId === 'dirt-work')    initMaintDirtWorkPanel();
   if (panelId === 'assigned')     initMaintAssignedPanel();
 }
 
@@ -4112,8 +4560,9 @@ async function refreshMaintenanceBadges() {
     setBadge('maint-badge-buildings', counts.buildings);
     setBadge('maint-badge-wells',     counts.wells);
     setBadge('maint-badge-vehicles',  counts.vehicles);
-    setBadge('maint-badge-canal',     counts.canal);
-    setBadge('maint-main-badge', counts.equipment + counts.buildings + counts.wells + counts.vehicles + counts.canal);
+    setBadge('maint-badge-canal',      counts.canal);
+    setBadge('maint-badge-dirt-work',  counts.dirt_work);
+    setBadge('maint-main-badge', counts.equipment + counts.buildings + counts.wells + counts.vehicles + counts.canal + (counts.dirt_work || 0));
   } catch { /* non-critical — badges stay at last known value */ }
 }
 

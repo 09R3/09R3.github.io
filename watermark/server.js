@@ -2731,6 +2731,76 @@ app.patch('/api/canal-issues/:id', requireAuth, async (req, res) => {
   }
 });
 
+// ── Dirt Work Issues ──────────────────────────────────────────────────────────
+app.get('/api/dirt-work-issues', requireAuth, async (req, res) => {
+  const includeResolved = req.query.include_resolved === 'true';
+  try {
+    const { rows } = await pool.query(`
+      SELECT dw.*,
+             u.full_name AS entered_by_full_name,
+             (SELECT COUNT(*) FROM maintenance_attachments
+              WHERE table_name = 'dirt_work_issues' AND record_id = dw.issue_id) AS attachment_count
+      FROM dirt_work_issues dw
+      LEFT JOIN users u ON u.username = dw.entered_by
+      WHERE $1 OR dw.status != 'resolved'
+      ORDER BY
+        CASE dw.status WHEN 'open' THEN 0 WHEN 'in_progress' THEN 1 ELSE 2 END,
+        dw.reported_date DESC NULLS LAST
+    `, [includeResolved]);
+    res.json(rows);
+  } catch (err) { handleErr(res, err); }
+});
+
+app.post('/api/dirt-work-issues', requireAuth, async (req, res) => {
+  const { pool: poolNum, work_type, description, location_notes,
+          reported_date, assigned_to, notes, gps_lat, gps_lon } = req.body;
+  const entered_by = req.user.username;
+  try {
+    const { rows } = await pool.query(`
+      INSERT INTO dirt_work_issues
+        (pool, work_type, description, location_notes, reported_date,
+         assigned_to, notes, entered_by, gps_lat, gps_lon)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+      RETURNING issue_id
+    `, [poolNum || null, work_type || null, description || null,
+        location_notes || null, reported_date || null,
+        assigned_to || null, notes || null, entered_by,
+        gps_lat != null ? parseFloat(gps_lat) : null,
+        gps_lon != null ? parseFloat(gps_lon) : null]);
+    res.json(rows[0]);
+  } catch (err) { handleErr(res, err); }
+});
+
+app.patch('/api/dirt-work-issues/:id', requireAuth, async (req, res) => {
+  const { id } = req.params;
+  const { status, action_taken, resolution_notes, po_number, cost,
+          assigned_to, notes, gps_lat, gps_lon } = req.body;
+  try {
+    await pool.query(`
+      UPDATE dirt_work_issues SET
+        status           = COALESCE($1, status),
+        action_taken     = COALESCE($2, action_taken),
+        resolution_notes = COALESCE($3, resolution_notes),
+        po_number        = COALESCE($4, po_number),
+        cost             = COALESCE($5, cost),
+        assigned_to      = COALESCE($6, assigned_to),
+        notes            = COALESCE($7, notes),
+        resolved_date    = CASE WHEN $1 = 'resolved' THEN NOW()
+                                WHEN $1 IN ('open','in_progress') THEN NULL
+                                ELSE resolved_date END,
+        gps_lat          = CASE WHEN $9::boolean THEN $10::double precision ELSE gps_lat END,
+        gps_lon          = CASE WHEN $9::boolean THEN $11::double precision ELSE gps_lon END,
+        updated_at       = NOW()
+      WHERE issue_id = $8
+    `, [status || null, action_taken ?? null, resolution_notes ?? null,
+        po_number ?? null, cost ?? null, assigned_to ?? null, notes ?? null, id,
+        gps_lat != null && gps_lon != null,
+        gps_lat != null ? parseFloat(gps_lat) : null,
+        gps_lon != null ? parseFloat(gps_lon) : null]);
+    res.json({ ok: true });
+  } catch (err) { handleErr(res, err); }
+});
+
 // ── Equipment Swap Units (unified, by category) ───────────────────────────────
 app.get('/api/equipment-swap-units/:category', requireAuth, async (req, res) => {
   const { category } = req.params;
@@ -2907,7 +2977,9 @@ app.get('/api/maintenance/badge-counts', requireAuth, async (req, res) => {
         (SELECT COUNT(*) FROM maintenance_vehicles
          WHERE status IN ('open','in-progress')) AS vehicles,
         (SELECT COUNT(*) FROM canal_issues
-         WHERE status IN ('open','in_progress')) AS canal
+         WHERE status IN ('open','in_progress')) AS canal,
+        (SELECT COUNT(*) FROM dirt_work_issues
+         WHERE status IN ('open','in_progress')) AS dirt_work
     `);
     const counts = rows[0];
     res.json({
@@ -2916,6 +2988,7 @@ app.get('/api/maintenance/badge-counts', requireAuth, async (req, res) => {
       wells:     parseInt(counts.wells)     || 0,
       vehicles:  parseInt(counts.vehicles)  || 0,
       canal:     parseInt(counts.canal)     || 0,
+      dirt_work: parseInt(counts.dirt_work) || 0,
     });
   } catch (err) {
     handleErr(res, err);
