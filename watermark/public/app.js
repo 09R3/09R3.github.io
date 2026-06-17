@@ -11372,7 +11372,7 @@ async function toggleSafetyMeeting(item) {
 
 function renderSafetyMeetingBody(body, data) {
   const linkHtml = data.link
-    ? `<div class="form-group"><label>Link</label><a href="${escHtml(data.link)}" target="_blank" rel="noopener" class="safety-meeting-link">${escHtml(data.link)}</a></div>`
+    ? `<div class="form-group"><label>Link</label><a href="${escHtml(/^https?:\/\//i.test(data.link) ? data.link : 'https://' + data.link)}" target="_blank" rel="noopener" class="safety-meeting-link">${escHtml(data.link)}</a></div>`
     : '';
   const notesHtml = data.notes
     ? `<div class="form-group"><label>Notes</label><div class="safety-meeting-notes">${escHtml(data.notes)}</div></div>`
