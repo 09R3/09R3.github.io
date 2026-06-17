@@ -35,6 +35,7 @@ applyTheme(localStorage.getItem('watermark-theme') || 'dark');
 let currentUser   = null;
 let currentScreen = null;
 let _usersList    = null;
+let _rolesList    = null;
 
 // Pumping plant state
 const pp = {
@@ -521,6 +522,7 @@ function showScreen(name) {
     'kf-monthly':    'KF Monthly Readings',
     maintenance:     'Maintenance Log',
     pesticides:      'Pesticides',
+    'dirt-work':     'Dirt Work',
     'well-runs':     'Well Runs',
     reports:         'Reports',
     admin:           'Settings',
@@ -569,6 +571,7 @@ function showScreen(name) {
   if (name === 'kf-monthly')    initKFScreen();
   if (name === 'maintenance')   initMaintenanceScreen();
   if (name === 'pesticides')    initPesticideScreen();
+  if (name === 'dirt-work')     initDirtWorkScreen();
   if (name === 'well-runs')     initWellRunsScreen();
   if (name === 'reports')       initReportsScreen();
   if (name === 'admin')         { initAdminScreen(); initSettingsScreen(); }
@@ -1940,6 +1943,54 @@ async function loadUsersList() {
   return _usersList;
 }
 
+async function loadRolesList() {
+  if (_rolesList) return _rolesList;
+  _rolesList = await api('GET', '/api/roles/list').catch(() => []);
+  return _rolesList;
+}
+
+// Title-case a role slug for display, e.g. "water-planner" → "Water Planner"
+function roleLabel(role) {
+  return String(role).replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+// Like userSelectOptions, but adds a "Roles" group. Role values are stored as
+// "role:<rolename>" so we can distinguish a role assignment from a person's name.
+// When an issue is assigned to a role, everyone with that role sees it as theirs.
+function assigneeSelectOptions(currentValue) {
+  const users = _usersList || [];
+  const roles = _rolesList || [];
+  let html = '<option value="">— Unassigned —</option>';
+
+  if (users.length) {
+    html += '<optgroup label="Users">';
+    users.forEach(u => {
+      const sel = u.full_name === currentValue ? ' selected' : '';
+      html += `<option value="${escHtml(u.full_name)}"${sel}>${escHtml(u.full_name)}</option>`;
+    });
+    html += '</optgroup>';
+  }
+
+  if (roles.length) {
+    html += '<optgroup label="Roles">';
+    roles.forEach(r => {
+      const val = `role:${r}`;
+      const sel = val === currentValue ? ' selected' : '';
+      html += `<option value="${escHtml(val)}"${sel}>\u{1F465} ${escHtml(roleLabel(r))}</option>`;
+    });
+    html += '</optgroup>';
+  }
+
+  // Keep a legacy/unknown value visible if it matches neither a user nor a role
+  const known = users.some(u => u.full_name === currentValue) ||
+                roles.some(r => `role:${r}` === currentValue);
+  if (currentValue && !known) {
+    const disp = currentValue.startsWith('role:') ? `\u{1F465} ${roleLabel(currentValue.slice(5))}` : currentValue;
+    html += `<option value="${escHtml(currentValue)}" selected>${escHtml(disp)}</option>`;
+  }
+  return html;
+}
+
 function userSelectOptions(currentValue) {
   const users = _usersList || [];
   let html = '<option value="">— Unassigned —</option>';
@@ -3267,7 +3318,13 @@ let dirtWorkNewLat    = null;
 let dirtWorkNewLon    = null;
 let dirtWorkNewPhotos = [];
 
-function initMaintDirtWorkPanel() {
+async function initDirtWorkScreen() {
+  // Refresh assignee options (users + roles) and data on every visit.
+  await Promise.all([loadUsersList(), loadRolesList()]);
+  el('dirt-issue-assigned').innerHTML = assigneeSelectOptions('');
+  loadDirtWorkIssues();
+
+  // Wire listeners only once.
   if (dirtWorkLoaded) return;
   dirtWorkLoaded = true;
 
@@ -3280,7 +3337,6 @@ function initMaintDirtWorkPanel() {
   });
 
   el('dirt-issue-date').value = todayISO();
-  el('dirt-issue-assigned').innerHTML = userSelectOptions('');
 
   el('dirt-new-issue-btn').addEventListener('click', () => {
     el('dirt-new-issue-form').classList.remove('hidden');
@@ -3379,7 +3435,6 @@ function initMaintDirtWorkPanel() {
       el('dirt-new-issue-form').classList.add('hidden');
       el('dirt-new-issue-btn').classList.remove('hidden');
       resetDirtNewForm();
-      dirtWorkLoaded = false;
       await loadDirtWorkIssues();
       showToast('Issue submitted', 'success');
       refreshMaintenanceBadges();
@@ -3393,11 +3448,8 @@ function initMaintDirtWorkPanel() {
   el('dirt-show-resolved-btn').addEventListener('click', () => {
     dirtWorkShowResolved = !dirtWorkShowResolved;
     el('dirt-show-resolved-btn').textContent = dirtWorkShowResolved ? 'Hide Resolved' : 'Show Resolved';
-    dirtWorkLoaded = false;
     loadDirtWorkIssues();
   });
-
-  loadDirtWorkIssues();
 }
 
 function resetDirtNewForm() {
@@ -3508,7 +3560,7 @@ function renderDirtWorkIssues(items) {
           ${issue.location_notes ? `<div class="form-group"><label>Location Notes</label><div style="font-size:0.9rem;padding:6px 0">${escHtml(issue.location_notes)}</div></div>` : ''}
           <div class="form-group">
             <label>Assigned To</label>
-            <select class="ctrl-select issue-assigned">${userSelectOptions(issue.assigned_to)}</select>
+            <select class="ctrl-select issue-assigned">${assigneeSelectOptions(issue.assigned_to)}</select>
           </div>
           <div class="form-group">
             <label>Status</label>
@@ -3595,7 +3647,6 @@ el('dirt-issue-list').addEventListener('click', async e => {
     openGPSMapPick(lat, lon, async (newLat, newLon) => {
       try {
         await api('PATCH', `/api/dirt-work-issues/${issueId}`, { gps_lat: newLat, gps_lon: newLon });
-        dirtWorkLoaded = false;
         await loadDirtWorkIssues();
         showToast('Location updated', 'success');
       } catch (err) { showToast(err.message, 'error'); }
@@ -3652,7 +3703,6 @@ el('dirt-issue-list').addEventListener('click', async e => {
         await doUploadIssueAttachments(issueId, 'dirt_work_issues', pending, item.dataset.entityName);
         issueCardFiles.delete(issueId);
       }
-      dirtWorkLoaded = false;
       await loadDirtWorkIssues();
       showToast('Issue updated', 'success');
       refreshMaintenanceBadges();
@@ -4514,7 +4564,6 @@ const MAINT_PANEL_NAMES = {
   swaps:          'Equipment Swaps',
   pms:            'PM Records',
   'canal-issues': 'Canal Issues',
-  'dirt-work':    'Dirt Work',
   assigned:       'Assigned to Me',
 };
 function openMaintPanel(panelId) {
@@ -4530,7 +4579,6 @@ function openMaintPanel(panelId) {
   if (panelId === 'swaps')        initMaintSwapsPanel();
   if (panelId === 'pms')          initMaintPMsPanel();
   if (panelId === 'canal-issues') initMaintCanalPanel();
-  if (panelId === 'dirt-work')    initMaintDirtWorkPanel();
   if (panelId === 'assigned')     initMaintAssignedPanel();
 }
 
@@ -4561,8 +4609,10 @@ async function refreshMaintenanceBadges() {
     setBadge('maint-badge-wells',     counts.wells);
     setBadge('maint-badge-vehicles',  counts.vehicles);
     setBadge('maint-badge-canal',      counts.canal);
+    // Dirt Work is now its own top-level screen — its badge lives on the home tile,
+    // not inside the Maintenance Log total.
     setBadge('maint-badge-dirt-work',  counts.dirt_work);
-    setBadge('maint-main-badge', counts.equipment + counts.buildings + counts.wells + counts.vehicles + counts.canal + (counts.dirt_work || 0));
+    setBadge('maint-main-badge', counts.equipment + counts.buildings + counts.wells + counts.vehicles + counts.canal);
   } catch { /* non-critical — badges stay at last known value */ }
 }
 
@@ -4575,8 +4625,16 @@ document.querySelectorAll('[data-maint-panel]').forEach(btn => {
 // .maint-back-btn buttons removed from HTML — navigation handled by setPanelNav()
 
 /* ── Assigned Items + Bell Notification ──────────────────────────────────── */
-const ASSIGN_TYPE_LABEL = { well: 'Well Issue', building: 'Building Issue', equipment: 'Equipment Issue' };
-const ASSIGN_TYPE_PANEL = { well: 'wells', building: 'buildings', equipment: 'equipment' };
+const ASSIGN_TYPE_LABEL = { well: 'Well Issue', building: 'Building Issue', equipment: 'Equipment Issue', dirt_work: 'Dirt Work' };
+const ASSIGN_TYPE_PANEL = { well: 'wells', building: 'buildings', equipment: 'equipment', dirt_work: 'dirt-work' };
+
+// Navigate to the right place for an assignment "View" button. Dirt Work is its
+// own top-level screen; the others are panels inside the Maintenance Log.
+function goToAssignmentTarget(target) {
+  if (target === 'dirt-work') { showScreen('dirt-work'); return; }
+  showScreen('maintenance');
+  openMaintPanel(target);
+}
 
 function updateBellBadge(items) {
   const lastChecked = localStorage.getItem('wm-assign-checked') || '1970-01-01T00:00:00.000Z';
@@ -4606,8 +4664,7 @@ function openAssignModal() {
       const btn = e.target.closest('.assign-view-btn');
       if (btn) {
         closeAssignModal();
-        showScreen('maintenance');
-        openMaintPanel(btn.dataset.panel);
+        goToAssignmentTarget(btn.dataset.panel);
       }
     });
   }
@@ -4658,7 +4715,7 @@ function initMaintAssignedPanel() {
     panel.dataset.listenerAdded = '1';
     listEl.addEventListener('click', e => {
       const btn = e.target.closest('[data-go-panel]');
-      if (btn) openMaintPanel(btn.dataset.goPanel);
+      if (btn) goToAssignmentTarget(btn.dataset.goPanel);
     });
   }
   loadAssignedPanel(listEl);

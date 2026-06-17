@@ -835,6 +835,20 @@ app.get('/api/users/list', async (req, res) => {
   }
 });
 
+// Distinct active roles — used to populate the "assign to a role" dropdown
+app.get('/api/roles/list', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT DISTINCT role FROM users
+       WHERE is_active = true AND role IS NOT NULL AND role <> ''
+       ORDER BY role`
+    );
+    res.json(rows.map(r => r.role));
+  } catch (err) {
+    res.json([]);
+  }
+});
+
 // ── Sites ─────────────────────────────────────────────────────────────────────
 app.get('/api/sites', requireAuth, async (req, res) => {
   try {
@@ -2641,24 +2655,32 @@ app.patch('/api/equipment-issues/:id', requireAuth, async (req, res) => {
 // ── My Assignments ────────────────────────────────────────────────────────────
 app.get('/api/my-assignments', requireAuth, async (req, res) => {
   const full_name = req.user.full_name;
+  // Items can be assigned to a person (full_name) or to a role. Role assignments
+  // are stored as "role:<rolename>", so everyone with that role sees them.
+  const roleTag = 'role:' + (req.user.role || '');
   try {
     const { rows } = await pool.query(`
       SELECT 'well' AS issue_type, issue_id, well_name AS entity_name,
              description, status, reported_date, created_at
       FROM well_issues
-      WHERE assigned_to ILIKE $1 AND status != 'resolved'
+      WHERE (assigned_to ILIKE $1 OR lower(assigned_to) = lower($2)) AND status != 'resolved'
       UNION ALL
       SELECT 'building', issue_id, building_name,
              description, status, reported_date, created_at
       FROM building_issues
-      WHERE assigned_to ILIKE $1 AND status != 'resolved'
+      WHERE (assigned_to ILIKE $1 OR lower(assigned_to) = lower($2)) AND status != 'resolved'
       UNION ALL
       SELECT 'equipment', issue_id, equipment_name,
              description, status, reported_date, created_at
       FROM equipment_issues
-      WHERE assigned_to ILIKE $1 AND status != 'resolved'
+      WHERE (assigned_to ILIKE $1 OR lower(assigned_to) = lower($2)) AND status != 'resolved'
+      UNION ALL
+      SELECT 'dirt_work', issue_id, COALESCE('Pool ' || pool, work_type) AS entity_name,
+             description, status, reported_date, created_at
+      FROM dirt_work_issues
+      WHERE (assigned_to ILIKE $1 OR lower(assigned_to) = lower($2)) AND status != 'resolved'
       ORDER BY created_at DESC
-    `, [full_name]);
+    `, [full_name, roleTag]);
     res.json(rows);
   } catch (err) {
     handleErr(res, err);

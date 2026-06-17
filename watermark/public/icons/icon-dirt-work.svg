@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+  <!-- D-grip handle top -->
+  <path d="M10.3 2.5 L10.3 4.2 A1.7 1.7 0 0 0 13.7 4.2 L13.7 2.5"/>
+  <!-- shaft -->
+  <path d="M12 4.2 L12 11.5"/>
+  <!-- spade blade -->
+  <path d="M8.8 11.5 L15.2 11.5 L13.6 15.3 A2 2 0 0 1 10.4 15.3 Z"/>
+  <!-- dirt mound / ground line -->
+  <path d="M2.5 19.5 C5 17.8, 7 17.8, 9 19.5 C11 21.2, 13 17.5, 16 19.5 C18 20.8, 19.5 19.5, 21.5 19.5"/>
+</svg>
