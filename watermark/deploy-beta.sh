@@ -95,9 +95,8 @@ rm -rf "$SOURCE_DIR"
 git clone \
     --depth 1 \
     --branch "$BRANCH" \
-    --filter=blob:none \
+    --no-tags \
     --sparse \
-    --quiet \
     "$REPO_URL" \
     "$SOURCE_DIR"
 
@@ -105,7 +104,7 @@ cd "$SOURCE_DIR"
 git sparse-checkout set watermark
 
 echo "      Fetching latest icons (Marv-s-site)..."
-git clone --depth 1 --quiet https://github.com/09R3/Marv-s-site.git \
+git clone --depth 1 --no-tags https://github.com/09R3/Marv-s-site.git \
     "$SOURCE_DIR/watermark/public/marv-site" \
     || echo "      Warning: could not fetch icons — Marv-s-site clone failed."
 
