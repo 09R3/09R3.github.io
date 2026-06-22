@@ -5360,7 +5360,8 @@ function createKFItem(w, dateInput, timeInput) {
     : 'Not read';
   const prevDTW    = w.last_dtw    != null ? `${Number(w.last_dtw).toFixed(2)} ft` : null;
   const prevMethod = w.last_method != null ? w.last_method.charAt(0).toUpperCase() + w.last_method.slice(1) : null;
-  const prevMeta   = [prevDTW, prevMethod].filter(Boolean).join(' · ');
+  const prevCond   = w.last_wet_dry_moist != null ? w.last_wet_dry_moist.charAt(0).toUpperCase() + w.last_wet_dry_moist.slice(1) : null;
+  const prevMeta   = [prevDTW, prevMethod, prevCond].filter(Boolean).join(' · ');
   const hasGPS     = w.gps_latitude && w.gps_longitude;
 
   div.innerHTML = `
@@ -5376,36 +5377,43 @@ function createKFItem(w, dateInput, timeInput) {
         <label>Depth to Water (ft)${prevDTW ? `<span class="prev-hint"> · Prev: ${prevDTW}</span>` : ''}</label>
         <input type="number" class="ctrl-input kf-dtw" step="0.01" placeholder="0.00">
       </div>
-      <div class="form-group toggle-row">
-        <label>Status</label>
-        <div class="toggle-group">
-          <button class="toggle-btn active kf-on">ON</button>
-          <button class="toggle-btn kf-off">OFF</button>
+      <div class="two-col">
+        <div class="form-group toggle-row">
+          <label>Status</label>
+          <div class="toggle-group">
+            <button class="toggle-btn active kf-on">ON</button>
+            <button class="toggle-btn kf-off">OFF</button>
+          </div>
         </div>
-      </div>
-      <div class="form-group toggle-row">
-        <label>Access</label>
-        <div class="toggle-group">
-          <button class="toggle-btn kf-access-tube${w.access === 'Tube' ? ' active' : ''}">Tube</button>
-          <button class="toggle-btn kf-access-plug${w.access === 'Plug' ? ' active' : ''}">Plug</button>
+        <div class="form-group toggle-row">
+          <label>Access</label>
+          <div class="toggle-group">
+            <button class="toggle-btn kf-access-tube${w.access === 'Tube' ? ' active' : ''}">Tube</button>
+            <button class="toggle-btn kf-access-plug${w.access === 'Plug' ? ' active' : ''}">Plug</button>
+          </div>
         </div>
       </div>
       <div class="two-col">
-        <div class="form-group">
+        <div class="form-group toggle-row">
           <label>Method</label>
-          <select class="ctrl-select kf-method">
-            <option value="">Select…</option>
-            <option value="plopper">Plopper</option>
-            <option value="sounder">Sounder</option>
-            <option value="tape">Tape</option>
-            <option value="transducer">Transducer</option>
-            <option value="other">Other</option>
-          </select>
+          <div class="toggle-group">
+            <button class="toggle-btn kf-m-sounder">Sounder</button>
+            <button class="toggle-btn kf-m-plopper">Plopper</button>
+            <button class="toggle-btn kf-m-other">Other</button>
+          </div>
         </div>
-        <div class="form-group">
-          <label>Operator</label>
-          <input type="text" class="ctrl-input kf-op" placeholder="Initials">
+        <div class="form-group toggle-row">
+          <label>Condition</label>
+          <div class="toggle-group">
+            <button class="toggle-btn kf-c-wet">Wet</button>
+            <button class="toggle-btn kf-c-dry">Dry</button>
+            <button class="toggle-btn kf-c-moist">Moist</button>
+          </div>
         </div>
+      </div>
+      <div class="form-group">
+        <label>Operator</label>
+        <input type="text" class="ctrl-input kf-op" placeholder="Initials">
       </div>
       <div class="form-group">
         <label>Notes</label>
@@ -5438,6 +5446,7 @@ function createKFItem(w, dateInput, timeInput) {
     openHistoryModal('kf', w.well_id, w.common_name);
   });
 
+  // Status
   let kfOnOff = true;
   div.querySelector('.kf-on').addEventListener('click', e => {
     kfOnOff = true;
@@ -5450,6 +5459,7 @@ function createKFItem(w, dateInput, timeInput) {
     div.querySelector('.kf-on').classList.remove('active');
   });
 
+  // Access
   let kfAccess = w.access || null;
   div.querySelector('.kf-access-tube').addEventListener('click', e => {
     if (kfAccess === 'Tube') { kfAccess = null; e.currentTarget.classList.remove('active'); return; }
@@ -5463,6 +5473,39 @@ function createKFItem(w, dateInput, timeInput) {
     e.currentTarget.classList.add('active');
     div.querySelector('.kf-access-tube').classList.remove('active');
   });
+
+  // Method toggles (Sounder / Plopper / Other) — tap again to deselect
+  let kfMethod = null;
+  const mSo = div.querySelector('.kf-m-sounder');
+  const mPl = div.querySelector('.kf-m-plopper');
+  const mOt = div.querySelector('.kf-m-other');
+  [[' sounder', mSo, [mPl, mOt]], ['plopper', mPl, [mSo, mOt]], ['other', mOt, [mSo, mPl]]].forEach(([val, btn, rest]) => {
+    btn.addEventListener('click', () => {
+      const v = val.trim();
+      if (kfMethod === v) { kfMethod = null; btn.classList.remove('active'); return; }
+      kfMethod = v; btn.classList.add('active'); rest.forEach(b => b.classList.remove('active'));
+    });
+  });
+  if (w.last_method && ['sounder', 'plopper', 'other'].includes(w.last_method)) {
+    kfMethod = w.last_method;
+    div.querySelector(`.kf-m-${kfMethod}`).classList.add('active');
+  }
+
+  // Condition toggles (Wet / Dry / Moist) — tap again to deselect
+  let kfCond = null;
+  const cWet = div.querySelector('.kf-c-wet');
+  const cDry = div.querySelector('.kf-c-dry');
+  const cMo  = div.querySelector('.kf-c-moist');
+  [['wet', cWet, [cDry, cMo]], ['dry', cDry, [cWet, cMo]], ['moist', cMo, [cWet, cDry]]].forEach(([val, btn, rest]) => {
+    btn.addEventListener('click', () => {
+      if (kfCond === val) { kfCond = null; btn.classList.remove('active'); return; }
+      kfCond = val; btn.classList.add('active'); rest.forEach(b => b.classList.remove('active'));
+    });
+  });
+  if (w.last_wet_dry_moist && ['wet', 'dry', 'moist'].includes(w.last_wet_dry_moist)) {
+    kfCond = w.last_wet_dry_moist;
+    div.querySelector(`.kf-c-${kfCond}`).classList.add('active');
+  }
 
   div.querySelector('.list-item-header').addEventListener('click', () => {
     const open = div.classList.toggle('expanded');
@@ -5491,7 +5534,8 @@ function createKFItem(w, dateInput, timeInput) {
       reading_time:    timeInput.value,
       dtw_reading:     dtw ? parseFloat(dtw) : null,
       well_on_off:     kfOnOff,
-      plopper_sounder: div.querySelector('.kf-method').value || null,
+      plopper_sounder: kfMethod || null,
+      wet_dry_moist:   kfCond || null,
       operator:        div.querySelector('.kf-op').value || null,
       notes:           div.querySelector('.kf-notes').value || null,
       access:          kfAccess,
@@ -5504,10 +5548,10 @@ function createKFItem(w, dateInput, timeInput) {
       div.classList.remove('expanded');
       div.querySelector('.list-item-form').style.display = 'none';
       if (!r.queued) {
-        const method = div.querySelector('.kf-method').value;
         const newPrev = [
-          `${Number(dtw).toFixed(2)} ft`,
-          method ? method.charAt(0).toUpperCase() + method.slice(1) : null,
+          dtw ? `${Number(dtw).toFixed(2)} ft` : null,
+          kfMethod ? kfMethod.charAt(0).toUpperCase() + kfMethod.slice(1) : null,
+          kfCond   ? kfCond.charAt(0).toUpperCase()   + kfCond.slice(1)   : null,
         ].filter(Boolean).join(' · ');
         let meta = div.querySelector('.list-item-meta');
         if (!meta) {
@@ -5518,7 +5562,6 @@ function createKFItem(w, dateInput, timeInput) {
         meta.innerHTML = `<span>Prev: ${newPrev}</span>`;
       }
       div.querySelector('.kf-dtw').value = '';
-      div.querySelector('.kf-method').value = '';
       div.querySelector('.kf-notes').value = '';
       showToast(r.queued ? `${w.common_name} queued offline` : `${w.common_name} saved`, r.queued ? 'warn' : 'success');
     } catch (err) {

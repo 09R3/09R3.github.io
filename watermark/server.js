@@ -1296,6 +1296,7 @@ app.get('/api/wells/kf', requireAuth, async (req, res) => {
         prev.reading_date    AS last_reading_date,
         prev.dtw_reading     AS last_dtw,
         prev.plopper_sounder AS last_method,
+        prev.wet_dry_moist   AS last_wet_dry_moist,
         (SELECT notes FROM readings_kf_monthly
          WHERE well_id = w.well_id AND notes IS NOT NULL AND notes != ''
          ORDER BY reading_date DESC, reading_time DESC LIMIT 1) AS last_notes,
@@ -1305,7 +1306,7 @@ app.get('/api/wells/kf', requireAuth, async (req, res) => {
       FROM wells w
       LEFT JOIN well_sets ws ON w.kf_set_id = ws.set_id
       LEFT JOIN LATERAL (
-        SELECT kf_reading_id, reading_date, dtw_reading, plopper_sounder
+        SELECT kf_reading_id, reading_date, dtw_reading, plopper_sounder, wet_dry_moist
         FROM readings_kf_monthly
         WHERE well_id = w.well_id
         ORDER BY reading_date DESC, reading_time DESC
@@ -1373,20 +1374,20 @@ app.get('/api/wells/operational', requireAuth, async (req, res) => {
 app.post('/api/readings/kf-monthly', requireAuth, async (req, res) => {
   const {
     well_id, reading_date, reading_time,
-    dtw_reading, well_on_off, plopper_sounder, operator, notes, access,
+    dtw_reading, well_on_off, plopper_sounder, wet_dry_moist, operator, notes, access,
   } = req.body;
-  if (!well_id || dtw_reading == null) {
-    return res.status(400).json({ error: 'well_id and dtw_reading are required' });
+  if (!well_id) {
+    return res.status(400).json({ error: 'well_id is required' });
   }
   try {
     const { rows } = await pool.query(
       `INSERT INTO readings_kf_monthly
-         (well_id, common_name, reading_date, reading_time, dtw_reading, well_on_off, plopper_sounder, operator, notes)
-       SELECT $1, common_name, $2, $3, $4, $5, $6, $7, $8
+         (well_id, common_name, reading_date, reading_time, dtw_reading, well_on_off, plopper_sounder, wet_dry_moist, operator, notes)
+       SELECT $1, common_name, $2, $3, $4, $5, $6, $7, $8, $9
        FROM wells WHERE well_id = $1
        RETURNING kf_reading_id`,
-      [well_id, reading_date, reading_time, dtw_reading,
-       well_on_off ?? null, plopper_sounder || null, operator || null, notes || null]
+      [well_id, reading_date, reading_time, dtw_reading ?? null,
+       well_on_off ?? null, plopper_sounder || null, wet_dry_moist || null, operator || null, notes || null]
     );
     if (access === 'Tube' || access === 'Plug') {
       await pool.query(`UPDATE wells SET access = $1 WHERE well_id = $2`, [access, well_id]);
