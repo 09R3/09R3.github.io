@@ -244,6 +244,22 @@ function showToast(msg, type = '') {
   t._timer = setTimeout(() => t.classList.add('hidden'), 3000);
 }
 
+function showReadingAlert(title, bodyHtml, buttons) {
+  return new Promise(resolve => {
+    const ov = document.createElement('div');
+    ov.className = 'modal-overlay';
+    ov.innerHTML = `<div class="modal-card" style="max-width:340px">
+      <div class="modal-header"><h2 style="font-size:1rem;margin:0">${title}</h2></div>
+      <div class="modal-body" style="font-size:0.9rem">${bodyHtml}</div>
+      <div class="modal-footer" style="display:flex;gap:8px;padding:12px 16px;justify-content:flex-end">
+        ${buttons.map(b => `<button class="btn ${b.cls}" data-key="${b.key}">${b.label}</button>`).join('')}
+      </div></div>`;
+    document.body.appendChild(ov);
+    ov.querySelectorAll('button[data-key]').forEach(btn =>
+      btn.addEventListener('click', () => { document.body.removeChild(ov); resolve(btn.dataset.key); }));
+  });
+}
+
 function showError(elId, msg) {
   const e = el(elId);
   e.textContent = msg;
@@ -1489,6 +1505,39 @@ function createWellItem(w, dateInput, timeInput) {
     const errEl = div.querySelector('.lif-error');
     errEl.classList.add('hidden');
     const saveBtn = e.currentTarget;
+
+    const _wMissing = [
+      { label: 'Hours',       inputEl: div.querySelector('.w-hours'),      prev: w.last_hour_reading },
+      { label: 'Flow (cfs)',  inputEl: div.querySelector('.w-flow'),       prev: w.last_flow_cfs     },
+      { label: 'Totalizer',   inputEl: div.querySelector('.w-totalizer'),  prev: w.last_totalizer    },
+      { label: 'Dripper Oil', inputEl: div.querySelector('.w-dripperoil'), prev: w.last_dripper_oil  },
+      { label: 'PG&E kWh',   inputEl: div.querySelector('.w-pge'),        prev: w.last_pge_kwh      },
+    ].filter(f => f.prev != null && f.inputEl && f.inputEl.value.trim() === '');
+    if (_wMissing.length) {
+      const _listHtml = _wMissing.map(f => `<li><strong>${f.label}</strong>: prev <strong>${f.prev}</strong></li>`).join('');
+      const _ra = await showReadingAlert('Incomplete Reading',
+        `<p>These fields had a value last reading but are now blank:</p><ul>${_listHtml}</ul>`,
+        [{ key: 'cancel', label: 'Cancel',             cls: 'btn-secondary' },
+         { key: 'fill',   label: 'Fill with Previous', cls: 'btn-primary'   },
+         { key: 'save',   label: 'Save Anyway',        cls: 'btn-save'      }]);
+      if (_ra === 'cancel') return;
+      if (_ra === 'fill') { _wMissing.forEach(f => { f.inputEl.value = f.prev; }); return; }
+    }
+    const _wDown = [
+      { label: 'Hours',     prev: w.last_hour_reading, cur: parseFloat(div.querySelector('.w-hours').value)     },
+      { label: 'Totalizer', prev: w.last_totalizer,    cur: parseFloat(div.querySelector('.w-totalizer').value) },
+      { label: 'PG&E kWh', prev: w.last_pge_kwh,      cur: parseFloat(div.querySelector('.w-pge').value)       },
+    ].filter(f => f.prev != null && !isNaN(f.cur) && f.cur < Number(f.prev));
+    if (_wDown.length) {
+      const _listHtml = _wDown.map(f => `<li><strong>${f.label}</strong>: ${f.prev} → ${f.cur}</li>`).join('');
+      const _ra = await showReadingAlert('Reading Decreased',
+        `<p>These readings are lower than the previous values:</p><ul>${_listHtml}</ul>` +
+        `<p style="color:var(--text-dim);font-size:0.85rem">Cumulative readings normally only go up.</p>`,
+        [{ key: 'cancel', label: 'Cancel',      cls: 'btn-secondary' },
+         { key: 'save',   label: 'Save Anyway', cls: 'btn-save'      }]);
+      if (_ra === 'cancel') return;
+    }
+
     saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
     const body = {
       well_id:      w.well_id,
@@ -1668,6 +1717,38 @@ function createCanalItem(s, dateInput, timeInput) {
     const errEl = div.querySelector('.lif-error');
     errEl.classList.add('hidden');
     const saveBtn = e.currentTarget;
+
+    const _cMissing = [
+      { label: 'Flow (cfs)',   inputEl: div.querySelector('.c-flow'),      prev: s.last_flow      },
+      { label: 'Totalizer',    inputEl: div.querySelector('.c-totalizer'), prev: s.last_totalizer },
+      { label: 'Gate Setting', inputEl: div.querySelector('.c-gate'),      prev: s.last_gate      },
+      { label: 'Head (ft)',    inputEl: div.querySelector('.c-head'),      prev: s.last_head      },
+    ].filter(f => f.prev != null && f.inputEl && f.inputEl.value.trim() === '');
+    if (_cMissing.length) {
+      const _listHtml = _cMissing.map(f => `<li><strong>${f.label}</strong>: prev <strong>${f.prev}</strong></li>`).join('');
+      const _ra = await showReadingAlert('Incomplete Reading',
+        `<p>These fields had a value last reading but are now blank:</p><ul>${_listHtml}</ul>`,
+        [{ key: 'cancel', label: 'Cancel',             cls: 'btn-secondary' },
+         { key: 'fill',   label: 'Fill with Previous', cls: 'btn-primary'   },
+         { key: 'save',   label: 'Save Anyway',        cls: 'btn-save'      }]);
+      if (_ra === 'cancel') return;
+      if (_ra === 'fill') { _cMissing.forEach(f => { f.inputEl.value = f.prev; }); return; }
+    }
+    const _cTotEl = div.querySelector('.c-totalizer');
+    const _cDown = (_cTotEl && s.last_totalizer != null)
+      ? [{ label: 'Totalizer', prev: s.last_totalizer, cur: parseFloat(_cTotEl.value) }]
+          .filter(f => !isNaN(f.cur) && f.cur < Number(f.prev))
+      : [];
+    if (_cDown.length) {
+      const _listHtml = _cDown.map(f => `<li><strong>${f.label}</strong>: ${f.prev} → ${f.cur}</li>`).join('');
+      const _ra = await showReadingAlert('Reading Decreased',
+        `<p>These readings are lower than the previous values:</p><ul>${_listHtml}</ul>` +
+        `<p style="color:var(--text-dim);font-size:0.85rem">Cumulative readings normally only go up.</p>`,
+        [{ key: 'cancel', label: 'Cancel',      cls: 'btn-secondary' },
+         { key: 'save',   label: 'Save Anyway', cls: 'btn-save'      }]);
+      if (_ra === 'cancel') return;
+    }
+
     saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
 
     const payload = {
@@ -1898,6 +1979,35 @@ function createVehicleItem(v, dateInput, timeInput) {
     const errEl = div.querySelector('.lif-error');
     errEl.classList.add('hidden');
     const saveBtn = e.currentTarget;
+
+    const _vMissing = [
+      { label: 'Odometer (mi)', inputEl: div.querySelector('.v-odo'), prev: v.last_odometer     },
+      { label: 'Engine Hours',  inputEl: div.querySelector('.v-hrs'), prev: v.last_engine_hours },
+    ].filter(f => f.prev != null && f.inputEl && f.inputEl.value.trim() === '');
+    if (_vMissing.length) {
+      const _listHtml = _vMissing.map(f => `<li><strong>${f.label}</strong>: prev <strong>${f.prev}</strong></li>`).join('');
+      const _ra = await showReadingAlert('Incomplete Reading',
+        `<p>These fields had a value last reading but are now blank:</p><ul>${_listHtml}</ul>`,
+        [{ key: 'cancel', label: 'Cancel',             cls: 'btn-secondary' },
+         { key: 'fill',   label: 'Fill with Previous', cls: 'btn-primary'   },
+         { key: 'save',   label: 'Save Anyway',        cls: 'btn-save'      }]);
+      if (_ra === 'cancel') return;
+      if (_ra === 'fill') { _vMissing.forEach(f => { f.inputEl.value = f.prev; }); return; }
+    }
+    const _vDown = [
+      { label: 'Odometer (mi)', prev: v.last_odometer,     cur: parseFloat(div.querySelector('.v-odo')?.value ?? '') },
+      { label: 'Engine Hours',  prev: v.last_engine_hours, cur: parseFloat(div.querySelector('.v-hrs')?.value ?? '') },
+    ].filter(f => f.prev != null && !isNaN(f.cur) && f.cur < Number(f.prev));
+    if (_vDown.length) {
+      const _listHtml = _vDown.map(f => `<li><strong>${f.label}</strong>: ${f.prev} → ${f.cur}</li>`).join('');
+      const _ra = await showReadingAlert('Reading Decreased',
+        `<p>These readings are lower than the previous values:</p><ul>${_listHtml}</ul>` +
+        `<p style="color:var(--text-dim);font-size:0.85rem">Cumulative readings normally only go up.</p>`,
+        [{ key: 'cancel', label: 'Cancel',      cls: 'btn-secondary' },
+         { key: 'save',   label: 'Save Anyway', cls: 'btn-save'      }]);
+      if (_ra === 'cancel') return;
+    }
+
     saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
     const body = {
       vehicle_id:     v.vehicle_id,
@@ -12660,6 +12770,17 @@ function buildGateRow(gate, dateInput, timeInput, cardEl) {
 
   saveBtn.addEventListener('click', async () => {
     errDiv.classList.add('hidden');
+
+    if (lastFlow != null && flowInput && flowInput.value.trim() === '') {
+      const _ra = await showReadingAlert('Incomplete Reading',
+        `<p><strong>Flow (cfs)</strong> was recorded last time (<strong>${lastFlow.toFixed(2)} cfs</strong>) but is now blank.</p>`,
+        [{ key: 'cancel', label: 'Cancel',             cls: 'btn-secondary' },
+         { key: 'fill',   label: 'Fill with Previous', cls: 'btn-primary'   },
+         { key: 'save',   label: 'Save Anyway',        cls: 'btn-save'      }]);
+      if (_ra === 'cancel') return;
+      if (_ra === 'fill') { flowInput.value = lastFlow.toFixed(2); return; }
+    }
+
     saveBtn.disabled = true;
     saveBtn.textContent = 'Saving…';
     const h  = parseFloat(headInput?.value);
