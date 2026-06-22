@@ -265,6 +265,17 @@ function showReadingAlert(title, bodyHtml, buttons) {
   });
 }
 
+// Double-submit guard: disable a save/submit button and show progress text on
+// the first click. Returns a restore() that re-enables it and puts the original
+// label back — call restore() in the catch/finally (or after a validation abort).
+function beginSave(btn, savingText = 'Saving…') {
+  if (!btn) return () => {};
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = savingText;
+  return () => { btn.disabled = false; btn.textContent = orig; };
+}
+
 function showError(elId, msg) {
   const e = el(elId);
   e.textContent = msg;
@@ -2322,7 +2333,7 @@ el('well-submit-btn').addEventListener('click', async () => {
   const wellArea = sel.options[sel.selectedIndex]?.dataset.area || null;
   if (!wellId) return showError('well-new-error', 'Please select a well');
 
-  el('well-submit-btn').disabled = true;
+  const _save = beginSave(el('well-submit-btn'));
   try {
     await api('POST', '/api/well-issues', {
       well_id:       parseInt(wellId),
@@ -2345,7 +2356,7 @@ el('well-submit-btn').addEventListener('click', async () => {
   } catch (err) {
     showError('well-new-error', err.message);
   } finally {
-    el('well-submit-btn').disabled = false;
+    _save();
   }
 });
 
@@ -2640,7 +2651,7 @@ el('bldg-submit-btn').addEventListener('click', async () => {
   const siteName = siteSel.options[siteSel.selectedIndex]?.textContent || null;
   const bldgName = bldgSel.options[bldgSel.selectedIndex]?.textContent || null;
 
-  el('bldg-submit-btn').disabled = true;
+  const _save = beginSave(el('bldg-submit-btn'));
   try {
     await api('POST', '/api/building-issues', {
       building_id:   bldgId   ? parseInt(bldgId)   : null,
@@ -2666,7 +2677,7 @@ el('bldg-submit-btn').addEventListener('click', async () => {
   } catch (err) {
     showError('bldg-new-error', err.message);
   } finally {
-    el('bldg-submit-btn').disabled = false;
+    _save();
   }
 });
 
@@ -2949,7 +2960,7 @@ el('equip-submit-btn').addEventListener('click', async () => {
     if (!equipId) return showError('equip-new-error', 'Please select equipment');
   }
 
-  el('equip-submit-btn').disabled = true;
+  const _save = beginSave(el('equip-submit-btn'));
   try {
     await api('POST', '/api/equipment-issues', {
       equipment_type: equipNewType,
@@ -2973,7 +2984,7 @@ el('equip-submit-btn').addEventListener('click', async () => {
   } catch (err) {
     showError('equip-new-error', err.message);
   } finally {
-    el('equip-submit-btn').disabled = false;
+    _save();
   }
 });
 
@@ -3292,7 +3303,7 @@ el('canal-submit-btn').addEventListener('click', async () => {
   const desc = el('canal-issue-desc').value.trim();
   if (!desc) return showError('canal-new-error', 'Issue description is required');
 
-  el('canal-submit-btn').disabled = true;
+  const _save = beginSave(el('canal-submit-btn'));
   try {
     const firstGPS = canalNewPhotos.find(p => p.gps)?.gps ?? null;
     const body = {
@@ -3321,7 +3332,7 @@ el('canal-submit-btn').addEventListener('click', async () => {
   } catch (err) {
     showError('canal-new-error', err.message);
   } finally {
-    el('canal-submit-btn').disabled = false;
+    _save();
   }
 });
 
@@ -3525,7 +3536,7 @@ async function initDirtWorkScreen() {
     clearError('dirt-new-error');
     const desc = el('dirt-issue-desc').value.trim();
     if (!desc) return showError('dirt-new-error', 'Description is required');
-    el('dirt-submit-btn').disabled = true;
+    const _save = beginSave(el('dirt-submit-btn'));
     try {
       const photoGPS = dirtWorkNewPhotos.find(p => p.gps)?.gps ?? null;
       const lat = dirtWorkNewLat ?? photoGPS?.lat ?? null;
@@ -3556,7 +3567,7 @@ async function initDirtWorkScreen() {
     } catch (err) {
       showError('dirt-new-error', err.message);
     } finally {
-      el('dirt-submit-btn').disabled = false;
+      _save();
     }
   });
 
@@ -5296,6 +5307,7 @@ el('maint-save-btn').addEventListener('click', async () => {
     notes:            el('maint-notes').value || null,
   };
 
+  const _save = beginSave(el('maint-save-btn'));
   try {
     let r;
     if (maintType === 'equipment') {
@@ -5354,6 +5366,8 @@ el('maint-save-btn').addEventListener('click', async () => {
     el('maint-next-service').value = '';
   } catch (err) {
     showError('maint-error', err.message);
+  } finally {
+    _save();
   }
 });
 
@@ -6525,6 +6539,7 @@ el('pw-save-btn').addEventListener('click', async () => {
   errEl.classList.add('hidden');
   if (!cur || !nw || !con) { errEl.textContent = 'All fields are required.'; errEl.classList.remove('hidden'); return; }
   if (nw !== con) { errEl.textContent = 'New passwords do not match.'; errEl.classList.remove('hidden'); return; }
+  const _save = beginSave(el('pw-save-btn'));
   try {
     await api('POST', '/api/auth/change-password', { current_password: cur, new_password: nw });
     el('pw-current').value = '';
@@ -6534,6 +6549,8 @@ el('pw-save-btn').addEventListener('click', async () => {
   } catch (err) {
     errEl.textContent = err.message;
     errEl.classList.remove('hidden');
+  } finally {
+    _save();
   }
 });
 
@@ -6561,6 +6578,7 @@ el('kf-widget-save-btn').addEventListener('click', async () => {
   const end_date   = el('kf-widget-end').value;
   if (!start_date || !end_date) return showToast('Both dates are required', 'error');
   if (start_date > end_date)    return showToast('Start date must be before end date', 'error');
+  const _save = beginSave(el('kf-widget-save-btn'));
   try {
     await api('PUT', '/api/settings/kf-widget', { start_date, end_date });
     showToast('KF widget updated');
@@ -6568,6 +6586,8 @@ el('kf-widget-save-btn').addEventListener('click', async () => {
     loadDashboardStats();
   } catch (err) {
     showToast(err.message, 'error');
+  } finally {
+    _save();
   }
 });
 
@@ -6690,12 +6710,15 @@ el('rw-settings-save-btn').addEventListener('click', async () => {
     const v = parseFloat(inp.value);
     if (!isNaN(v) && v >= 0) pool_extras[inp.dataset.pool] = v;
   });
+  const _save = beginSave(el('rw-settings-save-btn'));
   try {
     await api('PUT', '/api/settings/running-wells', { well_ids: checked, pool_extras });
     showToast('Running wells saved');
     loadDashboardStats();
   } catch (err) {
     showToast(err.message, 'error');
+  } finally {
+    _save();
   }
 });
 
@@ -6718,11 +6741,14 @@ el('gps-sel-toggle-off').addEventListener('click', () => {
 });
 el('gps-sel-save-btn').addEventListener('click', async () => {
   const isPublic = el('gps-sel-toggle-on').classList.contains('active');
+  const _save = beginSave(el('gps-sel-save-btn'));
   try {
     await api('PUT', '/api/settings/gps-selector', { public: isPublic });
     showToast('Setting saved', 'success');
   } catch (err) {
     showToast('Failed to save: ' + err.message, 'error');
+  } finally {
+    _save();
   }
 });
 
@@ -6751,6 +6777,7 @@ async function initScadaRolesPanel() {
 el('scada-roles-save-btn').addEventListener('click', async () => {
   const roles = [...document.querySelectorAll('.scada-role-cb:checked')].map(c => c.dataset.role);
   if (!roles.includes('admin')) roles.push('admin');
+  const _save = beginSave(el('scada-roles-save-btn'));
   try {
     const r = await api('PUT', '/api/settings/scada-roles', { roles });
     if (Array.isArray(r.roles)) scadaAllowedRoles = r.roles;
@@ -6761,6 +6788,8 @@ el('scada-roles-save-btn').addEventListener('click', async () => {
     showToast('SCADA access updated', 'success');
   } catch (err) {
     showToast('Failed to save: ' + err.message, 'error');
+  } finally {
+    _save();
   }
 });
 
@@ -7029,7 +7058,7 @@ el('bug-modal-submit').addEventListener('click', async () => {
   errEl.classList.add('hidden');
   if (!description) { errEl.textContent = 'Please describe the issue.'; errEl.classList.remove('hidden'); return; }
   const is_repeatable = document.querySelector('#bug-repeatable-seg .seg-btn.active')?.dataset.val === 'true';
-  el('bug-modal-submit').disabled = true;
+  const _save = beginSave(el('bug-modal-submit'));
   try {
     const result = await api('POST', '/api/bug-reports', {
       screen_area: el('bug-screen').value || null,
@@ -7063,7 +7092,7 @@ el('bug-modal-submit').addEventListener('click', async () => {
     errEl.textContent = err.message;
     errEl.classList.remove('hidden');
   } finally {
-    el('bug-modal-submit').disabled = false;
+    _save();
   }
 });
 
@@ -7186,6 +7215,7 @@ el('user-modal-save').addEventListener('click', async () => {
   const email     = el('um-email').value.trim();
   const password  = el('um-password').value;
 
+  const _save = beginSave(el('user-modal-save'));
   try {
     if (editingUserId) {
       await api('PUT', `/api/users/${editingUserId}`, { full_name, initials, role, email });
@@ -7202,6 +7232,8 @@ el('user-modal-save').addEventListener('click', async () => {
     await loadUserList();
   } catch (err) {
     showError('um-error', err.message);
+  } finally {
+    _save();
   }
 });
 
@@ -7625,7 +7657,7 @@ function buildPMTypeStructure(pmType, def, contentEl) {
     if (!building) return showToast('Select a location first', 'error');
     const checklist = collectChecklist(checklistEl, def, building);
     const notes = notesEl.value.trim();
-    submitBtn.disabled = true;
+    const _save = beginSave(submitBtn);
     try {
       await api('POST', '/api/pm-records', { pm_type: pmType, building, checklist, notes });
       formWrap.style.display = 'none';
@@ -7636,7 +7668,7 @@ function buildPMTypeStructure(pmType, def, contentEl) {
     } catch (err) {
       showToast(err.message, 'error');
     } finally {
-      submitBtn.disabled = false;
+      _save();
     }
   });
 }
@@ -7735,7 +7767,7 @@ async function buildSiphonBreakerPM(pmType, def, contentEl) {
     if (!positions.length) { showToast('No pump positions loaded', 'error'); return; }
     const checklist = collectSiphonChecklist(listEl, positions);
     const notes = notesEl.value.trim();
-    submitBtn.disabled = true;
+    const _save = beginSave(submitBtn);
     try {
       await api('POST', '/api/pm-records', { pm_type: pmType, building: plantName, checklist, notes });
       formWrap.style.display = 'none';
@@ -7746,7 +7778,7 @@ async function buildSiphonBreakerPM(pmType, def, contentEl) {
     } catch (err) {
       showToast(err.message, 'error');
     } finally {
-      submitBtn.disabled = false;
+      _save();
     }
   });
 
@@ -7899,7 +7931,7 @@ async function buildAirCompressorPM(pmType, def, contentEl) {
       });
     });
     const notes = notesEl.value.trim();
-    submitBtn.disabled = true;
+    const _save = beginSave(submitBtn);
     try {
       await api('POST', '/api/pm-records', { pm_type: pmType, building: plantName, checklist, notes });
       formWrap.style.display = 'none';
@@ -7910,7 +7942,7 @@ async function buildAirCompressorPM(pmType, def, contentEl) {
     } catch (err) {
       showToast(err.message, 'error');
     } finally {
-      submitBtn.disabled = false;
+      _save();
     }
   });
 
@@ -8267,6 +8299,7 @@ el('pest-usage-save-btn').addEventListener('click', async () => {
   const quantity = parseFloat(el('pest-usage-qty').value);
   if (!pesticide_id) return showToast('Select a pesticide', 'error');
   if (!quantity || quantity <= 0) return showToast('Enter a valid quantity', 'error');
+  const _save = beginSave(el('pest-usage-save-btn'));
   try {
     await api('POST', '/api/pesticide-usage', { pesticide_id: parseInt(pesticide_id), quantity });
     el('pest-usage-form').classList.add('hidden');
@@ -8278,6 +8311,8 @@ el('pest-usage-save-btn').addEventListener('click', async () => {
     showToast('Usage logged');
   } catch (err) {
     showToast(err.message, 'error');
+  } finally {
+    _save();
   }
 });
 
@@ -8467,6 +8502,7 @@ el('pest-location-modal').addEventListener('click', e => {
 el('pest-location-save-btn').addEventListener('click', async () => {
   const location_description = el('pest-location-desc').value.trim();
   const notes = el('pest-location-notes').value.trim();
+  const _save = beginSave(el('pest-location-save-btn'));
   try {
     await api('PATCH', `/api/pesticide-usage/${pestLocationEditId}`, { location_description, notes });
     el('pest-location-modal').classList.add('hidden');
@@ -8476,6 +8512,8 @@ el('pest-location-save-btn').addEventListener('click', async () => {
     showToast('Location saved');
   } catch (err) {
     showToast(err.message, 'error');
+  } finally {
+    _save();
   }
 });
 
@@ -8565,6 +8603,7 @@ el('pest-product-save-btn').addEventListener('click', async () => {
   const unit_of_measure = el('pest-product-uom').value.trim();
   if (!name) return showToast('Product name is required', 'error');
   if (!unit_of_measure) return showToast('Unit of measure is required', 'error');
+  const _save = beginSave(el('pest-product-save-btn'));
   try {
     await api('POST', '/api/pesticides', { name, epa_reg_number, unit_of_measure });
     el('pest-product-form').classList.add('hidden');
@@ -8575,6 +8614,8 @@ el('pest-product-save-btn').addEventListener('click', async () => {
     showToast('Product added');
   } catch (err) {
     showToast(err.message, 'error');
+  } finally {
+    _save();
   }
 });
 
@@ -11445,7 +11486,7 @@ async function submitSafetyMeeting() {
     return;
   }
   const btn = el('sm-submit');
-  btn.disabled = true;
+  const _save = beginSave(btn);
   try {
     await api('POST', '/api/safety-meetings', {
       meeting_date: el('sm-date').value,
@@ -11463,7 +11504,7 @@ async function submitSafetyMeeting() {
     errEl.textContent = err.message;
     errEl.classList.remove('hidden');
   } finally {
-    btn.disabled = false;
+    _save();
   }
 }
 
