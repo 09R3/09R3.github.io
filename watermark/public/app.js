@@ -245,14 +245,19 @@ function showToast(msg, type = '') {
 }
 
 function showReadingAlert(title, bodyHtml, buttons) {
+  // Cancel always renders last (bottom of the vertical stack)
+  const ordered = [
+    ...buttons.filter(b => b.key !== 'cancel'),
+    ...buttons.filter(b => b.key === 'cancel'),
+  ];
   return new Promise(resolve => {
     const ov = document.createElement('div');
     ov.className = 'modal-overlay';
     ov.innerHTML = `<div class="modal-card" style="max-width:340px">
       <div class="modal-header"><h2 style="font-size:1rem;margin:0">${title}</h2></div>
       <div class="modal-body" style="font-size:0.9rem">${bodyHtml}</div>
-      <div class="modal-footer" style="display:flex;gap:8px;padding:12px 16px;justify-content:flex-end">
-        ${buttons.map(b => `<button class="btn ${b.cls}" data-key="${b.key}">${b.label}</button>`).join('')}
+      <div class="modal-footer" style="display:flex;flex-direction:column;gap:8px;padding:12px 16px">
+        ${ordered.map(b => `<button class="btn ${b.cls}" style="width:100%" data-key="${b.key}">${b.label}</button>`).join('')}
       </div></div>`;
     document.body.appendChild(ov);
     ov.querySelectorAll('button[data-key]').forEach(btn =>
