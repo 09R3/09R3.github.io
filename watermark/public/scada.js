@@ -27,6 +27,7 @@ let _scadaRuntimePlant       = localStorage.getItem('scadaRuntimePlant') || '';
 let _scadaRuntimeRange       = localStorage.getItem('scadaRuntimeRange') || '24h';
 let _scadaRuntimeCustomStart = localStorage.getItem('scadaRuntimeCustomStart') || '';
 let _scadaRuntimeCustomEnd   = localStorage.getItem('scadaRuntimeCustomEnd') || '';
+let _scadaRuntimeSubTab      = localStorage.getItem('scadaRuntimeSubTab') || 'runtime';
 
 // ── Chart vendor (loaded once from /vendor, works offline) ───────────────────
 const SCADA_VENDOR = [
@@ -629,6 +630,10 @@ function renderScadaRuntime() {
       ${scadaRangeBtnsHtml(_scadaRuntimeRange)}
     </div>
     ${scadaCustomRangeHtml(_scadaRuntimeCustomStart, _scadaRuntimeCustomEnd, 'scada-runtime', _scadaRuntimeRange !== 'custom')}
+    <div class="seg-group" id="scada-runtime-subtab" style="margin-bottom:8px">
+      <button class="seg-btn${_scadaRuntimeSubTab==='runtime'?' active':''}" data-subtab="runtime">Pump Runtime</button>
+      <button class="seg-btn${_scadaRuntimeSubTab==='reverse'?' active':''}" data-subtab="reverse">Reverse Flow</button>
+    </div>
     <div id="scada-runtime-body"><div class="placeholder-msg">Loading…</div></div>`;
 
   wireScadaTabs();
@@ -640,7 +645,7 @@ function renderScadaRuntime() {
       _scadaRuntimeRange = b.dataset.range;
       localStorage.setItem('scadaRuntimeRange', _scadaRuntimeRange);
       el('scada-runtime-custom').classList.toggle('hidden', _scadaRuntimeRange !== 'custom');
-      if (_scadaRuntimeRange !== 'custom') loadScadaRuntime();
+      if (_scadaRuntimeRange !== 'custom') (_scadaRuntimeSubTab === 'reverse' ? loadScadaReverseFlow : loadScadaRuntime)();
     }));
 
   el('scada-runtime-apply').addEventListener('click', () => {
@@ -648,7 +653,7 @@ function renderScadaRuntime() {
     _scadaRuntimeCustomEnd   = el('scada-runtime-to').value;
     localStorage.setItem('scadaRuntimeCustomStart', _scadaRuntimeCustomStart);
     localStorage.setItem('scadaRuntimeCustomEnd',   _scadaRuntimeCustomEnd);
-    loadScadaRuntime();
+    (_scadaRuntimeSubTab === 'reverse' ? loadScadaReverseFlow : loadScadaRuntime)();
   });
 
   el('scada-runtime-pills').querySelectorAll('[data-plant]').forEach(pill =>
@@ -657,10 +662,19 @@ function renderScadaRuntime() {
       pill.classList.add('active');
       _scadaRuntimePlant = pill.dataset.plant;
       localStorage.setItem('scadaRuntimePlant', _scadaRuntimePlant);
-      loadScadaRuntime();
+      (_scadaRuntimeSubTab === 'reverse' ? loadScadaReverseFlow : loadScadaRuntime)();
     }));
 
-  loadScadaRuntime();
+  el('scada-runtime-subtab').querySelectorAll('.seg-btn').forEach(b =>
+    b.addEventListener('click', () => {
+      el('scada-runtime-subtab').querySelectorAll('.seg-btn').forEach(x => x.classList.remove('active'));
+      b.classList.add('active');
+      _scadaRuntimeSubTab = b.dataset.subtab;
+      localStorage.setItem('scadaRuntimeSubTab', _scadaRuntimeSubTab);
+      (_scadaRuntimeSubTab === 'reverse' ? loadScadaReverseFlow : loadScadaRuntime)();
+    }));
+
+  (_scadaRuntimeSubTab === 'reverse' ? loadScadaReverseFlow : loadScadaRuntime)();
 }
 
 async function loadScadaRuntime() {
@@ -701,6 +715,54 @@ async function loadScadaRuntime() {
             <span class="scada-runtime-hrs">${hrs.toFixed(1)} h</span>
           </div>
           <div class="scada-runtime-bar-track"><div class="scada-runtime-bar" style="width:${pct}%"></div></div>
+        </div>`;
+      })
+    ).join('');
+
+    rBody.innerHTML = `<div class="scada-runtime-grid">${cards}</div>`;
+  } catch (err) {
+    rBody.innerHTML = `<div class="placeholder-msg">Failed to load: ${escHtml(err.message)}</div>`;
+  }
+}
+
+async function loadScadaReverseFlow() {
+  const rBody = el('scada-runtime-body');
+  if (!rBody) return;
+  rBody.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+
+  const g = scadaPlantGroups().find(x => x.key === _scadaRuntimePlant);
+  if (!g) { rBody.innerHTML = '<div class="placeholder-msg">No data.</div>'; return; }
+
+  const sites = g.b ? [g.a, g.b] : [g.a];
+  const runtimeRangeObj = _scadaRuntimeRange === 'custom'
+    ? { start: _scadaRuntimeCustomStart, end: _scadaRuntimeCustomEnd }
+    : null;
+  const maxHrs = runtimeRangeObj ? rangeHours(runtimeRangeObj) : rangeHours(_scadaRuntimeRange);
+
+  if (runtimeRangeObj && (!runtimeRangeObj.start || !runtimeRangeObj.end)) {
+    rBody.innerHTML = '<div class="placeholder-msg">Set start and end dates above, then tap Apply.</div>';
+    return;
+  }
+
+  try {
+    const qs = runtimeRangeObj
+      ? `start=${encodeURIComponent(localDtToISO(runtimeRangeObj.start))}&end=${encodeURIComponent(localDtToISO(runtimeRangeObj.end))}`
+      : `range=${encodeURIComponent(_scadaRuntimeRange)}`;
+    const results = await Promise.all(
+      sites.map(s => api('GET', `/api/scada/runtime-reverse?site=${encodeURIComponent(s.influxSite)}&${qs}`))
+    );
+
+    const cards = sites.flatMap((site, si) =>
+      site.pumps.map(p => {
+        const hrs = results[si][p] ?? 0;
+        const pct = Math.min(100, (hrs / maxHrs) * 100).toFixed(1);
+        const label = pumpLabel(site, p);
+        return `<div class="scada-runtime-card">
+          <div class="scada-runtime-head">
+            <span class="scada-pump-label">Pump ${escHtml(label)}</span>
+            <span class="scada-runtime-hrs">${hrs.toFixed(1)} h</span>
+          </div>
+          <div class="scada-runtime-bar-track"><div class="scada-runtime-bar reverse" style="width:${pct}%"></div></div>
         </div>`;
       })
     ).join('');

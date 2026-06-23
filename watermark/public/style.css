@@ -3429,6 +3429,7 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
 .scada-runtime-hrs { font-size: 1.1rem; font-weight: 700; }
 .scada-runtime-bar-track { height: 5px; background: var(--surface2); border-radius: 3px; overflow: hidden; }
 .scada-runtime-bar { height: 100%; background: var(--accent); border-radius: 3px; transition: width 0.4s; }
+.scada-runtime-bar.reverse { background: #b45309; }
 
 /* ── SCADA Power tab ─────────────────────────────────────────────────────── */
 .scada-dot-na { background: var(--text-dim); opacity: 0.5; }

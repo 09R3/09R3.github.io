@@ -4945,6 +4945,23 @@ app.get('/api/scada/runtime', requireAuth, requireScadaAccess, async (req, res) 
   } catch (err) { handleErr(res, err); }
 });
 
+// Reverse-flow hours for all pumps at one site (siphon breaker O_Cmd integral).
+app.get('/api/scada/runtime-reverse', requireAuth, requireScadaAccess, async (req, res) => {
+  if (!SCADA_CONFIG) return res.status(503).json({ error: 'SCADA not configured' });
+  const { site: influxSite, range, start, end } = req.query;
+  if (!influxSite) return res.status(400).json({ error: 'site required' });
+  const siteConfig = SCADA_CONFIG.sites.find(s => s.influxSite === String(influxSite));
+  if (!siteConfig) return res.status(404).json({ error: 'site not found' });
+  const rangeOpts = (start && end) ? { start: String(start), end: String(end) } : String(range || '24h');
+  const paths = siteConfig.pumps.map(p => `${influxSite}.${p}.SBVlv.Cntrl.O_Cmd`);
+  try {
+    const raw = await scadaGetRuntime(paths, rangeOpts);
+    const result = {};
+    for (const p of siteConfig.pumps) result[p] = raw[`${influxSite}.${p}.SBVlv.Cntrl.O_Cmd`] ?? 0;
+    res.json(result);
+  } catch (err) { handleErr(res, err); }
+});
+
 // ── Power monitoring API ─────────────────────────────────────────────────────
 // Latest value of every power field, for one meter (?meter=) or all meters.
 // Shape: { meterId: { field: { v, t } } }.
