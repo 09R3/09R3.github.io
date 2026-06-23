@@ -30,6 +30,16 @@ let _scadaRuntimeCustomStart = localStorage.getItem('scadaRuntimeCustomStart') |
 let _scadaRuntimeCustomEnd   = localStorage.getItem('scadaRuntimeCustomEnd') || '';
 let _scadaRuntimeSubTab      = localStorage.getItem('scadaRuntimeSubTab') || 'runtime';
 
+// Overview charts — mini FBLvl trend per plant card
+let _overviewRange   = localStorage.getItem('scadaOverviewRange') || '24h';
+let _overviewCharts  = new Map();   // groupKey → Chart instance
+let _overviewLoadGen = 0;           // cancel stale loads on range change
+
+function destroyOverviewCharts() {
+  _overviewCharts.forEach(c => { try { c.destroy(); } catch { /* */ } });
+  _overviewCharts.clear();
+}
+
 // ── Chart vendor (loaded once from /vendor, works offline) ───────────────────
 const SCADA_VENDOR = [
   '/vendor/chart.umd.js',
@@ -279,6 +289,7 @@ function showScadaTab(tab) {
   setPanelNav(el('screen-scada'), () => showScreen('dashboard'), 'SCADA Dashboard');
   if (_scadaChart) { _scadaChart.destroy(); _scadaChart = null; _scadaChartKey = null; }
   _scadaDetailTag = null;
+  destroyOverviewCharts();
   stopScadaPower(); // tear down power timer + charts when leaving Power tab
   if (tab === 'trends') renderScadaTrends();
   else if (tab === 'runtime') renderScadaRuntime();
@@ -289,6 +300,7 @@ function showScadaTab(tab) {
 // ── Overview (paired plant cards) ─────────────────────────────────────────────
 function renderScadaOverview() {
   _scadaView = 'overview';
+  destroyOverviewCharts();
   const groups = scadaPlantGroups();
   const cards = groups.map(g => {
     const solo = !g.b;
@@ -298,13 +310,93 @@ function renderScadaOverview() {
     return `<div class="scada-plant-card${solo ? ' scada-plant-solo' : ''}" data-plant="${g.key}">
       <div class="scada-plant-title">${escHtml(g.name)}</div>
       <div class="scada-plant-sides">${inner}</div>
+      <div style="position:relative;height:80px;margin-top:6px">
+        <canvas data-ov-plant="${g.key}"></canvas>
+      </div>
     </div>`;
   }).join('');
 
-  el('scada-body').innerHTML = scadaTabsHtml('overview') + `<div class="scada-overview-grid">${cards}</div>`;
+  const rangeBtns = ['1h','6h','24h','7d','30d'].map(r =>
+    `<button class="scada-plant-pill${_overviewRange===r?' active':''}" style="font-size:0.72rem;padding:3px 8px" data-ovrange="${r}">${r}</button>`
+  ).join('');
+
+  el('scada-body').innerHTML = scadaTabsHtml('overview') + `
+    <div id="scada-ov-range" style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">${rangeBtns}</div>
+    <div class="scada-overview-grid">${cards}</div>`;
+
   wireScadaTabs();
+
+  el('scada-ov-range').querySelectorAll('[data-ovrange]').forEach(btn =>
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      el('scada-ov-range').querySelectorAll('[data-ovrange]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      _overviewRange = btn.dataset.ovrange;
+      localStorage.setItem('scadaOverviewRange', _overviewRange);
+      loadOverviewCharts();
+    }));
+
   el('scada-body').querySelectorAll('[data-plant]').forEach(c =>
     c.addEventListener('click', () => openScadaPlant(c.dataset.plant)));
+
+  loadOverviewCharts();
+}
+
+async function loadOverviewCharts() {
+  const gen = ++_overviewLoadGen;
+  try { await loadScadaVendor(); } catch { return; }
+  if (gen !== _overviewLoadGen) return;
+
+  const groups = scadaPlantGroups();
+  const qs = `range=${encodeURIComponent(_overviewRange)}`;
+
+  await Promise.all(groups.map(async g => {
+    const canvas = el('scada-body').querySelector(`[data-ov-plant="${g.key}"]`);
+    if (!canvas) return;
+    if (_overviewCharts.has(g.key)) { _overviewCharts.get(g.key).destroy(); _overviewCharts.delete(g.key); }
+
+    const sites = g.b ? [g.a, g.b] : [g.a];
+    try {
+      const seriesData = await Promise.all(
+        sites.map(s => api('GET', `/api/scada/history?tag=${encodeURIComponent(scadaSensorPath(s, 'FBLvl'))}&${qs}`))
+      );
+      if (gen !== _overviewLoadGen || !canvas.isConnected) return;
+
+      const tc = scadaThemeColors();
+      const datasets = sites.map((site, i) => ({
+        data: seriesData[i].map(([t, v]) => ({ x: t, y: v })),
+        borderColor: SCADA_COLORS[i % SCADA_COLORS.length],
+        backgroundColor: 'transparent',
+        borderWidth: 1.5,
+        pointRadius: 0,
+        tension: 0,
+      }));
+
+      const chart = new window.Chart(canvas.getContext('2d'), {
+        type: 'line',
+        data: { datasets },
+        options: {
+          animation: false,
+          responsive: true,
+          maintainAspectRatio: false,
+          events: [],
+          plugins: { legend: { display: false } },
+          scales: {
+            x: {
+              type: 'time',
+              ticks: { color: tc.dim, maxTicksLimit: 3, font: { size: 9 } },
+              grid: { color: tc.grid },
+            },
+            y: {
+              ticks: { color: tc.dim, maxTicksLimit: 3, font: { size: 9 } },
+              grid: { color: tc.grid },
+            },
+          },
+        },
+      });
+      _overviewCharts.set(g.key, chart);
+    } catch { /* skip — no data or offline */ }
+  }));
 }
 
 function plantSideHtml(site) {
@@ -338,6 +430,7 @@ function openScadaPlant(groupKey) {
   if (!g) return;
   _scadaView = 'plant:' + groupKey;
   _scadaDetailTag = null;
+  destroyOverviewCharts();
   if (_scadaChart) { _scadaChart.destroy(); _scadaChart = null; }
   setPanelNav(el('screen-scada'), () => showScadaTab('overview'), 'SCADA – ' + g.name);
   renderScadaPlantDetail(g);
