@@ -4953,11 +4953,19 @@ app.get('/api/scada/runtime-reverse', requireAuth, requireScadaAccess, async (re
   const siteConfig = SCADA_CONFIG.sites.find(s => s.influxSite === String(influxSite));
   if (!siteConfig) return res.status(404).json({ error: 'site not found' });
   const rangeOpts = (start && end) ? { start: String(start), end: String(end) } : String(range || '24h');
-  const paths = siteConfig.pumps.map(p => `${influxSite}.${p}.SBVlv.Cntrl.O_Cmd`);
+  const siphonPaths = siteConfig.pumps.map(p => `${influxSite}.${p}.SBVlv.Cntrl.O_Cmd`);
+  const motorPaths  = siteConfig.pumps.map(p => `${influxSite}.${p}.MTR.Cntrl.Run`);
   try {
-    const raw = await scadaGetRuntime(paths, rangeOpts);
+    const [rawSiphon, rawMotor] = await Promise.all([
+      scadaGetRuntime(siphonPaths, rangeOpts),
+      scadaGetRuntime(motorPaths, rangeOpts),
+    ]);
     const result = {};
-    for (const p of siteConfig.pumps) result[p] = raw[`${influxSite}.${p}.SBVlv.Cntrl.O_Cmd`] ?? 0;
+    for (const p of siteConfig.pumps) {
+      const siphon = rawSiphon[`${influxSite}.${p}.SBVlv.Cntrl.O_Cmd`] ?? 0;
+      const motor  = rawMotor[`${influxSite}.${p}.MTR.Cntrl.Run`] ?? 0;
+      result[p] = Math.max(0, siphon - motor);
+    }
     res.json(result);
   } catch (err) { handleErr(res, err); }
 });

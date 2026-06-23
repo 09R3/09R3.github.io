@@ -8,8 +8,9 @@ let _scadaConfig     = null;
 let _scadaCurrent    = {};
 let _scadaView       = 'overview'; // 'overview' | 'trends' | 'runtime' | 'plant:pp1'
 let _scadaES         = null;
-let _scadaChart      = null;
-let _scadaChartKey   = null;
+let _scadaChart        = null;
+let _scadaChartKey     = null;
+let _scadaRuntimeChart = null;
 let _scadaDetailTag  = null;   // selected tag in plant detail view
 let _scadaDetailRange = '24h';
 let _scadaLastUpdate = 0;
@@ -680,6 +681,7 @@ function renderScadaRuntime() {
 async function loadScadaRuntime() {
   const rBody = el('scada-runtime-body');
   if (!rBody) return;
+  if (_scadaRuntimeChart) { _scadaRuntimeChart.destroy(); _scadaRuntimeChart = null; }
   rBody.innerHTML = '<div class="placeholder-msg">Loading…</div>';
 
   const g = scadaPlantGroups().find(x => x.key === _scadaRuntimePlant);
@@ -704,22 +706,23 @@ async function loadScadaRuntime() {
       sites.map(s => api('GET', `/api/scada/runtime?site=${encodeURIComponent(s.influxSite)}&${qs}`))
     );
 
-    const cards = sites.flatMap((site, si) =>
-      site.pumps.map(p => {
-        const hrs = results[si][p] ?? 0;
-        const pct = Math.min(100, (hrs / maxHrs) * 100).toFixed(1);
-        const label = pumpLabel(site, p);
-        return `<div class="scada-runtime-card">
+    const allPumps = sites.flatMap((site, si) =>
+      site.pumps.map(p => ({ label: pumpLabel(site, p), hrs: results[si][p] ?? 0 }))
+    );
+    const cards = allPumps.map(({ label, hrs }) => {
+      const pct = Math.min(100, (hrs / maxHrs) * 100).toFixed(1);
+      return `<div class="scada-runtime-card">
           <div class="scada-runtime-head">
             <span class="scada-pump-label">Pump ${escHtml(label)}</span>
             <span class="scada-runtime-hrs">${hrs.toFixed(1)} h</span>
           </div>
           <div class="scada-runtime-bar-track"><div class="scada-runtime-bar" style="width:${pct}%"></div></div>
         </div>`;
-      })
-    ).join('');
+    }).join('');
 
-    rBody.innerHTML = `<div class="scada-runtime-grid">${cards}</div>`;
+    rBody.innerHTML = `<div class="scada-runtime-grid">${cards}</div>
+      <div style="height:160px;margin-top:12px;position:relative"><canvas id="scada-runtime-chart"></canvas></div>`;
+    drawRuntimeBarChart(document.getElementById('scada-runtime-chart'), allPumps, '#22c55e').catch(() => {});
   } catch (err) {
     rBody.innerHTML = `<div class="placeholder-msg">Failed to load: ${escHtml(err.message)}</div>`;
   }
@@ -728,6 +731,7 @@ async function loadScadaRuntime() {
 async function loadScadaReverseFlow() {
   const rBody = el('scada-runtime-body');
   if (!rBody) return;
+  if (_scadaRuntimeChart) { _scadaRuntimeChart.destroy(); _scadaRuntimeChart = null; }
   rBody.innerHTML = '<div class="placeholder-msg">Loading…</div>';
 
   const g = scadaPlantGroups().find(x => x.key === _scadaRuntimePlant);
@@ -752,22 +756,23 @@ async function loadScadaReverseFlow() {
       sites.map(s => api('GET', `/api/scada/runtime-reverse?site=${encodeURIComponent(s.influxSite)}&${qs}`))
     );
 
-    const cards = sites.flatMap((site, si) =>
-      site.pumps.map(p => {
-        const hrs = results[si][p] ?? 0;
-        const pct = Math.min(100, (hrs / maxHrs) * 100).toFixed(1);
-        const label = pumpLabel(site, p);
-        return `<div class="scada-runtime-card">
+    const allPumps = sites.flatMap((site, si) =>
+      site.pumps.map(p => ({ label: pumpLabel(site, p), hrs: results[si][p] ?? 0 }))
+    );
+    const cards = allPumps.map(({ label, hrs }) => {
+      const pct = Math.min(100, (hrs / maxHrs) * 100).toFixed(1);
+      return `<div class="scada-runtime-card">
           <div class="scada-runtime-head">
             <span class="scada-pump-label">Pump ${escHtml(label)}</span>
             <span class="scada-runtime-hrs">${hrs.toFixed(1)} h</span>
           </div>
           <div class="scada-runtime-bar-track"><div class="scada-runtime-bar reverse" style="width:${pct}%"></div></div>
         </div>`;
-      })
-    ).join('');
+    }).join('');
 
-    rBody.innerHTML = `<div class="scada-runtime-grid">${cards}</div>`;
+    rBody.innerHTML = `<div class="scada-runtime-grid">${cards}</div>
+      <div style="height:160px;margin-top:12px;position:relative"><canvas id="scada-runtime-chart"></canvas></div>`;
+    drawRuntimeBarChart(document.getElementById('scada-runtime-chart'), allPumps, '#b45309').catch(() => {});
   } catch (err) {
     rBody.innerHTML = `<div class="placeholder-msg">Failed to load: ${escHtml(err.message)}</div>`;
   }
@@ -777,6 +782,41 @@ function rangeHours(range) {
   if (typeof range === 'object' && range.start && range.end)
     return Math.max(1, (new Date(range.end) - new Date(range.start)) / 3600000);
   return { '1h': 1, '6h': 6, '24h': 24, '7d': 168, '30d': 720 }[range] || 24;
+}
+
+async function drawRuntimeBarChart(canvas, allPumps, barColor) {
+  await loadScadaVendor();
+  const c = scadaThemeColors();
+  _scadaRuntimeChart = new window.Chart(canvas.getContext('2d'), {
+    type: 'bar',
+    data: {
+      labels: allPumps.map(x => x.label),
+      datasets: [{
+        data: allPumps.map(x => x.hrs),
+        backgroundColor: barColor + '99',
+        borderColor: barColor,
+        borderWidth: 1,
+        borderRadius: 3,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: ctx => `${ctx.parsed.y.toFixed(1)} h` } },
+      },
+      scales: {
+        x: { ticks: { color: c.dim, font: { size: 11 } }, grid: { color: c.grid } },
+        y: {
+          beginAtZero: true,
+          title: { display: true, text: 'Hours', color: c.dim, font: { size: 11 } },
+          ticks: { color: c.dim, font: { size: 11 } },
+          grid: { color: c.grid },
+        },
+      },
+    },
+  });
 }
 
 /* ── Power monitoring tab ─────────────────────────────────────────────────────
