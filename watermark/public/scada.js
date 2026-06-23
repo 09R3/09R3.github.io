@@ -199,7 +199,7 @@ function applyScadaCurrent(data) {
   Object.assign(_scadaCurrent, data);
   _scadaLastUpdate = Date.now();
   setScadaStatus(true);
-  if (_scadaView === 'overview') renderScadaOverview();
+  if (_scadaView === 'overview') patchScadaOverview();
   else if (_scadaView.startsWith('plant:')) patchScadaPlantDetail();
   // trends / runtime: historical data — leave charts alone
 }
@@ -303,25 +303,24 @@ function renderScadaOverview() {
   destroyOverviewCharts();
   const groups = scadaPlantGroups();
   const cards = groups.map(g => {
-    const solo = !g.b;
-    const inner = solo
-      ? plantSideHtml(g.a)
-      : `${plantSideHtml(g.a)}<div class="scada-plant-divider"></div>${plantSideHtml(g.b)}`;
-    return `<div class="scada-plant-card${solo ? ' scada-plant-solo' : ''}" data-plant="${g.key}">
-      <div class="scada-plant-title">${escHtml(g.name)}</div>
-      <div class="scada-plant-sides">${inner}</div>
-      <div style="position:relative;height:80px;margin-top:6px">
-        <canvas data-ov-plant="${g.key}"></canvas>
+    const sides = g.b
+      ? `${compactSideHtml(g.a)}<div style="width:1px;background:var(--border);margin:0 4px;flex-shrink:0"></div>${compactSideHtml(g.b)}`
+      : compactSideHtml(g.a);
+    return `<div class="scada-plant-card" style="display:flex;align-items:stretch;padding:0;overflow:hidden" data-plant="${g.key}">
+      <div style="flex:1;min-width:0;padding:8px 10px">
+        <div class="scada-plant-title" style="margin-bottom:4px">${escHtml(g.name)}</div>
+        <div style="display:flex;gap:0">${sides}</div>
+      </div>
+      <div style="flex:0 0 38%;border-left:1px solid var(--border);position:relative;min-height:88px">
+        <canvas data-ov-plant="${g.key}" style="position:absolute;inset:0;width:100%;height:100%"></canvas>
       </div>
     </div>`;
   }).join('');
 
-  const rangeBtns = ['1h','6h','24h','7d','30d'].map(r =>
-    `<button class="scada-plant-pill${_overviewRange===r?' active':''}" style="font-size:0.72rem;padding:3px 8px" data-ovrange="${r}">${r}</button>`
-  ).join('');
-
   el('scada-body').innerHTML = scadaTabsHtml('overview') + `
-    <div id="scada-ov-range" style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">${rangeBtns}</div>
+    <div class="seg-group" id="scada-ov-range" style="margin-bottom:8px">
+      ${['1h','6h','24h','7d','30d'].map(r => `<button class="seg-btn${_overviewRange===r?' active':''}" data-ovrange="${r}">${r}</button>`).join('')}
+    </div>
     <div class="scada-overview-grid">${cards}</div>`;
 
   wireScadaTabs();
@@ -340,6 +339,51 @@ function renderScadaOverview() {
     c.addEventListener('click', () => openScadaPlant(c.dataset.plant)));
 
   loadOverviewCharts();
+}
+
+function compactSideHtml(site) {
+  const total = site.pumps.length;
+  let running = 0, faulted = 0;
+  site.pumps.forEach(p => {
+    if (isOn(scadaVal(scadaPumpPath(site, p, 'MTR.Cntrl.Run')))) running++;
+    if (isOn(scadaVal(scadaPumpPath(site, p, 'MTR.Cntrl.Fail')))) faulted++;
+  });
+  const dot = faulted ? 'alarm' : (running ? 'ok' : 'idle');
+  const fbPath = scadaSensorPath(site, 'FBLvl');
+  const trPath = scadaSensorPath(site, 'TRLvl');
+  const abPath = scadaSensorPath(site, 'ABLvl');
+  return `<div style="flex:1;min-width:0" data-ov-site="${escHtml(site.influxSite)}">
+    <div style="display:flex;align-items:center;gap:3px;margin-bottom:3px">
+      <span class="scada-dot scada-dot-${dot}"></span>
+      <span style="font-size:0.78rem;font-weight:700;white-space:nowrap">${escHtml(shortSiteName(site))}</span>
+      <span class="scada-pump-count" style="font-size:0.7rem;color:var(--text-dim)">${running}/${total}</span>
+    </div>
+    <div style="font-size:0.73rem;line-height:1.55;color:var(--text-dim)">
+      <div>FB&nbsp;<strong data-scada-sensor="FBLvl" data-scada-tag="${fbPath}">${fmtSensor('FBLvl', scadaVal(fbPath))}</strong></div>
+      <div>TR&nbsp;<strong data-scada-sensor="TRLvl" data-scada-tag="${trPath}">${fmtSensor('TRLvl', scadaVal(trPath))}</strong></div>
+      <div>AB&nbsp;<strong data-scada-sensor="ABLvl" data-scada-tag="${abPath}">${fmtSensor('ABLvl', scadaVal(abPath))}</strong></div>
+    </div>
+  </div>`;
+}
+
+function patchScadaOverview() {
+  const body = el('scada-body');
+  body.querySelectorAll('[data-scada-sensor]').forEach(elm =>
+    elm.textContent = fmtSensor(elm.dataset.scadaSensor, scadaVal(elm.dataset.scadaTag)));
+  body.querySelectorAll('[data-ov-site]').forEach(div => {
+    const site = _scadaConfig?.sites.find(s => s.influxSite === div.dataset.ovSite);
+    if (!site) return;
+    let running = 0, faulted = 0;
+    site.pumps.forEach(p => {
+      if (isOn(scadaVal(scadaPumpPath(site, p, 'MTR.Cntrl.Run')))) running++;
+      if (isOn(scadaVal(scadaPumpPath(site, p, 'MTR.Cntrl.Fail')))) faulted++;
+    });
+    const dot = faulted ? 'alarm' : (running ? 'ok' : 'idle');
+    const dotEl = div.querySelector('.scada-dot');
+    const cntEl = div.querySelector('.scada-pump-count');
+    if (dotEl) dotEl.className = `scada-dot scada-dot-${dot}`;
+    if (cntEl) cntEl.textContent = `${running}/${site.pumps.length}`;
+  });
 }
 
 async function loadOverviewCharts() {
