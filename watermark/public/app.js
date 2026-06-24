@@ -35,6 +35,7 @@ applyTheme(localStorage.getItem('watermark-theme') || 'dark');
 let currentUser   = null;
 let currentScreen = null;
 let _usersList    = null;
+let _rolesList    = null;
 
 // Pumping plant state
 const pp = {
@@ -58,6 +59,22 @@ function todayISO() {
 
 const SUPERVISOR_ROLES = ['supervisor', 'admin', 'water-planner'];
 function isSupervisorLevel(role) { return SUPERVISOR_ROLES.includes(role ?? ''); }
+
+// Roles allowed to see the SCADA Dashboard — fetched from the server (admin-managed
+// via Settings → SCADA Access). Defaults to admin until the fetch resolves. The
+// server is the real gate; this only drives nav/tile visibility + the screen guard.
+let scadaAllowedRoles = ['admin'];
+function isScadaAllowed(role) { return scadaAllowedRoles.includes(role ?? ''); }
+
+async function applyScadaVisibility(user) {
+  try {
+    const r = await api('GET', '/api/settings/scada-roles');
+    if (Array.isArray(r.roles)) scadaAllowedRoles = r.roles;
+  } catch { /* keep default */ }
+  const ok = isScadaAllowed(user.role);
+  el('nav-scada-item').classList.toggle('hidden', !ok);
+  el('dash-scada-tile').classList.toggle('hidden', !ok);
+}
 
 const ROLE_LABELS = {
   admin: 'Admin', supervisor: 'Supervisor', operator: 'Operator',
@@ -225,6 +242,38 @@ function showToast(msg, type = '') {
   t.classList.remove('hidden');
   clearTimeout(t._timer);
   t._timer = setTimeout(() => t.classList.add('hidden'), 3000);
+}
+
+function showReadingAlert(title, bodyHtml, buttons) {
+  // Cancel always renders last (bottom of the vertical stack)
+  const ordered = [
+    ...buttons.filter(b => b.key !== 'cancel'),
+    ...buttons.filter(b => b.key === 'cancel'),
+  ];
+  return new Promise(resolve => {
+    const ov = document.createElement('div');
+    ov.className = 'modal-overlay';
+    ov.innerHTML = `<div class="modal-card" style="max-width:340px">
+      <div class="modal-header"><h2 style="font-size:1rem;margin:0">${title}</h2></div>
+      <div class="modal-body" style="font-size:0.9rem">${bodyHtml}</div>
+      <div class="modal-footer" style="display:flex;flex-direction:column;gap:8px;padding:12px 16px">
+        ${ordered.map(b => `<button class="btn ${b.cls}" style="width:100%" data-key="${b.key}">${b.label}</button>`).join('')}
+      </div></div>`;
+    document.body.appendChild(ov);
+    ov.querySelectorAll('button[data-key]').forEach(btn =>
+      btn.addEventListener('click', () => { document.body.removeChild(ov); resolve(btn.dataset.key); }));
+  });
+}
+
+// Double-submit guard: disable a save/submit button and show progress text on
+// the first click. Returns a restore() that re-enables it and puts the original
+// label back — call restore() in the catch/finally (or after a validation abort).
+function beginSave(btn, savingText = 'Saving…') {
+  if (!btn) return () => {};
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = savingText;
+  return () => { btn.disabled = false; btn.textContent = orig; };
 }
 
 function showError(elId, msg) {
@@ -489,6 +538,7 @@ el('set-map-modal').addEventListener('click', e => { if (e.target === el('set-ma
 
 /* ── Screen Navigation ───────────────────────────────────────────────────── */
 function showScreen(name) {
+  const prevScreen = currentScreen;
   document.querySelectorAll('.screen-content').forEach(s => s.classList.remove('active'));
   const target = el(`screen-${name}`);
   if (target) {
@@ -504,6 +554,7 @@ function showScreen(name) {
     'kf-monthly':    'KF Monthly Readings',
     maintenance:     'Maintenance Log',
     pesticides:      'Pesticides',
+    'dirt-work':     'Dirt Work',
     'well-runs':     'Well Runs',
     reports:         'Reports',
     admin:           'Settings',
@@ -511,8 +562,14 @@ function showScreen(name) {
     charts:          'Charts',
     ponds:           'Ponds',
     safety:          'Safety',
+    scada:           'SCADA Dashboard',
   };
   closeDrawer();
+
+  // Stop the SCADA live stream when navigating away from its screen
+  if (prevScreen === 'scada' && name !== 'scada' && typeof stopScadaStream === 'function') {
+    stopScadaStream();
+  }
 
   // Add / update ‹ Back nav + swipe-back for non-dashboard screens.
   // Each sub-panel open/close will call setPanelNav again to update title + back target.
@@ -529,6 +586,13 @@ function showScreen(name) {
       return;
     }
   }
+  // SCADA Dashboard is gated to admins for now (see SCADA_ROLES on server)
+  if (name === 'scada') {
+    if (!currentUser || !isScadaAllowed(currentUser.role)) {
+      showScreen('dashboard');
+      return;
+    }
+  }
 
   // Lazy-load data on first visit
   if (name === 'dashboard')     { loadDashboardStats(); refreshPendingSync(); refreshMaintenanceBadges(); }
@@ -539,6 +603,7 @@ function showScreen(name) {
   if (name === 'kf-monthly')    initKFScreen();
   if (name === 'maintenance')   initMaintenanceScreen();
   if (name === 'pesticides')    initPesticideScreen();
+  if (name === 'dirt-work')     initDirtWorkScreen();
   if (name === 'well-runs')     initWellRunsScreen();
   if (name === 'reports')       initReportsScreen();
   if (name === 'admin')         { initAdminScreen(); initSettingsScreen(); }
@@ -546,6 +611,7 @@ function showScreen(name) {
   if (name === 'charts')        initChartsScreen();
   if (name === 'ponds')         initPondsScreen();
   if (name === 'safety')        initSafetyScreen();
+  if (name === 'scada')         initScadaScreen();
 
   // Refresh time to current on every screen visit
   const screenTimeIds = {
@@ -624,6 +690,11 @@ function onLogin(user) {
     el('settings-admin-section').classList.remove('hidden');
     el('settings-widgets-section').classList.remove('hidden');
   }
+  // SCADA Dashboard — start hidden, reveal if this role is in the server allow-list
+  el('nav-scada-item').classList.add('hidden');
+  el('dash-scada-tile').classList.add('hidden');
+  el('settings-scada-roles-row')?.classList.toggle('hidden', user.role !== 'admin');
+  applyScadaVisibility(user);
   // Populate account info on settings screen
   el('settings-full-name').textContent = user.full_name || '—';
   el('settings-username').textContent  = user.username;
@@ -1450,6 +1521,39 @@ function createWellItem(w, dateInput, timeInput) {
     const errEl = div.querySelector('.lif-error');
     errEl.classList.add('hidden');
     const saveBtn = e.currentTarget;
+
+    const _wMissing = [
+      { label: 'Hours',       inputEl: div.querySelector('.w-hours'),      prev: w.last_hour_reading },
+      { label: 'Flow (cfs)',  inputEl: div.querySelector('.w-flow'),       prev: w.last_flow_cfs     },
+      { label: 'Totalizer',   inputEl: div.querySelector('.w-totalizer'),  prev: w.last_totalizer    },
+      { label: 'Dripper Oil', inputEl: div.querySelector('.w-dripperoil'), prev: w.last_dripper_oil  },
+      { label: 'PG&E kWh',   inputEl: div.querySelector('.w-pge'),        prev: w.last_pge_kwh      },
+    ].filter(f => f.prev != null && f.inputEl && f.inputEl.value.trim() === '');
+    if (_wMissing.length) {
+      const _listHtml = _wMissing.map(f => `<li><strong>${f.label}</strong>: prev <strong>${f.prev}</strong></li>`).join('');
+      const _ra = await showReadingAlert('Incomplete Reading',
+        `<p>These fields had a value last reading but are now blank:</p><ul>${_listHtml}</ul>`,
+        [{ key: 'cancel', label: 'Cancel',             cls: 'btn-secondary' },
+         { key: 'fill',   label: 'Fill with Previous', cls: 'btn-primary'   },
+         { key: 'save',   label: 'Save Anyway',        cls: 'btn-save'      }]);
+      if (_ra === 'cancel') return;
+      if (_ra === 'fill') { _wMissing.forEach(f => { f.inputEl.value = f.prev; }); return; }
+    }
+    const _wDown = [
+      { label: 'Hours',     prev: w.last_hour_reading, cur: parseFloat(div.querySelector('.w-hours').value)     },
+      { label: 'Totalizer', prev: w.last_totalizer,    cur: parseFloat(div.querySelector('.w-totalizer').value) },
+      { label: 'PG&E kWh', prev: w.last_pge_kwh,      cur: parseFloat(div.querySelector('.w-pge').value)       },
+    ].filter(f => f.prev != null && !isNaN(f.cur) && f.cur < Number(f.prev));
+    if (_wDown.length) {
+      const _listHtml = _wDown.map(f => `<li><strong>${f.label}</strong>: ${f.prev} → ${f.cur}</li>`).join('');
+      const _ra = await showReadingAlert('Reading Decreased',
+        `<p>These readings are lower than the previous values:</p><ul>${_listHtml}</ul>` +
+        `<p style="color:var(--text-dim);font-size:0.85rem">Cumulative readings normally only go up.</p>`,
+        [{ key: 'cancel', label: 'Cancel',      cls: 'btn-secondary' },
+         { key: 'save',   label: 'Save Anyway', cls: 'btn-save'      }]);
+      if (_ra === 'cancel') return;
+    }
+
     saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
     const body = {
       well_id:      w.well_id,
@@ -1629,6 +1733,38 @@ function createCanalItem(s, dateInput, timeInput) {
     const errEl = div.querySelector('.lif-error');
     errEl.classList.add('hidden');
     const saveBtn = e.currentTarget;
+
+    const _cMissing = [
+      { label: 'Flow (cfs)',   inputEl: div.querySelector('.c-flow'),      prev: s.last_flow      },
+      { label: 'Totalizer',    inputEl: div.querySelector('.c-totalizer'), prev: s.last_totalizer },
+      { label: 'Gate Setting', inputEl: div.querySelector('.c-gate'),      prev: s.last_gate      },
+      { label: 'Head (ft)',    inputEl: div.querySelector('.c-head'),      prev: s.last_head      },
+    ].filter(f => f.prev != null && f.inputEl && f.inputEl.value.trim() === '');
+    if (_cMissing.length) {
+      const _listHtml = _cMissing.map(f => `<li><strong>${f.label}</strong>: prev <strong>${f.prev}</strong></li>`).join('');
+      const _ra = await showReadingAlert('Incomplete Reading',
+        `<p>These fields had a value last reading but are now blank:</p><ul>${_listHtml}</ul>`,
+        [{ key: 'cancel', label: 'Cancel',             cls: 'btn-secondary' },
+         { key: 'fill',   label: 'Fill with Previous', cls: 'btn-primary'   },
+         { key: 'save',   label: 'Save Anyway',        cls: 'btn-save'      }]);
+      if (_ra === 'cancel') return;
+      if (_ra === 'fill') { _cMissing.forEach(f => { f.inputEl.value = f.prev; }); return; }
+    }
+    const _cTotEl = div.querySelector('.c-totalizer');
+    const _cDown = (_cTotEl && s.last_totalizer != null)
+      ? [{ label: 'Totalizer', prev: s.last_totalizer, cur: parseFloat(_cTotEl.value) }]
+          .filter(f => !isNaN(f.cur) && f.cur < Number(f.prev))
+      : [];
+    if (_cDown.length) {
+      const _listHtml = _cDown.map(f => `<li><strong>${f.label}</strong>: ${f.prev} → ${f.cur}</li>`).join('');
+      const _ra = await showReadingAlert('Reading Decreased',
+        `<p>These readings are lower than the previous values:</p><ul>${_listHtml}</ul>` +
+        `<p style="color:var(--text-dim);font-size:0.85rem">Cumulative readings normally only go up.</p>`,
+        [{ key: 'cancel', label: 'Cancel',      cls: 'btn-secondary' },
+         { key: 'save',   label: 'Save Anyway', cls: 'btn-save'      }]);
+      if (_ra === 'cancel') return;
+    }
+
     saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
 
     const payload = {
@@ -1859,6 +1995,35 @@ function createVehicleItem(v, dateInput, timeInput) {
     const errEl = div.querySelector('.lif-error');
     errEl.classList.add('hidden');
     const saveBtn = e.currentTarget;
+
+    const _vMissing = [
+      { label: 'Odometer (mi)', inputEl: div.querySelector('.v-odo'), prev: v.last_odometer     },
+      { label: 'Engine Hours',  inputEl: div.querySelector('.v-hrs'), prev: v.last_engine_hours },
+    ].filter(f => f.prev != null && f.inputEl && f.inputEl.value.trim() === '');
+    if (_vMissing.length) {
+      const _listHtml = _vMissing.map(f => `<li><strong>${f.label}</strong>: prev <strong>${f.prev}</strong></li>`).join('');
+      const _ra = await showReadingAlert('Incomplete Reading',
+        `<p>These fields had a value last reading but are now blank:</p><ul>${_listHtml}</ul>`,
+        [{ key: 'cancel', label: 'Cancel',             cls: 'btn-secondary' },
+         { key: 'fill',   label: 'Fill with Previous', cls: 'btn-primary'   },
+         { key: 'save',   label: 'Save Anyway',        cls: 'btn-save'      }]);
+      if (_ra === 'cancel') return;
+      if (_ra === 'fill') { _vMissing.forEach(f => { f.inputEl.value = f.prev; }); return; }
+    }
+    const _vDown = [
+      { label: 'Odometer (mi)', prev: v.last_odometer,     cur: parseFloat(div.querySelector('.v-odo')?.value ?? '') },
+      { label: 'Engine Hours',  prev: v.last_engine_hours, cur: parseFloat(div.querySelector('.v-hrs')?.value ?? '') },
+    ].filter(f => f.prev != null && !isNaN(f.cur) && f.cur < Number(f.prev));
+    if (_vDown.length) {
+      const _listHtml = _vDown.map(f => `<li><strong>${f.label}</strong>: ${f.prev} → ${f.cur}</li>`).join('');
+      const _ra = await showReadingAlert('Reading Decreased',
+        `<p>These readings are lower than the previous values:</p><ul>${_listHtml}</ul>` +
+        `<p style="color:var(--text-dim);font-size:0.85rem">Cumulative readings normally only go up.</p>`,
+        [{ key: 'cancel', label: 'Cancel',      cls: 'btn-secondary' },
+         { key: 'save',   label: 'Save Anyway', cls: 'btn-save'      }]);
+      if (_ra === 'cancel') return;
+    }
+
     saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
     const body = {
       vehicle_id:     v.vehicle_id,
@@ -1902,6 +2067,54 @@ async function loadUsersList() {
   if (_usersList) return _usersList;
   _usersList = await api('GET', '/api/users/list').catch(() => []);
   return _usersList;
+}
+
+async function loadRolesList() {
+  if (_rolesList) return _rolesList;
+  _rolesList = await api('GET', '/api/roles/list').catch(() => []);
+  return _rolesList;
+}
+
+// Title-case a role slug for display, e.g. "water-planner" → "Water Planner"
+function roleLabel(role) {
+  return String(role).replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+// Like userSelectOptions, but adds a "Roles" group. Role values are stored as
+// "role:<rolename>" so we can distinguish a role assignment from a person's name.
+// When an issue is assigned to a role, everyone with that role sees it as theirs.
+function assigneeSelectOptions(currentValue) {
+  const users = _usersList || [];
+  const roles = _rolesList || [];
+  let html = '<option value="">— Unassigned —</option>';
+
+  if (users.length) {
+    html += '<optgroup label="Users">';
+    users.forEach(u => {
+      const sel = u.full_name === currentValue ? ' selected' : '';
+      html += `<option value="${escHtml(u.full_name)}"${sel}>${escHtml(u.full_name)}</option>`;
+    });
+    html += '</optgroup>';
+  }
+
+  if (roles.length) {
+    html += '<optgroup label="Roles">';
+    roles.forEach(r => {
+      const val = `role:${r}`;
+      const sel = val === currentValue ? ' selected' : '';
+      html += `<option value="${escHtml(val)}"${sel}>\u{1F465} ${escHtml(roleLabel(r))}</option>`;
+    });
+    html += '</optgroup>';
+  }
+
+  // Keep a legacy/unknown value visible if it matches neither a user nor a role
+  const known = users.some(u => u.full_name === currentValue) ||
+                roles.some(r => `role:${r}` === currentValue);
+  if (currentValue && !known) {
+    const disp = currentValue.startsWith('role:') ? `\u{1F465} ${roleLabel(currentValue.slice(5))}` : currentValue;
+    html += `<option value="${escHtml(currentValue)}" selected>${escHtml(disp)}</option>`;
+  }
+  return html;
 }
 
 function userSelectOptions(currentValue) {
@@ -2120,7 +2333,7 @@ el('well-submit-btn').addEventListener('click', async () => {
   const wellArea = sel.options[sel.selectedIndex]?.dataset.area || null;
   if (!wellId) return showError('well-new-error', 'Please select a well');
 
-  el('well-submit-btn').disabled = true;
+  const _save = beginSave(el('well-submit-btn'));
   try {
     await api('POST', '/api/well-issues', {
       well_id:       parseInt(wellId),
@@ -2143,7 +2356,7 @@ el('well-submit-btn').addEventListener('click', async () => {
   } catch (err) {
     showError('well-new-error', err.message);
   } finally {
-    el('well-submit-btn').disabled = false;
+    _save();
   }
 });
 
@@ -2438,7 +2651,7 @@ el('bldg-submit-btn').addEventListener('click', async () => {
   const siteName = siteSel.options[siteSel.selectedIndex]?.textContent || null;
   const bldgName = bldgSel.options[bldgSel.selectedIndex]?.textContent || null;
 
-  el('bldg-submit-btn').disabled = true;
+  const _save = beginSave(el('bldg-submit-btn'));
   try {
     await api('POST', '/api/building-issues', {
       building_id:   bldgId   ? parseInt(bldgId)   : null,
@@ -2464,7 +2677,7 @@ el('bldg-submit-btn').addEventListener('click', async () => {
   } catch (err) {
     showError('bldg-new-error', err.message);
   } finally {
-    el('bldg-submit-btn').disabled = false;
+    _save();
   }
 });
 
@@ -2747,7 +2960,7 @@ el('equip-submit-btn').addEventListener('click', async () => {
     if (!equipId) return showError('equip-new-error', 'Please select equipment');
   }
 
-  el('equip-submit-btn').disabled = true;
+  const _save = beginSave(el('equip-submit-btn'));
   try {
     await api('POST', '/api/equipment-issues', {
       equipment_type: equipNewType,
@@ -2771,7 +2984,7 @@ el('equip-submit-btn').addEventListener('click', async () => {
   } catch (err) {
     showError('equip-new-error', err.message);
   } finally {
-    el('equip-submit-btn').disabled = false;
+    _save();
   }
 });
 
@@ -3090,7 +3303,7 @@ el('canal-submit-btn').addEventListener('click', async () => {
   const desc = el('canal-issue-desc').value.trim();
   if (!desc) return showError('canal-new-error', 'Issue description is required');
 
-  el('canal-submit-btn').disabled = true;
+  const _save = beginSave(el('canal-submit-btn'));
   try {
     const firstGPS = canalNewPhotos.find(p => p.gps)?.gps ?? null;
     const body = {
@@ -3119,7 +3332,7 @@ el('canal-submit-btn').addEventListener('click', async () => {
   } catch (err) {
     showError('canal-new-error', err.message);
   } finally {
-    el('canal-submit-btn').disabled = false;
+    _save();
   }
 });
 
@@ -3210,6 +3423,413 @@ el('canal-issue-list').addEventListener('click', async e => {
       if (pending.length) { await doUploadIssueAttachments(issueId, 'canal_issues', pending, item.dataset.entityName); issueCardFiles.delete(issueId); }
       canalIssuesLoaded = false;
       await loadCanalIssues();
+      showToast('Issue updated', 'success');
+      refreshMaintenanceBadges();
+    } catch (err) {
+      errEl.textContent = err.message;
+      errEl.classList.remove('hidden');
+      e.target.disabled = false;
+    }
+  }
+});
+
+// ── Dirt Work Issues ─────────────────────────────────────────────────────────
+let dirtWorkIssues    = [];
+let dirtWorkLoaded    = false;
+let dirtWorkShowResolved = false;
+let _dirtFilterPool   = '';
+let _dirtFilterType   = '';
+let _dirtFilterQ      = '';
+let dirtWorkNewLat    = null;
+let dirtWorkNewLon    = null;
+let dirtWorkNewPhotos = [];
+
+async function initDirtWorkScreen() {
+  // Refresh assignee options (users + roles) and data on every visit.
+  await Promise.all([loadUsersList(), loadRolesList()]);
+  el('dirt-issue-assigned').innerHTML = assigneeSelectOptions('');
+  loadDirtWorkIssues();
+
+  // Wire listeners only once.
+  if (dirtWorkLoaded) return;
+  dirtWorkLoaded = true;
+
+  el('dirt-filter-pool').addEventListener('change', () => { _dirtFilterPool = el('dirt-filter-pool').value; applyDirtFilters(); });
+  el('dirt-filter-type').addEventListener('change', () => { _dirtFilterType = el('dirt-filter-type').value; applyDirtFilters(); });
+  let _dqT;
+  el('dirt-filter-q').addEventListener('input', () => {
+    clearTimeout(_dqT);
+    _dqT = setTimeout(() => { _dirtFilterQ = el('dirt-filter-q').value.trim(); applyDirtFilters(); }, 250);
+  });
+
+  el('dirt-issue-date').value = todayISO();
+
+  el('dirt-new-issue-btn').addEventListener('click', () => {
+    el('dirt-new-issue-form').classList.remove('hidden');
+    el('dirt-new-issue-btn').classList.add('hidden');
+  });
+
+  el('dirt-cancel-btn').addEventListener('click', () => {
+    el('dirt-new-issue-form').classList.add('hidden');
+    el('dirt-new-issue-btn').classList.remove('hidden');
+    el('dirt-new-error').classList.add('hidden');
+    resetDirtNewForm();
+  });
+
+  el('dirt-new-loc-btn').addEventListener('click', () => {
+    if (!navigator.geolocation) return showToast('Geolocation not available', 'error');
+    el('dirt-new-loc-btn').disabled = true;
+    navigator.geolocation.getCurrentPosition(pos => {
+      dirtWorkNewLat = pos.coords.latitude;
+      dirtWorkNewLon = pos.coords.longitude;
+      el('dirt-new-coords').textContent = `${dirtWorkNewLat.toFixed(6)}, ${dirtWorkNewLon.toFixed(6)}`;
+      el('dirt-new-map-btn').classList.remove('hidden');
+      el('dirt-new-loc-btn').disabled = false;
+    }, () => {
+      showToast('Could not get location', 'error');
+      el('dirt-new-loc-btn').disabled = false;
+    });
+  });
+
+  el('dirt-new-map-btn').addEventListener('click', () => {
+    const lat = dirtWorkNewLat ?? 36.5;
+    const lon = dirtWorkNewLon ?? -119.5;
+    openGPSMapPick(lat, lon, (newLat, newLon) => {
+      dirtWorkNewLat = newLat;
+      dirtWorkNewLon = newLon;
+      el('dirt-new-coords').textContent = `${newLat.toFixed(6)}, ${newLon.toFixed(6)}`;
+    });
+  });
+
+  // Photo picker for new issue
+  const dirtNewPhotoInput = document.createElement('input');
+  dirtNewPhotoInput.type = 'file';
+  dirtNewPhotoInput.accept = 'image/*';
+  dirtNewPhotoInput.multiple = true;
+  dirtNewPhotoInput.style.display = 'none';
+  document.body.appendChild(dirtNewPhotoInput);
+
+  el('dirt-new-photo-btn').addEventListener('click', () => dirtNewPhotoInput.click());
+
+  dirtNewPhotoInput.addEventListener('change', async () => {
+    const files = [...dirtNewPhotoInput.files];
+    dirtNewPhotoInput.value = '';
+    if (!files.length) return;
+    const entries = files.map(f => ({ file: f, gps: null }));
+    dirtWorkNewPhotos.push(...entries);
+    renderDirtNewPhotoList();
+    await Promise.all(entries.map(async entry => {
+      entry.gps = await readExifGPS(entry.file);
+      if (entry.gps) renderDirtNewPhotoList();
+    }));
+  });
+
+  el('dirt-new-photo-list').addEventListener('click', e => {
+    const rm = e.target.closest('.maint-aq-remove');
+    if (rm) {
+      dirtWorkNewPhotos.splice(parseInt(rm.dataset.idx), 1);
+      renderDirtNewPhotoList();
+    }
+  });
+
+  el('dirt-submit-btn').addEventListener('click', async () => {
+    clearError('dirt-new-error');
+    const desc = el('dirt-issue-desc').value.trim();
+    if (!desc) return showError('dirt-new-error', 'Description is required');
+    const _save = beginSave(el('dirt-submit-btn'));
+    try {
+      const photoGPS = dirtWorkNewPhotos.find(p => p.gps)?.gps ?? null;
+      const lat = dirtWorkNewLat ?? photoGPS?.lat ?? null;
+      const lon = dirtWorkNewLon ?? photoGPS?.lon ?? null;
+      const body = {
+        pool:           el('dirt-issue-pool').value || null,
+        work_type:      el('dirt-issue-type').value || null,
+        description:    desc,
+        location_notes: el('dirt-issue-location').value.trim() || null,
+        assigned_to:    el('dirt-issue-assigned').value || null,
+        reported_date:  el('dirt-issue-date').value || null,
+        notes:          el('dirt-issue-notes').value.trim() || null,
+        gps_lat:        lat,
+        gps_lon:        lon,
+      };
+      const newIssue = await api('POST', '/api/dirt-work-issues', body);
+      if (dirtWorkNewPhotos.length) {
+        const entityName = `dirt-pool${body.pool || 'x'}`;
+        const pending = dirtWorkNewPhotos.map(p => ({ file: p.file, fileType: 'photo' }));
+        await doUploadIssueAttachments(newIssue.issue_id, 'dirt_work_issues', pending, entityName);
+      }
+      el('dirt-new-issue-form').classList.add('hidden');
+      el('dirt-new-issue-btn').classList.remove('hidden');
+      resetDirtNewForm();
+      await loadDirtWorkIssues();
+      showToast('Issue submitted', 'success');
+      refreshMaintenanceBadges();
+    } catch (err) {
+      showError('dirt-new-error', err.message);
+    } finally {
+      _save();
+    }
+  });
+
+  el('dirt-show-resolved-btn').addEventListener('click', () => {
+    dirtWorkShowResolved = !dirtWorkShowResolved;
+    el('dirt-show-resolved-btn').textContent = dirtWorkShowResolved ? 'Hide Resolved' : 'Show Resolved';
+    loadDirtWorkIssues();
+  });
+}
+
+function resetDirtNewForm() {
+  dirtWorkNewPhotos = [];
+  dirtWorkNewLat = null;
+  dirtWorkNewLon = null;
+  el('dirt-issue-pool').value = '';
+  el('dirt-issue-type').value = '';
+  el('dirt-issue-desc').value = '';
+  el('dirt-issue-location').value = '';
+  el('dirt-issue-assigned').value = '';
+  el('dirt-issue-date').value = todayISO();
+  el('dirt-issue-notes').value = '';
+  el('dirt-new-coords').textContent = '';
+  el('dirt-new-map-btn').classList.add('hidden');
+  renderDirtNewPhotoList();
+}
+
+function renderDirtNewPhotoList() {
+  const listEl = el('dirt-new-photo-list');
+  if (!dirtWorkNewPhotos.length) { listEl.innerHTML = ''; return; }
+  listEl.innerHTML = dirtWorkNewPhotos.map((p, i) => `
+    <div class="maint-aq-item">
+      <span class="maint-aq-badge">PIC</span>
+      <span style="flex:1;font-size:0.8rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(p.file.name)}</span>
+      <button class="maint-aq-remove" data-idx="${i}">×</button>
+    </div>`).join('');
+}
+
+async function loadDirtWorkIssues() {
+  try {
+    dirtWorkIssues = await api('GET', `/api/dirt-work-issues?include_resolved=${dirtWorkShowResolved}`);
+    populateDirtFilterDropdowns();
+    applyDirtFilters();
+  } catch {
+    el('dirt-issue-list').innerHTML = `<div class="placeholder-msg">Failed to load.</div>`;
+  }
+}
+
+function populateDirtFilterDropdowns() {
+  const pSel = el('dirt-filter-pool');
+  const prevPool = pSel.value;
+  const pools = [...new Set(dirtWorkIssues.map(i => i.pool).filter(Boolean))].sort((a, b) => Number(a) - Number(b));
+  pSel.innerHTML = '<option value="">All Pools</option>' +
+    pools.map(p => `<option value="${escHtml(p)}"${p === prevPool ? ' selected' : ''}>Pool ${escHtml(p)}</option>`).join('');
+
+  const tSel = el('dirt-filter-type');
+  const prevType = tSel.value;
+  const types = [...new Set(dirtWorkIssues.map(i => i.work_type).filter(Boolean))].sort();
+  tSel.innerHTML = '<option value="">All Types</option>' +
+    types.map(t => `<option value="${escHtml(t)}"${t === prevType ? ' selected' : ''}>${escHtml(t)}</option>`).join('');
+}
+
+function applyDirtFilters() {
+  let items = dirtWorkIssues;
+  if (_dirtFilterPool) items = items.filter(i => String(i.pool) === _dirtFilterPool);
+  if (_dirtFilterType) items = items.filter(i => i.work_type === _dirtFilterType);
+  if (_dirtFilterQ) {
+    const q = _dirtFilterQ.toLowerCase();
+    items = items.filter(i =>
+      [i.pool ? `pool ${i.pool}` : '', i.work_type, i.description, i.location_notes,
+       i.action_taken, i.resolution_notes, i.assigned_to, i.entered_by_full_name, i.notes]
+        .some(f => (f || '').toLowerCase().includes(q))
+    );
+  }
+  renderDirtWorkIssues(items);
+}
+
+function renderDirtWorkIssues(items) {
+  const list = el('dirt-issue-list');
+  if (!items.length) {
+    const hasF = _dirtFilterPool || _dirtFilterType || _dirtFilterQ;
+    list.innerHTML = `<div class="placeholder-msg">${hasF ? 'No matching issues.' : `No ${dirtWorkShowResolved ? '' : 'open '}issues.`}</div>`;
+    return;
+  }
+  list.innerHTML = items.map(issue => {
+    const statusClass = issue.status.replace('_', '-');
+    const poolLabel   = issue.pool ? `Pool ${escHtml(issue.pool)}` : 'No Pool';
+    const typeLabel   = issue.work_type ? ` — ${escHtml(issue.work_type)}` : '';
+    const snippet     = (issue.description || '').slice(0, 80) + (issue.description?.length > 80 ? '…' : '');
+    const entityName  = `dirt-pool${issue.pool || 'x'}`.slice(0, 30);
+    const hasGPS      = issue.gps_lat != null && issue.gps_lon != null;
+    return `
+      <div class="equip-issue-item" data-issue-id="${issue.issue_id}" data-entity-name="${entityName}">
+        <div class="equip-issue-header">
+          <div class="equip-issue-meta">
+            <div class="equip-issue-name">${poolLabel}${typeLabel}</div>
+            <div class="equip-issue-snippet">${escHtml(snippet)}</div>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+            <span class="status-pill ${statusClass}">${issue.status.replace('_',' ')}</span>
+            <span class="equip-issue-date">${issue.reported_date?.slice(0,10) || ''}</span>
+          </div>
+        </div>
+        <div class="equip-issue-body hidden">
+          <div class="form-group">
+            <label>Pool</label>
+            <div style="font-size:0.9rem;padding:6px 0">${issue.pool ? `Pool ${escHtml(issue.pool)}` : '—'}</div>
+          </div>
+          <div class="form-group">
+            <label>Work Type</label>
+            <div style="font-size:0.9rem;padding:6px 0">${escHtml(issue.work_type || '—')}</div>
+          </div>
+          <div class="form-group">
+            <label>Description</label>
+            <div style="font-size:0.9rem;padding:6px 0">${escHtml(issue.description || '')}</div>
+          </div>
+          ${issue.location_notes ? `<div class="form-group"><label>Location Notes</label><div style="font-size:0.9rem;padding:6px 0">${escHtml(issue.location_notes)}</div></div>` : ''}
+          <div class="form-group">
+            <label>Assigned To</label>
+            <select class="ctrl-select issue-assigned">${assigneeSelectOptions(issue.assigned_to)}</select>
+          </div>
+          <div class="form-group">
+            <label>Status</label>
+            <select class="ctrl-select issue-status-select">
+              <option value="open"        ${issue.status==='open'        ?'selected':''}>Open</option>
+              <option value="in_progress" ${issue.status==='in_progress' ?'selected':''}>In Progress</option>
+              <option value="resolved"    ${issue.status==='resolved'    ?'selected':''}>Resolved</option>
+            </select>
+          </div>
+          <div class="form-group issue-action-group" style="${issue.status==='in_progress' ? '' : 'display:none'}">
+            <label>Action Taken</label>
+            <textarea class="ctrl-textarea issue-action-taken" rows="2" placeholder="Describe the action being taken…">${escHtml(issue.action_taken || '')}</textarea>
+          </div>
+          <div class="issue-res-group" style="${issue.status==='resolved' ? '' : 'display:none'}">
+            <div class="form-group">
+              <label>Resolution Notes</label>
+              <textarea class="ctrl-textarea issue-res-notes" rows="2" placeholder="Describe how it was resolved…">${escHtml(issue.resolution_notes || '')}</textarea>
+            </div>
+            <div class="form-group">
+              <label>PO Number</label>
+              <input type="text" class="ctrl-input issue-po-number" value="${escHtml(issue.po_number || '')}" placeholder="Optional">
+            </div>
+            <div class="form-group">
+              <label>Cost ($)</label>
+              <input type="number" class="ctrl-input issue-cost" value="${issue.cost != null ? issue.cost : ''}" placeholder="0.00" min="0" step="0.01">
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Notes</label>
+            <textarea class="ctrl-textarea issue-notes" rows="2" placeholder="Additional notes…">${escHtml(issue.notes || '')}</textarea>
+          </div>
+          <div class="form-group">
+            <div class="maint-attach-btns">
+              <button type="button" class="btn btn-secondary btn-sm issue-pic-btn">${icon('photo')} Photo(s)</button>
+              ${hasGPS ? `<button type="button" class="btn btn-secondary btn-sm dirt-map-btn" data-lat="${issue.gps_lat}" data-lon="${issue.gps_lon}">&#127757; Map</button>
+              <button type="button" class="btn btn-secondary btn-sm dirt-pick-btn" data-lat="${issue.gps_lat}" data-lon="${issue.gps_lon}">&#128204; Update Location</button>` : `<button type="button" class="btn btn-secondary btn-sm dirt-pick-btn" data-lat="" data-lon="">&#128204; Set Location</button>`}
+              ${Number(issue.attachment_count) > 0 ? `<button type="button" class="btn btn-secondary btn-sm issue-files-btn">${icon('attachments')} ${issue.attachment_count} file${issue.attachment_count > 1 ? 's' : ''}</button>` : ''}
+            </div>
+            <div class="maint-attach-queue issue-attach-queue hidden"></div>
+            <div class="maint-hist-attach-area issue-files-area hidden"></div>
+          </div>
+          <div class="error-msg hidden issue-update-error"></div>
+          <button class="btn btn-save issue-save-btn" style="width:100%" data-table="dirt_work_issues">Save Changes</button>
+        </div>
+      </div>`;
+  }).join('');
+
+  // Wire status-change visibility for action/resolution groups
+  list.querySelectorAll('.issue-status-select').forEach(sel => {
+    sel.addEventListener('change', () => {
+      const body = sel.closest('.equip-issue-body');
+      body.querySelector('.issue-action-group').style.display = sel.value === 'in_progress' ? '' : 'none';
+      body.querySelector('.issue-res-group').style.display    = sel.value === 'resolved'    ? '' : 'none';
+    });
+  });
+}
+
+// Issue list interactions for dirt work (delegated)
+el('dirt-issue-list').addEventListener('click', async e => {
+  const item = e.target.closest('.equip-issue-item');
+  if (!item) return;
+
+  if (e.target.closest('.equip-issue-header')) {
+    item.querySelector('.equip-issue-body').classList.toggle('hidden');
+    return;
+  }
+
+  if (e.target.classList.contains('issue-pic-btn')) {
+    issueCardActiveId = item.dataset.issueId;
+    issueCardActiveTable = 'dirt_work_issues';
+    issuePicInput.click();
+    return;
+  }
+
+  if (e.target.classList.contains('dirt-map-btn')) {
+    openGPSMap(parseFloat(e.target.dataset.lat), parseFloat(e.target.dataset.lon));
+    return;
+  }
+
+  if (e.target.classList.contains('dirt-pick-btn')) {
+    const lat = parseFloat(e.target.dataset.lat) || 36.5;
+    const lon = parseFloat(e.target.dataset.lon) || -119.5;
+    const issueId = item.dataset.issueId;
+    openGPSMapPick(lat, lon, async (newLat, newLon) => {
+      try {
+        await api('PATCH', `/api/dirt-work-issues/${issueId}`, { gps_lat: newLat, gps_lon: newLon });
+        await loadDirtWorkIssues();
+        showToast('Location updated', 'success');
+      } catch (err) { showToast(err.message, 'error'); }
+    });
+    return;
+  }
+
+  if (e.target.classList.contains('issue-files-btn')) {
+    const area = item.querySelector('.issue-files-area');
+    if (!area.classList.contains('hidden')) { area.classList.add('hidden'); return; }
+    area.classList.remove('hidden');
+    if (area.dataset.loaded) return;
+    area.innerHTML = '<div style="font-size:0.8rem;color:var(--text-dim)">Loading…</div>';
+    try {
+      const atts = await api('GET', `/api/maintenance/attachments?table_name=dirt_work_issues&record_id=${item.dataset.issueId}`);
+      area.dataset.loaded = '1';
+      if (!atts.length) { area.innerHTML = '<div class="maint-att-empty">No files</div>'; return; }
+      area.innerHTML = atts.map(a => {
+        const isPdf = a.mime_type === 'application/pdf' || a.original_name.endsWith('.pdf');
+        const url   = `/uploads/${a.rel_path.split('/').map(encodeURIComponent).join('/')}`;
+        return `<div class="maint-att-item" data-url="${url}" data-pdf="${isPdf}" data-name="${a.original_name.replace(/"/g,'&quot;')}">
+          <div class="maint-att-thumb">${isPdf ? `<span class="maint-att-pdf-icon">${icon('invoice', 28)}</span>` : `<img src="${url}" loading="lazy" alt="">`}</div>
+          <span class="maint-att-type-badge">PIC</span>
+          <div class="maint-att-name">${a.original_name}</div>
+        </div>`;
+      }).join('');
+      area.querySelectorAll('.maint-att-item').forEach(card =>
+        card.addEventListener('click', () => openAttachmentPreview(card.dataset.url, card.dataset.name, card.dataset.pdf === 'true'))
+      );
+    } catch (err) { area.innerHTML = `<div class="maint-att-empty" style="color:var(--red-light)">${err.message}</div>`; }
+    return;
+  }
+
+  if (e.target.classList.contains('issue-save-btn')) {
+    const issueId     = item.dataset.issueId;
+    const status      = item.querySelector('.issue-status-select').value;
+    const actionTaken = item.querySelector('.issue-action-taken').value.trim() || null;
+    const resNotes    = item.querySelector('.issue-res-notes').value.trim()    || null;
+    const poNumber    = item.querySelector('.issue-po-number')?.value.trim()   || null;
+    const costVal     = item.querySelector('.issue-cost')?.value;
+    const cost        = costVal !== '' ? parseFloat(costVal) : null;
+    const notes       = item.querySelector('.issue-notes').value.trim()        || null;
+    const assignedTo  = item.querySelector('.issue-assigned').value             || null;
+    const errEl       = item.querySelector('.issue-update-error');
+    errEl.classList.add('hidden');
+    e.target.disabled = true;
+    try {
+      const pending = issueCardFiles.get(issueId) || [];
+      await api('PATCH', `/api/dirt-work-issues/${issueId}`, {
+        status, action_taken: actionTaken, resolution_notes: resNotes,
+        po_number: poNumber, cost, notes, assigned_to: assignedTo,
+      });
+      if (pending.length) {
+        await doUploadIssueAttachments(issueId, 'dirt_work_issues', pending, item.dataset.entityName);
+        issueCardFiles.delete(issueId);
+      }
+      await loadDirtWorkIssues();
       showToast('Issue updated', 'success');
       refreshMaintenanceBadges();
     } catch (err) {
@@ -3612,6 +4232,44 @@ function openGPSMap(lat, lon) {
 
 el('gps-map-close').addEventListener('click', () => {
   el('gps-map-modal').classList.add('hidden');
+  _cancelGPSMapPick();
+});
+
+// GPS Map pick mode — lets callers request a tap-to-place interaction
+let _gpsPickCallback = null;
+let _gpsPickClickHandler = null;
+
+function _cancelGPSMapPick() {
+  if (_gpsPickClickHandler && gpsLeafletMap) {
+    gpsLeafletMap.off('click', _gpsPickClickHandler);
+    _gpsPickClickHandler = null;
+  }
+  _gpsPickCallback = null;
+  el('gps-map-title').textContent = 'Photo Location';
+  el('gps-map-pick-hint').classList.add('hidden');
+  el('gps-map-confirm').classList.add('hidden');
+}
+
+function openGPSMapPick(lat, lon, callback) {
+  openGPSMap(lat, lon);
+  _gpsPickCallback = callback;
+  el('gps-map-title').textContent = 'Pick Location';
+  el('gps-map-pick-hint').classList.remove('hidden');
+  el('gps-map-confirm').classList.remove('hidden');
+  _gpsPickClickHandler = e => {
+    gpsLeafletMarker.setLatLng(e.latlng);
+    el('gps-map-coords').textContent = `${e.latlng.lat.toFixed(6)}, ${e.latlng.lng.toFixed(6)}`;
+  };
+  gpsLeafletMap.on('click', _gpsPickClickHandler);
+}
+
+el('gps-map-confirm').addEventListener('click', () => {
+  if (_gpsPickCallback && gpsLeafletMarker) {
+    const ll = gpsLeafletMarker.getLatLng();
+    _gpsPickCallback(ll.lat, ll.lng);
+  }
+  el('gps-map-modal').classList.add('hidden');
+  _cancelGPSMapPick();
 });
 
 /* ── Maintenance ─────────────────────────────────────────────────────────── */
@@ -4076,7 +4734,10 @@ async function refreshMaintenanceBadges() {
     setBadge('maint-badge-buildings', counts.buildings);
     setBadge('maint-badge-wells',     counts.wells);
     setBadge('maint-badge-vehicles',  counts.vehicles);
-    setBadge('maint-badge-canal',     counts.canal);
+    setBadge('maint-badge-canal',      counts.canal);
+    // Dirt Work is now its own top-level screen — its badge lives on the home tile,
+    // not inside the Maintenance Log total.
+    setBadge('maint-badge-dirt-work',  counts.dirt_work);
     setBadge('maint-main-badge', counts.equipment + counts.buildings + counts.wells + counts.vehicles + counts.canal);
   } catch { /* non-critical — badges stay at last known value */ }
 }
@@ -4090,8 +4751,16 @@ document.querySelectorAll('[data-maint-panel]').forEach(btn => {
 // .maint-back-btn buttons removed from HTML — navigation handled by setPanelNav()
 
 /* ── Assigned Items + Bell Notification ──────────────────────────────────── */
-const ASSIGN_TYPE_LABEL = { well: 'Well Issue', building: 'Building Issue', equipment: 'Equipment Issue' };
-const ASSIGN_TYPE_PANEL = { well: 'wells', building: 'buildings', equipment: 'equipment' };
+const ASSIGN_TYPE_LABEL = { well: 'Well Issue', building: 'Building Issue', equipment: 'Equipment Issue', dirt_work: 'Dirt Work' };
+const ASSIGN_TYPE_PANEL = { well: 'wells', building: 'buildings', equipment: 'equipment', dirt_work: 'dirt-work' };
+
+// Navigate to the right place for an assignment "View" button. Dirt Work is its
+// own top-level screen; the others are panels inside the Maintenance Log.
+function goToAssignmentTarget(target) {
+  if (target === 'dirt-work') { showScreen('dirt-work'); return; }
+  showScreen('maintenance');
+  openMaintPanel(target);
+}
 
 function updateBellBadge(items) {
   const lastChecked = localStorage.getItem('wm-assign-checked') || '1970-01-01T00:00:00.000Z';
@@ -4121,8 +4790,7 @@ function openAssignModal() {
       const btn = e.target.closest('.assign-view-btn');
       if (btn) {
         closeAssignModal();
-        showScreen('maintenance');
-        openMaintPanel(btn.dataset.panel);
+        goToAssignmentTarget(btn.dataset.panel);
       }
     });
   }
@@ -4173,7 +4841,7 @@ function initMaintAssignedPanel() {
     panel.dataset.listenerAdded = '1';
     listEl.addEventListener('click', e => {
       const btn = e.target.closest('[data-go-panel]');
-      if (btn) openMaintPanel(btn.dataset.goPanel);
+      if (btn) goToAssignmentTarget(btn.dataset.goPanel);
     });
   }
   loadAssignedPanel(listEl);
@@ -4639,6 +5307,7 @@ el('maint-save-btn').addEventListener('click', async () => {
     notes:            el('maint-notes').value || null,
   };
 
+  const _save = beginSave(el('maint-save-btn'));
   try {
     let r;
     if (maintType === 'equipment') {
@@ -4697,6 +5366,8 @@ el('maint-save-btn').addEventListener('click', async () => {
     el('maint-next-service').value = '';
   } catch (err) {
     showError('maint-error', err.message);
+  } finally {
+    _save();
   }
 });
 
@@ -4818,7 +5489,8 @@ function createKFItem(w, dateInput, timeInput) {
     : 'Not read';
   const prevDTW    = w.last_dtw    != null ? `${Number(w.last_dtw).toFixed(2)} ft` : null;
   const prevMethod = w.last_method != null ? w.last_method.charAt(0).toUpperCase() + w.last_method.slice(1) : null;
-  const prevMeta   = [prevDTW, prevMethod].filter(Boolean).join(' · ');
+  const prevCond   = w.last_wet_dry_moist != null ? w.last_wet_dry_moist.charAt(0).toUpperCase() + w.last_wet_dry_moist.slice(1) : null;
+  const prevMeta   = [prevDTW, prevMethod, prevCond].filter(Boolean).join(' · ');
   const hasGPS     = w.gps_latitude && w.gps_longitude;
 
   div.innerHTML = `
@@ -4834,36 +5506,43 @@ function createKFItem(w, dateInput, timeInput) {
         <label>Depth to Water (ft)${prevDTW ? `<span class="prev-hint"> · Prev: ${prevDTW}</span>` : ''}</label>
         <input type="number" class="ctrl-input kf-dtw" step="0.01" placeholder="0.00">
       </div>
-      <div class="form-group toggle-row">
-        <label>Status</label>
-        <div class="toggle-group">
-          <button class="toggle-btn active kf-on">ON</button>
-          <button class="toggle-btn kf-off">OFF</button>
+      <div class="two-col">
+        <div class="form-group toggle-row">
+          <label>Status</label>
+          <div class="toggle-group">
+            <button class="toggle-btn active kf-on">ON</button>
+            <button class="toggle-btn kf-off">OFF</button>
+          </div>
         </div>
-      </div>
-      <div class="form-group toggle-row">
-        <label>Access</label>
-        <div class="toggle-group">
-          <button class="toggle-btn kf-access-tube${w.access === 'Tube' ? ' active' : ''}">Tube</button>
-          <button class="toggle-btn kf-access-plug${w.access === 'Plug' ? ' active' : ''}">Plug</button>
+        <div class="form-group toggle-row">
+          <label>Access</label>
+          <div class="toggle-group">
+            <button class="toggle-btn kf-access-tube${w.access === 'Tube' ? ' active' : ''}">Tube</button>
+            <button class="toggle-btn kf-access-plug${w.access === 'Plug' ? ' active' : ''}">Plug</button>
+          </div>
         </div>
       </div>
       <div class="two-col">
-        <div class="form-group">
+        <div class="form-group toggle-row">
           <label>Method</label>
-          <select class="ctrl-select kf-method">
-            <option value="">Select…</option>
-            <option value="plopper">Plopper</option>
-            <option value="sounder">Sounder</option>
-            <option value="tape">Tape</option>
-            <option value="transducer">Transducer</option>
-            <option value="other">Other</option>
-          </select>
+          <div class="toggle-group">
+            <button class="toggle-btn kf-m-sounder">Sounder</button>
+            <button class="toggle-btn kf-m-plopper">Plopper</button>
+            <button class="toggle-btn kf-m-other">Other</button>
+          </div>
         </div>
-        <div class="form-group">
-          <label>Operator</label>
-          <input type="text" class="ctrl-input kf-op" placeholder="Initials">
+        <div class="form-group toggle-row">
+          <label>Condition</label>
+          <div class="toggle-group">
+            <button class="toggle-btn kf-c-wet">Wet</button>
+            <button class="toggle-btn kf-c-dry">Dry</button>
+            <button class="toggle-btn kf-c-moist">Moist</button>
+          </div>
         </div>
+      </div>
+      <div class="form-group">
+        <label>Operator</label>
+        <input type="text" class="ctrl-input kf-op" placeholder="Initials">
       </div>
       <div class="form-group">
         <label>Notes</label>
@@ -4896,6 +5575,7 @@ function createKFItem(w, dateInput, timeInput) {
     openHistoryModal('kf', w.well_id, w.common_name);
   });
 
+  // Status
   let kfOnOff = true;
   div.querySelector('.kf-on').addEventListener('click', e => {
     kfOnOff = true;
@@ -4908,6 +5588,7 @@ function createKFItem(w, dateInput, timeInput) {
     div.querySelector('.kf-on').classList.remove('active');
   });
 
+  // Access
   let kfAccess = w.access || null;
   div.querySelector('.kf-access-tube').addEventListener('click', e => {
     if (kfAccess === 'Tube') { kfAccess = null; e.currentTarget.classList.remove('active'); return; }
@@ -4921,6 +5602,39 @@ function createKFItem(w, dateInput, timeInput) {
     e.currentTarget.classList.add('active');
     div.querySelector('.kf-access-tube').classList.remove('active');
   });
+
+  // Method toggles (Sounder / Plopper / Other) — tap again to deselect
+  let kfMethod = null;
+  const mSo = div.querySelector('.kf-m-sounder');
+  const mPl = div.querySelector('.kf-m-plopper');
+  const mOt = div.querySelector('.kf-m-other');
+  [[' sounder', mSo, [mPl, mOt]], ['plopper', mPl, [mSo, mOt]], ['other', mOt, [mSo, mPl]]].forEach(([val, btn, rest]) => {
+    btn.addEventListener('click', () => {
+      const v = val.trim();
+      if (kfMethod === v) { kfMethod = null; btn.classList.remove('active'); return; }
+      kfMethod = v; btn.classList.add('active'); rest.forEach(b => b.classList.remove('active'));
+    });
+  });
+  if (w.last_method && ['sounder', 'plopper', 'other'].includes(w.last_method)) {
+    kfMethod = w.last_method;
+    div.querySelector(`.kf-m-${kfMethod}`).classList.add('active');
+  }
+
+  // Condition toggles (Wet / Dry / Moist) — tap again to deselect
+  let kfCond = null;
+  const cWet = div.querySelector('.kf-c-wet');
+  const cDry = div.querySelector('.kf-c-dry');
+  const cMo  = div.querySelector('.kf-c-moist');
+  [['wet', cWet, [cDry, cMo]], ['dry', cDry, [cWet, cMo]], ['moist', cMo, [cWet, cDry]]].forEach(([val, btn, rest]) => {
+    btn.addEventListener('click', () => {
+      if (kfCond === val) { kfCond = null; btn.classList.remove('active'); return; }
+      kfCond = val; btn.classList.add('active'); rest.forEach(b => b.classList.remove('active'));
+    });
+  });
+  if (w.last_wet_dry_moist && ['wet', 'dry', 'moist'].includes(w.last_wet_dry_moist)) {
+    kfCond = w.last_wet_dry_moist;
+    div.querySelector(`.kf-c-${kfCond}`).classList.add('active');
+  }
 
   div.querySelector('.list-item-header').addEventListener('click', () => {
     const open = div.classList.toggle('expanded');
@@ -4949,7 +5663,8 @@ function createKFItem(w, dateInput, timeInput) {
       reading_time:    timeInput.value,
       dtw_reading:     dtw ? parseFloat(dtw) : null,
       well_on_off:     kfOnOff,
-      plopper_sounder: div.querySelector('.kf-method').value || null,
+      plopper_sounder: kfMethod || null,
+      wet_dry_moist:   kfCond || null,
       operator:        div.querySelector('.kf-op').value || null,
       notes:           div.querySelector('.kf-notes').value || null,
       access:          kfAccess,
@@ -4962,10 +5677,10 @@ function createKFItem(w, dateInput, timeInput) {
       div.classList.remove('expanded');
       div.querySelector('.list-item-form').style.display = 'none';
       if (!r.queued) {
-        const method = div.querySelector('.kf-method').value;
         const newPrev = [
-          `${Number(dtw).toFixed(2)} ft`,
-          method ? method.charAt(0).toUpperCase() + method.slice(1) : null,
+          dtw ? `${Number(dtw).toFixed(2)} ft` : null,
+          kfMethod ? kfMethod.charAt(0).toUpperCase() + kfMethod.slice(1) : null,
+          kfCond   ? kfCond.charAt(0).toUpperCase()   + kfCond.slice(1)   : null,
         ].filter(Boolean).join(' · ');
         let meta = div.querySelector('.list-item-meta');
         if (!meta) {
@@ -4976,7 +5691,6 @@ function createKFItem(w, dateInput, timeInput) {
         meta.innerHTML = `<span>Prev: ${newPrev}</span>`;
       }
       div.querySelector('.kf-dtw').value = '';
-      div.querySelector('.kf-method').value = '';
       div.querySelector('.kf-notes').value = '';
       showToast(r.queued ? `${w.common_name} queued offline` : `${w.common_name} saved`, r.queued ? 'warn' : 'success');
     } catch (err) {
@@ -5321,6 +6035,7 @@ const SETTINGS_PANEL_NAMES = {
   'kf-widget':      'KF Widget',
   'running-wells':  'Running Wells',
   'gps-selector':   'GPS Location Selector',
+  'scada-roles':    'SCADA Access',
   appinfo:          'App Info',
   tools:            'Tools',
   bugreports:       'Bug Reports',
@@ -5337,6 +6052,7 @@ function openSettingsPanel(panelId) {
   if (panelId === 'kf-widget')      initKFWidgetPanel();
   if (panelId === 'running-wells')  initRunningWellsPanel();
   if (panelId === 'gps-selector')   initGPSSelectorSettingsPanel();
+  if (panelId === 'scada-roles')    initScadaRolesPanel();
   if (panelId === 'appinfo') {
     const ls = localStorage.getItem('watermark-last-sync');
     el('settings-last-sync').textContent = ls ? new Date(ls).toLocaleString() : 'Never';
@@ -5823,6 +6539,7 @@ el('pw-save-btn').addEventListener('click', async () => {
   errEl.classList.add('hidden');
   if (!cur || !nw || !con) { errEl.textContent = 'All fields are required.'; errEl.classList.remove('hidden'); return; }
   if (nw !== con) { errEl.textContent = 'New passwords do not match.'; errEl.classList.remove('hidden'); return; }
+  const _save = beginSave(el('pw-save-btn'));
   try {
     await api('POST', '/api/auth/change-password', { current_password: cur, new_password: nw });
     el('pw-current').value = '';
@@ -5832,6 +6549,8 @@ el('pw-save-btn').addEventListener('click', async () => {
   } catch (err) {
     errEl.textContent = err.message;
     errEl.classList.remove('hidden');
+  } finally {
+    _save();
   }
 });
 
@@ -5859,6 +6578,7 @@ el('kf-widget-save-btn').addEventListener('click', async () => {
   const end_date   = el('kf-widget-end').value;
   if (!start_date || !end_date) return showToast('Both dates are required', 'error');
   if (start_date > end_date)    return showToast('Start date must be before end date', 'error');
+  const _save = beginSave(el('kf-widget-save-btn'));
   try {
     await api('PUT', '/api/settings/kf-widget', { start_date, end_date });
     showToast('KF widget updated');
@@ -5866,6 +6586,8 @@ el('kf-widget-save-btn').addEventListener('click', async () => {
     loadDashboardStats();
   } catch (err) {
     showToast(err.message, 'error');
+  } finally {
+    _save();
   }
 });
 
@@ -5988,12 +6710,15 @@ el('rw-settings-save-btn').addEventListener('click', async () => {
     const v = parseFloat(inp.value);
     if (!isNaN(v) && v >= 0) pool_extras[inp.dataset.pool] = v;
   });
+  const _save = beginSave(el('rw-settings-save-btn'));
   try {
     await api('PUT', '/api/settings/running-wells', { well_ids: checked, pool_extras });
     showToast('Running wells saved');
     loadDashboardStats();
   } catch (err) {
     showToast(err.message, 'error');
+  } finally {
+    _save();
   }
 });
 
@@ -6016,11 +6741,55 @@ el('gps-sel-toggle-off').addEventListener('click', () => {
 });
 el('gps-sel-save-btn').addEventListener('click', async () => {
   const isPublic = el('gps-sel-toggle-on').classList.contains('active');
+  const _save = beginSave(el('gps-sel-save-btn'));
   try {
     await api('PUT', '/api/settings/gps-selector', { public: isPublic });
     showToast('Setting saved', 'success');
   } catch (err) {
     showToast('Failed to save: ' + err.message, 'error');
+  } finally {
+    _save();
+  }
+});
+
+/* ── SCADA Access (admin) ─────────────────────────────────────────────────── */
+// Roles offered as checkboxes, in display order. Admin is always on + locked.
+const SCADA_ROLE_OPTIONS = ['operator', 'systems-operator', 'heavy-equipment-operator',
+  'pump-tech', 'elec-tech', 'water-planner', 'supervisor', 'admin'];
+
+async function initScadaRolesPanel() {
+  const list = el('scada-roles-list');
+  let allowed = ['admin'];
+  try {
+    const r = await api('GET', '/api/settings/scada-roles');
+    if (Array.isArray(r.roles)) allowed = r.roles;
+  } catch { /* keep default */ }
+  list.innerHTML = SCADA_ROLE_OPTIONS.map(role => {
+    const checked = allowed.includes(role) ? 'checked' : '';
+    const locked  = role === 'admin' ? 'disabled' : '';
+    return `<label class="settings-row">
+      <span class="settings-label">${escHtml(formatRole(role))}${role === 'admin' ? ' (always)' : ''}</span>
+      <input type="checkbox" class="scada-role-cb" data-role="${role}" ${checked} ${locked}>
+    </label>`;
+  }).join('');
+}
+
+el('scada-roles-save-btn').addEventListener('click', async () => {
+  const roles = [...document.querySelectorAll('.scada-role-cb:checked')].map(c => c.dataset.role);
+  if (!roles.includes('admin')) roles.push('admin');
+  const _save = beginSave(el('scada-roles-save-btn'));
+  try {
+    const r = await api('PUT', '/api/settings/scada-roles', { roles });
+    if (Array.isArray(r.roles)) scadaAllowedRoles = r.roles;
+    // Reflect immediately for the current admin
+    const ok = isScadaAllowed(currentUser.role);
+    el('nav-scada-item').classList.toggle('hidden', !ok);
+    el('dash-scada-tile').classList.toggle('hidden', !ok);
+    showToast('SCADA access updated', 'success');
+  } catch (err) {
+    showToast('Failed to save: ' + err.message, 'error');
+  } finally {
+    _save();
   }
 });
 
@@ -6289,7 +7058,7 @@ el('bug-modal-submit').addEventListener('click', async () => {
   errEl.classList.add('hidden');
   if (!description) { errEl.textContent = 'Please describe the issue.'; errEl.classList.remove('hidden'); return; }
   const is_repeatable = document.querySelector('#bug-repeatable-seg .seg-btn.active')?.dataset.val === 'true';
-  el('bug-modal-submit').disabled = true;
+  const _save = beginSave(el('bug-modal-submit'));
   try {
     const result = await api('POST', '/api/bug-reports', {
       screen_area: el('bug-screen').value || null,
@@ -6323,7 +7092,7 @@ el('bug-modal-submit').addEventListener('click', async () => {
     errEl.textContent = err.message;
     errEl.classList.remove('hidden');
   } finally {
-    el('bug-modal-submit').disabled = false;
+    _save();
   }
 });
 
@@ -6446,6 +7215,7 @@ el('user-modal-save').addEventListener('click', async () => {
   const email     = el('um-email').value.trim();
   const password  = el('um-password').value;
 
+  const _save = beginSave(el('user-modal-save'));
   try {
     if (editingUserId) {
       await api('PUT', `/api/users/${editingUserId}`, { full_name, initials, role, email });
@@ -6462,6 +7232,8 @@ el('user-modal-save').addEventListener('click', async () => {
     await loadUserList();
   } catch (err) {
     showError('um-error', err.message);
+  } finally {
+    _save();
   }
 });
 
@@ -6885,7 +7657,7 @@ function buildPMTypeStructure(pmType, def, contentEl) {
     if (!building) return showToast('Select a location first', 'error');
     const checklist = collectChecklist(checklistEl, def, building);
     const notes = notesEl.value.trim();
-    submitBtn.disabled = true;
+    const _save = beginSave(submitBtn);
     try {
       await api('POST', '/api/pm-records', { pm_type: pmType, building, checklist, notes });
       formWrap.style.display = 'none';
@@ -6896,7 +7668,7 @@ function buildPMTypeStructure(pmType, def, contentEl) {
     } catch (err) {
       showToast(err.message, 'error');
     } finally {
-      submitBtn.disabled = false;
+      _save();
     }
   });
 }
@@ -6995,7 +7767,7 @@ async function buildSiphonBreakerPM(pmType, def, contentEl) {
     if (!positions.length) { showToast('No pump positions loaded', 'error'); return; }
     const checklist = collectSiphonChecklist(listEl, positions);
     const notes = notesEl.value.trim();
-    submitBtn.disabled = true;
+    const _save = beginSave(submitBtn);
     try {
       await api('POST', '/api/pm-records', { pm_type: pmType, building: plantName, checklist, notes });
       formWrap.style.display = 'none';
@@ -7006,7 +7778,7 @@ async function buildSiphonBreakerPM(pmType, def, contentEl) {
     } catch (err) {
       showToast(err.message, 'error');
     } finally {
-      submitBtn.disabled = false;
+      _save();
     }
   });
 
@@ -7159,7 +7931,7 @@ async function buildAirCompressorPM(pmType, def, contentEl) {
       });
     });
     const notes = notesEl.value.trim();
-    submitBtn.disabled = true;
+    const _save = beginSave(submitBtn);
     try {
       await api('POST', '/api/pm-records', { pm_type: pmType, building: plantName, checklist, notes });
       formWrap.style.display = 'none';
@@ -7170,7 +7942,7 @@ async function buildAirCompressorPM(pmType, def, contentEl) {
     } catch (err) {
       showToast(err.message, 'error');
     } finally {
-      submitBtn.disabled = false;
+      _save();
     }
   });
 
@@ -7527,6 +8299,7 @@ el('pest-usage-save-btn').addEventListener('click', async () => {
   const quantity = parseFloat(el('pest-usage-qty').value);
   if (!pesticide_id) return showToast('Select a pesticide', 'error');
   if (!quantity || quantity <= 0) return showToast('Enter a valid quantity', 'error');
+  const _save = beginSave(el('pest-usage-save-btn'));
   try {
     await api('POST', '/api/pesticide-usage', { pesticide_id: parseInt(pesticide_id), quantity });
     el('pest-usage-form').classList.add('hidden');
@@ -7538,6 +8311,8 @@ el('pest-usage-save-btn').addEventListener('click', async () => {
     showToast('Usage logged');
   } catch (err) {
     showToast(err.message, 'error');
+  } finally {
+    _save();
   }
 });
 
@@ -7727,6 +8502,7 @@ el('pest-location-modal').addEventListener('click', e => {
 el('pest-location-save-btn').addEventListener('click', async () => {
   const location_description = el('pest-location-desc').value.trim();
   const notes = el('pest-location-notes').value.trim();
+  const _save = beginSave(el('pest-location-save-btn'));
   try {
     await api('PATCH', `/api/pesticide-usage/${pestLocationEditId}`, { location_description, notes });
     el('pest-location-modal').classList.add('hidden');
@@ -7736,6 +8512,8 @@ el('pest-location-save-btn').addEventListener('click', async () => {
     showToast('Location saved');
   } catch (err) {
     showToast(err.message, 'error');
+  } finally {
+    _save();
   }
 });
 
@@ -7825,6 +8603,7 @@ el('pest-product-save-btn').addEventListener('click', async () => {
   const unit_of_measure = el('pest-product-uom').value.trim();
   if (!name) return showToast('Product name is required', 'error');
   if (!unit_of_measure) return showToast('Unit of measure is required', 'error');
+  const _save = beginSave(el('pest-product-save-btn'));
   try {
     await api('POST', '/api/pesticides', { name, epa_reg_number, unit_of_measure });
     el('pest-product-form').classList.add('hidden');
@@ -7835,6 +8614,8 @@ el('pest-product-save-btn').addEventListener('click', async () => {
     showToast('Product added');
   } catch (err) {
     showToast(err.message, 'error');
+  } finally {
+    _save();
   }
 });
 
@@ -10705,7 +11486,7 @@ async function submitSafetyMeeting() {
     return;
   }
   const btn = el('sm-submit');
-  btn.disabled = true;
+  const _save = beginSave(btn);
   try {
     await api('POST', '/api/safety-meetings', {
       meeting_date: el('sm-date').value,
@@ -10723,7 +11504,7 @@ async function submitSafetyMeeting() {
     errEl.textContent = err.message;
     errEl.classList.remove('hidden');
   } finally {
-    btn.disabled = false;
+    _save();
   }
 }
 
@@ -10790,7 +11571,7 @@ async function toggleSafetyMeeting(item) {
 
 function renderSafetyMeetingBody(body, data) {
   const linkHtml = data.link
-    ? `<div class="form-group"><label>Link</label><a href="${escHtml(data.link)}" target="_blank" rel="noopener" class="safety-meeting-link">${escHtml(data.link)}</a></div>`
+    ? `<div class="form-group"><label>Link</label><a href="${escHtml(/^https?:\/\//i.test(data.link) ? data.link : 'https://' + data.link)}" target="_blank" rel="noopener" class="safety-meeting-link">${escHtml(data.link)}</a></div>`
     : '';
   const notesHtml = data.notes
     ? `<div class="form-group"><label>Notes</label><div class="safety-meeting-notes">${escHtml(data.notes)}</div></div>`
@@ -10810,7 +11591,7 @@ function renderSafetyMeetingBody(body, data) {
       <div class="safety-attend-list"></div>
     </div>`;
 
-  renderSafetyAttendees(body.querySelector('.safety-attend-list'), data.attendees || []);
+  renderSafetyAttendees(body.querySelector('.safety-attend-list'), data.attendees || [], data.meeting_id, body);
 
   body.querySelector('.safety-signin-btn').addEventListener('click', () => {
     openSafetySigninModal(data.meeting_id, body);
@@ -10820,20 +11601,42 @@ function renderSafetyMeetingBody(body, data) {
   });
 }
 
-function renderSafetyAttendees(listEl, attendees) {
+function renderSafetyAttendees(listEl, attendees, meetingId, bodyEl) {
+  const canDel = meetingId && bodyEl && isSupervisorLevel(currentUser?.role);
   if (!attendees.length) {
     listEl.innerHTML = '<div class="placeholder-msg" style="padding:12px 0">No attendees yet.</div>';
     return;
   }
   listEl.innerHTML = `<table class="safety-attend-table">
-    <thead><tr><th>#</th><th>Print Name</th><th>Signature</th><th>Date</th></tr></thead>
+    <thead><tr><th>#</th><th>Print Name</th><th>Signature</th><th>Date</th>${canDel ? '<th></th>' : ''}</tr></thead>
     <tbody>${attendees.map((a, i) => `<tr>
       <td style="color:var(--text-dim);font-size:0.82rem">${i + 1}</td>
       <td>${escHtml(a.full_name)}</td>
       <td>${a.signature_data ? `<img src="${escHtml(a.signature_data)}" alt="signature">` : '<span style="color:var(--text-dim)">—</span>'}</td>
       <td style="white-space:nowrap">${a.signed_date ? localDateStr(a.signed_date, { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}</td>
+      ${canDel ? `<td><button class="safety-attend-del" data-aid="${a.attendee_id}" title="Delete">✕</button></td>` : ''}
     </tr>`).join('')}</tbody>
   </table>`;
+
+  if (canDel) {
+    listEl.querySelectorAll('.safety-attend-del').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        if (!confirm('Remove this attendance record?')) return;
+        try {
+          await api('DELETE', `/api/safety-meetings/${meetingId}/attendees/${btn.dataset.aid}`);
+          const data = await api('GET', `/api/safety-meetings/${meetingId}`);
+          renderSafetyAttendees(listEl, data.attendees || [], meetingId, bodyEl);
+          const item = bodyEl.closest('.safety-meeting-item');
+          if (item) {
+            const countEl = item.querySelector('.safety-attend-count');
+            if (countEl) countEl.textContent = `${data.attendees.length} attendee${data.attendees.length !== 1 ? 's' : ''}`;
+          }
+        } catch (err) {
+          showToast('Failed to delete: ' + (err.message || 'Unknown error'));
+        }
+      });
+    });
+  }
 }
 
 // ── Sign-in Modal ─────────────────────────────────────────────────────────────
@@ -10865,11 +11668,10 @@ function openSafetySigninModal(meetingId, bodyEl) {
       const isOther = el('safety-signin-name-sel').value === '__other__';
       el('safety-signin-name-other').style.display = isOther ? '' : 'none';
     });
-    el('safety-signin-save').addEventListener('click', () => saveSignIn(bodyEl));
+    el('safety-signin-save').onclick = () => saveSignIn(bodyEl);
   } else {
     // Clear canvas on re-open
     _sigCtx.clearRect(0, 0, _sigCanvas.width, _sigCanvas.height);
-    // Store latest bodyEl for save callback
     el('safety-signin-save').onclick = () => saveSignIn(bodyEl);
   }
 
@@ -10940,8 +11742,10 @@ async function saveSignIn(bodyEl) {
 
   const btn = el('safety-signin-save');
   btn.disabled = true;
+  btn.textContent = 'Saving…';
   try {
-    await api('POST', `/api/safety-meetings/${_safetySigninMeetingId}/attend`, {
+    const meetingId = _safetySigninMeetingId;
+    await api('POST', `/api/safety-meetings/${meetingId}/attend`, {
       full_name:      name,
       signature_data: sigData || null,
       signed_date:    el('safety-signin-date').value,
@@ -10949,8 +11753,8 @@ async function saveSignIn(bodyEl) {
     closeSafetySigninModal();
     showToast('Signed in successfully');
     // Reload attendees in the expanded body
-    const data = await api('GET', `/api/safety-meetings/${_safetySigninMeetingId}`);
-    renderSafetyAttendees(bodyEl.querySelector('.safety-attend-list'), data.attendees || []);
+    const data = await api('GET', `/api/safety-meetings/${meetingId}`);
+    renderSafetyAttendees(bodyEl.querySelector('.safety-attend-list'), data.attendees || [], meetingId, bodyEl);
     // Update the attendee count badge in the header
     const item = bodyEl.closest('.safety-meeting-item');
     if (item) {
@@ -10958,10 +11762,10 @@ async function saveSignIn(bodyEl) {
       if (countEl) countEl.textContent = `${data.attendees.length} attendee${data.attendees.length !== 1 ? 's' : ''}`;
     }
   } catch (err) {
+    btn.disabled = false;
+    btn.textContent = 'Save';
     errEl.textContent = err.message;
     errEl.classList.remove('hidden');
-  } finally {
-    btn.disabled = false;
   }
 }
 
@@ -12012,6 +12816,17 @@ function buildGateRow(gate, dateInput, timeInput, cardEl) {
 
   saveBtn.addEventListener('click', async () => {
     errDiv.classList.add('hidden');
+
+    if (lastFlow != null && flowInput && flowInput.value.trim() === '') {
+      const _ra = await showReadingAlert('Incomplete Reading',
+        `<p><strong>Flow (cfs)</strong> was recorded last time (<strong>${lastFlow.toFixed(2)} cfs</strong>) but is now blank.</p>`,
+        [{ key: 'cancel', label: 'Cancel',             cls: 'btn-secondary' },
+         { key: 'fill',   label: 'Fill with Previous', cls: 'btn-primary'   },
+         { key: 'save',   label: 'Save Anyway',        cls: 'btn-save'      }]);
+      if (_ra === 'cancel') return;
+      if (_ra === 'fill') { flowInput.value = lastFlow.toFixed(2); return; }
+    }
+
     saveBtn.disabled = true;
     saveBtn.textContent = 'Saving…';
     const h  = parseFloat(headInput?.value);

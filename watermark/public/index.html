@@ -129,7 +129,7 @@
         Sign in with Microsoft 365
       </a>
       <div id="ms-login-error" class="error-msg hidden"></div>
-      <div class="login-version">v 2.53</div>
+      <div class="login-version">v 2.78</div>
     </div>
   </div>
 </div>
@@ -266,6 +266,10 @@
       <li class="nav-item" id="nav-admin-item"><button class="nav-btn" data-screen="admin">
         <span class="nav-btn-icon"><span class="app-icon" style="width:22px;height:22px;-webkit-mask-image:url(/marv-site/icons/icon-settings.svg);mask-image:url(/marv-site/icons/icon-settings.svg)"></span></span>
         Settings
+      </button></li>
+      <li class="nav-item hidden" id="nav-scada-item"><button class="nav-btn" data-screen="scada">
+        <span class="nav-btn-icon"><span class="app-icon" style="width:22px;height:22px;-webkit-mask-image:url(/marv-site/icons/icon-pumping-plant.svg);mask-image:url(/marv-site/icons/icon-pumping-plant.svg)"></span></span>
+        SCADA Dashboard
       </button></li>
       <li><button class="nav-btn" data-screen="hr">
         <span class="nav-btn-icon"><span class="app-icon" style="width:22px;height:22px;-webkit-mask-image:url(/marv-site/icons/icon-pm-records.svg);mask-image:url(/marv-site/icons/icon-pm-records.svg)"></span></span>
@@ -440,6 +444,13 @@
           </div>
           <span class="dash-label">Pesticides</span>
         </button>
+        <button class="dash-tile" id="dash-dirt-work-tile" data-screen="dirt-work">
+          <div class="dash-icon-wrap">
+            <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/icons/icon-dirt-work.svg);mask-image:url(/icons/icon-dirt-work.svg)"></span>
+          </div>
+          <span class="dash-label">Dirt Work</span>
+          <span class="maint-badge hidden" id="maint-badge-dirt-work">0</span>
+        </button>
       </div>
     </div>
 
@@ -469,6 +480,12 @@
             <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-usage.svg);mask-image:url(/marv-site/icons/icon-usage.svg)"></span>
           </div>
           <span class="dash-label">Charts</span>
+        </button>
+        <button class="dash-tile hidden" id="dash-scada-tile" data-screen="scada">
+          <div class="dash-icon-wrap">
+            <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-pumping-plant.svg);mask-image:url(/marv-site/icons/icon-pumping-plant.svg)"></span>
+          </div>
+          <span class="dash-label">SCADA Dashboard</span>
         </button>
       </div>
     </div>
@@ -633,10 +650,7 @@
         <input type="search" id="veh-filter-q" class="ctrl-input" placeholder="Search…">
       </div>
 
-      <!-- Record list -->
-      <div id="veh-record-list"></div>
-
-      <!-- New record form (collapsible) -->
+      <!-- New record form (collapsible, appears above list) -->
       <div id="veh-new-record-form" class="hidden">
       <div class="form-card">
         <div class="form-group">
@@ -746,6 +760,10 @@
         </div>
       </div>
       </div><!-- /veh-new-record-form -->
+
+      <!-- Record list -->
+      <div id="veh-record-list"></div>
+
     </div>
 
     <!-- Equipment Panel — fully functional -->
@@ -1108,6 +1126,90 @@
     </div><!-- /maint-panel-assigned -->
 
   </div><!-- /screen-maintenance -->
+
+  <!-- ── Dirt Work ────────────────────────────────────────────────────────── -->
+  <div id="screen-dirt-work" class="screen-content">
+    <div class="issue-toolbar">
+      <button class="btn btn-secondary btn-sm" id="dirt-show-resolved-btn">Show Resolved</button>
+      <button class="btn btn-save btn-sm" id="dirt-new-issue-btn">+ New Issue</button>
+    </div>
+
+    <div class="issue-filter-bar">
+      <select id="dirt-filter-pool" class="ctrl-select"><option value="">All Pools</option></select>
+      <select id="dirt-filter-type" class="ctrl-select"><option value="">All Types</option></select>
+      <input type="search" id="dirt-filter-q" class="ctrl-input" placeholder="Search…">
+    </div>
+
+    <div id="dirt-new-issue-form" class="form-card hidden">
+      <div class="two-col">
+        <div class="form-group">
+          <label>Pool</label>
+          <select id="dirt-issue-pool" class="ctrl-select">
+            <option value="">Select pool…</option>
+            <option value="1">Pool 1</option>
+            <option value="2">Pool 2</option>
+            <option value="3">Pool 3</option>
+            <option value="4">Pool 4</option>
+            <option value="5">Pool 5</option>
+            <option value="6">Pool 6</option>
+            <option value="7">Pool 7</option>
+            <option value="8">Pool 8</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Work Type</label>
+          <select id="dirt-issue-type" class="ctrl-select">
+            <option value="">Select type…</option>
+            <option value="Grading">Grading</option>
+            <option value="Washout">Washout</option>
+            <option value="Berm Work">Berm Work</option>
+            <option value="Vegetation Removal">Vegetation Removal</option>
+            <option value="Other">Other</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Description</label>
+        <textarea id="dirt-issue-desc" class="ctrl-textarea" rows="3" placeholder="Describe the issue…"></textarea>
+      </div>
+      <div class="form-group">
+        <label>Location Notes</label>
+        <input type="text" id="dirt-issue-location" class="ctrl-input" placeholder="e.g. Pool 3 – north berm">
+      </div>
+      <div class="form-group">
+        <label>Assigned To</label>
+        <select id="dirt-issue-assigned" class="ctrl-select"></select>
+      </div>
+      <div class="form-group">
+        <label>Reported Date</label>
+        <input type="date" id="dirt-issue-date" class="ctrl-input ctrl-input-sm">
+      </div>
+      <div class="form-group">
+        <label>GPS Location</label>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <button type="button" class="btn btn-secondary btn-sm" id="dirt-new-loc-btn">&#x1F4CD; Use My Location</button>
+          <button type="button" class="btn btn-secondary btn-sm hidden" id="dirt-new-map-btn">&#x1F5FA; View / Change on Map</button>
+          <span id="dirt-new-coords" style="font-size:0.78rem;color:var(--text-dim)"></span>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Photo(s)</label>
+        <button type="button" class="btn btn-secondary btn-sm" id="dirt-new-photo-btn">Add Photo(s)</button>
+        <div id="dirt-new-photo-list" style="margin-top:6px"></div>
+      </div>
+      <div class="form-group">
+        <label>Notes</label>
+        <textarea id="dirt-issue-notes" class="ctrl-textarea" rows="2" placeholder="Additional notes…"></textarea>
+      </div>
+      <div id="dirt-new-error" class="error-msg hidden"></div>
+      <div class="two-col">
+        <button class="btn btn-secondary" id="dirt-cancel-btn">Cancel</button>
+        <button class="btn btn-save" id="dirt-submit-btn">Submit Issue</button>
+      </div>
+    </div>
+
+    <div id="dirt-issue-list"></div>
+  </div><!-- /screen-dirt-work -->
 
   <!-- ── Pesticides ───────────────────────────────────────────────────────── -->
   <div id="screen-pesticides" class="screen-content">
@@ -1620,6 +1722,9 @@
         <button class="settings-menu-row" data-panel="gps-selector">
           <span>GPS Location Selector</span><span class="settings-chevron">›</span>
         </button>
+        <button class="settings-menu-row hidden" id="settings-scada-roles-row" data-panel="scada-roles">
+          <span>SCADA Access</span><span class="settings-chevron">›</span>
+        </button>
         <div class="settings-menu-label">Admin</div>
         <button class="settings-menu-row" data-panel="bugreports">
           <span>Bug Reports</span><span class="settings-chevron">›</span>
@@ -1735,7 +1840,7 @@
     <div id="settings-panel-appinfo" class="settings-panel hidden">
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 2.53</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 2.78</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>
@@ -1983,6 +2088,21 @@
         </div>
       </div>
       <button id="gps-sel-save-btn" class="btn btn-save" style="margin:0 16px 16px;width:calc(100% - 32px)">Save</button>
+    </div>
+
+    <!-- SCADA Access panel (admin) -->
+    <div id="settings-panel-scada-roles" class="settings-panel hidden">
+      <div class="settings-section">
+        <div class="settings-card">
+          <div class="settings-pad">
+            <p style="font-size:0.85rem;color:var(--text-dim);margin:0 0 14px">
+              Choose which roles can see and open the SCADA Dashboard. Admin always has access. Changes apply to other users the next time they sign in.
+            </p>
+            <div id="scada-roles-list"></div>
+          </div>
+        </div>
+      </div>
+      <button id="scada-roles-save-btn" class="btn btn-save" style="margin:0 16px 16px;width:calc(100% - 32px)">Save</button>
     </div>
 
     <div id="settings-panel-usermgmt" class="settings-panel hidden">
@@ -2407,6 +2527,14 @@
 
   </div><!-- /screen-charts -->
 
+  <!-- ── SCADA Dashboard ───────────────────────────────────────────────────── -->
+  <div id="screen-scada" class="screen-content">
+    <div id="scada-status-bar" class="scada-status-bar hidden"></div>
+    <div id="scada-body" class="scada-body">
+      <div class="placeholder-msg">Loading…</div>
+    </div>
+  </div><!-- /screen-scada -->
+
 </div><!-- /app-shell -->
 
 
@@ -2557,11 +2685,13 @@
 <div id="gps-map-modal" class="modal-overlay hidden">
   <div class="modal-card" style="width:calc(100% - 24px);max-width:none">
     <div class="modal-header">
-      <span>Photo Location</span>
+      <span id="gps-map-title">Photo Location</span>
       <button class="modal-close" id="gps-map-close">&#x2715;</button>
     </div>
+    <div id="gps-map-pick-hint" class="hidden" style="font-size:0.78rem;color:var(--text-dim);margin-bottom:6px">Tap map to move the pin to the correct location.</div>
     <div id="gps-map-container" style="height:min(520px,65vh);width:100%;border-radius:8px;overflow:hidden;margin-top:8px"></div>
     <div id="gps-map-coords" style="font-size:0.75rem;text-align:center;margin-top:6px;color:var(--text-dim)"></div>
+    <button id="gps-map-confirm" class="btn btn-save hidden" style="width:100%;margin-top:10px">Confirm Location</button>
   </div>
 </div>
 
@@ -2613,6 +2743,7 @@
 <div id="toast" class="toast hidden"></div>
 
 <script src="app.js"></script>
+<script src="scada.js"></script>
 <!-- Safety Meeting Sign-in Modal -->
 <div id="safety-signin-modal" class="modal-overlay hidden">
   <div class="modal-card safety-signin-card">

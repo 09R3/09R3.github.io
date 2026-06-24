@@ -1,5 +1,6 @@
-const CACHE = 'watermark-v2.53';
-const SHELL = ['/', '/app.js', '/style.css', '/manifest.json'];
+const CACHE = 'watermark-v2.78';
+const SHELL = ['/', '/app.js', '/scada.js', '/style.css', '/manifest.json',
+  '/vendor/chart.umd.js', '/vendor/chartjs-adapter-date-fns.bundle.min.js'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)));
@@ -32,6 +33,9 @@ self.addEventListener('message', e => {
 
 self.addEventListener('fetch', e => {
   const { pathname } = new URL(e.request.url);
+
+  // SCADA live stream (SSE) — never cache an open-ended stream; pass straight through
+  if (pathname === '/api/scada/stream') return;
 
   // App shell — cache first
   if (SHELL.includes(pathname) || pathname === '/') {

@@ -9,6 +9,7 @@ const fs           = require('fs');
 const multer       = require('multer');
 const XLSX         = require('xlsx');
 const msal         = require('@azure/msal-node');
+const { InfluxDB } = require('@influxdata/influxdb-client');
 
 // ── Microsoft Entra ID (Azure AD) ────────────────────────────────────────────
 const msalEnabled = !!(
@@ -30,13 +31,239 @@ if (msalEnabled) {
 // All roles with supervisor-level access (declared here so routes below can reference it)
 const SUPERVISOR_ROLES = ['supervisor', 'admin', 'water-planner'];
 
+// Default SCADA Dashboard access if the `scada_roles` app_setting is unset.
+// The live allow-list is admin-managed via Settings (see getScadaRoles).
+const SCADA_ROLES = ['admin'];
+
 const app = express();
 app.use(express.json());
 app.use(cookieParser());
 app.set('trust proxy', 1);
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ── File Uploads ──────────────────────────────────────────────────────────────
+// ── SCADA Dashboard (InfluxDB) ─────────────────────────────────────────────────
+// Reads live PLC data from InfluxDB (written by the Python pollers). The browser
+// never sees Influx tag paths — only the config tree below (with the tag-path
+// builders kept server-side). Influx connection comes from .env; if it's missing,
+// the /api/scada/* routes return 503 and the UI shows "source unavailable".
+const SCADA_CONFIG = (() => {
+  try { return JSON.parse(fs.readFileSync(path.join(__dirname, 'scada-config.json'), 'utf8')); }
+  catch (e) { console.warn('SCADA config not loaded:', e.message); return null; }
+})();
+const INFLUX_BUCKET = process.env.INFLUX_BUCKET || 'plc-data';
+
+let _influxQuery = null;
+function getInfluxQuery() {
+  if (_influxQuery) return _influxQuery;
+  const url = process.env.INFLUX_URL, token = process.env.INFLUX_TOKEN;
+  if (!url || !token) return null;
+  _influxQuery = new InfluxDB({ url, token }).getQueryApi(process.env.INFLUX_ORG || 'scada-org');
+  return _influxQuery;
+}
+
+// Every display tag-path the UI needs: sensors (X.SCL.PV) + per-pump bits.
+function scadaAllTagPaths(config) {
+  const sensors = config.defaultSensors || [];
+  const tags = [];
+  for (const site of config.sites) {
+    const siteSensors = site.sensors || sensors;
+    for (const sensor of siteSensors) tags.push(`${site.influxSite}.${sensor}.SCL.PV`);
+    for (const pump of site.pumps) {
+      tags.push(
+        `${site.influxSite}.${pump}.MTR.Cntrl.Run`,
+        `${site.influxSite}.${pump}.MTR.Cntrl.Fail`,
+        `${site.influxSite}.${pump}.MTR.Spd.SCL.PV`,
+        `${site.influxSite}.${pump}.HP`,
+        `${site.influxSite}.${pump}.SBVlv.Cntrl.Enable`,
+      );
+    }
+  }
+  return tags;
+}
+
+// Latest value per tag. Chunks of 20 avoid Flux's "program nested too deep" error.
+async function scadaGetCurrent(tagPaths) {
+  const qApi = getInfluxQuery();
+  if (!qApi) throw new Error('InfluxDB not configured');
+  const CHUNK = 20;
+  const result = {};
+  for (let i = 0; i < tagPaths.length; i += CHUNK) {
+    const chunk = tagPaths.slice(i, i + CHUNK);
+    const filter = chunk.map(t => `r.tag == "${t}"`).join(' or ');
+    const flux = `
+      from(bucket: "${INFLUX_BUCKET}")
+        |> range(start: -5m)
+        |> filter(fn: (r) => r._measurement == "plc_tags" and r._field == "value")
+        |> filter(fn: (r) => ${filter})
+        |> last()`;
+    for await (const { values, tableMeta } of qApi.iterateRows(flux)) {
+      const row = tableMeta.toObject(values);
+      result[row.tag] = { v: row._value, t: new Date(row._time).getTime() };
+    }
+  }
+  return result;
+}
+
+// Aggregated history for one tag. mean for analog, max for status bits.
+// Pick aggregation window automatically from span (targets ~200–300 points).
+function calcAggEvery(startMs, endMs) {
+  const hrs = (endMs - startMs) / 3600000;
+  if (hrs <= 2)       return '30s';
+  if (hrs <= 12)      return '2m';
+  if (hrs <= 48)      return '5m';
+  if (hrs <= 7 * 24)  return '30m';
+  if (hrs <= 30 * 24) return '2h';
+  return '6h';
+}
+
+// rangeOpts: preset string ('1h'…'30d') OR { start: ISO, end: ISO } for custom.
+async function scadaGetHistory(tagPath, rangeOpts) {
+  const qApi = getInfluxQuery();
+  if (!qApi) throw new Error('InfluxDB not configured');
+  const isStatus = /\.(Run|Fail|Enable)$/.test(tagPath);
+  let rangeClause, every;
+  if (typeof rangeOpts === 'object') {
+    const s = new Date(rangeOpts.start); const e = new Date(rangeOpts.end);
+    if (isNaN(s) || isNaN(e)) throw new Error('invalid custom range');
+    rangeClause = `range(start: ${s.toISOString()}, stop: ${e.toISOString()})`;
+    every = calcAggEvery(s.getTime(), e.getTime());
+  } else {
+    const startMap = { '1h':'-1h','6h':'-6h','24h':'-24h','7d':'-7d','30d':'-30d' };
+    const everyMap = { '1h':'30s','6h':'2m','24h':'5m','7d':'30m','30d':'2h' };
+    rangeClause = `range(start: ${startMap[rangeOpts] || '-1h'})`;
+    every = everyMap[rangeOpts] || '30s';
+  }
+  const flux = `
+    from(bucket: "${INFLUX_BUCKET}")
+      |> ${rangeClause}
+      |> filter(fn: (r) => r._measurement == "plc_tags" and r.tag == "${tagPath}" and r._field == "value")
+      |> aggregateWindow(every: ${every}, fn: ${isStatus ? 'max' : 'mean'}, createEmpty: false)`;
+  const points = [];
+  for await (const { values, tableMeta } of qApi.iterateRows(flux)) {
+    const row = tableMeta.toObject(values);
+    points.push([new Date(row._time).getTime(), row._value]);
+  }
+  return points;
+}
+
+async function scadaGetRuntime(tagPaths, rangeOpts) {
+  const qApi = getInfluxQuery();
+  if (!qApi) throw new Error('InfluxDB not configured');
+  let rangeClause;
+  if (typeof rangeOpts === 'object') {
+    const s = new Date(rangeOpts.start); const e = new Date(rangeOpts.end);
+    if (isNaN(s) || isNaN(e)) throw new Error('invalid custom range');
+    rangeClause = `range(start: ${s.toISOString()}, stop: ${e.toISOString()})`;
+  } else {
+    const startMap = { '1h':'-1h','6h':'-6h','24h':'-24h','7d':'-7d','30d':'-30d' };
+    rangeClause = `range(start: ${startMap[rangeOpts] || '-24h'})`;
+  }
+  const result = {};
+  const CHUNK = 10;
+  for (let i = 0; i < tagPaths.length; i += CHUNK) {
+    const chunk = tagPaths.slice(i, i + CHUNK);
+    const filter = chunk.map(t => `r.tag == "${t}"`).join(' or ');
+    const flux = `
+      from(bucket: "${INFLUX_BUCKET}")
+        |> ${rangeClause}
+        |> filter(fn: (r) => r._measurement == "plc_tags" and r._field == "value")
+        |> filter(fn: (r) => ${filter})
+        |> integral(unit: 1s)`;
+    for await (const { values, tableMeta } of qApi.iterateRows(flux)) {
+      const row = tableMeta.toObject(values);
+      if (row.tag) result[row.tag] = (row._value || 0) / 3600;
+    }
+  }
+  return result;
+}
+
+// ── Power monitoring (power_meters bucket) ─────────────────────────────────────
+// Power data lives in its own bucket/measurement, tagged by meter_id (one per
+// pumping plant). Same InfluxDB connection as the SCADA pollers. All field names,
+// units, and thresholds are config-driven (scada-config.json → power) so the
+// meter schema can change without touching code.
+const POWER_CFG     = SCADA_CONFIG?.power || null;
+const POWER_BUCKET  = POWER_CFG?.bucket || process.env.POWER_BUCKET || 'power_meters';
+const POWER_MEAS    = POWER_CFG?.measurement || 'power_reading';
+
+// Power data is in its own bucket, possibly behind its own token/org/instance.
+// POWER_INFLUX_* override the SCADA connection when set; otherwise we reuse the
+// SCADA connection (same instance, just a different bucket). This covers all
+// cases: same token across buckets, a bucket-scoped power token, or a separate
+// InfluxDB entirely.
+let _powerInfluxQuery = null;
+function getPowerInfluxQuery() {
+  if (_powerInfluxQuery) return _powerInfluxQuery;
+  const url   = process.env.POWER_INFLUX_URL   || process.env.INFLUX_URL;
+  const token = process.env.POWER_INFLUX_TOKEN || process.env.INFLUX_TOKEN;
+  if (!url || !token) return null;
+  const org   = process.env.POWER_INFLUX_ORG   || process.env.INFLUX_ORG || 'scada-org';
+  _powerInfluxQuery = new InfluxDB({ url, token }).getQueryApi(org);
+  return _powerInfluxQuery;
+}
+
+function powerMeterIds() { return (POWER_CFG?.sites || []).map(s => s.meterId); }
+// Every field referenced by any group + fieldMeta — the full allow-list.
+function powerKnownFields() {
+  const set = new Set();
+  for (const g of (POWER_CFG?.groups || [])) (g.members || []).forEach(m => set.add(m));
+  for (const k of Object.keys(POWER_CFG?.fieldMeta || {})) set.add(k);
+  return set;
+}
+
+// Latest value of every field for the given meters. last() returns one point per
+// (meter_id, field) series, so no per-field filter is needed (avoids Flux depth limit).
+async function powerGetCurrent(meterIds) {
+  const qApi = getPowerInfluxQuery();
+  if (!qApi) throw new Error('InfluxDB not configured');
+  const result = {};
+  if (!meterIds.length) return result;
+  const meterFilter = meterIds.map(m => `r.meter_id == "${m}"`).join(' or ');
+  const flux = `
+    from(bucket: "${POWER_BUCKET}")
+      |> range(start: -15m)
+      |> filter(fn: (r) => r._measurement == "${POWER_MEAS}")
+      |> filter(fn: (r) => ${meterFilter})
+      |> last()`;
+  for await (const { values, tableMeta } of qApi.iterateRows(flux)) {
+    const row = tableMeta.toObject(values);
+    (result[row.meter_id] ||= {})[row._field] = { v: row._value, t: new Date(row._time).getTime() };
+  }
+  return result;
+}
+
+// Aggregated history for one meter, grouped by field → { field: [[t,v]] }.
+async function powerGetHistory(meterId, fields, rangeOpts) {
+  const qApi = getPowerInfluxQuery();
+  if (!qApi) throw new Error('InfluxDB not configured');
+  let rangeClause, every;
+  if (typeof rangeOpts === 'object') {
+    const s = new Date(rangeOpts.start), e = new Date(rangeOpts.end);
+    if (isNaN(s) || isNaN(e)) throw new Error('invalid custom range');
+    rangeClause = `range(start: ${s.toISOString()}, stop: ${e.toISOString()})`;
+    every = calcAggEvery(s.getTime(), e.getTime());
+  } else {
+    const startMap = { '15m':'-15m','1h':'-1h','6h':'-6h','24h':'-24h','7d':'-7d','30d':'-30d' };
+    const everyMap = { '15m':'10s','1h':'30s','6h':'2m','24h':'5m','7d':'30m','30d':'2h' };
+    rangeClause = `range(start: ${startMap[rangeOpts] || '-24h'})`;
+    every = everyMap[rangeOpts] || '5m';
+  }
+  const fieldFilter = fields.map(f => `r._field == "${f}"`).join(' or ');
+  const flux = `
+    from(bucket: "${POWER_BUCKET}")
+      |> ${rangeClause}
+      |> filter(fn: (r) => r._measurement == "${POWER_MEAS}" and r.meter_id == "${meterId}")
+      |> filter(fn: (r) => ${fieldFilter})
+      |> aggregateWindow(every: ${every}, fn: mean, createEmpty: false)`;
+  const series = {};
+  for await (const { values, tableMeta } of qApi.iterateRows(flux)) {
+    const row = tableMeta.toObject(values);
+    (series[row._field] ||= []).push([new Date(row._time).getTime(), row._value]);
+  }
+  return series;
+}
+
+
 const UPLOADS_ROOT = process.env.UPLOADS_PATH || '/app/uploads';
 fs.mkdirSync(UPLOADS_ROOT, { recursive: true });
 
@@ -608,6 +835,20 @@ app.get('/api/users/list', async (req, res) => {
   }
 });
 
+// Distinct active roles — used to populate the "assign to a role" dropdown
+app.get('/api/roles/list', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT DISTINCT role FROM users
+       WHERE is_active = true AND role IS NOT NULL AND role <> ''
+       ORDER BY role`
+    );
+    res.json(rows.map(r => r.role));
+  } catch (err) {
+    res.json([]);
+  }
+});
+
 // ── Sites ─────────────────────────────────────────────────────────────────────
 app.get('/api/sites', requireAuth, async (req, res) => {
   try {
@@ -1055,6 +1296,7 @@ app.get('/api/wells/kf', requireAuth, async (req, res) => {
         prev.reading_date    AS last_reading_date,
         prev.dtw_reading     AS last_dtw,
         prev.plopper_sounder AS last_method,
+        prev.wet_dry_moist   AS last_wet_dry_moist,
         (SELECT notes FROM readings_kf_monthly
          WHERE well_id = w.well_id AND notes IS NOT NULL AND notes != ''
          ORDER BY reading_date DESC, reading_time DESC LIMIT 1) AS last_notes,
@@ -1064,7 +1306,7 @@ app.get('/api/wells/kf', requireAuth, async (req, res) => {
       FROM wells w
       LEFT JOIN well_sets ws ON w.kf_set_id = ws.set_id
       LEFT JOIN LATERAL (
-        SELECT kf_reading_id, reading_date, dtw_reading, plopper_sounder
+        SELECT kf_reading_id, reading_date, dtw_reading, plopper_sounder, wet_dry_moist
         FROM readings_kf_monthly
         WHERE well_id = w.well_id
         ORDER BY reading_date DESC, reading_time DESC
@@ -1132,20 +1374,20 @@ app.get('/api/wells/operational', requireAuth, async (req, res) => {
 app.post('/api/readings/kf-monthly', requireAuth, async (req, res) => {
   const {
     well_id, reading_date, reading_time,
-    dtw_reading, well_on_off, plopper_sounder, operator, notes, access,
+    dtw_reading, well_on_off, plopper_sounder, wet_dry_moist, operator, notes, access,
   } = req.body;
-  if (!well_id || dtw_reading == null) {
-    return res.status(400).json({ error: 'well_id and dtw_reading are required' });
+  if (!well_id) {
+    return res.status(400).json({ error: 'well_id is required' });
   }
   try {
     const { rows } = await pool.query(
       `INSERT INTO readings_kf_monthly
-         (well_id, common_name, reading_date, reading_time, dtw_reading, well_on_off, plopper_sounder, operator, notes)
-       SELECT $1, common_name, $2, $3, $4, $5, $6, $7, $8
+         (well_id, common_name, reading_date, reading_time, dtw_reading, well_on_off, plopper_sounder, wet_dry_moist, operator, notes)
+       SELECT $1, common_name, $2, $3, $4, $5, $6, $7, $8, $9
        FROM wells WHERE well_id = $1
        RETURNING kf_reading_id`,
-      [well_id, reading_date, reading_time, dtw_reading,
-       well_on_off ?? null, plopper_sounder || null, operator || null, notes || null]
+      [well_id, reading_date, reading_time, dtw_reading ?? null,
+       well_on_off ?? null, plopper_sounder || null, wet_dry_moist || null, operator || null, notes || null]
     );
     if (access === 'Tube' || access === 'Plug') {
       await pool.query(`UPDATE wells SET access = $1 WHERE well_id = $2`, [access, well_id]);
@@ -2414,24 +2656,32 @@ app.patch('/api/equipment-issues/:id', requireAuth, async (req, res) => {
 // ── My Assignments ────────────────────────────────────────────────────────────
 app.get('/api/my-assignments', requireAuth, async (req, res) => {
   const full_name = req.user.full_name;
+  // Items can be assigned to a person (full_name) or to a role. Role assignments
+  // are stored as "role:<rolename>", so everyone with that role sees them.
+  const roleTag = 'role:' + (req.user.role || '');
   try {
     const { rows } = await pool.query(`
       SELECT 'well' AS issue_type, issue_id, well_name AS entity_name,
              description, status, reported_date, created_at
       FROM well_issues
-      WHERE assigned_to ILIKE $1 AND status != 'resolved'
+      WHERE (assigned_to ILIKE $1 OR lower(assigned_to) = lower($2)) AND status != 'resolved'
       UNION ALL
       SELECT 'building', issue_id, building_name,
              description, status, reported_date, created_at
       FROM building_issues
-      WHERE assigned_to ILIKE $1 AND status != 'resolved'
+      WHERE (assigned_to ILIKE $1 OR lower(assigned_to) = lower($2)) AND status != 'resolved'
       UNION ALL
       SELECT 'equipment', issue_id, equipment_name,
              description, status, reported_date, created_at
       FROM equipment_issues
-      WHERE assigned_to ILIKE $1 AND status != 'resolved'
+      WHERE (assigned_to ILIKE $1 OR lower(assigned_to) = lower($2)) AND status != 'resolved'
+      UNION ALL
+      SELECT 'dirt_work', issue_id, COALESCE('Pool ' || pool, work_type) AS entity_name,
+             description, status, reported_date, created_at
+      FROM dirt_work_issues
+      WHERE (assigned_to ILIKE $1 OR lower(assigned_to) = lower($2)) AND status != 'resolved'
       ORDER BY created_at DESC
-    `, [full_name]);
+    `, [full_name, roleTag]);
     res.json(rows);
   } catch (err) {
     handleErr(res, err);
@@ -2502,6 +2752,76 @@ app.patch('/api/canal-issues/:id', requireAuth, async (req, res) => {
   } catch (err) {
     handleErr(res, err);
   }
+});
+
+// ── Dirt Work Issues ──────────────────────────────────────────────────────────
+app.get('/api/dirt-work-issues', requireAuth, async (req, res) => {
+  const includeResolved = req.query.include_resolved === 'true';
+  try {
+    const { rows } = await pool.query(`
+      SELECT dw.*,
+             u.full_name AS entered_by_full_name,
+             (SELECT COUNT(*) FROM maintenance_attachments
+              WHERE table_name = 'dirt_work_issues' AND record_id = dw.issue_id) AS attachment_count
+      FROM dirt_work_issues dw
+      LEFT JOIN users u ON u.username = dw.entered_by
+      WHERE $1 OR dw.status != 'resolved'
+      ORDER BY
+        CASE dw.status WHEN 'open' THEN 0 WHEN 'in_progress' THEN 1 ELSE 2 END,
+        dw.reported_date DESC NULLS LAST
+    `, [includeResolved]);
+    res.json(rows);
+  } catch (err) { handleErr(res, err); }
+});
+
+app.post('/api/dirt-work-issues', requireAuth, async (req, res) => {
+  const { pool: poolNum, work_type, description, location_notes,
+          reported_date, assigned_to, notes, gps_lat, gps_lon } = req.body;
+  const entered_by = req.user.username;
+  try {
+    const { rows } = await pool.query(`
+      INSERT INTO dirt_work_issues
+        (pool, work_type, description, location_notes, reported_date,
+         assigned_to, notes, entered_by, gps_lat, gps_lon)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+      RETURNING issue_id
+    `, [poolNum || null, work_type || null, description || null,
+        location_notes || null, reported_date || null,
+        assigned_to || null, notes || null, entered_by,
+        gps_lat != null ? parseFloat(gps_lat) : null,
+        gps_lon != null ? parseFloat(gps_lon) : null]);
+    res.json(rows[0]);
+  } catch (err) { handleErr(res, err); }
+});
+
+app.patch('/api/dirt-work-issues/:id', requireAuth, async (req, res) => {
+  const { id } = req.params;
+  const { status, action_taken, resolution_notes, po_number, cost,
+          assigned_to, notes, gps_lat, gps_lon } = req.body;
+  try {
+    await pool.query(`
+      UPDATE dirt_work_issues SET
+        status           = COALESCE($1, status),
+        action_taken     = COALESCE($2, action_taken),
+        resolution_notes = COALESCE($3, resolution_notes),
+        po_number        = COALESCE($4, po_number),
+        cost             = COALESCE($5, cost),
+        assigned_to      = COALESCE($6, assigned_to),
+        notes            = COALESCE($7, notes),
+        resolved_date    = CASE WHEN $1 = 'resolved' THEN NOW()
+                                WHEN $1 IN ('open','in_progress') THEN NULL
+                                ELSE resolved_date END,
+        gps_lat          = CASE WHEN $9::boolean THEN $10::double precision ELSE gps_lat END,
+        gps_lon          = CASE WHEN $9::boolean THEN $11::double precision ELSE gps_lon END,
+        updated_at       = NOW()
+      WHERE issue_id = $8
+    `, [status || null, action_taken ?? null, resolution_notes ?? null,
+        po_number ?? null, cost ?? null, assigned_to ?? null, notes ?? null, id,
+        gps_lat != null && gps_lon != null,
+        gps_lat != null ? parseFloat(gps_lat) : null,
+        gps_lon != null ? parseFloat(gps_lon) : null]);
+    res.json({ ok: true });
+  } catch (err) { handleErr(res, err); }
 });
 
 // ── Equipment Swap Units (unified, by category) ───────────────────────────────
@@ -2680,7 +3000,9 @@ app.get('/api/maintenance/badge-counts', requireAuth, async (req, res) => {
         (SELECT COUNT(*) FROM maintenance_vehicles
          WHERE status IN ('open','in-progress')) AS vehicles,
         (SELECT COUNT(*) FROM canal_issues
-         WHERE status IN ('open','in_progress')) AS canal
+         WHERE status IN ('open','in_progress')) AS canal,
+        (SELECT COUNT(*) FROM dirt_work_issues
+         WHERE status IN ('open','in_progress')) AS dirt_work
     `);
     const counts = rows[0];
     res.json({
@@ -2689,6 +3011,7 @@ app.get('/api/maintenance/badge-counts', requireAuth, async (req, res) => {
       wells:     parseInt(counts.wells)     || 0,
       vehicles:  parseInt(counts.vehicles)  || 0,
       canal:     parseInt(counts.canal)     || 0,
+      dirt_work: parseInt(counts.dirt_work) || 0,
     });
   } catch (err) {
     handleErr(res, err);
@@ -4523,6 +4846,178 @@ app.delete('/api/safety-meetings/:id/attendees/:aid', requireAuth, requireRole(.
       [req.params.aid, req.params.id]);
     res.json({ ok: true });
   } catch (err) { handleErr(res, err); }
+});
+
+// ── SCADA Dashboard API ─────────────────────────────────────────────────────
+// Access is driven by the `scada_roles` app_setting (admin-managed). Admin is
+// always allowed so the setting can never lock everyone out. Live data is
+// network-only.
+
+let _scadaRolesCache = null, _scadaRolesCacheAt = 0;
+async function getScadaRoles() {
+  if (_scadaRolesCache && Date.now() - _scadaRolesCacheAt < 10000) return _scadaRolesCache;
+  let roles = [...SCADA_ROLES]; // default ['admin']
+  try {
+    const { rows } = await pool.query(`SELECT value FROM app_settings WHERE key = 'scada_roles'`);
+    if (rows[0]?.value != null) {
+      roles = rows[0].value.split(',').map(s => s.trim()).filter(Boolean);
+    }
+  } catch { /* fall back to default */ }
+  if (!roles.includes('admin')) roles.push('admin');
+  _scadaRolesCache = roles; _scadaRolesCacheAt = Date.now();
+  return roles;
+}
+
+// Dynamic gate — reads the current allow-list (cached ~10s) per request.
+function requireScadaAccess(req, res, next) {
+  getScadaRoles()
+    .then(roles => roles.includes(req.user.role)
+      ? next()
+      : res.status(403).json({ error: 'Insufficient permissions' }))
+    .catch(err => handleErr(res, err));
+}
+
+// Read current SCADA allow-list (any authed user — drives nav visibility).
+app.get('/api/settings/scada-roles', requireAuth, async (req, res) => {
+  try { res.json({ roles: await getScadaRoles() }); } catch (err) { handleErr(res, err); }
+});
+
+// Update SCADA allow-list (admin only). 'admin' is always forced in.
+app.put('/api/settings/scada-roles', requireAuth, requireRole('admin'), async (req, res) => {
+  let roles = Array.isArray(req.body.roles) ? req.body.roles.map(String).filter(Boolean) : [];
+  if (!roles.includes('admin')) roles.push('admin');
+  try {
+    await pool.query(
+      `INSERT INTO app_settings (key, value, updated_at) VALUES ('scada_roles', $1, NOW())
+       ON CONFLICT (key) DO UPDATE SET value=$1, updated_at=NOW()`, [roles.join(',')]);
+    _scadaRolesCache = null; // invalidate so the change takes effect immediately
+    res.json({ ok: true, roles });
+  } catch (err) { handleErr(res, err); }
+});
+
+// Site/tag tree for the frontend. No Influx tag paths leak — only display config.
+app.get('/api/scada/config', requireAuth, requireScadaAccess, (req, res) => {
+  if (!SCADA_CONFIG) return res.status(503).json({ error: 'SCADA not configured' });
+  res.json(SCADA_CONFIG);
+});
+
+// Latest value of every display tag.
+app.get('/api/scada/current', requireAuth, requireScadaAccess, async (req, res) => {
+  if (!SCADA_CONFIG) return res.status(503).json({ error: 'SCADA not configured' });
+  try {
+    res.json(await scadaGetCurrent(scadaAllTagPaths(SCADA_CONFIG)));
+  } catch (err) { handleErr(res, err); }
+});
+
+// History endpoint. Supports preset ranges and custom start/end.
+// Single:   ?tag=...&range=1h  OR  ?tag=...&start=ISO&end=ISO
+// Multi:    ?tags=a,b&range=7d  OR  ?tags=a,b&start=ISO&end=ISO  → { series }
+app.get('/api/scada/history', requireAuth, requireScadaAccess, async (req, res) => {
+  const { tag, tags, range, start, end } = req.query;
+  const rangeOpts = (start && end) ? { start: String(start), end: String(end) } : String(range || '1h');
+  try {
+    if (tags) {
+      const list = String(tags).split(',').map(s => s.trim()).filter(Boolean).slice(0, 8);
+      const series = {};
+      await Promise.all(list.map(async t => { series[t] = await scadaGetHistory(t, rangeOpts); }));
+      return res.json({ series });
+    }
+    if (!tag) return res.status(400).json({ error: 'tag required' });
+    res.json(await scadaGetHistory(String(tag), rangeOpts));
+  } catch (err) { handleErr(res, err); }
+});
+
+// Run-hour totals for all pumps at one site (used by Runtime tab).
+// Uses InfluxDB integral(unit:1s) on Run tags — no extra DB needed.
+app.get('/api/scada/runtime', requireAuth, requireScadaAccess, async (req, res) => {
+  if (!SCADA_CONFIG) return res.status(503).json({ error: 'SCADA not configured' });
+  const { site: influxSite, range, start, end } = req.query;
+  if (!influxSite) return res.status(400).json({ error: 'site required' });
+  const siteConfig = SCADA_CONFIG.sites.find(s => s.influxSite === String(influxSite));
+  if (!siteConfig) return res.status(404).json({ error: 'site not found' });
+  const rangeOpts = (start && end) ? { start: String(start), end: String(end) } : String(range || '24h');
+  const runPaths = siteConfig.pumps.map(p => `${influxSite}.${p}.MTR.Cntrl.Run`);
+  try {
+    const raw = await scadaGetRuntime(runPaths, rangeOpts);
+    const result = {};
+    for (const p of siteConfig.pumps) result[p] = raw[`${influxSite}.${p}.MTR.Cntrl.Run`] ?? 0;
+    res.json(result);
+  } catch (err) { handleErr(res, err); }
+});
+
+// Reverse-flow hours for all pumps at one site (siphon breaker O_Cmd integral).
+app.get('/api/scada/runtime-reverse', requireAuth, requireScadaAccess, async (req, res) => {
+  if (!SCADA_CONFIG) return res.status(503).json({ error: 'SCADA not configured' });
+  const { site: influxSite, range, start, end } = req.query;
+  if (!influxSite) return res.status(400).json({ error: 'site required' });
+  const siteConfig = SCADA_CONFIG.sites.find(s => s.influxSite === String(influxSite));
+  if (!siteConfig) return res.status(404).json({ error: 'site not found' });
+  const rangeOpts = (start && end) ? { start: String(start), end: String(end) } : String(range || '24h');
+  const siphonPaths = siteConfig.pumps.map(p => `${influxSite}.${p}.SBVlv.Cntrl.O_Cmd`);
+  const motorPaths  = siteConfig.pumps.map(p => `${influxSite}.${p}.MTR.Cntrl.Run`);
+  try {
+    const [rawSiphon, rawMotor] = await Promise.all([
+      scadaGetRuntime(siphonPaths, rangeOpts),
+      scadaGetRuntime(motorPaths, rangeOpts),
+    ]);
+    const result = {};
+    for (const p of siteConfig.pumps) {
+      const siphon = rawSiphon[`${influxSite}.${p}.SBVlv.Cntrl.O_Cmd`] ?? 0;
+      const motor  = rawMotor[`${influxSite}.${p}.MTR.Cntrl.Run`] ?? 0;
+      result[p] = Math.max(0, siphon - motor);
+    }
+    res.json(result);
+  } catch (err) { handleErr(res, err); }
+});
+
+// ── Power monitoring API ─────────────────────────────────────────────────────
+// Latest value of every power field, for one meter (?meter=) or all meters.
+// Shape: { meterId: { field: { v, t } } }.
+app.get('/api/scada/power/current', requireAuth, requireScadaAccess, async (req, res) => {
+  if (!POWER_CFG) return res.status(503).json({ error: 'Power monitoring not configured' });
+  const all = powerMeterIds();
+  let meters = all;
+  if (req.query.meter) {
+    meters = all.filter(m => m === String(req.query.meter));
+    if (!meters.length) return res.status(404).json({ error: 'meter not found' });
+  }
+  try {
+    res.json(await powerGetCurrent(meters));
+  } catch (err) { handleErr(res, err); }
+});
+
+// History for one meter. ?meter=...&fields=P1,P2,Psum_kW&range=24h (or &start=&end=).
+// Returns { series: { field: [[t,v]] } }. Meter + fields validated against config.
+app.get('/api/scada/power/history', requireAuth, requireScadaAccess, async (req, res) => {
+  if (!POWER_CFG) return res.status(503).json({ error: 'Power monitoring not configured' });
+  const { meter, fields, range, start, end } = req.query;
+  if (!meter || !powerMeterIds().includes(String(meter)))
+    return res.status(400).json({ error: 'valid meter required' });
+  const known = powerKnownFields();
+  const fieldList = String(fields || '').split(',').map(s => s.trim())
+    .filter(f => known.has(f)).slice(0, 12);
+  if (!fieldList.length) return res.status(400).json({ error: 'valid fields required' });
+  const rangeOpts = (start && end) ? { start: String(start), end: String(end) } : String(range || '24h');
+  try {
+    res.json({ series: await powerGetHistory(String(meter), fieldList, rangeOpts) });
+  } catch (err) { handleErr(res, err); }
+});
+
+// SSE: pushes latest values every pollMs. One interval per connection.
+app.get('/api/scada/stream', requireAuth, requireScadaAccess, (req, res) => {
+  if (!SCADA_CONFIG) return res.status(503).end();
+  res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+  res.flushHeaders();
+  const tagPaths = scadaAllTagPaths(SCADA_CONFIG);
+  const push = async () => {
+    try {
+      const data = await scadaGetCurrent(tagPaths);
+      res.write(`event: current\ndata: ${JSON.stringify(data)}\n\n`);
+    } catch { res.write('event: sourceError\ndata: {}\n\n'); }
+  };
+  push();
+  const iv = setInterval(push, SCADA_CONFIG.pollMs || 5000);
+  req.on('close', () => clearInterval(iv));
 });
 
 // ── Start ─────────────────────────────────────────────────────────────────────
