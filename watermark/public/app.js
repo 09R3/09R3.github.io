@@ -6100,11 +6100,12 @@ el('exif-back-btn').addEventListener('click', () => {
   el('exif-tool-overlay').classList.add('hidden');
 });
 
-// ── SCADA Scaling Test tool (4-20mA tester) ───────────────────────────────────
-// Reads each analog sensor's live .SCL.Raw signal, applies a user-entered
-// Min/Max/Offset 4-20mA scaling, and shows the result next to the live PV so
-// scaling can be dialed in against real-time numbers. Scaling inputs persist
-// per tag in localStorage. Read-only — never writes back to the PLC.
+// ── SCADA Scaling Test tool (raw-ADC tester) ──────────────────────────────────
+// Reads each analog sensor's live .SCL.Raw ADC count, applies a user-entered
+// Min/Max/Offset linear scaling between the configurable 4mA/20mA raw endpoints,
+// and shows the result next to the live PV so scaling can be dialed in against
+// real-time numbers. Inputs persist in localStorage. Read-only — never writes
+// back to the PLC.
 (function () {
   const SENSORS = [
     { key: 'FBLvl',  label: 'Forebay',    unit: 'ft'  },
@@ -6113,7 +6114,18 @@ el('exif-back-btn').addEventListener('click', () => {
     { key: 'TRLvl',  label: 'Trash Rack', unit: 'ft'  },
     { key: 'AirPSI', label: 'Air Press',  unit: 'psi' },
   ];
+  // Common Allen-Bradley raw-count range for a 4-20mA analog input.
+  const DEF_RAW4 = 6242, DEF_RAW20 = 31208;
   let config = null, plantNum = 1, pollTimer = null;
+
+  function rawEndpoints() {
+    const r4  = Number(localStorage.getItem('scadatestRaw4'));
+    const r20 = Number(localStorage.getItem('scadatestRaw20'));
+    return {
+      raw4:  isFinite(r4)  && localStorage.getItem('scadatestRaw4')  != null && localStorage.getItem('scadatestRaw4')  !== '' ? r4  : DEF_RAW4,
+      raw20: isFinite(r20) && localStorage.getItem('scadatestRaw20') != null && localStorage.getItem('scadatestRaw20') !== '' ? r20 : DEF_RAW20,
+    };
+  }
 
   function scaleKey(tag)   { return 'scadatestScale:' + tag; }
   function getScale(tag) {
@@ -6122,12 +6134,14 @@ el('exif-back-btn').addEventListener('click', () => {
   }
   function setScale(tag, s) { localStorage.setItem(scaleKey(tag), JSON.stringify(s)); }
 
-  // Classic 4-20mA linear scaling. Returns null if inputs are incomplete.
+  // Linear raw-ADC scaling between the 4mA/20mA count endpoints.
+  // Returns null if inputs are incomplete or the span is degenerate.
   function scale(raw, min, max, offset) {
     if (raw == null || min === '' || max === '' || min == null || max == null) return null;
     const r = Number(raw), mn = Number(min), mx = Number(max), off = Number(offset) || 0;
-    if (!isFinite(r) || !isFinite(mn) || !isFinite(mx)) return null;
-    return mn + ((r - 4) / 16) * (mx - mn) + off;
+    const { raw4, raw20 } = rawEndpoints();
+    if (!isFinite(r) || !isFinite(mn) || !isFinite(mx) || raw20 === raw4) return null;
+    return mn + ((r - raw4) / (raw20 - raw4)) * (mx - mn) + off;
   }
 
   function plantSites(n) {
@@ -6160,7 +6174,7 @@ el('exif-back-btn').addEventListener('click', () => {
       <div class="scadatest-table-wrap">
         <table class="scadatest-table">
           <thead><tr>
-            <th>Signal</th><th>Raw mA</th><th>Min</th><th>Max</th><th>Offset</th><th>Output</th><th>Live PV</th>
+            <th>Signal</th><th>Raw ADC</th><th>Min</th><th>Max</th><th>Offset</th><th>Output</th><th>Live PV</th>
           </tr></thead>
           <tbody>${SENSORS.map(sn => rowHtml(site, sn)).join('')}</tbody>
         </table>
@@ -6210,10 +6224,15 @@ el('exif-back-btn').addEventListener('click', () => {
       const pv  = data[tr.dataset.pvTag]?.v;
       const rawCell = tr.querySelector('[data-cell="raw"]');
       rawCell._raw = raw ?? null;
-      rawCell.textContent = raw == null ? '—' : Number(raw).toFixed(3);
+      rawCell.textContent = raw == null ? '—' : Number(raw).toFixed(Number.isInteger(raw) ? 0 : 1);
       tr.querySelector('[data-cell="pv"]').textContent = pv == null ? '—' : Number(pv).toFixed(2);
       recomputeRow(tr);
     });
+  }
+
+  function recomputeAll() {
+    el('scadatest-tables').querySelectorAll('tr[data-raw-tag]').forEach(recomputeRow);
+    updateCalc();
   }
 
   function updateCalc() {
@@ -6228,6 +6247,9 @@ el('exif-back-btn').addEventListener('click', () => {
 
   window.openScadaTestTool = async function () {
     el('scadatest-tool-overlay').classList.remove('hidden');
+    const { raw4, raw20 } = rawEndpoints();
+    el('scadatest-raw4').value  = raw4;
+    el('scadatest-raw20').value = raw20;
     if (!config) {
       el('scadatest-tables').innerHTML = '<div class="scadatest-site-hdr">Loading…</div>';
       try { config = await api('GET', '/api/scada/config'); }
@@ -6246,6 +6268,16 @@ el('exif-back-btn').addEventListener('click', () => {
   el('scadatest-back-btn').addEventListener('click', () => {
     el('scadatest-tool-overlay').classList.add('hidden');
     clearInterval(pollTimer); pollTimer = null;
+  });
+
+  // Global ADC endpoints — persist and recompute every row + the calculator.
+  el('scadatest-raw4').addEventListener('input', () => {
+    localStorage.setItem('scadatestRaw4', el('scadatest-raw4').value);
+    recomputeAll();
+  });
+  el('scadatest-raw20').addEventListener('input', () => {
+    localStorage.setItem('scadatestRaw20', el('scadatest-raw20').value);
+    recomputeAll();
   });
 
   ['raw','min','max','offset'].forEach(f =>

@@ -129,7 +129,7 @@
         Sign in with Microsoft 365
       </a>
       <div id="ms-login-error" class="error-msg hidden"></div>
-      <div class="login-version">v 2.81</div>
+      <div class="login-version">v 2.82</div>
     </div>
   </div>
 </div>
@@ -1840,7 +1840,7 @@
     <div id="settings-panel-appinfo" class="settings-panel hidden">
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 2.81</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 2.82</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>
@@ -1976,7 +1976,12 @@
         <span class="uptool-nav-title">SCADA Scaling Test</span>
       </div>
       <div class="uptool-body">
-        <div class="scadatest-intro">4-20&nbsp;mA scaling tester. Output = Min + (Raw − 4) / 16 × (Max − Min) + Offset.</div>
+        <div class="scadatest-intro">Raw-ADC scaling tester. Output = Min + (Raw − Raw@4mA) / (Raw@20mA − Raw@4mA) × (Max − Min) + Offset.</div>
+        <div class="scadatest-rawrange">
+          <span class="scadatest-rawrange-lbl">ADC endpoints (4-20&nbsp;mA):</span>
+          <label>Raw@4mA<input type="number" step="any" id="scadatest-raw4" class="ctrl-input ctrl-input-sm"></label>
+          <label>Raw@20mA<input type="number" step="any" id="scadatest-raw20" class="ctrl-input ctrl-input-sm"></label>
+        </div>
         <div class="scadatest-pills" id="scadatest-pills"></div>
         <div id="scadatest-tables"></div>
 
@@ -1984,7 +1989,7 @@
         <div class="scadatest-calc">
           <div class="scadatest-calc-title">Test Calculator</div>
           <div class="scadatest-calc-grid">
-            <label>Raw (mA)<input type="number" step="any" id="scadatest-calc-raw" class="ctrl-input ctrl-input-sm"></label>
+            <label>Raw ADC<input type="number" step="any" id="scadatest-calc-raw" class="ctrl-input ctrl-input-sm"></label>
             <label>Min<input type="number" step="any" id="scadatest-calc-min" class="ctrl-input ctrl-input-sm"></label>
             <label>Max<input type="number" step="any" id="scadatest-calc-max" class="ctrl-input ctrl-input-sm"></label>
             <label>Offset<input type="number" step="any" id="scadatest-calc-offset" class="ctrl-input ctrl-input-sm"></label>

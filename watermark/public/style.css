@@ -3507,6 +3507,16 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
   padding: 12px 16px; font-size: 0.78rem; color: var(--text-dim);
   border-bottom: 1px solid var(--border);
 }
+.scadatest-rawrange {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
+  padding: 10px 16px; border-bottom: 1px solid var(--border);
+}
+.scadatest-rawrange-lbl { font-size: 0.78rem; color: var(--text-dim); font-weight: 600; }
+.scadatest-rawrange label {
+  display: flex; flex-direction: column; gap: 3px;
+  font-size: 0.7rem; color: var(--text-dim); font-weight: 600;
+}
+.scadatest-rawrange input { width: 90px; }
 .scadatest-pills {
   display: flex; flex-wrap: wrap; gap: 6px;
   padding: 12px 16px 4px;
