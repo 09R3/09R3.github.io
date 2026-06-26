@@ -13,6 +13,8 @@ let _scadaChartKey     = null;
 let _scadaRuntimeChart = null;
 let _scadaDetailTag  = null;   // selected tag in plant detail view
 let _scadaDetailRange = '24h';
+let _scadaDetailCustomStart = localStorage.getItem('scadaDetailCustomStart') || '';
+let _scadaDetailCustomEnd   = localStorage.getItem('scadaDetailCustomEnd') || '';
 let _scadaLastUpdate = 0;
 let _scadaStatusTimer = null;
 
@@ -31,7 +33,9 @@ let _scadaRuntimeCustomEnd   = localStorage.getItem('scadaRuntimeCustomEnd') || 
 let _scadaRuntimeSubTab      = localStorage.getItem('scadaRuntimeSubTab') || 'runtime';
 
 // Overview charts — mini FBLvl trend per plant card
-let _overviewRange   = localStorage.getItem('scadaOverviewRange') || '24h';
+let _overviewRange       = localStorage.getItem('scadaOverviewRange') || '24h';
+let _overviewCustomStart = localStorage.getItem('scadaOverviewCustomStart') || '';
+let _overviewCustomEnd   = localStorage.getItem('scadaOverviewCustomEnd') || '';
 let _overviewCharts  = new Map();   // groupKey → Chart instance
 let _overviewLoadGen = 0;           // cancel stale loads on range change
 
@@ -47,6 +51,23 @@ const SCADA_VENDOR = [
 ];
 const SCADA_COLORS = ['#38b6ff','#2ecc71','#f1c40f','#e67e22','#9b59b6','#e74c3c','#1abc9c','#fd79a8'];
 const SCADA_STATUS_RE = /\.(Run|Fail|Enable)$/;
+
+// Pump flow capacity in CFS, keyed by influxSite then pump letter.
+const PUMP_CFS_TABLE = {
+  'CVC_PP1A': {A:31,  B:70,  C:180, D:180, E:180, F:180, G:70,  H:31},
+  'CVC_PP2A': {A:31,  B:70,  C:180, D:180, E:180, F:180, G:70,  H:31},
+  'CVC_PP3A': {A:31,  B:70,  C:180, D:180, E:180, F:70,  G:31,  H:70,  J:31},
+  'CVC_PP4A': {A:31,  B:70,  C:180, D:180, E:180, F:70,  G:31,  H:70,  J:31},
+  'CVC_PP5A': {A:31,  B:70,  C:180, D:180, E:180, F:70,  G:31,  H:70,  J:31},
+  'CVC_PP6A': {A:31,  B:70,  C:180, D:180, E:180, F:70,  G:70,  H:31},
+  'CVC_PP7A': {A:31,  B:70,  C:70,  D:70,  E:70,  F:31},
+  'CVC_PP1B': {A:200, B:200, C:200},
+  'CVC_PP2B': {A:200, B:200, C:200},
+  'CVC_PP3B': {A:200, B:200, C:200},
+  'CVC_PP4B': {A:200, B:200, C:200},
+  'CVC_PP5B': {A:200, B:200, C:200},
+  'CVC_PP6B': {A:45,  B:200, C:200, D:90},
+};
 
 let _scadaVendorLoaded = null;
 function loadScadaVendor() {
@@ -107,28 +128,59 @@ async function drawScadaChart(canvas, tagPaths, range) {
   try {
     await loadScadaVendor();
     const qs = scadaRangeQS(range);
-    let series;
-    if (tagPaths.length === 1) {
-      const arr = await api('GET', `/api/scada/history?tag=${encodeURIComponent(tagPaths[0])}&${qs}`);
-      series = { [tagPaths[0]]: arr };
-    } else {
-      const r = await api('GET', `/api/scada/history?tags=${encodeURIComponent(tagPaths.join(','))}&${qs}`);
+
+    // Separate regular tag paths from synthetic computed-sum tags
+    const regPaths = tagPaths.filter(p => !p.startsWith('~sum~'));
+    const sumTags  = tagPaths.filter(p =>  p.startsWith('~sum~'));
+
+    let series = {};
+    if (regPaths.length === 1) {
+      const arr = await api('GET', `/api/scada/history?tag=${encodeURIComponent(regPaths[0])}&${qs}`);
+      series[regPaths[0]] = arr;
+    } else if (regPaths.length > 1) {
+      const r = await api('GET', `/api/scada/history?tags=${encodeURIComponent(regPaths.join(','))}&${qs}`);
       series = r.series || {};
     }
+
+    // Fetch constituent paths for each sum tag and merge by timestamp
+    for (const sumTag of sumTags) {
+      const parsed = parseSumTag(sumTag);
+      if (!parsed || !parsed.paths.length) continue;
+      const r = await api('GET', `/api/scada/history?tags=${encodeURIComponent(parsed.paths.join(','))}&${qs}`);
+      const s = r.series || {};
+      const pts = new Map();
+      parsed.paths.forEach(p => { (s[p] || []).forEach(([t, v]) => pts.set(t, (pts.get(t) || 0) + v)); });
+      series[sumTag] = [...pts.entries()].sort((a, b) => a[0] < b[0] ? -1 : 1);
+    }
+
     if (_scadaChartKey !== key) return; // selection changed while fetching
 
     const c = scadaThemeColors();
     const single = tagPaths.length === 1;
+    const anyStatus = tagPaths.some(p => SCADA_STATUS_RE.test(p));
     const datasets = tagPaths.map((p, i) => {
       const color = SCADA_COLORS[i % SCADA_COLORS.length];
-      const stepped = SCADA_STATUS_RE.test(p);
+      const status = SCADA_STATUS_RE.test(p);
+      if (status) {
+        // On/off state: filled stepped band on a hidden 0–1 axis so it reads as a
+        // solid bar while running (empty when off) and never distorts the level scale.
+        return {
+          label: scadaTagLabel(p),
+          data: (series[p] || []).map(([t, v]) => ({ x: t, y: v >= 0.5 ? 1 : 0 })),
+          yAxisID: 'yStatus',
+          borderColor: color,
+          backgroundColor: color + '33',
+          borderWidth: 1, pointRadius: 0,
+          stepped: true, fill: 'origin',
+        };
+      }
       return {
         label: scadaTagLabel(p),
         data: (series[p] || []).map(([t, v]) => ({ x: t, y: v })),
         borderColor: color,
         backgroundColor: single ? scadaGradientFill(color) : color + '22',
         borderWidth: 1.8, pointRadius: 0,
-        tension: stepped ? 0 : 0.25, stepped,
+        tension: 0.25,
         fill: single,
       };
     });
@@ -148,6 +200,7 @@ async function drawScadaChart(canvas, tagPaths, range) {
           x: { type: 'time', time: { tooltipFormat: 'MMM d, h:mm a' },
                ticks: { color: c.dim, maxTicksLimit: 8, autoSkip: true }, grid: { color: c.grid } },
           y: { ticks: { color: c.dim }, grid: { color: c.grid } },
+          ...(anyStatus ? { yStatus: { display: false, min: 0, max: 1, position: 'right' } } : {}),
         },
       },
     });
@@ -232,13 +285,45 @@ function fmtSensor(sensor, v) {
   return Number(v).toFixed(2);
 }
 
+// Returns inline color style when a temperature reading is critically high.
+function tempColorStyle(sensor, v) {
+  return sensor === 'InTmp' && v != null && v > 85 ? '#ef4444' : '';
+}
+
+// Decodes a synthetic computed-sum tag: '~sum~Label~unit~path1,path2,...'
+function parseSumTag(tag) {
+  if (!tag.startsWith('~sum~')) return null;
+  const parts = tag.slice(5).split('~'); // ['Label', 'unit', 'path1,path2']
+  return { label: parts[0], unit: parts[1] || '', paths: (parts[2] || '').split(',').filter(Boolean) };
+}
+
+// Running-pump CFS total for a plant group (used for live overview flow line).
+function plantGroupFlow(g) {
+  const sites = g.b ? [g.a, g.b] : [g.a];
+  let total = 0;
+  sites.forEach(site => {
+    const cfs = PUMP_CFS_TABLE[site.influxSite] || {};
+    site.pumps.forEach(p => {
+      if (isOn(scadaVal(scadaPumpPath(site, p, 'MTR.Cntrl.Run')))) total += cfs[p] || 0;
+    });
+  });
+  return total;
+}
+
 // "CVC PP 1A" → "PP 1A"
 function shortSiteName(site) { return site.name.replace('CVC ', ''); }
 
 function scadaSiteByInflux(influx) { return _scadaConfig.sites.find(s => s.influxSite === influx); }
 
-// Human-readable label for any tag path.
+// Human-readable label for any tag path (including synthetic ~sum~ tags).
 function scadaTagLabel(path) {
+  if (path.startsWith('~sum~')) {
+    const parsed = parseSumTag(path);
+    if (!parsed) return path;
+    const firstSite = parsed.paths[0] ? scadaSiteByInflux(parsed.paths[0].split('.')[0]) : null;
+    const sn = firstSite ? shortSiteName(firstSite) : '';
+    return sn ? `${sn} · ${parsed.label}` : parsed.label;
+  }
   const parts = path.split('.');
   const site = scadaSiteByInflux(parts[0]);
   const sn = site ? shortSiteName(site) : parts[0];
@@ -247,6 +332,9 @@ function scadaTagLabel(path) {
   }
   if (parts[2] === 'MTR' && parts[3] === 'Spd') {
     return `${sn} · Pump ${site ? pumpLabel(site, parts[1]) : parts[1]} RPM`;
+  }
+  if (parts[2] === 'MTR' && parts[3] === 'Cntrl' && parts[4] === 'Run') {
+    return `${sn} · Pump ${site ? pumpLabel(site, parts[1]) : parts[1]} Run`;
   }
   return path;
 }
@@ -306,10 +394,12 @@ function renderScadaOverview() {
     const sides = g.b
       ? `${compactSideHtml(g.a)}<div style="width:1px;background:var(--border);margin:0 4px;flex-shrink:0"></div>${compactSideHtml(g.b)}`
       : compactSideHtml(g.a);
+    const flowTotal = plantGroupFlow(g);
     return `<div class="scada-plant-card" style="display:flex;align-items:stretch;padding:0;overflow:hidden" data-plant="${g.key}">
       <div style="flex:1;min-width:0;padding:8px 10px">
-        <div class="scada-plant-title" style="margin-bottom:4px">${escHtml(g.name)}</div>
-        <div style="display:flex;gap:0">${sides}</div>
+        <div class="scada-plant-title" style="margin-bottom:4px">${escHtml(g.name)}${dwrTitleHtml(g)}</div>
+        <div style="display:flex;gap:0;align-items:flex-start">${sides}${bldgTempColHtml(g)}</div>
+        <div style="font-size:0.7rem;color:var(--text-dim);margin-top:3px" data-ov-flow="${escHtml(g.key)}">Flow&nbsp;=&nbsp;<strong>${flowTotal} cfs</strong></div>
       </div>
       <div style="flex:0 0 38%;border-left:1px solid var(--border);position:relative;min-height:88px">
         <canvas data-ov-plant="${g.key}" style="position:absolute;inset:0;width:100%;height:100%"></canvas>
@@ -318,27 +408,64 @@ function renderScadaOverview() {
   }).join('');
 
   el('scada-body').innerHTML = scadaTabsHtml('overview') + `
-    <div class="seg-group" id="scada-ov-range" style="margin-bottom:8px">
-      ${['1h','6h','24h','7d','30d'].map(r => `<button class="seg-btn${_overviewRange===r?' active':''}" data-ovrange="${r}">${r}</button>`).join('')}
-    </div>
+    <div class="seg-group" id="scada-ov-range" style="margin-bottom:8px">${scadaRangeBtnsHtml(_overviewRange)}</div>
+    ${scadaCustomRangeHtml(_overviewCustomStart, _overviewCustomEnd, 'scada-ov', _overviewRange !== 'custom')}
     <div class="scada-overview-grid">${cards}</div>`;
 
   wireScadaTabs();
 
-  el('scada-ov-range').querySelectorAll('[data-ovrange]').forEach(btn =>
-    btn.addEventListener('click', e => {
-      e.stopPropagation();
-      el('scada-ov-range').querySelectorAll('[data-ovrange]').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      _overviewRange = btn.dataset.ovrange;
+  el('scada-ov-range').querySelectorAll('.seg-btn').forEach(b =>
+    b.addEventListener('click', () => {
+      el('scada-ov-range').querySelectorAll('.seg-btn').forEach(x => x.classList.remove('active'));
+      b.classList.add('active');
+      _overviewRange = b.dataset.range;
       localStorage.setItem('scadaOverviewRange', _overviewRange);
-      loadOverviewCharts();
+      el('scada-ov-custom').classList.toggle('hidden', _overviewRange !== 'custom');
+      if (_overviewRange !== 'custom') loadOverviewCharts();
     }));
+
+  el('scada-ov-apply').addEventListener('click', () => {
+    _overviewCustomStart = el('scada-ov-from').value;
+    _overviewCustomEnd   = el('scada-ov-to').value;
+    localStorage.setItem('scadaOverviewCustomStart', _overviewCustomStart);
+    localStorage.setItem('scadaOverviewCustomEnd',   _overviewCustomEnd);
+    loadOverviewCharts();
+  });
 
   el('scada-body').querySelectorAll('[data-plant]').forEach(c =>
     c.addEventListener('click', () => openScadaPlant(c.dataset.plant)));
 
   loadOverviewCharts();
+}
+
+// Title suffix showing live DWR total flow, for plants that define a computed flow sum.
+function dwrTitleHtml(g) {
+  const sites = g.b ? [g.a, g.b] : [g.a];
+  const site = sites.find(s => (s.computedSensors || []).some(c => c.kind === 'flow' || /flow|dwr/i.test(c.label)));
+  if (!site) return '';
+  const comp  = site.computedSensors.find(c => c.kind === 'flow' || /flow|dwr/i.test(c.label));
+  const paths = comp.sum.map(s => scadaSensorPath(site, s));
+  const vals  = paths.map(scadaVal);
+  const total = vals.every(v => v != null) ? vals.reduce((a, b) => a + b, 0) : null;
+  return ` <span style="font-weight:500;font-size:0.8rem;color:var(--accent)"
+    data-ov-dwr="${escHtml(paths.join(','))}" data-ov-dwr-unit="${escHtml(comp.unit || '')}">— DWR ${total == null ? '—' : total.toFixed(1)} ${escHtml(comp.unit || '')}</span>`;
+}
+
+// Building-temp column (right side of the readings block) — one row per site in the group.
+function bldgTempColHtml(g) {
+  const sites = g.b ? [g.a, g.b] : [g.a];
+  const rows = sites.map(s => {
+    const path  = scadaSensorPath(s, 'InTmp');
+    const tag   = shortSiteName(s).replace('PP ', '');
+    const v     = scadaVal(path);
+    const color = tempColorStyle('InTmp', v);
+    const style = color ? ` style="color:${color}"` : '';
+    return `<div>${escHtml(tag)}&nbsp;<strong data-scada-sensor="InTmp" data-scada-tag="${path}"${style}>${fmtSensor('InTmp', v)}</strong>°</div>`;
+  }).join('');
+  return `<div style="flex:0 0 auto;padding-left:10px;font-size:0.73rem;line-height:1.55;color:var(--text-dim)">
+    <div style="font-size:0.62rem;text-transform:uppercase;letter-spacing:.04em;opacity:.8">Bldg °F</div>
+    ${rows}
+  </div>`;
 }
 
 function compactSideHtml(site) {
@@ -368,8 +495,13 @@ function compactSideHtml(site) {
 
 function patchScadaOverview() {
   const body = el('scada-body');
-  body.querySelectorAll('[data-scada-sensor]').forEach(elm =>
-    elm.textContent = fmtSensor(elm.dataset.scadaSensor, scadaVal(elm.dataset.scadaTag)));
+  body.querySelectorAll('[data-scada-sensor]').forEach(elm => {
+    const sensor = elm.dataset.scadaSensor;
+    const v = scadaVal(elm.dataset.scadaTag);
+    elm.textContent = fmtSensor(sensor, v);
+    const color = tempColorStyle(sensor, v);
+    elm.style.color = color || '';
+  });
   body.querySelectorAll('[data-ov-site]').forEach(div => {
     const site = _scadaConfig?.sites.find(s => s.influxSite === div.dataset.ovSite);
     if (!site) return;
@@ -384,6 +516,18 @@ function patchScadaOverview() {
     if (dotEl) dotEl.className = `scada-dot scada-dot-${dot}`;
     if (cntEl) cntEl.textContent = `${running}/${site.pumps.length}`;
   });
+  body.querySelectorAll('[data-ov-dwr]').forEach(elm => {
+    const vals = elm.dataset.ovDwr.split(',').map(p => scadaVal(p));
+    const total = vals.every(v => v != null) ? vals.reduce((a, b) => a + b, 0) : null;
+    elm.textContent = `— DWR ${total == null ? '—' : total.toFixed(1)} ${elm.dataset.ovDwrUnit || ''}`;
+  });
+  body.querySelectorAll('[data-ov-flow]').forEach(elm => {
+    const g = scadaPlantGroups().find(x => x.key === elm.dataset.ovFlow);
+    if (!g) return;
+    const total = plantGroupFlow(g);
+    const strong = elm.querySelector('strong');
+    if (strong) strong.textContent = `${total} cfs`;
+  });
 }
 
 async function loadOverviewCharts() {
@@ -392,29 +536,47 @@ async function loadOverviewCharts() {
   if (gen !== _overviewLoadGen) return;
 
   const groups = scadaPlantGroups();
-  const qs = `range=${encodeURIComponent(_overviewRange)}`;
+  const custom = _overviewRange === 'custom';
+  if (custom && (!_overviewCustomStart || !_overviewCustomEnd)) return; // wait for Apply
+  const qs = custom
+    ? `start=${encodeURIComponent(localDtToISO(_overviewCustomStart))}&end=${encodeURIComponent(localDtToISO(_overviewCustomEnd))}`
+    : `range=${encodeURIComponent(_overviewRange)}`;
 
   await Promise.all(groups.map(async g => {
     const canvas = el('scada-body').querySelector(`[data-ov-plant="${g.key}"]`);
     if (!canvas) return;
     if (_overviewCharts.has(g.key)) { _overviewCharts.get(g.key).destroy(); _overviewCharts.delete(g.key); }
 
-    const sites = g.b ? [g.a, g.b] : [g.a];
+    // Chart shows only the A-side Forebay and Trash Rack levels for at-a-glance view.
+    const siteA = g.a;
     try {
-      const seriesData = await Promise.all(
-        sites.map(s => api('GET', `/api/scada/history?tag=${encodeURIComponent(scadaSensorPath(s, 'FBLvl'))}&${qs}`))
-      );
+      const [fbData, trData] = await Promise.all([
+        api('GET', `/api/scada/history?tag=${encodeURIComponent(scadaSensorPath(siteA, 'FBLvl'))}&${qs}`),
+        api('GET', `/api/scada/history?tag=${encodeURIComponent(scadaSensorPath(siteA, 'TRLvl'))}&${qs}`),
+      ]);
       if (gen !== _overviewLoadGen || !canvas.isConnected) return;
 
       const tc = scadaThemeColors();
-      const datasets = sites.map((site, i) => ({
-        data: seriesData[i].map(([t, v]) => ({ x: t, y: v })),
-        borderColor: SCADA_COLORS[i % SCADA_COLORS.length],
-        backgroundColor: 'transparent',
-        borderWidth: 1.5,
-        pointRadius: 0,
-        tension: 0,
-      }));
+      const datasets = [
+        {
+          label: 'FB',
+          data: fbData.map(([t, v]) => ({ x: t, y: v })),
+          borderColor: SCADA_COLORS[0],
+          backgroundColor: 'transparent',
+          borderWidth: 1.5,
+          pointRadius: 0,
+          tension: 0,
+        },
+        {
+          label: 'TR',
+          data: trData.map(([t, v]) => ({ x: t, y: v })),
+          borderColor: SCADA_COLORS[2],
+          backgroundColor: 'transparent',
+          borderWidth: 1.5,
+          pointRadius: 0,
+          tension: 0,
+        },
+      ];
 
       const chart = new window.Chart(canvas.getContext('2d'), {
         type: 'line',
@@ -424,7 +586,12 @@ async function loadOverviewCharts() {
           responsive: true,
           maintainAspectRatio: false,
           events: [],
-          plugins: { legend: { display: false } },
+          plugins: {
+            legend: {
+              display: true,
+              labels: { color: tc.dim, boxWidth: 10, font: { size: 9 }, padding: 4 },
+            },
+          },
           scales: {
             x: {
               type: 'time',
@@ -483,11 +650,14 @@ function openScadaPlant(groupKey) {
 function sensorColHtml(site) {
   const sensors = site.sensors || _scadaConfig.defaultSensors || [];
   const tiles = sensors.map(s => {
-    const meta = _scadaConfig.sensorMeta?.[s] || { label: s, unit: '' };
-    const path = scadaSensorPath(site, s);
+    const meta  = _scadaConfig.sensorMeta?.[s] || { label: s, unit: '' };
+    const path  = scadaSensorPath(site, s);
+    const v     = scadaVal(path);
+    const color = tempColorStyle(s, v);
+    const style = color ? ` style="color:${color}"` : '';
     return `<div class="scada-sensor-tile" data-scada-tag="${path}" data-selectable>
       <div class="scada-sensor-label">${escHtml(meta.label)}</div>
-      <div class="scada-sensor-value" data-scada-sensor="${s}" data-scada-tag="${path}">${fmtSensor(s, scadaVal(path))}</div>
+      <div class="scada-sensor-value" data-scada-sensor="${s}" data-scada-tag="${path}"${style}>${fmtSensor(s, v)}</div>
       <div class="scada-sensor-unit">${escHtml(meta.unit || '')}</div>
     </div>`;
   }).join('');
@@ -546,11 +716,8 @@ function renderScadaPlantDetail(g) {
     <div class="scada-pump-grid">${pumpCards}</div>
     <div class="scada-section-hdr" id="scada-chart-hdr">Tap a tile or pump to view its trend</div>
     <div class="scada-chart-range hidden" id="scada-detail-range">
-      <div class="seg-group">
-        ${['1h','6h','24h','7d'].map(r =>
-          `<button class="seg-btn${_scadaDetailRange===r?' active':''}" data-range="${r}">${r}</button>`
-        ).join('')}
-      </div>
+      <div class="seg-group">${scadaRangeBtnsHtml(_scadaDetailRange)}</div>
+      ${scadaCustomRangeHtml(_scadaDetailCustomStart, _scadaDetailCustomEnd, 'scada-detail', _scadaDetailRange !== 'custom')}
     </div>
     <div class="scada-chart-wrap hidden" id="scada-detail-chart-wrap">
       <canvas id="scada-chart-canvas" class="scada-chart-canvas"></canvas>
@@ -562,11 +729,27 @@ function renderScadaPlantDetail(g) {
       el('scada-detail-range').querySelectorAll('.seg-btn').forEach(x => x.classList.remove('active'));
       b.classList.add('active');
       _scadaDetailRange = b.dataset.range;
-      if (_scadaDetailTag) drawScadaChart(el('scada-chart-canvas'), [_scadaDetailTag], _scadaDetailRange);
+      el('scada-detail-custom').classList.toggle('hidden', _scadaDetailRange !== 'custom');
+      if (_scadaDetailRange !== 'custom' && _scadaDetailTag)
+        drawScadaChart(el('scada-chart-canvas'), [_scadaDetailTag], detailRangeArg());
     }));
+
+  el('scada-detail-apply').addEventListener('click', () => {
+    _scadaDetailCustomStart = el('scada-detail-from').value;
+    _scadaDetailCustomEnd   = el('scada-detail-to').value;
+    localStorage.setItem('scadaDetailCustomStart', _scadaDetailCustomStart);
+    localStorage.setItem('scadaDetailCustomEnd',   _scadaDetailCustomEnd);
+    if (_scadaDetailTag) drawScadaChart(el('scada-chart-canvas'), [_scadaDetailTag], detailRangeArg());
+  });
 
   el('scada-body').querySelectorAll('[data-selectable]').forEach(tile =>
     tile.addEventListener('click', () => selectScadaDetailTag(tile)));
+}
+
+function detailRangeArg() {
+  return _scadaDetailRange === 'custom'
+    ? { start: _scadaDetailCustomStart, end: _scadaDetailCustomEnd }
+    : _scadaDetailRange;
 }
 
 function selectScadaDetailTag(tile) {
@@ -587,14 +770,18 @@ function selectScadaDetailTag(tile) {
 
   el('scada-detail-range').classList.remove('hidden');
   el('scada-detail-chart-wrap').classList.remove('hidden');
-  drawScadaChart(el('scada-chart-canvas'), [path], _scadaDetailRange);
+  drawScadaChart(el('scada-chart-canvas'), [path], detailRangeArg());
 }
 
 // In-place live-value patch for plant detail (chart untouched).
 function patchScadaPlantDetail() {
   const body = el('scada-body');
   body.querySelectorAll('[data-scada-sensor]').forEach(elm => {
-    elm.textContent = fmtSensor(elm.dataset.scadaSensor, scadaVal(elm.dataset.scadaTag));
+    const sensor = elm.dataset.scadaSensor;
+    const v = scadaVal(elm.dataset.scadaTag);
+    elm.textContent = fmtSensor(sensor, v);
+    const color = tempColorStyle(sensor, v);
+    elm.style.color = color || '';
   });
   body.querySelectorAll('[data-scada-int]').forEach(elm => {
     const v = scadaVal(elm.dataset.scadaTag);
@@ -620,7 +807,7 @@ function patchScadaPlantDetail() {
 }
 
 // ── Trends (plant pills + multi-select chips) ─────────────────────────────────
-const SCADA_PRESET_RANGES = ['1h','6h','24h','7d','30d'];
+const SCADA_PRESET_RANGES = ['1h','8h','12h','24h','7d','30d'];
 const SCADA_POWER_RANGES  = ['15m','1h','6h','24h','7d'];
 
 function scadaRangeBtnsHtml(currentRange, presets = SCADA_PRESET_RANGES) {
@@ -644,6 +831,12 @@ function renderScadaTrends() {
   const groups = scadaPlantGroups();
   if (!_scadaTrendPlant || !groups.some(g => g.key === _scadaTrendPlant))
     _scadaTrendPlant = groups[0]?.key || '';
+
+  // Trends now charts pump on/off state, not RPM — migrate any saved RPM selections.
+  if ([..._scadaTrendTags].some(t => t.endsWith('.MTR.Spd.SCL.PV'))) {
+    _scadaTrendTags = new Set([..._scadaTrendTags].map(t => t.replace(/\.MTR\.Spd\.SCL\.PV$/, '.MTR.Cntrl.Run')));
+    localStorage.setItem('scadaTrendTags', JSON.stringify([..._scadaTrendTags]));
+  }
 
   el('scada-body').innerHTML = scadaTabsHtml('trends') + `
     <div class="scada-plant-pills" id="scada-trend-pills">
@@ -702,7 +895,7 @@ function renderScadaTrends() {
   refreshScadaTrendChart();
 }
 
-// Chips for all tags (sensors + pump RPM) in the selected plant (A + B).
+// Chips for all tags (sensors + pump run + computed sums) in the selected plant (A + B).
 function buildScadaTrendChips() {
   const wrap = el('scada-trend-chips');
   if (!wrap) return;
@@ -714,13 +907,22 @@ function buildScadaTrendChips() {
     const sensors = site.sensors || _scadaConfig.defaultSensors || [];
     return [
       ...sensors.map(s => scadaSensorPath(site, s)),
-      ...site.pumps.map(p => scadaPumpPath(site, p, 'MTR.Spd.SCL.PV')),
+      ...site.pumps.map(p => scadaPumpPath(site, p, 'MTR.Cntrl.Run')),
     ];
   });
 
-  wrap.innerHTML = paths.map(path =>
-    `<button class="scada-trend-chip${_scadaTrendTags.has(path)?' selected':''}" data-trend-tag="${path}">
-      ${escHtml(scadaTagLabel(path))}</button>`).join('');
+  // Add synthetic computed-sum chips (e.g. DWR Total)
+  const computedTags = sites.flatMap(site =>
+    (site.computedSensors || []).map(c => {
+      const cpaths = c.sum.map(s => scadaSensorPath(site, s));
+      return `~sum~${c.label}~${c.unit||''}~${cpaths.join(',')}`;
+    })
+  );
+
+  const allTags = [...paths, ...computedTags];
+  wrap.innerHTML = allTags.map(tag =>
+    `<button class="scada-trend-chip${_scadaTrendTags.has(tag)?' selected':''}" data-trend-tag="${escHtml(tag)}">
+      ${escHtml(scadaTagLabel(tag))}</button>`).join('');
 
   wrap.querySelectorAll('[data-trend-tag]').forEach(chip =>
     chip.addEventListener('click', () => {
@@ -918,7 +1120,7 @@ async function loadScadaReverseFlow() {
 function rangeHours(range) {
   if (typeof range === 'object' && range.start && range.end)
     return Math.max(1, (new Date(range.end) - new Date(range.start)) / 3600000);
-  return { '1h': 1, '6h': 6, '24h': 24, '7d': 168, '30d': 720 }[range] || 24;
+  return { '1h': 1, '8h': 8, '12h': 12, '6h': 6, '24h': 24, '7d': 168, '30d': 720 }[range] || 24;
 }
 
 async function drawRuntimeBarChart(canvas, allPumps, barColor) {

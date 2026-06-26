@@ -128,8 +128,8 @@ async function scadaGetHistory(tagPath, rangeOpts) {
     rangeClause = `range(start: ${s.toISOString()}, stop: ${e.toISOString()})`;
     every = calcAggEvery(s.getTime(), e.getTime());
   } else {
-    const startMap = { '1h':'-1h','6h':'-6h','24h':'-24h','7d':'-7d','30d':'-30d' };
-    const everyMap = { '1h':'30s','6h':'2m','24h':'5m','7d':'30m','30d':'2h' };
+    const startMap = { '1h':'-1h','8h':'-8h','12h':'-12h','6h':'-6h','24h':'-24h','7d':'-7d','30d':'-30d' };
+    const everyMap = { '1h':'30s','8h':'2m','12h':'2m','6h':'2m','24h':'5m','7d':'30m','30d':'2h' };
     rangeClause = `range(start: ${startMap[rangeOpts] || '-1h'})`;
     every = everyMap[rangeOpts] || '30s';
   }
@@ -155,7 +155,7 @@ async function scadaGetRuntime(tagPaths, rangeOpts) {
     if (isNaN(s) || isNaN(e)) throw new Error('invalid custom range');
     rangeClause = `range(start: ${s.toISOString()}, stop: ${e.toISOString()})`;
   } else {
-    const startMap = { '1h':'-1h','6h':'-6h','24h':'-24h','7d':'-7d','30d':'-30d' };
+    const startMap = { '1h':'-1h','8h':'-8h','12h':'-12h','6h':'-6h','24h':'-24h','7d':'-7d','30d':'-30d' };
     rangeClause = `range(start: ${startMap[rangeOpts] || '-24h'})`;
   }
   const result = {};
