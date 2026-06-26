@@ -3494,3 +3494,67 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
     position: static !important;
   }
 }
+
+/* ── SCADA Scaling Test tool ─────────────────────────────────────────────── */
+#scadatest-tool-overlay {
+  position: fixed; inset: 0; z-index: 300;
+  background: var(--bg);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+#scadatest-tool-overlay.hidden { display: none; }
+.scadatest-intro {
+  padding: 12px 16px; font-size: 0.78rem; color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+}
+.scadatest-pills {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  padding: 12px 16px 4px;
+}
+.scadatest-pill {
+  background: none; border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 6px 14px;
+  color: var(--text-dim); font-size: 0.9rem; cursor: pointer; min-height: 38px;
+}
+.scadatest-pill.active {
+  background: var(--accent); border-color: var(--accent);
+  color: #fff; font-weight: 600;
+}
+.scadatest-site-hdr {
+  padding: 12px 16px 4px; font-weight: 700; font-size: 0.95rem; color: var(--text);
+}
+.scadatest-table-wrap { overflow-x: auto; padding: 0 8px; }
+.scadatest-table {
+  width: 100%; border-collapse: collapse; font-size: 0.8rem; min-width: 560px;
+}
+.scadatest-table th {
+  text-align: right; padding: 6px 6px; color: var(--text-dim);
+  font-weight: 600; font-size: 0.72rem; border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.scadatest-table th:first-child { text-align: left; }
+.scadatest-table td {
+  padding: 5px 6px; border-bottom: 1px solid var(--border); text-align: right;
+  white-space: nowrap;
+}
+.scadatest-table td:first-child { text-align: left; font-weight: 600; }
+.scadatest-table input {
+  width: 64px; text-align: right; padding: 4px 6px; font-size: 0.8rem;
+}
+.scadatest-raw { color: var(--accent); font-variant-numeric: tabular-nums; }
+.scadatest-out { font-weight: 700; font-variant-numeric: tabular-nums; }
+.scadatest-pv  { color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.scadatest-calc {
+  margin: 16px; padding: 14px; border: 1px solid var(--border);
+  border-radius: var(--radius); background: var(--surface);
+}
+.scadatest-calc-title { font-weight: 700; margin-bottom: 10px; }
+.scadatest-calc-grid {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;
+}
+.scadatest-calc-grid label {
+  display: flex; flex-direction: column; gap: 3px;
+  font-size: 0.72rem; color: var(--text-dim); font-weight: 600;
+}
+.scadatest-calc-out { margin-top: 12px; font-size: 0.95rem; }
+.scadatest-calc-out strong { color: var(--accent); font-variant-numeric: tabular-nums; }

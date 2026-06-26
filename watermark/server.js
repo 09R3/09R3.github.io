@@ -4909,6 +4909,24 @@ app.get('/api/scada/current', requireAuth, requireScadaAccess, async (req, res) 
   } catch (err) { handleErr(res, err); }
 });
 
+// Raw + PV current values for the analog sensors of given sites — used by the
+// SCADA Test tool (4-20mA scaling tester). ?sites=CVC_PP1A,CVC_PP1B
+// Returns latest { tag: { v, t } } for each sensor's .SCL.Raw and .SCL.PV.
+const SCADA_RAW_SENSORS = ['ABLvl', 'AirPSI', 'FBLvl', 'TRLvl', 'DSLvl'];
+app.get('/api/scada/raw-current', requireAuth, requireScadaAccess, async (req, res) => {
+  if (!SCADA_CONFIG) return res.status(503).json({ error: 'SCADA not configured' });
+  const valid = new Set(SCADA_CONFIG.sites.map(s => s.influxSite));
+  const sitesList = String(req.query.sites || '').split(',').map(s => s.trim())
+    .filter(s => valid.has(s));
+  if (!sitesList.length) return res.status(400).json({ error: 'valid sites required' });
+  const tags = [];
+  for (const site of sitesList) for (const sensor of SCADA_RAW_SENSORS)
+    tags.push(`${site}.${sensor}.SCL.Raw`, `${site}.${sensor}.SCL.PV`);
+  try {
+    res.json(await scadaGetCurrent(tags));
+  } catch (err) { handleErr(res, err); }
+});
+
 // History endpoint. Supports preset ranges and custom start/end.
 // Single:   ?tag=...&range=1h  OR  ?tag=...&start=ISO&end=ISO
 // Multi:    ?tags=a,b&range=7d  OR  ?tags=a,b&start=ISO&end=ISO  → { series }

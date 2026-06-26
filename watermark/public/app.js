@@ -6093,11 +6093,164 @@ el('settings-panel-tools').addEventListener('click', e => {
   if (btn.dataset.tool === 'exif')      openExifTool();
   if (btn.dataset.tool === 'upload')    openUploadTool();
   if (btn.dataset.tool === 'gpspicker') openGpsPicker();
+  if (btn.dataset.tool === 'scadatest') openScadaTestTool();
 });
 
 el('exif-back-btn').addEventListener('click', () => {
   el('exif-tool-overlay').classList.add('hidden');
 });
+
+// ── SCADA Scaling Test tool (4-20mA tester) ───────────────────────────────────
+// Reads each analog sensor's live .SCL.Raw signal, applies a user-entered
+// Min/Max/Offset 4-20mA scaling, and shows the result next to the live PV so
+// scaling can be dialed in against real-time numbers. Scaling inputs persist
+// per tag in localStorage. Read-only — never writes back to the PLC.
+(function () {
+  const SENSORS = [
+    { key: 'FBLvl',  label: 'Forebay',    unit: 'ft'  },
+    { key: 'ABLvl',  label: 'Afterbay',   unit: 'ft'  },
+    { key: 'DSLvl',  label: 'Downstream', unit: 'ft'  },
+    { key: 'TRLvl',  label: 'Trash Rack', unit: 'ft'  },
+    { key: 'AirPSI', label: 'Air Press',  unit: 'psi' },
+  ];
+  let config = null, plantNum = 1, pollTimer = null;
+
+  function scaleKey(tag)   { return 'scadatestScale:' + tag; }
+  function getScale(tag) {
+    try { return JSON.parse(localStorage.getItem(scaleKey(tag))) || {}; }
+    catch { return {}; }
+  }
+  function setScale(tag, s) { localStorage.setItem(scaleKey(tag), JSON.stringify(s)); }
+
+  // Classic 4-20mA linear scaling. Returns null if inputs are incomplete.
+  function scale(raw, min, max, offset) {
+    if (raw == null || min === '' || max === '' || min == null || max == null) return null;
+    const r = Number(raw), mn = Number(min), mx = Number(max), off = Number(offset) || 0;
+    if (!isFinite(r) || !isFinite(mn) || !isFinite(mx)) return null;
+    return mn + ((r - 4) / 16) * (mx - mn) + off;
+  }
+
+  function plantSites(n) {
+    if (!config) return [];
+    return config.sites.filter(s => s.influxSite === `CVC_PP${n}A` || s.influxSite === `CVC_PP${n}B`);
+  }
+
+  function rowHtml(site, sensor) {
+    const tag = `${site.influxSite}.${sensor.key}.SCL.Raw`;
+    const pvTag = `${site.influxSite}.${sensor.key}.SCL.PV`;
+    const s = getScale(tag);
+    return `<tr data-raw-tag="${tag}" data-pv-tag="${pvTag}">
+      <td>${escHtml(sensor.label)}<span style="color:var(--text-dim);font-weight:400"> ${escHtml(sensor.unit)}</span></td>
+      <td class="scadatest-raw" data-cell="raw">—</td>
+      <td><input type="number" step="any" data-fld="min" value="${s.min ?? ''}"></td>
+      <td><input type="number" step="any" data-fld="max" value="${s.max ?? ''}"></td>
+      <td><input type="number" step="any" data-fld="offset" value="${s.offset ?? ''}"></td>
+      <td class="scadatest-out" data-cell="out">—</td>
+      <td class="scadatest-pv" data-cell="pv">—</td>
+    </tr>`;
+  }
+
+  function render() {
+    el('scadatest-pills').innerHTML = [1,2,3,4,5,6,7].map(n =>
+      `<button class="scadatest-pill${n===plantNum?' active':''}" data-plant="${n}">PP ${n}</button>`).join('');
+
+    const sites = plantSites(plantNum);
+    el('scadatest-tables').innerHTML = sites.map(site => `
+      <div class="scadatest-site-hdr">${escHtml(site.name)}</div>
+      <div class="scadatest-table-wrap">
+        <table class="scadatest-table">
+          <thead><tr>
+            <th>Signal</th><th>Raw mA</th><th>Min</th><th>Max</th><th>Offset</th><th>Output</th><th>Live PV</th>
+          </tr></thead>
+          <tbody>${SENSORS.map(sn => rowHtml(site, sn)).join('')}</tbody>
+        </table>
+      </div>`).join('') || '<div class="scadatest-site-hdr">No sites for this plant.</div>';
+
+    // Wire scaling inputs: persist + recompute that row's output on change
+    el('scadatest-tables').querySelectorAll('tr[data-raw-tag]').forEach(tr => {
+      tr.querySelectorAll('input[data-fld]').forEach(inp =>
+        inp.addEventListener('input', () => {
+          const tag = tr.dataset.rawTag;
+          const s = getScale(tag);
+          s[inp.dataset.fld] = inp.value;
+          setScale(tag, s);
+          recomputeRow(tr);
+        }));
+    });
+
+    el('scadatest-pills').querySelectorAll('[data-plant]').forEach(p =>
+      p.addEventListener('click', () => {
+        plantNum = Number(p.dataset.plant);
+        render();
+        poll();
+      }));
+  }
+
+  function recomputeRow(tr) {
+    const rawCell = tr.querySelector('[data-cell="raw"]');
+    const raw = rawCell._raw;
+    const min = tr.querySelector('[data-fld="min"]').value;
+    const max = tr.querySelector('[data-fld="max"]').value;
+    const off = tr.querySelector('[data-fld="offset"]').value;
+    const out = scale(raw, min, max, off);
+    tr.querySelector('[data-cell="out"]').textContent = out == null ? '—' : out.toFixed(2);
+  }
+
+  async function poll() {
+    if (!config) return;
+    const sites = plantSites(plantNum);
+    if (!sites.length) return;
+    const siteParam = sites.map(s => s.influxSite).join(',');
+    let data;
+    try { data = await api('GET', `/api/scada/raw-current?sites=${encodeURIComponent(siteParam)}`); }
+    catch { return; }
+    if (el('scadatest-tool-overlay').classList.contains('hidden')) return;
+    el('scadatest-tables').querySelectorAll('tr[data-raw-tag]').forEach(tr => {
+      const raw = data[tr.dataset.rawTag]?.v;
+      const pv  = data[tr.dataset.pvTag]?.v;
+      const rawCell = tr.querySelector('[data-cell="raw"]');
+      rawCell._raw = raw ?? null;
+      rawCell.textContent = raw == null ? '—' : Number(raw).toFixed(3);
+      tr.querySelector('[data-cell="pv"]').textContent = pv == null ? '—' : Number(pv).toFixed(2);
+      recomputeRow(tr);
+    });
+  }
+
+  function updateCalc() {
+    const out = scale(
+      el('scadatest-calc-raw').value === '' ? null : el('scadatest-calc-raw').value,
+      el('scadatest-calc-min').value,
+      el('scadatest-calc-max').value,
+      el('scadatest-calc-offset').value,
+    );
+    el('scadatest-calc-result').textContent = out == null ? '—' : out.toFixed(2);
+  }
+
+  window.openScadaTestTool = async function () {
+    el('scadatest-tool-overlay').classList.remove('hidden');
+    if (!config) {
+      el('scadatest-tables').innerHTML = '<div class="scadatest-site-hdr">Loading…</div>';
+      try { config = await api('GET', '/api/scada/config'); }
+      catch (e) {
+        el('scadatest-tables').innerHTML =
+          `<div class="scadatest-site-hdr">SCADA source unavailable.</div>`;
+        return;
+      }
+    }
+    render();
+    poll();
+    clearInterval(pollTimer);
+    pollTimer = setInterval(poll, config.pollMs || 5000);
+  };
+
+  el('scadatest-back-btn').addEventListener('click', () => {
+    el('scadatest-tool-overlay').classList.add('hidden');
+    clearInterval(pollTimer); pollTimer = null;
+  });
+
+  ['raw','min','max','offset'].forEach(f =>
+    el('scadatest-calc-' + f).addEventListener('input', updateCalc));
+})();
 
 // ── Pond GPS Picker ───────────────────────────────────────────────────────────
 (function () {
