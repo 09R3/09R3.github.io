@@ -12192,7 +12192,7 @@ function navigateToSearchResult(action) {
 /* ── Charts ───────────────────────────────────────────────────────────────── */
 const CHART_PANEL_TITLES = {
   overpour: 'Overpour', pressure: 'Pressure', 'open-air': 'Open Air', p11: 'P-11',
-  gate: 'Gate Discharge', rrb: 'RRB T.O. 1 & 2',
+  gate: 'Gate Discharge', rrb: 'RRB T.O. 1 & 2', pioneer: 'Pioneer Inlet',
 };
 
 function openChartsPanel(panelId) {
@@ -12206,6 +12206,7 @@ function openChartsPanel(panelId) {
   else if (panelId === 'p11')       initP11Panel();
   else if (panelId === 'gate')      initGateDischargePanel();
   else if (panelId === 'rrb')       initRRBPanel();
+  else if (panelId === 'pioneer')   initPioneerPanel();
 }
 
 function closeChartsPanel() {
@@ -12420,6 +12421,80 @@ function updateRRBCalc() {
   const ci = h100 % 10;
   if (ri >= RRB_Q.length || ci >= 10) { el('rrb-result').textContent = '—'; return; }
   el('rrb-result').textContent = RRB_Q[ri][ci];
+}
+
+// ── Pioneer Inlet panel (sharp crested weir) ────────────────────────────
+// Lookup chart from gauge height (GH, ft) to flow (cfs). Rows start at GH 0.30
+// and run to 2.70; columns are hundredths +0.00…+0.09. Values are kept as
+// strings to preserve the published precision and the ^ / U markers exactly.
+const PIONEER_FIRST_GH = 0.30;
+const PIONEER_Q = [
+  ['0.0','0.400','0.800','1.20','1.60','2.00','2.40','2.80','3.20','3.60'],  // 0.30
+  ['4.00','4.60','5.20','5.80','6.40','7.00','7.60','8.20','8.80','9.40'],   // 0.40
+  ['10.0','10.7','11.4','12.1','12.8','13.5','14.2','14.9','15.6','16.3'],   // 0.50
+  ['17.0','18.0','19.0','20.0','21.0','22.0','23.0','24.0','25.0','26.0'],   // 0.60
+  ['27.0','28.2','29.4','30.6','31.8','33.0','34.2','35.4','36.6','37.8'],   // 0.70
+  ['39.0','40.2','41.4','42.6','43.8','45.0','46.2','47.4','48.6','49.8'],   // 0.80
+  ['51.0','52.4','53.8','55.2','56.6','58.0','59.4','60.8','62.2','63.6'],   // 0.90
+  ['65.0','66.3','67.6','68.9','70.2','71.5','72.8','74.1','75.4','76.7'],   // 1.00
+  ['78.0','79.5','81.0','82.5','84.0','85.5','87.0','88.5','90.0','91.5'],   // 1.10
+  ['93.0','94.7','96.4','98.1','99.8','102','103','105','107','108'],        // 1.20
+  ['110','112','114','116','118','120','121','123','125','127'],             // 1.30
+  ['129','131','133','135','137','139','141','143','145','147'],             // 1.40
+  ['149','151','153','155','157','159','161','163','165','167'],             // 1.50
+  ['169','171','173','175','177','180','182','184','186','188'],             // 1.60
+  ['190','192','194','196','198','201','203','205','207','209'],             // 1.70
+  ['211','213','215','218','220','222','224','226','229','231'],             // 1.80
+  ['233','235','237','240','242','244','246','248','251','253'],             // 1.90
+  ['255','257','260','262','264','267','269','271','273','276'],             // 2.00
+  ['278','280','283','285','287','289','292','294','296','299'],             // 2.10
+  ['301','303','306','308','311','313','315','318','320','323'],             // 2.20
+  ['325','327','330','332','335','337','340','342','345','347'],             // 2.30
+  ['350','353^','355^','358^','360^','363^','366^','368^','371^','373^'],    // 2.40
+  ['376^','379^','381^','384^','387^','389^','392^','395^','398^','400^'],   // 2.50
+  ['403U','406U','409U','411U','414U','417U','420U','423U','425U','428U'],   // 2.60
+  ['431U'],                                                                  // 2.70
+];
+
+function initPioneerPanel() {
+  const container = el('pioneer-table-container');
+  if (!container.dataset.built) {
+    const cols = [0,0.01,0.02,0.03,0.04,0.05,0.06,0.07,0.08,0.09];
+    let html = '<table class="charts-table"><thead><tr><th>GH (ft)</th>';
+    cols.forEach(c => { html += `<th>+${c.toFixed(2)}</th>`; });
+    html += '</tr></thead><tbody>';
+    for (let ri = 0; ri < PIONEER_Q.length; ri++) {
+      const rowLabel = (PIONEER_FIRST_GH + ri * 0.1).toFixed(2);
+      html += `<tr><td>${rowLabel}</td>`;
+      for (let ci = 0; ci < cols.length; ci++) {
+        html += `<td>${PIONEER_Q[ri][ci] ?? ''}</td>`;
+      }
+      html += '</tr>';
+    }
+    html += '</tbody></table>';
+    container.innerHTML = html;
+    container.dataset.built = '1';
+  }
+  el('pioneer-tab-btn-table').onclick = () => switchPioneerTab('table');
+  el('pioneer-tab-btn-calc').onclick  = () => switchPioneerTab('calc');
+  el('pioneer-head').oninput = updatePioneerCalc;
+}
+
+function switchPioneerTab(tab) {
+  el('pioneer-tab-table').style.display = tab === 'table' ? '' : 'none';
+  el('pioneer-tab-calc').style.display  = tab === 'calc'  ? '' : 'none';
+  el('pioneer-tab-btn-table').classList.toggle('active', tab === 'table');
+  el('pioneer-tab-btn-calc').classList.toggle('active',  tab === 'calc');
+}
+
+function updatePioneerCalc() {
+  const h = parseFloat(el('pioneer-head').value);
+  if (isNaN(h) || h < PIONEER_FIRST_GH || h > 2.70) { el('pioneer-result').textContent = '—'; return; }
+  const h100 = Math.round(h * 100);
+  const ri = Math.floor(h100 / 10) - Math.round(PIONEER_FIRST_GH * 10);
+  const ci = h100 % 10;
+  const val = PIONEER_Q[ri] && PIONEER_Q[ri][ci];
+  el('pioneer-result').textContent = (val == null) ? '—' : val;
 }
 
 /* ── Ponds ───────────────────────────────────────────────────────────────── */

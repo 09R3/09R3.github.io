@@ -129,7 +129,7 @@
         Sign in with Microsoft 365
       </a>
       <div id="ms-login-error" class="error-msg hidden"></div>
-      <div class="login-version">v 2.85</div>
+      <div class="login-version">v 2.86</div>
     </div>
   </div>
 </div>
@@ -1840,7 +1840,7 @@
     <div id="settings-panel-appinfo" class="settings-panel hidden">
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 2.85</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 2.86</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>
@@ -2321,6 +2321,12 @@
           </div>
           <span class="dash-label">RRB T.O. 1 & 2</span>
         </button>
+        <button class="dash-tile" data-charts-panel="pioneer">
+          <div class="dash-icon-wrap">
+            <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-weir.svg);mask-image:url(/marv-site/icons/icon-weir.svg)"></span>
+          </div>
+          <span class="dash-label">Pioneer Inlet</span>
+        </button>
       </div>
     </div>
 
@@ -2551,6 +2557,34 @@
               <div class="charts-result-area">
                 <div class="charts-result-label">Flow Rate Q</div>
                 <div><span class="charts-result-value" id="rrb-result">—</span><span class="charts-result-unit">cfs</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Pioneer Inlet panel (sharp crested weir) -->
+    <div id="charts-panel-pioneer" class="maint-panel hidden">
+      <div class="settings-section">
+        <div class="settings-card">
+          <div class="settings-pad">
+            <div class="charts-tabs">
+              <button class="charts-tab-btn active" id="pioneer-tab-btn-table">Table</button>
+              <button class="charts-tab-btn" id="pioneer-tab-btn-calc">Calculator</button>
+            </div>
+            <div id="pioneer-tab-table" style="margin-top:12px">
+              <div class="charts-table-wrap" id="pioneer-table-container"></div>
+            </div>
+            <div id="pioneer-tab-calc" class="charts-calc" style="display:none">
+              <div class="charts-field-row">
+                <label>Gauge Height</label>
+                <input type="number" id="pioneer-head" class="ctrl-input" min="0.30" max="2.70" step="0.01" placeholder="ft">
+                <span class="charts-unit-label">ft</span>
+              </div>
+              <div class="charts-result-area">
+                <div class="charts-result-label">Flow Rate Q</div>
+                <div><span class="charts-result-value" id="pioneer-result">—</span><span class="charts-result-unit">cfs</span></div>
               </div>
             </div>
           </div>
