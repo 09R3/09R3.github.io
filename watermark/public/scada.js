@@ -1121,7 +1121,8 @@ async function loadScadaReverseFlow() {
   const g = scadaPlantGroups().find(x => x.key === _scadaRuntimePlant);
   if (!g) { rBody.innerHTML = '<div class="placeholder-msg">No data.</div>'; return; }
 
-  const sites = g.b ? [g.a, g.b] : [g.a];
+  // Reverse flow is an A-plant concept only — B plants never run in reverse.
+  const sites = [g.a];
   const runtimeRangeObj = _scadaRuntimeRange === 'custom'
     ? { start: _scadaRuntimeCustomStart, end: _scadaRuntimeCustomEnd }
     : null;

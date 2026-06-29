@@ -182,6 +182,79 @@ async function scadaGetRuntime(tagPaths, rangeOpts) {
   return result;
 }
 
+// Reverse-flow hours per pump for an A-plant. A pump accrues reverse time only
+// while the plant is in reverse mode (Skid.FRmode true) AND that pump's siphon
+// breaker is closed (SBVlv.Cntrl.O_Cmd true). Both are step (boolean) signals,
+// so we sample them onto a uniform grid (last value, carried forward for gaps)
+// and count the windows where both are true. count * gridSeconds → reverse time.
+// This is correct across forward↔reverse transitions, unlike subtracting two
+// independent integrals.
+function reverseGridSeconds(spanHours) {
+  if (spanHours <= 24)      return 30;
+  if (spanHours <= 48)      return 60;
+  if (spanHours <= 7 * 24)  return 120;
+  if (spanHours <= 30 * 24) return 600;
+  return 1800;
+}
+
+async function scadaGetReverseHours(influxSite, rangeOpts, pumps) {
+  const qApi = getInfluxQuery();
+  if (!qApi) throw new Error('InfluxDB not configured');
+
+  let rangeClause, spanHours;
+  if (typeof rangeOpts === 'object') {
+    const s = new Date(rangeOpts.start); const e = new Date(rangeOpts.end);
+    if (isNaN(s) || isNaN(e)) throw new Error('invalid custom range');
+    rangeClause = `range(start: ${s.toISOString()}, stop: ${e.toISOString()})`;
+    spanHours = (e.getTime() - s.getTime()) / 3600000;
+  } else {
+    const startMap = { '1h':'-1h','8h':'-8h','12h':'-12h','6h':'-6h','24h':'-24h','7d':'-7d','30d':'-30d' };
+    const hrsMap   = { '1h':1,'8h':8,'12h':12,'6h':6,'24h':24,'7d':168,'30d':720 };
+    rangeClause = `range(start: ${startMap[rangeOpts] || '-24h'})`;
+    spanHours   = hrsMap[rangeOpts] || 24;
+  }
+  const grid = reverseGridSeconds(spanHours);
+
+  const frTag      = `${influxSite}.Skid.FRmode`;
+  const siphonTags = pumps.map(p => `${influxSite}.${p}.SBVlv.Cntrl.O_Cmd`);
+  const allTags    = [frTag, ...siphonTags];
+  const filter     = allTags.map(t => `r.tag == "${t}"`).join(' or ');
+
+  const flux = `
+    from(bucket: "${INFLUX_BUCKET}")
+      |> ${rangeClause}
+      |> filter(fn: (r) => r._measurement == "plc_tags" and r._field == "value")
+      |> filter(fn: (r) => ${filter})
+      |> aggregateWindow(every: ${grid}s, fn: last, createEmpty: true)`;
+
+  // Bucket every (tag, window) into a time-keyed map so we can AND across tags.
+  const byTime = new Map(); // timeMs → { tag: value }
+  for await (const { values, tableMeta } of qApi.iterateRows(flux)) {
+    const row = tableMeta.toObject(values);
+    if (!row.tag) continue;
+    const t = new Date(row._time).getTime();
+    let slot = byTime.get(t);
+    if (!slot) { slot = {}; byTime.set(t, slot); }
+    slot[row.tag] = row._value;
+  }
+
+  const times = [...byTime.keys()].sort((a, b) => a - b);
+  const counts = {}; pumps.forEach(p => { counts[p] = 0; });
+  const last = {}; // tag → last seen non-null value (LOCF for step signals)
+  for (const t of times) {
+    const slot = byTime.get(t);
+    for (const tag of allTags) {
+      if (slot[tag] != null) last[tag] = slot[tag];
+    }
+    if (!(last[frTag] > 0.5)) continue; // plant not in reverse this window
+    pumps.forEach((p, i) => { if (last[siphonTags[i]] > 0.5) counts[p]++; });
+  }
+
+  const result = {};
+  pumps.forEach(p => { result[p] = (counts[p] * grid) / 3600; });
+  return result;
+}
+
 // ── Power monitoring (power_meters bucket) ─────────────────────────────────────
 // Power data lives in its own bucket/measurement, tagged by meter_id (one per
 // pumping plant). Same InfluxDB connection as the SCADA pollers. All field names,
@@ -4968,28 +5041,19 @@ app.get('/api/scada/runtime', requireAuth, requireScadaAccess, async (req, res) 
   } catch (err) { handleErr(res, err); }
 });
 
-// Reverse-flow hours for all pumps at one site (siphon breaker O_Cmd integral).
+// Reverse-flow hours per pump at one A-plant: time the plant is in reverse mode
+// (Skid.FRmode) AND the pump's siphon breaker is closed (SBVlv.Cntrl.O_Cmd).
+// Only A-plants run reverse; B-plants have no FRmode, so they return {}.
 app.get('/api/scada/runtime-reverse', requireAuth, requireScadaAccess, async (req, res) => {
   if (!SCADA_CONFIG) return res.status(503).json({ error: 'SCADA not configured' });
   const { site: influxSite, range, start, end } = req.query;
   if (!influxSite) return res.status(400).json({ error: 'site required' });
   const siteConfig = SCADA_CONFIG.sites.find(s => s.influxSite === String(influxSite));
   if (!siteConfig) return res.status(404).json({ error: 'site not found' });
+  if (!/A$/.test(String(influxSite))) return res.json({}); // reverse is A-plant only
   const rangeOpts = (start && end) ? { start: String(start), end: String(end) } : String(range || '24h');
-  const siphonPaths = siteConfig.pumps.map(p => `${influxSite}.${p}.SBVlv.Cntrl.O_Cmd`);
-  const motorPaths  = siteConfig.pumps.map(p => `${influxSite}.${p}.MTR.Cntrl.Run`);
   try {
-    const [rawSiphon, rawMotor] = await Promise.all([
-      scadaGetRuntime(siphonPaths, rangeOpts),
-      scadaGetRuntime(motorPaths, rangeOpts),
-    ]);
-    const result = {};
-    for (const p of siteConfig.pumps) {
-      const siphon = rawSiphon[`${influxSite}.${p}.SBVlv.Cntrl.O_Cmd`] ?? 0;
-      const motor  = rawMotor[`${influxSite}.${p}.MTR.Cntrl.Run`] ?? 0;
-      result[p] = Math.max(0, siphon - motor);
-    }
-    res.json(result);
+    res.json(await scadaGetReverseHours(String(influxSite), rangeOpts, siteConfig.pumps));
   } catch (err) { handleErr(res, err); }
 });
 
