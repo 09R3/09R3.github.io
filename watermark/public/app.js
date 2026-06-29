@@ -6114,8 +6114,8 @@ el('exif-back-btn').addEventListener('click', () => {
     { key: 'TRLvl',  label: 'Trash Rack', unit: 'ft'  },
     { key: 'AirPSI', label: 'Air Press',  unit: 'psi' },
   ];
-  // Common Allen-Bradley raw-count range for a 4-20mA analog input.
-  const DEF_RAW4 = 6242, DEF_RAW20 = 31208;
+  // Default raw-count range for a 4-20mA analog input.
+  const DEF_RAW4 = 4000, DEF_RAW20 = 20000;
   let config = null, plantNum = 1, pollTimer = null;
 
   function rawEndpoints() {

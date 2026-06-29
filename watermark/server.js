@@ -75,7 +75,12 @@ function scadaAllTagPaths(config) {
         `${site.influxSite}.${pump}.MTR.Spd.SCL.PV`,
         `${site.influxSite}.${pump}.HP`,
         `${site.influxSite}.${pump}.SBVlv.Cntrl.Enable`,
+        `${site.influxSite}.${pump}.SBVlv.Cntrl.O_Cmd`,  // siphon breaker: true = closed
       );
+    }
+    // Skid-level status (A plants): downstream-override disable + forward/reverse mode
+    if (/A$/.test(site.influxSite)) {
+      tags.push(`${site.influxSite}.Skid.DSDis`, `${site.influxSite}.Skid.FRmode`);
     }
   }
   return tags;
