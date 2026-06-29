@@ -317,14 +317,15 @@ function siphonClosed(site, p) { return isOn(scadaVal(scadaPumpPath(site, p, 'SB
 
 // Plant-group flow total (used for the live overview flow line). In reverse mode
 // (FRmode true) a plant's flow is the reverse-chart CFS of every pump whose siphon
-// breaker is closed; otherwise it's the forward CFS of every running pump.
+// breaker is closed, shown NEGATIVE since water moves the opposite direction;
+// otherwise it's the forward CFS of every running pump.
 function plantGroupFlow(g) {
   const sites = g.b ? [g.a, g.b] : [g.a];
   let total = 0;
   sites.forEach(site => {
     if (siteReverseMode(site)) {
       const rev = REVERSE_CFS_TABLE[site.influxSite] || {};
-      site.pumps.forEach(p => { if (siphonClosed(site, p)) total += rev[p] || 0; });
+      site.pumps.forEach(p => { if (siphonClosed(site, p)) total -= rev[p] || 0; });
     } else {
       const cfs = PUMP_CFS_TABLE[site.influxSite] || {};
       site.pumps.forEach(p => {
