@@ -86,7 +86,7 @@ const REVERSE_CFS_TABLE = {
 // B-plant pumps use their actual letters (A/B/C/D); they display as K/L/M/N.
 const PUMP_HP_TABLE = {
   'CVC_PP1A': {A:100, B:250, C:565, D:565, E:565, F:565, G:250, H:100},
-  'CVC_PP2A': {A:100, B:250, C:565, D:565, E:400, F:565, G:250, H:100},
+  'CVC_PP2A': {A:100, B:250, C:565, D:565, E:565, F:565, G:250, H:100},
   'CVC_PP3A': {A:100, B:250, C:565, D:565, E:565, F:250, G:100, H:250, J:100},
   'CVC_PP4A': {A:100, B:250, C:565, D:565, E:565, F:250, G:100, H:250, J:100},
   'CVC_PP5A': {A:100, B:250, C:565, D:565, E:565, F:250, G:100, H:250, J:100},
