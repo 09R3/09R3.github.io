@@ -81,6 +81,25 @@ const REVERSE_CFS_TABLE = {
   'CVC_PP7A': {A:25, B:56, C:56,  D:56,  E:56,  F:25},
 };
 
+// Pump motor HP per pump, keyed by influxSite then pump letter. This is a static
+// label only (no calculations depend on it), hard-coded from the published chart.
+// B-plant pumps use their actual letters (A/B/C/D); they display as K/L/M/N.
+const PUMP_HP_TABLE = {
+  'CVC_PP1A': {A:100, B:250, C:565, D:565, E:565, F:565, G:250, H:100},
+  'CVC_PP2A': {A:100, B:250, C:565, D:565, E:400, F:565, G:250, H:100},
+  'CVC_PP3A': {A:100, B:250, C:565, D:565, E:565, F:250, G:100, H:250, J:100},
+  'CVC_PP4A': {A:100, B:250, C:565, D:565, E:565, F:250, G:100, H:250, J:100},
+  'CVC_PP5A': {A:100, B:250, C:565, D:565, E:565, F:250, G:100, H:250, J:100},
+  'CVC_PP6A': {A:100, B:250, C:565, D:565, E:565, F:250, G:250, H:100},
+  'CVC_PP7A': {A:100, B:250, C:250, D:250, E:250, F:100},
+  'CVC_PP1B': {A:800, B:800, C:800},
+  'CVC_PP2B': {A:700, B:700, C:700},
+  'CVC_PP3B': {A:700, B:700, C:700},
+  'CVC_PP4B': {A:700, B:700, C:700},
+  'CVC_PP5B': {A:700, B:700, C:700},
+  'CVC_PP6B': {A:250, B:700, C:700, D:400},
+};
+
 let _scadaVendorLoaded = null;
 function loadScadaVendor() {
   if (window.Chart) return Promise.resolve();
@@ -722,10 +741,10 @@ function pumpCardHtml(site, p) {
   const runPath  = scadaPumpPath(site, p, 'MTR.Cntrl.Run');
   const failPath = scadaPumpPath(site, p, 'MTR.Cntrl.Fail');
   const spdPath  = scadaPumpPath(site, p, 'MTR.Spd.SCL.PV');
-  const hpPath   = scadaPumpPath(site, p, 'HP');
   const sbPath   = scadaPumpPath(site, p, 'SBVlv.Cntrl.O_Cmd');
   const run = isOn(scadaVal(runPath)), fail = isOn(scadaVal(failPath));
-  const spd = scadaVal(spdPath), hp = scadaVal(hpPath);
+  const spd = scadaVal(spdPath);
+  const hp  = (PUMP_HP_TABLE[site.influxSite] || {})[p]; // static label, from chart
   const sbClosed = siphonClosed(site, p);
   return `<div class="scada-pump-card${run?' run':' stop'}" data-scada-tag="${spdPath}" data-run-path="${runPath}" data-selectable>
     <div class="scada-pump-head">
@@ -735,7 +754,7 @@ function pumpCardHtml(site, p) {
     <span class="scada-run-pill ${run?'running':'stopped'}" data-scada-run="${runPath}">${run?'RUNNING':'STOPPED'}</span>
     <div class="scada-pump-meta">
       <span>RPM <strong data-scada-tag="${spdPath}" data-scada-int="1">${spd==null?'—':Math.round(spd)}</strong></span>
-      ${hp!=null?`<span>HP <strong>${Math.round(hp)}</strong></span>`:''}
+      ${hp!=null?`<span>HP <strong>${hp}</strong></span>`:''}
     </div>
     <div class="scada-pump-siphon" data-scada-siphon="${sbPath}">Siphon <strong>${sbClosed ? 'Closed' : 'Open'}</strong></div>
   </div>`;

@@ -73,7 +73,6 @@ function scadaAllTagPaths(config) {
         `${site.influxSite}.${pump}.MTR.Cntrl.Run`,
         `${site.influxSite}.${pump}.MTR.Cntrl.Fail`,
         `${site.influxSite}.${pump}.MTR.Spd.SCL.PV`,
-        `${site.influxSite}.${pump}.HP`,
         `${site.influxSite}.${pump}.SBVlv.Cntrl.Enable`,
         `${site.influxSite}.${pump}.SBVlv.Cntrl.O_Cmd`,  // siphon breaker: true = closed
       );
