@@ -525,6 +525,33 @@ pool.query(`
   )
 `).catch(err => console.error('Migration error (canal_issues):', err.message));
 
+// Charge codes: simple reference codes (code + description).
+pool.query(`
+  CREATE TABLE IF NOT EXISTS charge_codes (
+    code_id      SERIAL PRIMARY KEY,
+    code         VARCHAR(50) NOT NULL UNIQUE,
+    description  TEXT,
+    status       TEXT NOT NULL DEFAULT 'active',
+    created_by   TEXT,
+    created_at   TIMESTAMPTZ DEFAULT NOW(),
+    updated_at   TIMESTAMPTZ DEFAULT NOW()
+  )
+`).catch(err => console.error('Migration error (charge_codes):', err.message));
+
+// Charge-code split tools: a named breakdown that splits hours across several
+// codes by percentage. components = [{ code, percent }] and percents total 100.
+pool.query(`
+  CREATE TABLE IF NOT EXISTS charge_code_splits (
+    split_id     SERIAL PRIMARY KEY,
+    name         TEXT NOT NULL,
+    components   JSONB NOT NULL DEFAULT '[]',
+    status       TEXT NOT NULL DEFAULT 'active',
+    created_by   TEXT,
+    created_at   TIMESTAMPTZ DEFAULT NOW(),
+    updated_at   TIMESTAMPTZ DEFAULT NOW()
+  )
+`).catch(err => console.error('Migration error (charge_code_splits):', err.message));
+
 pool.query(`
   CREATE TABLE IF NOT EXISTS pest_tasks (
     task_id      SERIAL PRIMARY KEY,
@@ -4712,6 +4739,134 @@ app.put('/api/users/:id/password', requireAuth, async (req, res) => {
   } catch (err) {
     handleErr(res, err);
   }
+});
+
+// ── Charge Codes ──────────────────────────────────────────────────────────────
+// Reference codes + description; any authed user can view. Writes are supervisor+.
+app.get('/api/charge-codes', requireAuth, async (req, res) => {
+  const includeInactive = req.query.include_inactive === 'true';
+  try {
+    const { rows } = await pool.query(`
+      SELECT code_id, code, description, status
+      FROM charge_codes
+      WHERE $1 OR status = 'active'
+      ORDER BY code
+    `, [includeInactive]);
+    res.json(rows);
+  } catch (err) { handleErr(res, err); }
+});
+
+app.post('/api/charge-codes', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
+  const code = String(req.body.code || '').trim();
+  const description = String(req.body.description || '').trim();
+  if (!code) return res.status(400).json({ error: 'code is required' });
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO charge_codes (code, description, created_by) VALUES ($1,$2,$3) RETURNING code_id`,
+      [code, description || null, req.user.username]);
+    res.json({ ok: true, code_id: rows[0].code_id });
+  } catch (err) {
+    if (err.code === '23505') return res.status(400).json({ error: 'That charge code already exists' });
+    handleErr(res, err);
+  }
+});
+
+app.patch('/api/charge-codes/:id', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
+  const { id } = req.params;
+  const { code, description, status } = req.body;
+  try {
+    await pool.query(`
+      UPDATE charge_codes SET
+        code        = COALESCE($1, code),
+        description = COALESCE($2, description),
+        status      = COALESCE($3, status),
+        updated_at  = NOW()
+      WHERE code_id = $4
+    `, [code != null ? String(code).trim() : null, description ?? null, status || null, id]);
+    res.json({ ok: true });
+  } catch (err) {
+    if (err.code === '23505') return res.status(400).json({ error: 'That charge code already exists' });
+    handleErr(res, err);
+  }
+});
+
+app.delete('/api/charge-codes/:id', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
+  try {
+    await pool.query(`DELETE FROM charge_codes WHERE code_id = $1`, [req.params.id]);
+    res.json({ ok: true });
+  } catch (err) { handleErr(res, err); }
+});
+
+// Split tools (breakdowns). components = [{ code, percent }], percents total 100.
+function validateSplitComponents(raw) {
+  if (!Array.isArray(raw) || raw.length === 0) return { error: 'At least one component is required' };
+  const components = [];
+  let sum = 0;
+  for (const c of raw) {
+    const code = String(c?.code || '').trim();
+    const percent = Number(c?.percent);
+    if (!code) return { error: 'Each component needs a code' };
+    if (!isFinite(percent) || percent <= 0) return { error: 'Each component needs a positive percent' };
+    components.push({ code, percent });
+    sum += percent;
+  }
+  if (Math.abs(sum - 100) > 0.01) return { error: `Percentages must total 100% (currently ${sum}%)` };
+  return { components };
+}
+
+app.get('/api/charge-code-splits', requireAuth, async (req, res) => {
+  const includeInactive = req.query.include_inactive === 'true';
+  try {
+    const { rows } = await pool.query(`
+      SELECT split_id, name, components, status
+      FROM charge_code_splits
+      WHERE $1 OR status = 'active'
+      ORDER BY name
+    `, [includeInactive]);
+    res.json(rows);
+  } catch (err) { handleErr(res, err); }
+});
+
+app.post('/api/charge-code-splits', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
+  const name = String(req.body.name || '').trim();
+  if (!name) return res.status(400).json({ error: 'name is required' });
+  const v = validateSplitComponents(req.body.components);
+  if (v.error) return res.status(400).json({ error: v.error });
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO charge_code_splits (name, components, created_by) VALUES ($1,$2::jsonb,$3) RETURNING split_id`,
+      [name, JSON.stringify(v.components), req.user.username]);
+    res.json({ ok: true, split_id: rows[0].split_id });
+  } catch (err) { handleErr(res, err); }
+});
+
+app.patch('/api/charge-code-splits/:id', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
+  const { id } = req.params;
+  const { name, components, status } = req.body;
+  let componentsJson = null;
+  if (components !== undefined) {
+    const v = validateSplitComponents(components);
+    if (v.error) return res.status(400).json({ error: v.error });
+    componentsJson = JSON.stringify(v.components);
+  }
+  try {
+    await pool.query(`
+      UPDATE charge_code_splits SET
+        name       = COALESCE($1, name),
+        components = COALESCE($2::jsonb, components),
+        status     = COALESCE($3, status),
+        updated_at = NOW()
+      WHERE split_id = $4
+    `, [name != null ? String(name).trim() : null, componentsJson, status || null, id]);
+    res.json({ ok: true });
+  } catch (err) { handleErr(res, err); }
+});
+
+app.delete('/api/charge-code-splits/:id', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
+  try {
+    await pool.query(`DELETE FROM charge_code_splits WHERE split_id = $1`, [req.params.id]);
+    res.json({ ok: true });
+  } catch (err) { handleErr(res, err); }
 });
 
 // ── KF By-Set Dashboard ───────────────────────────────────────────────────────

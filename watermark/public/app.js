@@ -6040,6 +6040,7 @@ const SETTINGS_PANEL_NAMES = {
   tools:            'Tools',
   bugreports:       'Bug Reports',
   usermgmt:         'User Management',
+  chargecodes:      'Charge Code Settings',
 };
 function openSettingsPanel(panelId) {
   el('settings-main').classList.add('hidden');
@@ -6053,6 +6054,7 @@ function openSettingsPanel(panelId) {
   if (panelId === 'running-wells')  initRunningWellsPanel();
   if (panelId === 'gps-selector')   initGPSSelectorSettingsPanel();
   if (panelId === 'scada-roles')    initScadaRolesPanel();
+  if (panelId === 'chargecodes')    initChargeCodesSettings();
   if (panelId === 'appinfo') {
     const ls = localStorage.getItem('watermark-last-sync');
     el('settings-last-sync').textContent = ls ? new Date(ls).toLocaleString() : 'Never';
@@ -7420,6 +7422,189 @@ el('user-modal-save').addEventListener('click', async () => {
   } finally {
     _save();
   }
+});
+
+/* ── Charge Code Settings (admin/supervisor) ─────────────────────────────── */
+let _editChargeCodeId = null, _editSplitId = null;
+
+function ccsSwitchTab(tab) {
+  el('ccs-tab-codes').style.display  = tab === 'codes'  ? '' : 'none';
+  el('ccs-tab-splits').style.display = tab === 'splits' ? '' : 'none';
+  el('ccs-tab-btn-codes').classList.toggle('active',  tab === 'codes');
+  el('ccs-tab-btn-splits').classList.toggle('active', tab === 'splits');
+}
+
+async function initChargeCodesSettings() {
+  ccsSwitchTab('codes');
+  el('ccs-tab-btn-codes').onclick  = () => ccsSwitchTab('codes');
+  el('ccs-tab-btn-splits').onclick = () => ccsSwitchTab('splits');
+  await loadChargeCodeSettings();
+}
+
+async function loadChargeCodeSettings() {
+  el('ccs-code-list').innerHTML  = '<div class="placeholder-msg">Loading…</div>';
+  el('ccs-split-list').innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  let codes = [], splits = [];
+  try {
+    [codes, splits] = await Promise.all([
+      api('GET', '/api/charge-codes?include_inactive=true'),
+      api('GET', '/api/charge-code-splits?include_inactive=true'),
+    ]);
+  } catch {
+    el('ccs-code-list').innerHTML = '<div class="placeholder-msg">Failed to load.</div>';
+    return;
+  }
+  renderCCSettingsCodes(codes);
+  renderCCSettingsSplits(splits);
+}
+
+function renderCCSettingsCodes(codes) {
+  const list = el('ccs-code-list');
+  if (!codes.length) { list.innerHTML = '<div class="placeholder-msg">No charge codes yet.</div>'; return; }
+  list.innerHTML = codes.map(c => `
+    <div class="cc-item${c.status !== 'active' ? ' cc-item-inactive' : ''}">
+      <span class="cc-item-code">${escHtml(c.code)}${c.status !== 'active' ? ' <span class="pest-inactive-badge">Inactive</span>' : ''}</span>
+      <span class="cc-item-desc">${escHtml(c.description || '')}</span>
+      <button class="btn btn-secondary btn-xs cc-edit-btn" data-id="${c.code_id}">Edit</button>
+    </div>`).join('');
+  list.querySelectorAll('.cc-edit-btn').forEach(btn =>
+    btn.addEventListener('click', () => openChargeCodeModal(codes.find(c => c.code_id === parseInt(btn.dataset.id)))));
+}
+
+function renderCCSettingsSplits(splits) {
+  const list = el('ccs-split-list');
+  if (!splits.length) { list.innerHTML = '<div class="placeholder-msg">No split tools yet.</div>'; return; }
+  list.innerHTML = splits.map(s => {
+    const parts = (s.components || []).map(c => `${escHtml(c.code)} ${c.percent}%`).join(' · ');
+    return `<div class="cc-item${s.status !== 'active' ? ' cc-item-inactive' : ''}" style="align-items:flex-start">
+      <div style="flex:1;min-width:0">
+        <div class="cc-item-code">${escHtml(s.name)}${s.status !== 'active' ? ' <span class="pest-inactive-badge">Inactive</span>' : ''}</div>
+        <div class="cc-item-desc" style="text-align:left">${parts}</div>
+      </div>
+      <button class="btn btn-secondary btn-xs cc-split-edit-btn" data-id="${s.split_id}">Edit</button>
+    </div>`;
+  }).join('');
+  list.querySelectorAll('.cc-split-edit-btn').forEach(btn =>
+    btn.addEventListener('click', () => openSplitModal(splits.find(s => s.split_id === parseInt(btn.dataset.id)))));
+}
+
+// ── Charge code add/edit modal ──
+el('ccs-add-code-btn').addEventListener('click', () => openChargeCodeModal(null));
+
+function openChargeCodeModal(code) {
+  _editChargeCodeId = code ? code.code_id : null;
+  el('cc-code-modal-title').textContent = code ? 'Edit Code' : 'Add Code';
+  el('ccm-code').value = code?.code || '';
+  el('ccm-desc').value = code?.description || '';
+  el('cc-code-modal-delete').style.display = code ? '' : 'none';
+  clearError('ccm-error');
+  el('cc-code-modal').classList.remove('hidden');
+}
+el('cc-code-modal-close').addEventListener('click',  () => el('cc-code-modal').classList.add('hidden'));
+el('cc-code-modal-cancel').addEventListener('click', () => el('cc-code-modal').classList.add('hidden'));
+
+el('cc-code-modal-save').addEventListener('click', async () => {
+  clearError('ccm-error');
+  const code = el('ccm-code').value.trim();
+  const description = el('ccm-desc').value.trim();
+  if (!code) return showError('ccm-error', 'Charge code is required');
+  const _save = beginSave(el('cc-code-modal-save'));
+  try {
+    if (_editChargeCodeId) await api('PATCH', `/api/charge-codes/${_editChargeCodeId}`, { code, description });
+    else await api('POST', '/api/charge-codes', { code, description });
+    el('cc-code-modal').classList.add('hidden');
+    showToast('Charge code saved', 'success');
+    await loadChargeCodeSettings();
+  } catch (err) {
+    showError('ccm-error', err.message);
+  } finally { _save(); }
+});
+
+el('cc-code-modal-delete').addEventListener('click', async () => {
+  if (!_editChargeCodeId || !confirm('Delete this charge code?')) return;
+  try {
+    await api('DELETE', `/api/charge-codes/${_editChargeCodeId}`);
+    el('cc-code-modal').classList.add('hidden');
+    showToast('Charge code deleted', 'success');
+    await loadChargeCodeSettings();
+  } catch (err) { showError('ccm-error', err.message); }
+});
+
+// ── Split tool add/edit modal (dynamic component rows) ──
+el('ccs-add-split-btn').addEventListener('click', () => openSplitModal(null));
+
+function openSplitModal(split) {
+  _editSplitId = split ? split.split_id : null;
+  el('cc-split-modal-title').textContent = split ? 'Edit Split Tool' : 'Add Split Tool';
+  el('csm-name').value = split?.name || '';
+  el('csm-components').innerHTML = '';
+  const comps = (split?.components && split.components.length) ? split.components : [{ code: '', percent: '' }, { code: '', percent: '' }];
+  comps.forEach(c => addSplitComponentRow(c.code, c.percent));
+  el('cc-split-modal-delete').style.display = split ? '' : 'none';
+  clearError('csm-error');
+  updateSplitTotal();
+  el('cc-split-modal').classList.remove('hidden');
+}
+
+function addSplitComponentRow(code = '', percent = '') {
+  const row = document.createElement('div');
+  row.className = 'csm-comp-row';
+  row.innerHTML = `
+    <input type="text" class="ctrl-input csm-comp-code" placeholder="Code" value="${escHtml(String(code))}">
+    <input type="number" class="ctrl-input csm-comp-pct" placeholder="%" min="0" step="1" value="${percent === '' ? '' : escHtml(String(percent))}">
+    <button type="button" class="btn btn-secondary btn-xs csm-comp-remove">&times;</button>`;
+  row.querySelector('.csm-comp-remove').addEventListener('click', () => { row.remove(); updateSplitTotal(); });
+  row.querySelector('.csm-comp-pct').addEventListener('input', updateSplitTotal);
+  el('csm-components').appendChild(row);
+}
+
+function readSplitComponents() {
+  return [...el('csm-components').querySelectorAll('.csm-comp-row')].map(r => ({
+    code: r.querySelector('.csm-comp-code').value.trim(),
+    percent: parseFloat(r.querySelector('.csm-comp-pct').value),
+  }));
+}
+
+function updateSplitTotal() {
+  const sum = readSplitComponents().reduce((a, c) => a + (isNaN(c.percent) ? 0 : c.percent), 0);
+  const totalEl = el('csm-total');
+  totalEl.textContent = `Total: ${sum}%`;
+  totalEl.classList.toggle('csm-total-ok', Math.abs(sum - 100) < 0.01);
+}
+
+el('csm-add-comp-btn').addEventListener('click', () => addSplitComponentRow());
+el('cc-split-modal-close').addEventListener('click',  () => el('cc-split-modal').classList.add('hidden'));
+el('cc-split-modal-cancel').addEventListener('click', () => el('cc-split-modal').classList.add('hidden'));
+
+el('cc-split-modal-save').addEventListener('click', async () => {
+  clearError('csm-error');
+  const name = el('csm-name').value.trim();
+  if (!name) return showError('csm-error', 'Name is required');
+  const components = readSplitComponents();
+  if (components.some(c => !c.code || isNaN(c.percent) || c.percent <= 0))
+    return showError('csm-error', 'Every component needs a code and a positive percent');
+  const sum = components.reduce((a, c) => a + c.percent, 0);
+  if (Math.abs(sum - 100) > 0.01) return showError('csm-error', `Percentages must total 100% (currently ${sum}%)`);
+  const _save = beginSave(el('cc-split-modal-save'));
+  try {
+    if (_editSplitId) await api('PATCH', `/api/charge-code-splits/${_editSplitId}`, { name, components });
+    else await api('POST', '/api/charge-code-splits', { name, components });
+    el('cc-split-modal').classList.add('hidden');
+    showToast('Split tool saved', 'success');
+    await loadChargeCodeSettings();
+  } catch (err) {
+    showError('csm-error', err.message);
+  } finally { _save(); }
+});
+
+el('cc-split-modal-delete').addEventListener('click', async () => {
+  if (!_editSplitId || !confirm('Delete this split tool?')) return;
+  try {
+    await api('DELETE', `/api/charge-code-splits/${_editSplitId}`);
+    el('cc-split-modal').classList.add('hidden');
+    showToast('Split tool deleted', 'success');
+    await loadChargeCodeSettings();
+  } catch (err) { showError('csm-error', err.message); }
 });
 
 /* ── Login Page: DB status + username dropdown + settings modal ──────────── */
@@ -11410,6 +11595,7 @@ function openHRPanel(panelId) {
   };
   setPanelNav(el('screen-hr'), closeHRPanel, 'HR – ' + (panelTitles[panelId] || panelId));
   if (panelId === 'time-off') initTimeOffPanel();
+  if (panelId === 'charge-codes') initChargeCodesPanel();
 }
 
 function closeHRPanel() {
@@ -11420,6 +11606,98 @@ function closeHRPanel() {
 
 function initHRScreen() {
   closeHRPanel();
+}
+
+// ── Charge Codes (HR reference list + breakdown calculator) ─────────────────
+let _ccCodes = [], _ccSplits = [];
+
+async function initChargeCodesPanel() {
+  ccSwitchTab('list');
+  el('cc-tab-btn-list').onclick = () => ccSwitchTab('list');
+  el('cc-tab-btn-calc').onclick = () => ccSwitchTab('calc');
+  el('cc-search').oninput = renderCCList;
+  el('cc-split-select').onchange = renderCCSplitResult;
+  el('cc-split-hours').oninput = renderCCSplitResult;
+  el('cc-list').innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    [_ccCodes, _ccSplits] = await Promise.all([
+      api('GET', '/api/charge-codes'),
+      api('GET', '/api/charge-code-splits'),
+    ]);
+  } catch {
+    el('cc-list').innerHTML = '<div class="placeholder-msg">Failed to load.</div>';
+    return;
+  }
+  renderCCList();
+  renderCCSplitOptions();
+}
+
+function ccSwitchTab(tab) {
+  el('cc-tab-list').style.display = tab === 'list' ? '' : 'none';
+  el('cc-tab-calc').style.display = tab === 'calc' ? '' : 'none';
+  el('cc-tab-btn-list').classList.toggle('active', tab === 'list');
+  el('cc-tab-btn-calc').classList.toggle('active', tab === 'calc');
+}
+
+function renderCCList() {
+  const q = (el('cc-search').value || '').trim().toLowerCase();
+  const rows = _ccCodes.filter(c =>
+    !q || c.code.toLowerCase().includes(q) || (c.description || '').toLowerCase().includes(q));
+  if (!rows.length) {
+    el('cc-list').innerHTML = `<div class="placeholder-msg">${_ccCodes.length ? 'No matches.' : 'No charge codes found.'}</div>`;
+    return;
+  }
+  el('cc-list').innerHTML = rows.map(c => `
+    <div class="cc-item">
+      <span class="cc-item-code">${escHtml(c.code)}</span>
+      <span class="cc-item-desc">${escHtml(c.description || '')}</span>
+    </div>`).join('');
+}
+
+function renderCCSplitOptions() {
+  const sel = el('cc-split-select');
+  if (!_ccSplits.length) {
+    sel.innerHTML = '<option value="">No breakdowns defined</option>';
+  } else {
+    sel.innerHTML = _ccSplits.map(s => `<option value="${s.split_id}">${escHtml(s.name)}</option>`).join('');
+  }
+  renderCCSplitResult();
+}
+
+// Split hours to the nearest quarter hour, giving any remainder to the
+// largest-percentage code so the parts always sum exactly to the total.
+function computeChargeSplit(total, components) {
+  const parts = components.map(c => ({
+    code: c.code,
+    percent: Number(c.percent),
+    hrs: Math.round((total * Number(c.percent) / 100) / 0.25) * 0.25,
+  }));
+  const sum = parts.reduce((a, p) => a + p.hrs, 0);
+  const diff = Math.round((total - sum) * 100) / 100;
+  if (diff !== 0 && parts.length) {
+    let mi = 0;
+    parts.forEach((p, i) => { if (p.percent > parts[mi].percent) mi = i; });
+    parts[mi].hrs = Math.round((parts[mi].hrs + diff) * 100) / 100;
+  }
+  return parts;
+}
+
+function renderCCSplitResult() {
+  const out = el('cc-split-result');
+  const split = _ccSplits.find(s => String(s.split_id) === el('cc-split-select').value);
+  const total = parseFloat(el('cc-split-hours').value);
+  if (!split || !Array.isArray(split.components) || !split.components.length) { out.innerHTML = ''; return; }
+  if (isNaN(total) || total < 0) {
+    out.innerHTML = '<div class="placeholder-msg">Enter total hours above.</div>';
+    return;
+  }
+  const parts = computeChargeSplit(total, split.components);
+  out.innerHTML = parts.map(p => `
+    <div class="cc-split-row">
+      <span><strong class="cc-item-code">${escHtml(p.code)}</strong> <span style="color:var(--text-dim)">(${p.percent}%)</span></span>
+      <strong>${p.hrs.toFixed(2)} h</strong>
+    </div>`).join('') + `
+    <div class="cc-split-total"><span>Total</span><span>${parts.reduce((a, p) => a + p.hrs, 0).toFixed(2)} h</span></div>`;
 }
 
 function initTimeOffPanel() {

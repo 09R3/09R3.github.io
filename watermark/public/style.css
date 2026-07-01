@@ -3497,6 +3497,31 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
   }
 }
 
+/* ── Charge Codes ────────────────────────────────────────────────────────── */
+.cc-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 9px 12px; margin-bottom: 6px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+}
+.cc-item-inactive { opacity: 0.55; }
+.cc-item-code { font-weight: 700; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+.cc-item-desc { color: var(--text-dim); text-align: right; font-size: 0.85rem; }
+.cc-split-result { margin-top: 14px; }
+.cc-split-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 12px; border-bottom: 1px solid var(--border);
+}
+.cc-split-row strong { font-variant-numeric: tabular-nums; }
+.cc-split-total {
+  display: flex; justify-content: space-between; padding: 10px 12px;
+  font-weight: 700; font-variant-numeric: tabular-nums;
+}
+.csm-comp-row { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+.csm-comp-row .csm-comp-code { flex: 1; }
+.csm-comp-row .csm-comp-pct { width: 80px; }
+.csm-total { margin-top: 10px; font-weight: 700; color: var(--text-dim); }
+.csm-total-ok { color: #2ecc71; }
+
 /* ── SCADA Scaling Test tool ─────────────────────────────────────────────── */
 #scadatest-tool-overlay {
   position: fixed; inset: 0; z-index: 300;
