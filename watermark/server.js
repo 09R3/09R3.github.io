@@ -73,9 +73,13 @@ function scadaAllTagPaths(config) {
         `${site.influxSite}.${pump}.MTR.Cntrl.Run`,
         `${site.influxSite}.${pump}.MTR.Cntrl.Fail`,
         `${site.influxSite}.${pump}.MTR.Spd.SCL.PV`,
-        `${site.influxSite}.${pump}.HP`,
         `${site.influxSite}.${pump}.SBVlv.Cntrl.Enable`,
+        `${site.influxSite}.${pump}.SBVlv.Cntrl.O_Cmd`,  // siphon breaker: true = closed
       );
+    }
+    // Skid-level status (A plants): downstream-override disable + forward/reverse mode
+    if (/A$/.test(site.influxSite)) {
+      tags.push(`${site.influxSite}.Skid.DSDis`, `${site.influxSite}.Skid.FRmode`);
     }
   }
   return tags;
@@ -174,6 +178,79 @@ async function scadaGetRuntime(tagPaths, rangeOpts) {
       if (row.tag) result[row.tag] = (row._value || 0) / 3600;
     }
   }
+  return result;
+}
+
+// Reverse-flow hours per pump for an A-plant. A pump accrues reverse time only
+// while the plant is in reverse mode (Skid.FRmode true) AND that pump's siphon
+// breaker is closed (SBVlv.Cntrl.O_Cmd true). Both are step (boolean) signals,
+// so we sample them onto a uniform grid (last value, carried forward for gaps)
+// and count the windows where both are true. count * gridSeconds → reverse time.
+// This is correct across forward↔reverse transitions, unlike subtracting two
+// independent integrals.
+function reverseGridSeconds(spanHours) {
+  if (spanHours <= 24)      return 30;
+  if (spanHours <= 48)      return 60;
+  if (spanHours <= 7 * 24)  return 120;
+  if (spanHours <= 30 * 24) return 600;
+  return 1800;
+}
+
+async function scadaGetReverseHours(influxSite, rangeOpts, pumps) {
+  const qApi = getInfluxQuery();
+  if (!qApi) throw new Error('InfluxDB not configured');
+
+  let rangeClause, spanHours;
+  if (typeof rangeOpts === 'object') {
+    const s = new Date(rangeOpts.start); const e = new Date(rangeOpts.end);
+    if (isNaN(s) || isNaN(e)) throw new Error('invalid custom range');
+    rangeClause = `range(start: ${s.toISOString()}, stop: ${e.toISOString()})`;
+    spanHours = (e.getTime() - s.getTime()) / 3600000;
+  } else {
+    const startMap = { '1h':'-1h','8h':'-8h','12h':'-12h','6h':'-6h','24h':'-24h','7d':'-7d','30d':'-30d' };
+    const hrsMap   = { '1h':1,'8h':8,'12h':12,'6h':6,'24h':24,'7d':168,'30d':720 };
+    rangeClause = `range(start: ${startMap[rangeOpts] || '-24h'})`;
+    spanHours   = hrsMap[rangeOpts] || 24;
+  }
+  const grid = reverseGridSeconds(spanHours);
+
+  const frTag      = `${influxSite}.Skid.FRmode`;
+  const siphonTags = pumps.map(p => `${influxSite}.${p}.SBVlv.Cntrl.O_Cmd`);
+  const allTags    = [frTag, ...siphonTags];
+  const filter     = allTags.map(t => `r.tag == "${t}"`).join(' or ');
+
+  const flux = `
+    from(bucket: "${INFLUX_BUCKET}")
+      |> ${rangeClause}
+      |> filter(fn: (r) => r._measurement == "plc_tags" and r._field == "value")
+      |> filter(fn: (r) => ${filter})
+      |> aggregateWindow(every: ${grid}s, fn: last, createEmpty: true)`;
+
+  // Bucket every (tag, window) into a time-keyed map so we can AND across tags.
+  const byTime = new Map(); // timeMs → { tag: value }
+  for await (const { values, tableMeta } of qApi.iterateRows(flux)) {
+    const row = tableMeta.toObject(values);
+    if (!row.tag) continue;
+    const t = new Date(row._time).getTime();
+    let slot = byTime.get(t);
+    if (!slot) { slot = {}; byTime.set(t, slot); }
+    slot[row.tag] = row._value;
+  }
+
+  const times = [...byTime.keys()].sort((a, b) => a - b);
+  const counts = {}; pumps.forEach(p => { counts[p] = 0; });
+  const last = {}; // tag → last seen non-null value (LOCF for step signals)
+  for (const t of times) {
+    const slot = byTime.get(t);
+    for (const tag of allTags) {
+      if (slot[tag] != null) last[tag] = slot[tag];
+    }
+    if (!(last[frTag] > 0.5)) continue; // plant not in reverse this window
+    pumps.forEach((p, i) => { if (last[siphonTags[i]] > 0.5) counts[p]++; });
+  }
+
+  const result = {};
+  pumps.forEach(p => { result[p] = (counts[p] * grid) / 3600; });
   return result;
 }
 
@@ -447,6 +524,33 @@ pool.query(`
     updated_at     TIMESTAMPTZ DEFAULT NOW()
   )
 `).catch(err => console.error('Migration error (canal_issues):', err.message));
+
+// Charge codes: simple reference codes (code + description).
+pool.query(`
+  CREATE TABLE IF NOT EXISTS charge_codes (
+    code_id      SERIAL PRIMARY KEY,
+    code         VARCHAR(50) NOT NULL UNIQUE,
+    description  TEXT,
+    status       TEXT NOT NULL DEFAULT 'active',
+    created_by   TEXT,
+    created_at   TIMESTAMPTZ DEFAULT NOW(),
+    updated_at   TIMESTAMPTZ DEFAULT NOW()
+  )
+`).catch(err => console.error('Migration error (charge_codes):', err.message));
+
+// Charge-code split tools: a named breakdown that splits hours across several
+// codes by percentage. components = [{ code, percent }] and percents total 100.
+pool.query(`
+  CREATE TABLE IF NOT EXISTS charge_code_splits (
+    split_id     SERIAL PRIMARY KEY,
+    name         TEXT NOT NULL,
+    components   JSONB NOT NULL DEFAULT '[]',
+    status       TEXT NOT NULL DEFAULT 'active',
+    created_by   TEXT,
+    created_at   TIMESTAMPTZ DEFAULT NOW(),
+    updated_at   TIMESTAMPTZ DEFAULT NOW()
+  )
+`).catch(err => console.error('Migration error (charge_code_splits):', err.message));
 
 pool.query(`
   CREATE TABLE IF NOT EXISTS pest_tasks (
@@ -4637,6 +4741,134 @@ app.put('/api/users/:id/password', requireAuth, async (req, res) => {
   }
 });
 
+// ── Charge Codes ──────────────────────────────────────────────────────────────
+// Reference codes + description; any authed user can view. Writes are supervisor+.
+app.get('/api/charge-codes', requireAuth, async (req, res) => {
+  const includeInactive = req.query.include_inactive === 'true';
+  try {
+    const { rows } = await pool.query(`
+      SELECT code_id, code, description, status
+      FROM charge_codes
+      WHERE $1 OR status = 'active'
+      ORDER BY code
+    `, [includeInactive]);
+    res.json(rows);
+  } catch (err) { handleErr(res, err); }
+});
+
+app.post('/api/charge-codes', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
+  const code = String(req.body.code || '').trim();
+  const description = String(req.body.description || '').trim();
+  if (!code) return res.status(400).json({ error: 'code is required' });
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO charge_codes (code, description, created_by) VALUES ($1,$2,$3) RETURNING code_id`,
+      [code, description || null, req.user.username]);
+    res.json({ ok: true, code_id: rows[0].code_id });
+  } catch (err) {
+    if (err.code === '23505') return res.status(400).json({ error: 'That charge code already exists' });
+    handleErr(res, err);
+  }
+});
+
+app.patch('/api/charge-codes/:id', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
+  const { id } = req.params;
+  const { code, description, status } = req.body;
+  try {
+    await pool.query(`
+      UPDATE charge_codes SET
+        code        = COALESCE($1, code),
+        description = COALESCE($2, description),
+        status      = COALESCE($3, status),
+        updated_at  = NOW()
+      WHERE code_id = $4
+    `, [code != null ? String(code).trim() : null, description ?? null, status || null, id]);
+    res.json({ ok: true });
+  } catch (err) {
+    if (err.code === '23505') return res.status(400).json({ error: 'That charge code already exists' });
+    handleErr(res, err);
+  }
+});
+
+app.delete('/api/charge-codes/:id', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
+  try {
+    await pool.query(`DELETE FROM charge_codes WHERE code_id = $1`, [req.params.id]);
+    res.json({ ok: true });
+  } catch (err) { handleErr(res, err); }
+});
+
+// Split tools (breakdowns). components = [{ code, percent }], percents total 100.
+function validateSplitComponents(raw) {
+  if (!Array.isArray(raw) || raw.length === 0) return { error: 'At least one component is required' };
+  const components = [];
+  let sum = 0;
+  for (const c of raw) {
+    const code = String(c?.code || '').trim();
+    const percent = Number(c?.percent);
+    if (!code) return { error: 'Each component needs a code' };
+    if (!isFinite(percent) || percent <= 0) return { error: 'Each component needs a positive percent' };
+    components.push({ code, percent });
+    sum += percent;
+  }
+  if (Math.abs(sum - 100) > 0.01) return { error: `Percentages must total 100% (currently ${sum}%)` };
+  return { components };
+}
+
+app.get('/api/charge-code-splits', requireAuth, async (req, res) => {
+  const includeInactive = req.query.include_inactive === 'true';
+  try {
+    const { rows } = await pool.query(`
+      SELECT split_id, name, components, status
+      FROM charge_code_splits
+      WHERE $1 OR status = 'active'
+      ORDER BY name
+    `, [includeInactive]);
+    res.json(rows);
+  } catch (err) { handleErr(res, err); }
+});
+
+app.post('/api/charge-code-splits', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
+  const name = String(req.body.name || '').trim();
+  if (!name) return res.status(400).json({ error: 'name is required' });
+  const v = validateSplitComponents(req.body.components);
+  if (v.error) return res.status(400).json({ error: v.error });
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO charge_code_splits (name, components, created_by) VALUES ($1,$2::jsonb,$3) RETURNING split_id`,
+      [name, JSON.stringify(v.components), req.user.username]);
+    res.json({ ok: true, split_id: rows[0].split_id });
+  } catch (err) { handleErr(res, err); }
+});
+
+app.patch('/api/charge-code-splits/:id', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
+  const { id } = req.params;
+  const { name, components, status } = req.body;
+  let componentsJson = null;
+  if (components !== undefined) {
+    const v = validateSplitComponents(components);
+    if (v.error) return res.status(400).json({ error: v.error });
+    componentsJson = JSON.stringify(v.components);
+  }
+  try {
+    await pool.query(`
+      UPDATE charge_code_splits SET
+        name       = COALESCE($1, name),
+        components = COALESCE($2::jsonb, components),
+        status     = COALESCE($3, status),
+        updated_at = NOW()
+      WHERE split_id = $4
+    `, [name != null ? String(name).trim() : null, componentsJson, status || null, id]);
+    res.json({ ok: true });
+  } catch (err) { handleErr(res, err); }
+});
+
+app.delete('/api/charge-code-splits/:id', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
+  try {
+    await pool.query(`DELETE FROM charge_code_splits WHERE split_id = $1`, [req.params.id]);
+    res.json({ ok: true });
+  } catch (err) { handleErr(res, err); }
+});
+
 // ── KF By-Set Dashboard ───────────────────────────────────────────────────────
 app.get('/api/dashboard/kf-by-set', requireAuth, async (req, res) => {
   try {
@@ -4909,6 +5141,24 @@ app.get('/api/scada/current', requireAuth, requireScadaAccess, async (req, res) 
   } catch (err) { handleErr(res, err); }
 });
 
+// Raw + PV current values for the analog sensors of given sites — used by the
+// SCADA Test tool (4-20mA scaling tester). ?sites=CVC_PP1A,CVC_PP1B
+// Returns latest { tag: { v, t } } for each sensor's .SCL.Raw and .SCL.PV.
+const SCADA_RAW_SENSORS = ['ABLvl', 'AirPSI', 'FBLvl', 'TRLvl', 'DSLvl'];
+app.get('/api/scada/raw-current', requireAuth, requireScadaAccess, async (req, res) => {
+  if (!SCADA_CONFIG) return res.status(503).json({ error: 'SCADA not configured' });
+  const valid = new Set(SCADA_CONFIG.sites.map(s => s.influxSite));
+  const sitesList = String(req.query.sites || '').split(',').map(s => s.trim())
+    .filter(s => valid.has(s));
+  if (!sitesList.length) return res.status(400).json({ error: 'valid sites required' });
+  const tags = [];
+  for (const site of sitesList) for (const sensor of SCADA_RAW_SENSORS)
+    tags.push(`${site}.${sensor}.SCL.Raw`, `${site}.${sensor}.SCL.PV`);
+  try {
+    res.json(await scadaGetCurrent(tags));
+  } catch (err) { handleErr(res, err); }
+});
+
 // History endpoint. Supports preset ranges and custom start/end.
 // Single:   ?tag=...&range=1h  OR  ?tag=...&start=ISO&end=ISO
 // Multi:    ?tags=a,b&range=7d  OR  ?tags=a,b&start=ISO&end=ISO  → { series }
@@ -4945,28 +5195,19 @@ app.get('/api/scada/runtime', requireAuth, requireScadaAccess, async (req, res) 
   } catch (err) { handleErr(res, err); }
 });
 
-// Reverse-flow hours for all pumps at one site (siphon breaker O_Cmd integral).
+// Reverse-flow hours per pump at one A-plant: time the plant is in reverse mode
+// (Skid.FRmode) AND the pump's siphon breaker is closed (SBVlv.Cntrl.O_Cmd).
+// Only A-plants run reverse; B-plants have no FRmode, so they return {}.
 app.get('/api/scada/runtime-reverse', requireAuth, requireScadaAccess, async (req, res) => {
   if (!SCADA_CONFIG) return res.status(503).json({ error: 'SCADA not configured' });
   const { site: influxSite, range, start, end } = req.query;
   if (!influxSite) return res.status(400).json({ error: 'site required' });
   const siteConfig = SCADA_CONFIG.sites.find(s => s.influxSite === String(influxSite));
   if (!siteConfig) return res.status(404).json({ error: 'site not found' });
+  if (!/A$/.test(String(influxSite))) return res.json({}); // reverse is A-plant only
   const rangeOpts = (start && end) ? { start: String(start), end: String(end) } : String(range || '24h');
-  const siphonPaths = siteConfig.pumps.map(p => `${influxSite}.${p}.SBVlv.Cntrl.O_Cmd`);
-  const motorPaths  = siteConfig.pumps.map(p => `${influxSite}.${p}.MTR.Cntrl.Run`);
   try {
-    const [rawSiphon, rawMotor] = await Promise.all([
-      scadaGetRuntime(siphonPaths, rangeOpts),
-      scadaGetRuntime(motorPaths, rangeOpts),
-    ]);
-    const result = {};
-    for (const p of siteConfig.pumps) {
-      const siphon = rawSiphon[`${influxSite}.${p}.SBVlv.Cntrl.O_Cmd`] ?? 0;
-      const motor  = rawMotor[`${influxSite}.${p}.MTR.Cntrl.Run`] ?? 0;
-      result[p] = Math.max(0, siphon - motor);
-    }
-    res.json(result);
+    res.json(await scadaGetReverseHours(String(influxSite), rangeOpts, siteConfig.pumps));
   } catch (err) { handleErr(res, err); }
 });
 

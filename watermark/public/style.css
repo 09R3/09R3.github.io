@@ -3335,9 +3335,21 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
 .scada-fault-badge { background: #5a1a1a; color: #ef9a9a; font-size: 0.66rem; font-weight: 700; padding: 2px 6px; border-radius: 10px; }
 .scada-pump-meta { display: flex; flex-direction: column; gap: 2px; font-size: 0.78rem; color: var(--text-dim); }
 .scada-pump-meta strong { color: var(--text); }
+.scada-pump-siphon { margin-top: 4px; font-size: 0.72rem; color: var(--text-dim); }
+.scada-pump-siphon strong { color: var(--text); }
 
 .scada-chart-controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
 .scada-chart-controls .ctrl-select { flex: 1; max-width: 240px; }
+
+/* Range button rows: one row that scrolls horizontally on narrow screens
+   instead of squishing/clipping the 1h…30d/Custom buttons. */
+#screen-scada .seg-group {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+#screen-scada .seg-group::-webkit-scrollbar { display: none; }
+#screen-scada .seg-btn { flex: 1 0 auto; min-width: 64px; padding: 10px 14px; }
 .scada-chart-wrap {
   position: relative; height: 260px;
   background: var(--surface); border: 1px solid var(--border);
@@ -3494,3 +3506,102 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
     position: static !important;
   }
 }
+
+/* ── Charge Codes ────────────────────────────────────────────────────────── */
+.cc-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 9px 12px; margin-bottom: 6px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+}
+.cc-item-inactive { opacity: 0.55; }
+.cc-item-code { font-weight: 700; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+.cc-item-desc { color: var(--text-dim); text-align: right; font-size: 0.85rem; }
+.cc-split-result { margin-top: 14px; }
+.cc-split-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 12px; border-bottom: 1px solid var(--border);
+}
+.cc-split-row strong { font-variant-numeric: tabular-nums; }
+.cc-split-total {
+  display: flex; justify-content: space-between; padding: 10px 12px;
+  font-weight: 700; font-variant-numeric: tabular-nums;
+}
+.csm-comp-row { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+.csm-comp-row .csm-comp-code { flex: 1; }
+.csm-comp-row .csm-comp-pct { width: 80px; }
+.csm-total { margin-top: 10px; font-weight: 700; color: var(--text-dim); }
+.csm-total-ok { color: #2ecc71; }
+
+/* ── SCADA Scaling Test tool ─────────────────────────────────────────────── */
+#scadatest-tool-overlay {
+  position: fixed; inset: 0; z-index: 300;
+  background: var(--bg);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+#scadatest-tool-overlay.hidden { display: none; }
+.scadatest-intro {
+  padding: 12px 16px; font-size: 0.78rem; color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+}
+.scadatest-rawrange {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
+  padding: 10px 16px; border-bottom: 1px solid var(--border);
+}
+.scadatest-rawrange-lbl { font-size: 0.78rem; color: var(--text-dim); font-weight: 600; }
+.scadatest-rawrange label {
+  display: flex; flex-direction: column; gap: 3px;
+  font-size: 0.7rem; color: var(--text-dim); font-weight: 600;
+}
+.scadatest-rawrange input { width: 90px; }
+.scadatest-pills {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  padding: 12px 16px 4px;
+}
+.scadatest-pill {
+  background: none; border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 6px 14px;
+  color: var(--text-dim); font-size: 0.9rem; cursor: pointer; min-height: 38px;
+}
+.scadatest-pill.active {
+  background: var(--accent); border-color: var(--accent);
+  color: #fff; font-weight: 600;
+}
+.scadatest-site-hdr {
+  padding: 12px 16px 4px; font-weight: 700; font-size: 0.95rem; color: var(--text);
+}
+.scadatest-table-wrap { overflow-x: auto; padding: 0 8px; }
+.scadatest-table {
+  width: 100%; border-collapse: collapse; font-size: 0.8rem; min-width: 560px;
+}
+.scadatest-table th {
+  text-align: right; padding: 6px 6px; color: var(--text-dim);
+  font-weight: 600; font-size: 0.72rem; border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.scadatest-table th:first-child { text-align: left; }
+.scadatest-table td {
+  padding: 5px 6px; border-bottom: 1px solid var(--border); text-align: right;
+  white-space: nowrap;
+}
+.scadatest-table td:first-child { text-align: left; font-weight: 600; }
+.scadatest-table input {
+  width: 64px; text-align: right; padding: 4px 6px; font-size: 0.8rem;
+}
+.scadatest-raw { color: var(--accent); font-variant-numeric: tabular-nums; }
+.scadatest-out { font-weight: 700; font-variant-numeric: tabular-nums; }
+.scadatest-pv  { color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.scadatest-calc {
+  margin: 16px; padding: 14px; border: 1px solid var(--border);
+  border-radius: var(--radius); background: var(--surface);
+}
+.scadatest-calc-title { font-weight: 700; margin-bottom: 10px; }
+.scadatest-calc-grid {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;
+}
+.scadatest-calc-grid label {
+  display: flex; flex-direction: column; gap: 3px;
+  font-size: 0.72rem; color: var(--text-dim); font-weight: 600;
+}
+.scadatest-calc-out { margin-top: 12px; font-size: 0.95rem; }
+.scadatest-calc-out strong { color: var(--accent); font-variant-numeric: tabular-nums; }

@@ -129,7 +129,7 @@
         Sign in with Microsoft 365
       </a>
       <div id="ms-login-error" class="error-msg hidden"></div>
-      <div class="login-version">v 2.80</div>
+      <div class="login-version">v 2.90</div>
     </div>
   </div>
 </div>
@@ -1732,6 +1732,9 @@
         <button class="settings-menu-row" data-panel="usermgmt">
           <span>User Management</span><span class="settings-chevron">›</span>
         </button>
+        <button class="settings-menu-row" data-panel="chargecodes">
+          <span>Charge Code Settings</span><span class="settings-chevron">›</span>
+        </button>
         <button class="settings-menu-row" id="db-gear-btn">
           <span>Database Connection Test</span><span class="settings-chevron">&#9881;</span>
         </button>
@@ -1840,7 +1843,7 @@
     <div id="settings-panel-appinfo" class="settings-panel hidden">
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 2.80</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 2.90</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>
@@ -1859,6 +1862,9 @@
           </button>
           <button class="settings-menu-row" data-tool="gpspicker">
             <span>Pond GPS Picker</span><span class="settings-chevron">›</span>
+          </button>
+          <button class="settings-menu-row" data-tool="scadatest">
+            <span>SCADA Scaling Test</span><span class="settings-chevron">›</span>
           </button>
         </div>
       </div>
@@ -1963,6 +1969,36 @@
           <div id="uptool-file-grid" class="uptool-file-grid"></div>
         </div>
 
+      </div>
+    </div>
+
+    <!-- SCADA Scaling Test tool overlay (full-screen) -->
+    <div id="scadatest-tool-overlay" class="hidden">
+      <div class="uptool-nav">
+        <button class="uptool-back-btn" id="scadatest-back-btn">&#8249; Tools</button>
+        <span class="uptool-nav-title">SCADA Scaling Test</span>
+      </div>
+      <div class="uptool-body">
+        <div class="scadatest-intro">Raw-ADC scaling tester. Output = Min + (Raw − Raw@4mA) / (Raw@20mA − Raw@4mA) × (Max − Min) + Offset.</div>
+        <div class="scadatest-rawrange">
+          <span class="scadatest-rawrange-lbl">ADC endpoints (4-20&nbsp;mA):</span>
+          <label>Raw@4mA<input type="number" step="any" id="scadatest-raw4" class="ctrl-input ctrl-input-sm"></label>
+          <label>Raw@20mA<input type="number" step="any" id="scadatest-raw20" class="ctrl-input ctrl-input-sm"></label>
+        </div>
+        <div class="scadatest-pills" id="scadatest-pills"></div>
+        <div id="scadatest-tables"></div>
+
+        <!-- Manual test calculator -->
+        <div class="scadatest-calc">
+          <div class="scadatest-calc-title">Test Calculator</div>
+          <div class="scadatest-calc-grid">
+            <label>Raw ADC<input type="number" step="any" id="scadatest-calc-raw" class="ctrl-input ctrl-input-sm"></label>
+            <label>Min<input type="number" step="any" id="scadatest-calc-min" class="ctrl-input ctrl-input-sm"></label>
+            <label>Max<input type="number" step="any" id="scadatest-calc-max" class="ctrl-input ctrl-input-sm"></label>
+            <label>Offset<input type="number" step="any" id="scadatest-calc-offset" class="ctrl-input ctrl-input-sm"></label>
+          </div>
+          <div class="scadatest-calc-out">Output = <strong id="scadatest-calc-result">—</strong></div>
+        </div>
       </div>
     </div>
 
@@ -2163,6 +2199,78 @@
         </div>
       </div>
     </div>
+
+    <!-- Charge Code Settings panel (admin/supervisor) -->
+    <div id="settings-panel-chargecodes" class="settings-panel hidden">
+      <div class="charts-tabs">
+        <button class="charts-tab-btn active" id="ccs-tab-btn-codes">Codes</button>
+        <button class="charts-tab-btn" id="ccs-tab-btn-splits">Split Tools</button>
+      </div>
+      <div id="ccs-tab-codes" style="margin-top:12px">
+        <div class="admin-actions">
+          <button class="btn btn-primary" id="ccs-add-code-btn">+ Add Code</button>
+        </div>
+        <div id="ccs-code-list"></div>
+      </div>
+      <div id="ccs-tab-splits" style="display:none;margin-top:12px">
+        <div class="admin-actions">
+          <button class="btn btn-primary" id="ccs-add-split-btn">+ Add Split Tool</button>
+        </div>
+        <div id="ccs-split-list"></div>
+      </div>
+    </div>
+
+    <!-- Add/Edit Charge Code Modal -->
+    <div id="cc-code-modal" class="modal-overlay hidden">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h2 id="cc-code-modal-title">Add Code</h2>
+          <button class="modal-close" id="cc-code-modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label>Charge Code</label>
+            <input type="text" id="ccm-code" class="ctrl-input" placeholder="e.g. 551U">
+          </div>
+          <div class="form-group">
+            <label>Description</label>
+            <input type="text" id="ccm-desc" class="ctrl-input" placeholder="e.g. Pool 1 - Pool 2">
+          </div>
+          <div id="ccm-error" class="error-msg hidden"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-danger" id="cc-code-modal-delete" style="display:none">Delete</button>
+          <button class="btn btn-secondary" id="cc-code-modal-cancel">Cancel</button>
+          <button class="btn btn-save" id="cc-code-modal-save">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Add/Edit Split Tool Modal -->
+    <div id="cc-split-modal" class="modal-overlay hidden">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h2 id="cc-split-modal-title">Add Split Tool</h2>
+          <button class="modal-close" id="cc-split-modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label>Name</label>
+            <input type="text" id="csm-name" class="ctrl-input" placeholder="e.g. Sounder Repair">
+          </div>
+          <label class="settings-label" style="display:block;margin-bottom:6px">Components (must total 100%)</label>
+          <div id="csm-components"></div>
+          <button class="btn btn-secondary btn-sm" id="csm-add-comp-btn" style="margin-top:4px">+ Add Component</button>
+          <div class="csm-total" id="csm-total">Total: 0%</div>
+          <div id="csm-error" class="error-msg hidden"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-danger" id="cc-split-modal-delete" style="display:none">Delete</button>
+          <button class="btn btn-secondary" id="cc-split-modal-cancel">Cancel</button>
+          <button class="btn btn-save" id="cc-split-modal-save">Save</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- ── HR ───────────────────────────────────────────────────────────────── -->
@@ -2225,10 +2333,33 @@
       </div>
     </div>
 
-    <!-- Charge Codes placeholder panel -->
+    <!-- Charge Codes panel -->
     <div id="hr-panel-charge-codes" class="maint-panel hidden">
-      <div class="placeholder-msg" style="padding-top:40px">
-        Charge Codes — coming soon.
+      <div class="settings-section">
+        <div class="settings-card">
+          <div class="settings-pad">
+            <div class="charts-tabs">
+              <button class="charts-tab-btn active" id="cc-tab-btn-list">Codes</button>
+              <button class="charts-tab-btn" id="cc-tab-btn-calc">Breakdown</button>
+            </div>
+            <div id="cc-tab-list" style="margin-top:12px">
+              <input type="search" id="cc-search" class="ctrl-input" placeholder="Search code or description…" style="margin-bottom:10px">
+              <div id="cc-list"></div>
+            </div>
+            <div id="cc-tab-calc" style="display:none;margin-top:12px">
+              <div class="charts-field-row">
+                <label>Breakdown</label>
+                <select id="cc-split-select" class="ctrl-select"></select>
+              </div>
+              <div class="charts-field-row">
+                <label>Total Hours</label>
+                <input type="number" id="cc-split-hours" class="ctrl-input" min="0" step="0.25" placeholder="hrs">
+                <span class="charts-unit-label">h</span>
+              </div>
+              <div id="cc-split-result" class="cc-split-result"></div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -2287,6 +2418,12 @@
             <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-weir.svg);mask-image:url(/marv-site/icons/icon-weir.svg)"></span>
           </div>
           <span class="dash-label">RRB T.O. 1 & 2</span>
+        </button>
+        <button class="dash-tile" data-charts-panel="pioneer">
+          <div class="dash-icon-wrap">
+            <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-weir.svg);mask-image:url(/marv-site/icons/icon-weir.svg)"></span>
+          </div>
+          <span class="dash-label">Pioneer Inlet</span>
         </button>
       </div>
     </div>
@@ -2518,6 +2655,34 @@
               <div class="charts-result-area">
                 <div class="charts-result-label">Flow Rate Q</div>
                 <div><span class="charts-result-value" id="rrb-result">—</span><span class="charts-result-unit">cfs</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Pioneer Inlet panel (sharp crested weir) -->
+    <div id="charts-panel-pioneer" class="maint-panel hidden">
+      <div class="settings-section">
+        <div class="settings-card">
+          <div class="settings-pad">
+            <div class="charts-tabs">
+              <button class="charts-tab-btn active" id="pioneer-tab-btn-table">Table</button>
+              <button class="charts-tab-btn" id="pioneer-tab-btn-calc">Calculator</button>
+            </div>
+            <div id="pioneer-tab-table" style="margin-top:12px">
+              <div class="charts-table-wrap" id="pioneer-table-container"></div>
+            </div>
+            <div id="pioneer-tab-calc" class="charts-calc" style="display:none">
+              <div class="charts-field-row">
+                <label>Gauge Height</label>
+                <input type="number" id="pioneer-head" class="ctrl-input" min="0.30" max="2.70" step="0.01" placeholder="ft">
+                <span class="charts-unit-label">ft</span>
+              </div>
+              <div class="charts-result-area">
+                <div class="charts-result-label">Flow Rate Q</div>
+                <div><span class="charts-result-value" id="pioneer-result">—</span><span class="charts-result-unit">cfs</span></div>
               </div>
             </div>
           </div>

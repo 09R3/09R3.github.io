@@ -6040,6 +6040,7 @@ const SETTINGS_PANEL_NAMES = {
   tools:            'Tools',
   bugreports:       'Bug Reports',
   usermgmt:         'User Management',
+  chargecodes:      'Charge Code Settings',
 };
 function openSettingsPanel(panelId) {
   el('settings-main').classList.add('hidden');
@@ -6053,6 +6054,7 @@ function openSettingsPanel(panelId) {
   if (panelId === 'running-wells')  initRunningWellsPanel();
   if (panelId === 'gps-selector')   initGPSSelectorSettingsPanel();
   if (panelId === 'scada-roles')    initScadaRolesPanel();
+  if (panelId === 'chargecodes')    initChargeCodesSettings();
   if (panelId === 'appinfo') {
     const ls = localStorage.getItem('watermark-last-sync');
     el('settings-last-sync').textContent = ls ? new Date(ls).toLocaleString() : 'Never';
@@ -6093,11 +6095,196 @@ el('settings-panel-tools').addEventListener('click', e => {
   if (btn.dataset.tool === 'exif')      openExifTool();
   if (btn.dataset.tool === 'upload')    openUploadTool();
   if (btn.dataset.tool === 'gpspicker') openGpsPicker();
+  if (btn.dataset.tool === 'scadatest') openScadaTestTool();
 });
 
 el('exif-back-btn').addEventListener('click', () => {
   el('exif-tool-overlay').classList.add('hidden');
 });
+
+// ── SCADA Scaling Test tool (raw-ADC tester) ──────────────────────────────────
+// Reads each analog sensor's live .SCL.Raw ADC count, applies a user-entered
+// Min/Max/Offset linear scaling between the configurable 4mA/20mA raw endpoints,
+// and shows the result next to the live PV so scaling can be dialed in against
+// real-time numbers. Inputs persist in localStorage. Read-only — never writes
+// back to the PLC.
+(function () {
+  const SENSORS = [
+    { key: 'FBLvl',  label: 'Forebay',    unit: 'ft'  },
+    { key: 'ABLvl',  label: 'Afterbay',   unit: 'ft'  },
+    { key: 'DSLvl',  label: 'Downstream', unit: 'ft'  },
+    { key: 'TRLvl',  label: 'Trash Rack', unit: 'ft'  },
+    { key: 'AirPSI', label: 'Air Press',  unit: 'psi' },
+  ];
+  // Default raw-count range for a 4-20mA analog input.
+  const DEF_RAW4 = 4000, DEF_RAW20 = 20000;
+  let config = null, plantNum = 1, pollTimer = null;
+
+  function rawEndpoints() {
+    const r4  = Number(localStorage.getItem('scadatestRaw4'));
+    const r20 = Number(localStorage.getItem('scadatestRaw20'));
+    return {
+      raw4:  isFinite(r4)  && localStorage.getItem('scadatestRaw4')  != null && localStorage.getItem('scadatestRaw4')  !== '' ? r4  : DEF_RAW4,
+      raw20: isFinite(r20) && localStorage.getItem('scadatestRaw20') != null && localStorage.getItem('scadatestRaw20') !== '' ? r20 : DEF_RAW20,
+    };
+  }
+
+  function scaleKey(tag)   { return 'scadatestScale:' + tag; }
+  function getScale(tag) {
+    try { return JSON.parse(localStorage.getItem(scaleKey(tag))) || {}; }
+    catch { return {}; }
+  }
+  function setScale(tag, s) { localStorage.setItem(scaleKey(tag), JSON.stringify(s)); }
+
+  // Linear raw-ADC scaling between the 4mA/20mA count endpoints.
+  // Returns null if inputs are incomplete or the span is degenerate.
+  function scale(raw, min, max, offset) {
+    if (raw == null || min === '' || max === '' || min == null || max == null) return null;
+    const r = Number(raw), mn = Number(min), mx = Number(max), off = Number(offset) || 0;
+    const { raw4, raw20 } = rawEndpoints();
+    if (!isFinite(r) || !isFinite(mn) || !isFinite(mx) || raw20 === raw4) return null;
+    return mn + ((r - raw4) / (raw20 - raw4)) * (mx - mn) + off;
+  }
+
+  function plantSites(n) {
+    if (!config) return [];
+    return config.sites.filter(s => s.influxSite === `CVC_PP${n}A` || s.influxSite === `CVC_PP${n}B`);
+  }
+
+  function rowHtml(site, sensor) {
+    const tag = `${site.influxSite}.${sensor.key}.SCL.Raw`;
+    const pvTag = `${site.influxSite}.${sensor.key}.SCL.PV`;
+    const s = getScale(tag);
+    return `<tr data-raw-tag="${tag}" data-pv-tag="${pvTag}">
+      <td>${escHtml(sensor.label)}<span style="color:var(--text-dim);font-weight:400"> ${escHtml(sensor.unit)}</span></td>
+      <td class="scadatest-raw" data-cell="raw">—</td>
+      <td><input type="number" step="any" data-fld="min" value="${s.min ?? ''}"></td>
+      <td><input type="number" step="any" data-fld="max" value="${s.max ?? ''}"></td>
+      <td><input type="number" step="any" data-fld="offset" value="${s.offset ?? ''}"></td>
+      <td class="scadatest-out" data-cell="out">—</td>
+      <td class="scadatest-pv" data-cell="pv">—</td>
+    </tr>`;
+  }
+
+  function render() {
+    el('scadatest-pills').innerHTML = [1,2,3,4,5,6,7].map(n =>
+      `<button class="scadatest-pill${n===plantNum?' active':''}" data-plant="${n}">PP ${n}</button>`).join('');
+
+    const sites = plantSites(plantNum);
+    el('scadatest-tables').innerHTML = sites.map(site => `
+      <div class="scadatest-site-hdr">${escHtml(site.name)}</div>
+      <div class="scadatest-table-wrap">
+        <table class="scadatest-table">
+          <thead><tr>
+            <th>Signal</th><th>Raw ADC</th><th>Min</th><th>Max</th><th>Offset</th><th>Output</th><th>Live PV</th>
+          </tr></thead>
+          <tbody>${SENSORS.map(sn => rowHtml(site, sn)).join('')}</tbody>
+        </table>
+      </div>`).join('') || '<div class="scadatest-site-hdr">No sites for this plant.</div>';
+
+    // Wire scaling inputs: persist + recompute that row's output on change
+    el('scadatest-tables').querySelectorAll('tr[data-raw-tag]').forEach(tr => {
+      tr.querySelectorAll('input[data-fld]').forEach(inp =>
+        inp.addEventListener('input', () => {
+          const tag = tr.dataset.rawTag;
+          const s = getScale(tag);
+          s[inp.dataset.fld] = inp.value;
+          setScale(tag, s);
+          recomputeRow(tr);
+        }));
+    });
+
+    el('scadatest-pills').querySelectorAll('[data-plant]').forEach(p =>
+      p.addEventListener('click', () => {
+        plantNum = Number(p.dataset.plant);
+        render();
+        poll();
+      }));
+  }
+
+  function recomputeRow(tr) {
+    const rawCell = tr.querySelector('[data-cell="raw"]');
+    const raw = rawCell._raw;
+    const min = tr.querySelector('[data-fld="min"]').value;
+    const max = tr.querySelector('[data-fld="max"]').value;
+    const off = tr.querySelector('[data-fld="offset"]').value;
+    const out = scale(raw, min, max, off);
+    tr.querySelector('[data-cell="out"]').textContent = out == null ? '—' : out.toFixed(2);
+  }
+
+  async function poll() {
+    if (!config) return;
+    const sites = plantSites(plantNum);
+    if (!sites.length) return;
+    const siteParam = sites.map(s => s.influxSite).join(',');
+    let data;
+    try { data = await api('GET', `/api/scada/raw-current?sites=${encodeURIComponent(siteParam)}`); }
+    catch { return; }
+    if (el('scadatest-tool-overlay').classList.contains('hidden')) return;
+    el('scadatest-tables').querySelectorAll('tr[data-raw-tag]').forEach(tr => {
+      const raw = data[tr.dataset.rawTag]?.v;
+      const pv  = data[tr.dataset.pvTag]?.v;
+      const rawCell = tr.querySelector('[data-cell="raw"]');
+      rawCell._raw = raw ?? null;
+      rawCell.textContent = raw == null ? '—' : Number(raw).toFixed(Number.isInteger(raw) ? 0 : 1);
+      tr.querySelector('[data-cell="pv"]').textContent = pv == null ? '—' : Number(pv).toFixed(2);
+      recomputeRow(tr);
+    });
+  }
+
+  function recomputeAll() {
+    el('scadatest-tables').querySelectorAll('tr[data-raw-tag]').forEach(recomputeRow);
+    updateCalc();
+  }
+
+  function updateCalc() {
+    const out = scale(
+      el('scadatest-calc-raw').value === '' ? null : el('scadatest-calc-raw').value,
+      el('scadatest-calc-min').value,
+      el('scadatest-calc-max').value,
+      el('scadatest-calc-offset').value,
+    );
+    el('scadatest-calc-result').textContent = out == null ? '—' : out.toFixed(2);
+  }
+
+  window.openScadaTestTool = async function () {
+    el('scadatest-tool-overlay').classList.remove('hidden');
+    const { raw4, raw20 } = rawEndpoints();
+    el('scadatest-raw4').value  = raw4;
+    el('scadatest-raw20').value = raw20;
+    if (!config) {
+      el('scadatest-tables').innerHTML = '<div class="scadatest-site-hdr">Loading…</div>';
+      try { config = await api('GET', '/api/scada/config'); }
+      catch (e) {
+        el('scadatest-tables').innerHTML =
+          `<div class="scadatest-site-hdr">SCADA source unavailable.</div>`;
+        return;
+      }
+    }
+    render();
+    poll();
+    clearInterval(pollTimer);
+    pollTimer = setInterval(poll, config.pollMs || 5000);
+  };
+
+  el('scadatest-back-btn').addEventListener('click', () => {
+    el('scadatest-tool-overlay').classList.add('hidden');
+    clearInterval(pollTimer); pollTimer = null;
+  });
+
+  // Global ADC endpoints — persist and recompute every row + the calculator.
+  el('scadatest-raw4').addEventListener('input', () => {
+    localStorage.setItem('scadatestRaw4', el('scadatest-raw4').value);
+    recomputeAll();
+  });
+  el('scadatest-raw20').addEventListener('input', () => {
+    localStorage.setItem('scadatestRaw20', el('scadatest-raw20').value);
+    recomputeAll();
+  });
+
+  ['raw','min','max','offset'].forEach(f =>
+    el('scadatest-calc-' + f).addEventListener('input', updateCalc));
+})();
 
 // ── Pond GPS Picker ───────────────────────────────────────────────────────────
 (function () {
@@ -7235,6 +7422,189 @@ el('user-modal-save').addEventListener('click', async () => {
   } finally {
     _save();
   }
+});
+
+/* ── Charge Code Settings (admin/supervisor) ─────────────────────────────── */
+let _editChargeCodeId = null, _editSplitId = null;
+
+function ccsSwitchTab(tab) {
+  el('ccs-tab-codes').style.display  = tab === 'codes'  ? '' : 'none';
+  el('ccs-tab-splits').style.display = tab === 'splits' ? '' : 'none';
+  el('ccs-tab-btn-codes').classList.toggle('active',  tab === 'codes');
+  el('ccs-tab-btn-splits').classList.toggle('active', tab === 'splits');
+}
+
+async function initChargeCodesSettings() {
+  ccsSwitchTab('codes');
+  el('ccs-tab-btn-codes').onclick  = () => ccsSwitchTab('codes');
+  el('ccs-tab-btn-splits').onclick = () => ccsSwitchTab('splits');
+  await loadChargeCodeSettings();
+}
+
+async function loadChargeCodeSettings() {
+  el('ccs-code-list').innerHTML  = '<div class="placeholder-msg">Loading…</div>';
+  el('ccs-split-list').innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  let codes = [], splits = [];
+  try {
+    [codes, splits] = await Promise.all([
+      api('GET', '/api/charge-codes?include_inactive=true'),
+      api('GET', '/api/charge-code-splits?include_inactive=true'),
+    ]);
+  } catch {
+    el('ccs-code-list').innerHTML = '<div class="placeholder-msg">Failed to load.</div>';
+    return;
+  }
+  renderCCSettingsCodes(codes);
+  renderCCSettingsSplits(splits);
+}
+
+function renderCCSettingsCodes(codes) {
+  const list = el('ccs-code-list');
+  if (!codes.length) { list.innerHTML = '<div class="placeholder-msg">No charge codes yet.</div>'; return; }
+  list.innerHTML = codes.map(c => `
+    <div class="cc-item${c.status !== 'active' ? ' cc-item-inactive' : ''}">
+      <span class="cc-item-code">${escHtml(c.code)}${c.status !== 'active' ? ' <span class="pest-inactive-badge">Inactive</span>' : ''}</span>
+      <span class="cc-item-desc">${escHtml(c.description || '')}</span>
+      <button class="btn btn-secondary btn-xs cc-edit-btn" data-id="${c.code_id}">Edit</button>
+    </div>`).join('');
+  list.querySelectorAll('.cc-edit-btn').forEach(btn =>
+    btn.addEventListener('click', () => openChargeCodeModal(codes.find(c => c.code_id === parseInt(btn.dataset.id)))));
+}
+
+function renderCCSettingsSplits(splits) {
+  const list = el('ccs-split-list');
+  if (!splits.length) { list.innerHTML = '<div class="placeholder-msg">No split tools yet.</div>'; return; }
+  list.innerHTML = splits.map(s => {
+    const parts = (s.components || []).map(c => `${escHtml(c.code)} ${c.percent}%`).join(' · ');
+    return `<div class="cc-item${s.status !== 'active' ? ' cc-item-inactive' : ''}" style="align-items:flex-start">
+      <div style="flex:1;min-width:0">
+        <div class="cc-item-code">${escHtml(s.name)}${s.status !== 'active' ? ' <span class="pest-inactive-badge">Inactive</span>' : ''}</div>
+        <div class="cc-item-desc" style="text-align:left">${parts}</div>
+      </div>
+      <button class="btn btn-secondary btn-xs cc-split-edit-btn" data-id="${s.split_id}">Edit</button>
+    </div>`;
+  }).join('');
+  list.querySelectorAll('.cc-split-edit-btn').forEach(btn =>
+    btn.addEventListener('click', () => openSplitModal(splits.find(s => s.split_id === parseInt(btn.dataset.id)))));
+}
+
+// ── Charge code add/edit modal ──
+el('ccs-add-code-btn').addEventListener('click', () => openChargeCodeModal(null));
+
+function openChargeCodeModal(code) {
+  _editChargeCodeId = code ? code.code_id : null;
+  el('cc-code-modal-title').textContent = code ? 'Edit Code' : 'Add Code';
+  el('ccm-code').value = code?.code || '';
+  el('ccm-desc').value = code?.description || '';
+  el('cc-code-modal-delete').style.display = code ? '' : 'none';
+  clearError('ccm-error');
+  el('cc-code-modal').classList.remove('hidden');
+}
+el('cc-code-modal-close').addEventListener('click',  () => el('cc-code-modal').classList.add('hidden'));
+el('cc-code-modal-cancel').addEventListener('click', () => el('cc-code-modal').classList.add('hidden'));
+
+el('cc-code-modal-save').addEventListener('click', async () => {
+  clearError('ccm-error');
+  const code = el('ccm-code').value.trim();
+  const description = el('ccm-desc').value.trim();
+  if (!code) return showError('ccm-error', 'Charge code is required');
+  const _save = beginSave(el('cc-code-modal-save'));
+  try {
+    if (_editChargeCodeId) await api('PATCH', `/api/charge-codes/${_editChargeCodeId}`, { code, description });
+    else await api('POST', '/api/charge-codes', { code, description });
+    el('cc-code-modal').classList.add('hidden');
+    showToast('Charge code saved', 'success');
+    await loadChargeCodeSettings();
+  } catch (err) {
+    showError('ccm-error', err.message);
+  } finally { _save(); }
+});
+
+el('cc-code-modal-delete').addEventListener('click', async () => {
+  if (!_editChargeCodeId || !confirm('Delete this charge code?')) return;
+  try {
+    await api('DELETE', `/api/charge-codes/${_editChargeCodeId}`);
+    el('cc-code-modal').classList.add('hidden');
+    showToast('Charge code deleted', 'success');
+    await loadChargeCodeSettings();
+  } catch (err) { showError('ccm-error', err.message); }
+});
+
+// ── Split tool add/edit modal (dynamic component rows) ──
+el('ccs-add-split-btn').addEventListener('click', () => openSplitModal(null));
+
+function openSplitModal(split) {
+  _editSplitId = split ? split.split_id : null;
+  el('cc-split-modal-title').textContent = split ? 'Edit Split Tool' : 'Add Split Tool';
+  el('csm-name').value = split?.name || '';
+  el('csm-components').innerHTML = '';
+  const comps = (split?.components && split.components.length) ? split.components : [{ code: '', percent: '' }, { code: '', percent: '' }];
+  comps.forEach(c => addSplitComponentRow(c.code, c.percent));
+  el('cc-split-modal-delete').style.display = split ? '' : 'none';
+  clearError('csm-error');
+  updateSplitTotal();
+  el('cc-split-modal').classList.remove('hidden');
+}
+
+function addSplitComponentRow(code = '', percent = '') {
+  const row = document.createElement('div');
+  row.className = 'csm-comp-row';
+  row.innerHTML = `
+    <input type="text" class="ctrl-input csm-comp-code" placeholder="Code" value="${escHtml(String(code))}">
+    <input type="number" class="ctrl-input csm-comp-pct" placeholder="%" min="0" step="1" value="${percent === '' ? '' : escHtml(String(percent))}">
+    <button type="button" class="btn btn-secondary btn-xs csm-comp-remove">&times;</button>`;
+  row.querySelector('.csm-comp-remove').addEventListener('click', () => { row.remove(); updateSplitTotal(); });
+  row.querySelector('.csm-comp-pct').addEventListener('input', updateSplitTotal);
+  el('csm-components').appendChild(row);
+}
+
+function readSplitComponents() {
+  return [...el('csm-components').querySelectorAll('.csm-comp-row')].map(r => ({
+    code: r.querySelector('.csm-comp-code').value.trim(),
+    percent: parseFloat(r.querySelector('.csm-comp-pct').value),
+  }));
+}
+
+function updateSplitTotal() {
+  const sum = readSplitComponents().reduce((a, c) => a + (isNaN(c.percent) ? 0 : c.percent), 0);
+  const totalEl = el('csm-total');
+  totalEl.textContent = `Total: ${sum}%`;
+  totalEl.classList.toggle('csm-total-ok', Math.abs(sum - 100) < 0.01);
+}
+
+el('csm-add-comp-btn').addEventListener('click', () => addSplitComponentRow());
+el('cc-split-modal-close').addEventListener('click',  () => el('cc-split-modal').classList.add('hidden'));
+el('cc-split-modal-cancel').addEventListener('click', () => el('cc-split-modal').classList.add('hidden'));
+
+el('cc-split-modal-save').addEventListener('click', async () => {
+  clearError('csm-error');
+  const name = el('csm-name').value.trim();
+  if (!name) return showError('csm-error', 'Name is required');
+  const components = readSplitComponents();
+  if (components.some(c => !c.code || isNaN(c.percent) || c.percent <= 0))
+    return showError('csm-error', 'Every component needs a code and a positive percent');
+  const sum = components.reduce((a, c) => a + c.percent, 0);
+  if (Math.abs(sum - 100) > 0.01) return showError('csm-error', `Percentages must total 100% (currently ${sum}%)`);
+  const _save = beginSave(el('cc-split-modal-save'));
+  try {
+    if (_editSplitId) await api('PATCH', `/api/charge-code-splits/${_editSplitId}`, { name, components });
+    else await api('POST', '/api/charge-code-splits', { name, components });
+    el('cc-split-modal').classList.add('hidden');
+    showToast('Split tool saved', 'success');
+    await loadChargeCodeSettings();
+  } catch (err) {
+    showError('csm-error', err.message);
+  } finally { _save(); }
+});
+
+el('cc-split-modal-delete').addEventListener('click', async () => {
+  if (!_editSplitId || !confirm('Delete this split tool?')) return;
+  try {
+    await api('DELETE', `/api/charge-code-splits/${_editSplitId}`);
+    el('cc-split-modal').classList.add('hidden');
+    showToast('Split tool deleted', 'success');
+    await loadChargeCodeSettings();
+  } catch (err) { showError('csm-error', err.message); }
 });
 
 /* ── Login Page: DB status + username dropdown + settings modal ──────────── */
@@ -11225,6 +11595,7 @@ function openHRPanel(panelId) {
   };
   setPanelNav(el('screen-hr'), closeHRPanel, 'HR – ' + (panelTitles[panelId] || panelId));
   if (panelId === 'time-off') initTimeOffPanel();
+  if (panelId === 'charge-codes') initChargeCodesPanel();
 }
 
 function closeHRPanel() {
@@ -11235,6 +11606,98 @@ function closeHRPanel() {
 
 function initHRScreen() {
   closeHRPanel();
+}
+
+// ── Charge Codes (HR reference list + breakdown calculator) ─────────────────
+let _ccCodes = [], _ccSplits = [];
+
+async function initChargeCodesPanel() {
+  ccSwitchTab('list');
+  el('cc-tab-btn-list').onclick = () => ccSwitchTab('list');
+  el('cc-tab-btn-calc').onclick = () => ccSwitchTab('calc');
+  el('cc-search').oninput = renderCCList;
+  el('cc-split-select').onchange = renderCCSplitResult;
+  el('cc-split-hours').oninput = renderCCSplitResult;
+  el('cc-list').innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    [_ccCodes, _ccSplits] = await Promise.all([
+      api('GET', '/api/charge-codes'),
+      api('GET', '/api/charge-code-splits'),
+    ]);
+  } catch {
+    el('cc-list').innerHTML = '<div class="placeholder-msg">Failed to load.</div>';
+    return;
+  }
+  renderCCList();
+  renderCCSplitOptions();
+}
+
+function ccSwitchTab(tab) {
+  el('cc-tab-list').style.display = tab === 'list' ? '' : 'none';
+  el('cc-tab-calc').style.display = tab === 'calc' ? '' : 'none';
+  el('cc-tab-btn-list').classList.toggle('active', tab === 'list');
+  el('cc-tab-btn-calc').classList.toggle('active', tab === 'calc');
+}
+
+function renderCCList() {
+  const q = (el('cc-search').value || '').trim().toLowerCase();
+  const rows = _ccCodes.filter(c =>
+    !q || c.code.toLowerCase().includes(q) || (c.description || '').toLowerCase().includes(q));
+  if (!rows.length) {
+    el('cc-list').innerHTML = `<div class="placeholder-msg">${_ccCodes.length ? 'No matches.' : 'No charge codes found.'}</div>`;
+    return;
+  }
+  el('cc-list').innerHTML = rows.map(c => `
+    <div class="cc-item">
+      <span class="cc-item-code">${escHtml(c.code)}</span>
+      <span class="cc-item-desc">${escHtml(c.description || '')}</span>
+    </div>`).join('');
+}
+
+function renderCCSplitOptions() {
+  const sel = el('cc-split-select');
+  if (!_ccSplits.length) {
+    sel.innerHTML = '<option value="">No breakdowns defined</option>';
+  } else {
+    sel.innerHTML = _ccSplits.map(s => `<option value="${s.split_id}">${escHtml(s.name)}</option>`).join('');
+  }
+  renderCCSplitResult();
+}
+
+// Split hours to the nearest quarter hour, giving any remainder to the
+// largest-percentage code so the parts always sum exactly to the total.
+function computeChargeSplit(total, components) {
+  const parts = components.map(c => ({
+    code: c.code,
+    percent: Number(c.percent),
+    hrs: Math.round((total * Number(c.percent) / 100) / 0.25) * 0.25,
+  }));
+  const sum = parts.reduce((a, p) => a + p.hrs, 0);
+  const diff = Math.round((total - sum) * 100) / 100;
+  if (diff !== 0 && parts.length) {
+    let mi = 0;
+    parts.forEach((p, i) => { if (p.percent > parts[mi].percent) mi = i; });
+    parts[mi].hrs = Math.round((parts[mi].hrs + diff) * 100) / 100;
+  }
+  return parts;
+}
+
+function renderCCSplitResult() {
+  const out = el('cc-split-result');
+  const split = _ccSplits.find(s => String(s.split_id) === el('cc-split-select').value);
+  const total = parseFloat(el('cc-split-hours').value);
+  if (!split || !Array.isArray(split.components) || !split.components.length) { out.innerHTML = ''; return; }
+  if (isNaN(total) || total < 0) {
+    out.innerHTML = '<div class="placeholder-msg">Enter total hours above.</div>';
+    return;
+  }
+  const parts = computeChargeSplit(total, split.components);
+  out.innerHTML = parts.map(p => `
+    <div class="cc-split-row">
+      <span><strong class="cc-item-code">${escHtml(p.code)}</strong> <span style="color:var(--text-dim)">(${p.percent}%)</span></span>
+      <strong>${p.hrs.toFixed(2)} h</strong>
+    </div>`).join('') + `
+    <div class="cc-split-total"><span>Total</span><span>${parts.reduce((a, p) => a + p.hrs, 0).toFixed(2)} h</span></div>`;
 }
 
 function initTimeOffPanel() {
@@ -12007,7 +12470,7 @@ function navigateToSearchResult(action) {
 /* ── Charts ───────────────────────────────────────────────────────────────── */
 const CHART_PANEL_TITLES = {
   overpour: 'Overpour', pressure: 'Pressure', 'open-air': 'Open Air', p11: 'P-11',
-  gate: 'Gate Discharge', rrb: 'RRB T.O. 1 & 2',
+  gate: 'Gate Discharge', rrb: 'RRB T.O. 1 & 2', pioneer: 'Pioneer Inlet',
 };
 
 function openChartsPanel(panelId) {
@@ -12021,6 +12484,7 @@ function openChartsPanel(panelId) {
   else if (panelId === 'p11')       initP11Panel();
   else if (panelId === 'gate')      initGateDischargePanel();
   else if (panelId === 'rrb')       initRRBPanel();
+  else if (panelId === 'pioneer')   initPioneerPanel();
 }
 
 function closeChartsPanel() {
@@ -12235,6 +12699,80 @@ function updateRRBCalc() {
   const ci = h100 % 10;
   if (ri >= RRB_Q.length || ci >= 10) { el('rrb-result').textContent = '—'; return; }
   el('rrb-result').textContent = RRB_Q[ri][ci];
+}
+
+// ── Pioneer Inlet panel (sharp crested weir) ────────────────────────────
+// Lookup chart from gauge height (GH, ft) to flow (cfs). Rows start at GH 0.30
+// and run to 2.70; columns are hundredths +0.00…+0.09. Values are kept as
+// strings to preserve the published precision and the ^ / U markers exactly.
+const PIONEER_FIRST_GH = 0.30;
+const PIONEER_Q = [
+  ['0.0','0.400','0.800','1.20','1.60','2.00','2.40','2.80','3.20','3.60'],  // 0.30
+  ['4.00','4.60','5.20','5.80','6.40','7.00','7.60','8.20','8.80','9.40'],   // 0.40
+  ['10.0','10.7','11.4','12.1','12.8','13.5','14.2','14.9','15.6','16.3'],   // 0.50
+  ['17.0','18.0','19.0','20.0','21.0','22.0','23.0','24.0','25.0','26.0'],   // 0.60
+  ['27.0','28.2','29.4','30.6','31.8','33.0','34.2','35.4','36.6','37.8'],   // 0.70
+  ['39.0','40.2','41.4','42.6','43.8','45.0','46.2','47.4','48.6','49.8'],   // 0.80
+  ['51.0','52.4','53.8','55.2','56.6','58.0','59.4','60.8','62.2','63.6'],   // 0.90
+  ['65.0','66.3','67.6','68.9','70.2','71.5','72.8','74.1','75.4','76.7'],   // 1.00
+  ['78.0','79.5','81.0','82.5','84.0','85.5','87.0','88.5','90.0','91.5'],   // 1.10
+  ['93.0','94.7','96.4','98.1','99.8','102','103','105','107','108'],        // 1.20
+  ['110','112','114','116','118','120','121','123','125','127'],             // 1.30
+  ['129','131','133','135','137','139','141','143','145','147'],             // 1.40
+  ['149','151','153','155','157','159','161','163','165','167'],             // 1.50
+  ['169','171','173','175','177','180','182','184','186','188'],             // 1.60
+  ['190','192','194','196','198','201','203','205','207','209'],             // 1.70
+  ['211','213','215','218','220','222','224','226','229','231'],             // 1.80
+  ['233','235','237','240','242','244','246','248','251','253'],             // 1.90
+  ['255','257','260','262','264','267','269','271','273','276'],             // 2.00
+  ['278','280','283','285','287','289','292','294','296','299'],             // 2.10
+  ['301','303','306','308','311','313','315','318','320','323'],             // 2.20
+  ['325','327','330','332','335','337','340','342','345','347'],             // 2.30
+  ['350','353^','355^','358^','360^','363^','366^','368^','371^','373^'],    // 2.40
+  ['376^','379^','381^','384^','387^','389^','392^','395^','398^','400^'],   // 2.50
+  ['403U','406U','409U','411U','414U','417U','420U','423U','425U','428U'],   // 2.60
+  ['431U'],                                                                  // 2.70
+];
+
+function initPioneerPanel() {
+  const container = el('pioneer-table-container');
+  if (!container.dataset.built) {
+    const cols = [0,0.01,0.02,0.03,0.04,0.05,0.06,0.07,0.08,0.09];
+    let html = '<table class="charts-table"><thead><tr><th>GH (ft)</th>';
+    cols.forEach(c => { html += `<th>+${c.toFixed(2)}</th>`; });
+    html += '</tr></thead><tbody>';
+    for (let ri = 0; ri < PIONEER_Q.length; ri++) {
+      const rowLabel = (PIONEER_FIRST_GH + ri * 0.1).toFixed(2);
+      html += `<tr><td>${rowLabel}</td>`;
+      for (let ci = 0; ci < cols.length; ci++) {
+        html += `<td>${PIONEER_Q[ri][ci] ?? ''}</td>`;
+      }
+      html += '</tr>';
+    }
+    html += '</tbody></table>';
+    container.innerHTML = html;
+    container.dataset.built = '1';
+  }
+  el('pioneer-tab-btn-table').onclick = () => switchPioneerTab('table');
+  el('pioneer-tab-btn-calc').onclick  = () => switchPioneerTab('calc');
+  el('pioneer-head').oninput = updatePioneerCalc;
+}
+
+function switchPioneerTab(tab) {
+  el('pioneer-tab-table').style.display = tab === 'table' ? '' : 'none';
+  el('pioneer-tab-calc').style.display  = tab === 'calc'  ? '' : 'none';
+  el('pioneer-tab-btn-table').classList.toggle('active', tab === 'table');
+  el('pioneer-tab-btn-calc').classList.toggle('active',  tab === 'calc');
+}
+
+function updatePioneerCalc() {
+  const h = parseFloat(el('pioneer-head').value);
+  if (isNaN(h) || h < PIONEER_FIRST_GH || h > 2.70) { el('pioneer-result').textContent = '—'; return; }
+  const h100 = Math.round(h * 100);
+  const ri = Math.floor(h100 / 10) - Math.round(PIONEER_FIRST_GH * 10);
+  const ci = h100 % 10;
+  const val = PIONEER_Q[ri] && PIONEER_Q[ri][ci];
+  el('pioneer-result').textContent = (val == null) ? '—' : val;
 }
 
 /* ── Ponds ───────────────────────────────────────────────────────────────── */

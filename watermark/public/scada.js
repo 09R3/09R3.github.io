@@ -69,6 +69,37 @@ const PUMP_CFS_TABLE = {
   'CVC_PP6B': {A:45,  B:200, C:200, D:90},
 };
 
+// Reverse-flow CFS per pump (A plants only) — used when a plant runs in reverse
+// mode and a pump's siphon breaker is closed. Keyed by influxSite then letter.
+const REVERSE_CFS_TABLE = {
+  'CVC_PP1A': {A:25, B:56, C:140, D:140, E:140, F:140, G:55, H:25},
+  'CVC_PP2A': {A:25, B:56, C:140, D:140, E:140, F:140, G:55, H:25},
+  'CVC_PP3A': {A:25, B:56, C:140, D:140, E:140, F:55,  G:25, H:55, J:25},
+  'CVC_PP4A': {A:25, B:56, C:140, D:140, E:140, F:55,  G:25, H:55, J:25},
+  'CVC_PP5A': {A:25, B:56, C:140, D:140, E:140, F:55,  G:25, H:55, J:25},
+  'CVC_PP6A': {A:25, B:56, C:140, D:140, E:140, F:55,  G:25},
+  'CVC_PP7A': {A:25, B:56, C:56,  D:56,  E:56,  F:25},
+};
+
+// Pump motor HP per pump, keyed by influxSite then pump letter. This is a static
+// label only (no calculations depend on it), hard-coded from the published chart.
+// B-plant pumps use their actual letters (A/B/C/D); they display as K/L/M/N.
+const PUMP_HP_TABLE = {
+  'CVC_PP1A': {A:100, B:250, C:565, D:565, E:565, F:565, G:250, H:100},
+  'CVC_PP2A': {A:100, B:250, C:565, D:565, E:565, F:565, G:250, H:100},
+  'CVC_PP3A': {A:100, B:250, C:565, D:565, E:565, F:250, G:100, H:250, J:100},
+  'CVC_PP4A': {A:100, B:250, C:565, D:565, E:565, F:250, G:100, H:250, J:100},
+  'CVC_PP5A': {A:100, B:250, C:565, D:565, E:565, F:250, G:100, H:250, J:100},
+  'CVC_PP6A': {A:100, B:250, C:565, D:565, E:565, F:250, G:250, H:100},
+  'CVC_PP7A': {A:100, B:250, C:250, D:250, E:250, F:100},
+  'CVC_PP1B': {A:800, B:800, C:800},
+  'CVC_PP2B': {A:700, B:700, C:700},
+  'CVC_PP3B': {A:700, B:700, C:700},
+  'CVC_PP4B': {A:700, B:700, C:700},
+  'CVC_PP5B': {A:700, B:700, C:700},
+  'CVC_PP6B': {A:250, B:700, C:700, D:400},
+};
+
 let _scadaVendorLoaded = null;
 function loadScadaVendor() {
   if (window.Chart) return Promise.resolve();
@@ -297,15 +328,29 @@ function parseSumTag(tag) {
   return { label: parts[0], unit: parts[1] || '', paths: (parts[2] || '').split(',').filter(Boolean) };
 }
 
-// Running-pump CFS total for a plant group (used for live overview flow line).
+// Skid-level status helpers (A plants expose these tags).
+function siteReverseMode(site) { return isOn(scadaVal(`${site.influxSite}.Skid.FRmode`)); }
+function siteOverridesDisabled(site) { return isOn(scadaVal(`${site.influxSite}.Skid.DSDis`)); }
+// Siphon breaker O_Cmd: true = closed.
+function siphonClosed(site, p) { return isOn(scadaVal(scadaPumpPath(site, p, 'SBVlv.Cntrl.O_Cmd'))); }
+
+// Plant-group flow total (used for the live overview flow line). In reverse mode
+// (FRmode true) a plant's flow is the reverse-chart CFS of every pump whose siphon
+// breaker is closed, shown NEGATIVE since water moves the opposite direction;
+// otherwise it's the forward CFS of every running pump.
 function plantGroupFlow(g) {
   const sites = g.b ? [g.a, g.b] : [g.a];
   let total = 0;
   sites.forEach(site => {
-    const cfs = PUMP_CFS_TABLE[site.influxSite] || {};
-    site.pumps.forEach(p => {
-      if (isOn(scadaVal(scadaPumpPath(site, p, 'MTR.Cntrl.Run')))) total += cfs[p] || 0;
-    });
+    if (siteReverseMode(site)) {
+      const rev = REVERSE_CFS_TABLE[site.influxSite] || {};
+      site.pumps.forEach(p => { if (siphonClosed(site, p)) total -= rev[p] || 0; });
+    } else {
+      const cfs = PUMP_CFS_TABLE[site.influxSite] || {};
+      site.pumps.forEach(p => {
+        if (isOn(scadaVal(scadaPumpPath(site, p, 'MTR.Cntrl.Run')))) total += cfs[p] || 0;
+      });
+    }
   });
   return total;
 }
@@ -395,9 +440,11 @@ function renderScadaOverview() {
       ? `${compactSideHtml(g.a)}<div style="width:1px;background:var(--border);margin:0 4px;flex-shrink:0"></div>${compactSideHtml(g.b)}`
       : compactSideHtml(g.a);
     const flowTotal = plantGroupFlow(g);
+    const revMode = siteReverseMode(g.a);
     return `<div class="scada-plant-card" style="display:flex;align-items:stretch;padding:0;overflow:hidden" data-plant="${g.key}">
       <div style="flex:1;min-width:0;padding:8px 10px">
         <div class="scada-plant-title" style="margin-bottom:4px">${escHtml(g.name)}${dwrTitleHtml(g)}</div>
+        <div data-ov-revmode="${escHtml(g.a.influxSite)}" style="font-size:0.72rem;font-weight:700;color:#ef4444;margin-bottom:3px${revMode ? '' : ';display:none'}">(Reverse Mode)</div>
         <div style="display:flex;gap:0;align-items:flex-start">${sides}${bldgTempColHtml(g)}</div>
         <div style="font-size:0.7rem;color:var(--text-dim);margin-top:3px" data-ov-flow="${escHtml(g.key)}">Flow&nbsp;=&nbsp;<strong>${flowTotal} cfs</strong></div>
       </div>
@@ -462,9 +509,13 @@ function bldgTempColHtml(g) {
     const style = color ? ` style="color:${color}"` : '';
     return `<div>${escHtml(tag)}&nbsp;<strong data-scada-sensor="InTmp" data-scada-tag="${path}"${style}>${fmtSensor('InTmp', v)}</strong>°</div>`;
   }).join('');
-  return `<div style="flex:0 0 auto;padding-left:10px;font-size:0.73rem;line-height:1.55;color:var(--text-dim)">
+  const dsDis = siteOverridesDisabled(g.a);
+  // text-align:right keeps the temp rows on a fixed right edge so the wider
+  // "Overrides Disabled" text below doesn't shift them.
+  return `<div style="flex:0 0 auto;padding-left:10px;font-size:0.73rem;line-height:1.55;color:var(--text-dim);text-align:right">
     <div style="font-size:0.62rem;text-transform:uppercase;letter-spacing:.04em;opacity:.8">Bldg °F</div>
     ${rows}
+    <div data-ov-dsdis="${escHtml(g.a.influxSite)}" style="font-size:0.66rem;font-weight:700;color:#ef4444;margin-top:2px${dsDis ? '' : ';display:none'}">Overrides Disabled</div>
   </div>`;
 }
 
@@ -527,6 +578,14 @@ function patchScadaOverview() {
     const total = plantGroupFlow(g);
     const strong = elm.querySelector('strong');
     if (strong) strong.textContent = `${total} cfs`;
+  });
+  body.querySelectorAll('[data-ov-revmode]').forEach(elm => {
+    const site = _scadaConfig?.sites.find(s => s.influxSite === elm.dataset.ovRevmode);
+    elm.style.display = site && siteReverseMode(site) ? '' : 'none';
+  });
+  body.querySelectorAll('[data-ov-dsdis]').forEach(elm => {
+    const site = _scadaConfig?.sites.find(s => s.influxSite === elm.dataset.ovDsdis);
+    elm.style.display = site && siteOverridesDisabled(site) ? '' : 'none';
   });
 }
 
@@ -684,9 +743,11 @@ function pumpCardHtml(site, p) {
   const runPath  = scadaPumpPath(site, p, 'MTR.Cntrl.Run');
   const failPath = scadaPumpPath(site, p, 'MTR.Cntrl.Fail');
   const spdPath  = scadaPumpPath(site, p, 'MTR.Spd.SCL.PV');
-  const hpPath   = scadaPumpPath(site, p, 'HP');
+  const sbPath   = scadaPumpPath(site, p, 'SBVlv.Cntrl.O_Cmd');
   const run = isOn(scadaVal(runPath)), fail = isOn(scadaVal(failPath));
-  const spd = scadaVal(spdPath), hp = scadaVal(hpPath);
+  const spd = scadaVal(spdPath);
+  const hp  = (PUMP_HP_TABLE[site.influxSite] || {})[p]; // static label, from chart
+  const sbClosed = siphonClosed(site, p);
   return `<div class="scada-pump-card${run?' run':' stop'}" data-scada-tag="${spdPath}" data-run-path="${runPath}" data-selectable>
     <div class="scada-pump-head">
       <span class="scada-pump-label">Pump ${escHtml(pumpLabel(site, p))}</span>
@@ -695,8 +756,9 @@ function pumpCardHtml(site, p) {
     <span class="scada-run-pill ${run?'running':'stopped'}" data-scada-run="${runPath}">${run?'RUNNING':'STOPPED'}</span>
     <div class="scada-pump-meta">
       <span>RPM <strong data-scada-tag="${spdPath}" data-scada-int="1">${spd==null?'—':Math.round(spd)}</strong></span>
-      ${hp!=null?`<span>HP <strong>${Math.round(hp)}</strong></span>`:''}
+      ${hp!=null?`<span>HP <strong>${hp}</strong></span>`:''}
     </div>
+    <div class="scada-pump-siphon" data-scada-siphon="${sbPath}">Siphon <strong>${sbClosed ? 'Closed' : 'Open'}</strong></div>
   </div>`;
 }
 
@@ -803,6 +865,11 @@ function patchScadaPlantDetail() {
     const run = isOn(scadaVal(card.dataset.runPath));
     card.classList.toggle('run', run);
     card.classList.toggle('stop', !run);
+  });
+  body.querySelectorAll('[data-scada-siphon]').forEach(elm => {
+    const closed = isOn(scadaVal(elm.dataset.scadaSiphon));
+    const strong = elm.querySelector('strong');
+    if (strong) strong.textContent = closed ? 'Closed' : 'Open';
   });
 }
 
@@ -1076,7 +1143,8 @@ async function loadScadaReverseFlow() {
   const g = scadaPlantGroups().find(x => x.key === _scadaRuntimePlant);
   if (!g) { rBody.innerHTML = '<div class="placeholder-msg">No data.</div>'; return; }
 
-  const sites = g.b ? [g.a, g.b] : [g.a];
+  // Reverse flow is an A-plant concept only — B plants never run in reverse.
+  const sites = [g.a];
   const runtimeRangeObj = _scadaRuntimeRange === 'custom'
     ? { start: _scadaRuntimeCustomStart, end: _scadaRuntimeCustomEnd }
     : null;
