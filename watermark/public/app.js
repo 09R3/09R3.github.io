@@ -680,7 +680,7 @@ function onLogin(user) {
   el('screen-login').classList.remove('active');
   el('app-shell').classList.remove('hidden');
   el('user-badge').textContent = user.initials || user.username.slice(0, 2).toUpperCase();
-  el('drawer-user').innerHTML = `<strong>${user.full_name || user.username}</strong>${user.role}`;
+  el('drawer-user').innerHTML = `<strong>${escHtml(user.full_name || user.username)}</strong>${escHtml(user.role)}`;
 
   // Reset all role-gated elements before applying role
   el('nav-reports-item').classList.add('hidden');
@@ -4431,7 +4431,7 @@ function renderIssueAttachQueue(issueId) {
   queueEl.innerHTML = pending.map((a, i) => `
     <div class="maint-aq-item">
       <span class="maint-aq-badge">${a.fileType === 'invoice' ? 'INV' : 'PIC'}</span>
-      <span style="flex:1;font-size:0.8rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${a.file.name}</span>
+      <span style="flex:1;font-size:0.8rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(a.file.name)}</span>
       ${a.gps ? `<button type="button" class="canal-aq-map-btn" data-lat="${a.gps.lat}" data-lon="${a.gps.lon}" style="padding:2px 7px;font-size:0.8rem;border:1px solid var(--border);border-radius:6px;background:var(--surface2);cursor:pointer">&#127757;</button>` : ''}
       <button class="maint-aq-remove" data-idx="${i}">×</button>
     </div>`).join('');
@@ -4529,7 +4529,7 @@ function renderVehCardQueue(id) {
       ${isPdf ? `<span class="maint-aq-icon">${icon('invoice', 28)}</span>` : `<img src="${URL.createObjectURL(a.file)}" alt="">`}
       <span class="maint-aq-badge">${a.fileType === 'invoice' ? 'INV' : 'PIC'}</span>
       <button class="maint-aq-remove" data-cardid="${id}" data-idx="${i}">&times;</button>
-      <div class="maint-aq-name">${a.file.name}</div>
+      <div class="maint-aq-name">${escHtml(a.file.name)}</div>
     </div>`;
   }).join('');
   el2.querySelectorAll('.maint-aq-remove').forEach(btn => {
@@ -5224,7 +5224,7 @@ function renderMaintAttachQueue() {
       ${thumb}
       <span class="maint-aq-badge">${badge}</span>
       <button class="maint-aq-remove" data-idx="${i}">&times;</button>
-      <div class="maint-aq-name">${a.file.name}</div>
+      <div class="maint-aq-name">${escHtml(a.file.name)}</div>
     </div>`;
   }).join('');
   queue.querySelectorAll('.maint-aq-remove').forEach(btn => {
@@ -6363,7 +6363,7 @@ el('exif-back-btn').addEventListener('click', () => {
       const items = await api('GET', url);
       sel.innerHTML = items.map(item => {
         const id = type === 'outlet' ? item.outlet_id : item.pond_id;
-        return `<option value="${id}">${item.name} (${id})</option>`;
+        return `<option value="${escHtml(String(id))}">${escHtml(item.name)} (${escHtml(String(id))})</option>`;
       }).join('');
       onEntitySelect();
     } catch (e) {
@@ -7200,8 +7200,8 @@ async function loadTodayReadings() {
     list.innerHTML = rows.map(r => `
       <div class="today-reading-row" data-type="${r.type}" data-id="${r.id}">
         <div class="today-reading-info">
-          <div class="today-reading-name">${r.name}</div>
-          <div class="today-reading-meta">${r.reading_time ? r.reading_time.slice(0,5) : ''} &bull; ${r.summary || ''}</div>
+          <div class="today-reading-name">${escHtml(r.name || '')}</div>
+          <div class="today-reading-meta">${r.reading_time ? escHtml(r.reading_time.slice(0,5)) : ''} &bull; ${escHtml(r.summary || '')}</div>
         </div>
         <button class="today-reading-del" data-type="${r.type}" data-id="${r.id}" title="Delete">&times;</button>
       </div>
@@ -7351,16 +7351,16 @@ async function loadBugReports() {
         <div class="bug-report-card ${r.resolved ? 'bug-resolved' : ''}">
           <div class="bug-report-header">
             <span class="bug-severity" style="color:${sevColor[r.severity] || sevColor.minor}">${r.severity.toUpperCase()}</span>
-            ${r.screen_area ? `<span class="bug-area">${r.screen_area}</span>` : ''}
+            ${r.screen_area ? `<span class="bug-area">${escHtml(r.screen_area)}</span>` : ''}
             ${r.is_repeatable ? '<span class="bug-tag">Repeatable</span>' : ''}
-            <span class="bug-meta">${r.submitted_by} &bull; ${new Date(r.submitted_at).toLocaleDateString()}</span>
+            <span class="bug-meta">${escHtml(r.submitted_by)} &bull; ${new Date(r.submitted_at).toLocaleDateString()}</span>
           </div>
-          <div class="bug-description">${r.description}</div>
-          ${r.app_version ? `<div class="bug-version">${r.app_version}</div>` : ''}
+          <div class="bug-description">${escHtml(r.description)}</div>
+          ${r.app_version ? `<div class="bug-version">${escHtml(r.app_version)}</div>` : ''}
           <div class="bug-resolve-row">
             <label class="bug-resolve-label">
               <input type="checkbox" class="bug-resolve-check" data-id="${r.report_id}" ${r.resolved ? 'checked' : ''}>
-              ${r.resolved ? `Resolved by ${r.resolved_by} on ${new Date(r.resolved_at).toLocaleDateString()}` : 'Mark resolved'}
+              ${r.resolved ? `Resolved by ${escHtml(r.resolved_by || '')} on ${new Date(r.resolved_at).toLocaleDateString()}` : 'Mark resolved'}
             </label>
           </div>
         </div>
@@ -7400,12 +7400,12 @@ async function loadUserList() {
       const card = document.createElement('div');
       card.className = `user-card${u.is_active ? '' : ' user-inactive'}`;
       card.innerHTML = `
-        <div class="user-avatar">${(u.initials || u.username.slice(0,2)).toUpperCase()}</div>
+        <div class="user-avatar">${escHtml((u.initials || u.username.slice(0,2)).toUpperCase())}</div>
         <div class="user-info">
-          <div class="user-name">${u.full_name || u.username}</div>
-          <div class="user-sub">@${u.username}${u.is_active ? '' : ' · Inactive'}</div>
+          <div class="user-name">${escHtml(u.full_name || u.username)}</div>
+          <div class="user-sub">@${escHtml(u.username)}${u.is_active ? '' : ' · Inactive'}</div>
         </div>
-        <span class="role-badge role-${u.role}">${formatRole(u.role)}</span>
+        <span class="role-badge role-${escHtml(u.role)}">${formatRole(u.role)}</span>
         ${currentUser.role === 'admin'
           ? `<button class="user-edit-btn" data-id="${u.user_id}">Edit</button>`
           : ''}
@@ -8560,77 +8560,6 @@ function showPMRecord(record, def) {
     ${record.notes ? `<div class="pm-view-notes"><strong>Notes:</strong> ${escHtml(record.notes)}</div>` : ''}`;
   el('pm-view-modal-body').querySelectorAll('input').forEach(i => i.disabled = true);
   el('pm-view-modal').classList.remove('hidden');
-}
-
-// ── PM PDF Export ─────────────────────────────────────────────────────────────
-function exportPMRecordAsPDF(record, def) {
-  const d = localDateStr(record.completed_date, { month: 'long', day: 'numeric', year: 'numeric' });
-  const t = record.completed_time?.slice(0, 5) || '';
-  const fileDate = record.completed_date ? String(record.completed_date).slice(0, 10) : '';
-  const filename = `${def.title} ${fileDate}`.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '');
-
-  const PM_CSS = `
-    body{font-family:Arial,sans-serif;font-size:12px;color:#000;margin:0}
-    h1{font-size:14px;margin:0 0 2px}
-    .sub{font-size:11px;color:#555;margin:0 0 12px}
-    table{border-collapse:collapse;margin-bottom:14px}
-    td{padding:2px 14px 2px 0;font-size:12px}
-    .item{margin:5px 0;line-height:1.5}
-    .pm-view-row{display:flex;gap:8px;padding:4px 0;border-bottom:1px solid #eee}
-    .pv-loc{font-weight:600;min-width:40px}.pv-note{color:#555;font-style:italic}
-    .pass{color:#388e3c}.fail{color:#d32f2f}.ac-group{margin-bottom:12px}
-    .ac-title{font-weight:700;font-size:11px;text-transform:uppercase;margin-bottom:4px}
-    .ac-row{display:flex;gap:6px;padding:2px 0}.ac-dot{width:10px;height:10px;border-radius:50%;margin-top:2px}
-    .ac-dot.pass{background:#388e3c}.ac-dot.fail{background:#d32f2f}.ac-dot.empty{background:#ccc}
-    .notes{margin-top:14px;border-top:1px solid #ccc;padding-top:10px}
-    .footer{margin-top:20px;border-top:2px solid #000;padding-top:8px;font-weight:bold}`;
-
-  let inner;
-  if (def.customType) {
-    const body = def.customType === 'siphon' ? renderSBRecordView(record) : renderACRecordView(record, def);
-    inner = `
-      <h1>${escHtml(def.title)}</h1>
-      <table><tr><td><strong>Location:</strong></td><td>${escHtml(record.building||'—')}</td>
-      <td><strong>Date:</strong></td><td>${d}${t?' · '+t:''}</td>
-      <td><strong>By:</strong></td><td>${escHtml(record.completed_by_name||'—')}</td></tr></table>
-      ${body}
-      ${record.notes?`<div class="notes"><strong>Notes:</strong><br>${escHtml(record.notes).replace(/\n/g,'<br>')}</div>`:''}`;
-  } else {
-    let itemNum = 0;
-    const itemsHTML = def.items.map(item => {
-      if (item.condBuilding && item.condBuilding !== record.building) return '';
-      itemNum++;
-      const val = record.checklist[item.key];
-      let checked = false, extra = '';
-      if (item.type === 'twc' || item.type === 'twc-area') {
-        checked = val?.checked || false;
-        if (val?.value) extra = ` — <strong>${escHtml(val.value)}</strong>`;
-      } else if (item.type === 'text') {
-        extra = val ? `: <strong>${escHtml(val)}</strong>` : '';
-        checked = !!val;
-      } else {
-        checked = val === true;
-      }
-      const sym = checked ? '&#9745;' : '&#9744;';
-      return `<div class="item">${sym} <strong>${itemNum}.</strong> ${escHtml(item.label)}${extra}</div>`;
-    }).filter(Boolean).join('');
-
-    inner = `
-      <h1>${escHtml(def.subtitle || def.title)}</h1>
-      <div class="sub">${escHtml(def.formRef || '')}</div>
-      <table>
-        <tr><td><strong>Inspector:</strong></td><td>${escHtml(record.completed_by_name || '—')}</td>
-            <td><strong>Location:</strong></td><td>${escHtml(record.building || '—')}</td></tr>
-        <tr><td><strong>Date:</strong></td><td>${d}</td>
-            <td><strong>Time:</strong></td><td>${t}</td></tr>
-      </table>
-      ${itemsHTML}
-      ${record.notes ? `<div class="notes"><strong>Notes:</strong><br>${escHtml(record.notes).replace(/\n/g,'<br>')}</div>` : ''}
-      <div class="footer">INITIAL: Completed in accordance with ${escHtml(def.formRef || 'PM Checklist')} &nbsp;&nbsp; Date: ${d} &nbsp;&nbsp; Time: ${t}</div>`;
-  }
-
-  sharePdfFromHtml(inner, PM_CSS, filename, def.title, { margin: 12 })
-    .catch(err => { if (err.name !== 'AbortError') showToast('Export failed: ' + err.message, 'error'); });
 }
 
 /* ── Pesticides ──────────────────────────────────────────────────────────── */

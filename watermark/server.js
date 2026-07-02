@@ -85,6 +85,22 @@ function scadaAllTagPaths(config) {
   return tags;
 }
 
+// Allow-list of every tag the history endpoint may query. Because tag paths are
+// interpolated into Flux, we only accept known paths (prevents Flux injection).
+// Also covers the analog .SCL.Raw sensors used by the scaling-test tool.
+let _scadaAllowedTags = null;
+function scadaAllowedTagSet() {
+  if (_scadaAllowedTags) return _scadaAllowedTags;
+  const set = new Set(SCADA_CONFIG ? scadaAllTagPaths(SCADA_CONFIG) : []);
+  if (SCADA_CONFIG) {
+    for (const site of SCADA_CONFIG.sites)
+      for (const sensor of SCADA_RAW_SENSORS)
+        set.add(`${site.influxSite}.${sensor}.SCL.Raw`);
+  }
+  _scadaAllowedTags = set;
+  return set;
+}
+
 // Latest value per tag. Chunks of 20 avoid Flux's "program nested too deep" error.
 async function scadaGetCurrent(tagPaths) {
   const qApi = getInfluxQuery();
@@ -107,6 +123,9 @@ async function scadaGetCurrent(tagPaths) {
   }
   return result;
 }
+
+// Preset range → Flux relative-start string, shared by the history/runtime helpers.
+const SCADA_RANGE_START = { '1h':'-1h','8h':'-8h','12h':'-12h','6h':'-6h','24h':'-24h','7d':'-7d','30d':'-30d' };
 
 // Aggregated history for one tag. mean for analog, max for status bits.
 // Pick aggregation window automatically from span (targets ~200–300 points).
@@ -132,9 +151,8 @@ async function scadaGetHistory(tagPath, rangeOpts) {
     rangeClause = `range(start: ${s.toISOString()}, stop: ${e.toISOString()})`;
     every = calcAggEvery(s.getTime(), e.getTime());
   } else {
-    const startMap = { '1h':'-1h','8h':'-8h','12h':'-12h','6h':'-6h','24h':'-24h','7d':'-7d','30d':'-30d' };
     const everyMap = { '1h':'30s','8h':'2m','12h':'2m','6h':'2m','24h':'5m','7d':'30m','30d':'2h' };
-    rangeClause = `range(start: ${startMap[rangeOpts] || '-1h'})`;
+    rangeClause = `range(start: ${SCADA_RANGE_START[rangeOpts] || '-1h'})`;
     every = everyMap[rangeOpts] || '30s';
   }
   const flux = `
@@ -159,8 +177,7 @@ async function scadaGetRuntime(tagPaths, rangeOpts) {
     if (isNaN(s) || isNaN(e)) throw new Error('invalid custom range');
     rangeClause = `range(start: ${s.toISOString()}, stop: ${e.toISOString()})`;
   } else {
-    const startMap = { '1h':'-1h','8h':'-8h','12h':'-12h','6h':'-6h','24h':'-24h','7d':'-7d','30d':'-30d' };
-    rangeClause = `range(start: ${startMap[rangeOpts] || '-24h'})`;
+    rangeClause = `range(start: ${SCADA_RANGE_START[rangeOpts] || '-24h'})`;
   }
   const result = {};
   const CHUNK = 10;
@@ -207,9 +224,8 @@ async function scadaGetReverseHours(influxSite, rangeOpts, pumps) {
     rangeClause = `range(start: ${s.toISOString()}, stop: ${e.toISOString()})`;
     spanHours = (e.getTime() - s.getTime()) / 3600000;
   } else {
-    const startMap = { '1h':'-1h','8h':'-8h','12h':'-12h','6h':'-6h','24h':'-24h','7d':'-7d','30d':'-30d' };
     const hrsMap   = { '1h':1,'8h':8,'12h':12,'6h':6,'24h':24,'7d':168,'30d':720 };
-    rangeClause = `range(start: ${startMap[rangeOpts] || '-24h'})`;
+    rangeClause = `range(start: ${SCADA_RANGE_START[rangeOpts] || '-24h'})`;
     spanHours   = hrsMap[rangeOpts] || 24;
   }
   const grid = reverseGridSeconds(spanHours);
@@ -5165,14 +5181,18 @@ app.get('/api/scada/raw-current', requireAuth, requireScadaAccess, async (req, r
 app.get('/api/scada/history', requireAuth, requireScadaAccess, async (req, res) => {
   const { tag, tags, range, start, end } = req.query;
   const rangeOpts = (start && end) ? { start: String(start), end: String(end) } : String(range || '1h');
+  const allowed = scadaAllowedTagSet();
   try {
     if (tags) {
       const list = String(tags).split(',').map(s => s.trim()).filter(Boolean).slice(0, 8);
+      const valid = list.filter(t => allowed.has(t));
+      if (!valid.length) return res.status(400).json({ error: 'no valid tags' });
       const series = {};
-      await Promise.all(list.map(async t => { series[t] = await scadaGetHistory(t, rangeOpts); }));
+      await Promise.all(valid.map(async t => { series[t] = await scadaGetHistory(t, rangeOpts); }));
       return res.json({ series });
     }
     if (!tag) return res.status(400).json({ error: 'tag required' });
+    if (!allowed.has(String(tag))) return res.status(400).json({ error: 'unknown tag' });
     res.json(await scadaGetHistory(String(tag), rangeOpts));
   } catch (err) { handleErr(res, err); }
 });

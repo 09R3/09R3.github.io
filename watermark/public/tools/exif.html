@@ -327,15 +327,21 @@ function mergeFields(rows) {
 
 function lbl(k) { return k.startsWith('⬛ ') ? k.replace('⬛ ', '') : (FIELD_LABELS[k] || k); }
 
+// Escape untrusted EXIF strings (field names + values come from the image).
+function esc(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
 function renderTable() {
   const wrap = document.getElementById('table-wrap');
   if (!allRows.length) { wrap.innerHTML = '<div id="empty">No data yet.</div>'; return; }
   const cols = allFields.filter(f => activeFields.has(f));
-  let html = '<table><thead><tr>' + cols.map(f => `<th title="${f}">${lbl(f)}</th>`).join('') + '</tr></thead><tbody>';
+  let html = '<table><thead><tr>' + cols.map(f => `<th title="${esc(f)}">${esc(lbl(f))}</th>`).join('') + '</tr></thead><tbody>';
   for (const row of allRows) {
     html += '<tr>' + cols.map(f => {
       const v = row[f] || '';
-      return v ? `<td title="${v}">${v}</td>` : `<td class="na">—</td>`;
+      return v ? `<td title="${esc(v)}">${esc(v)}</td>` : `<td class="na">—</td>`;
     }).join('') + '</tr>';
   }
   wrap.innerHTML = html + '</tbody></table>';

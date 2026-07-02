@@ -1,4 +1,4 @@
-const CACHE = 'watermark-v2.91';
+const CACHE = 'watermark-v2.92';
 const SHELL = ['/', '/app.js', '/scada.js', '/style.css', '/manifest.json',
   '/vendor/chart.umd.js', '/vendor/chartjs-adapter-date-fns.bundle.min.js'];
 
@@ -50,7 +50,8 @@ self.addEventListener('fetch', e => {
     e.respondWith(
       fetch(e.request)
         .then(r => {
-          caches.open(CACHE).then(c => c.put(e.request, r.clone()));
+          // Only cache successful responses — never store 401/403/5xx bodies
+          if (r.ok) caches.open(CACHE).then(c => c.put(e.request, r.clone()));
           return r;
         })
         .catch(() => caches.match(e.request))
