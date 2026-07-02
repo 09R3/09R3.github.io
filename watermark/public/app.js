@@ -73,7 +73,10 @@ async function applyScadaVisibility(user) {
   } catch { /* keep default */ }
   const ok = isScadaAllowed(user.role);
   el('nav-scada-item').classList.toggle('hidden', !ok);
-  el('dash-scada-tile').classList.toggle('hidden', !ok);
+  // Dashboard SCADA widget (3rd stat card) — may not be rendered yet; the
+  // stats renderer also checks isScadaAllowed, so both paths converge.
+  el('scada-flow-stat')?.classList.toggle('hidden', !ok);
+  if (ok) loadScadaFlowWidget();
 }
 
 const ROLE_LABELS = {
@@ -692,7 +695,6 @@ function onLogin(user) {
   }
   // SCADA Dashboard — start hidden, reveal if this role is in the server allow-list
   el('nav-scada-item').classList.add('hidden');
-  el('dash-scada-tile').classList.add('hidden');
   el('settings-scada-roles-row')?.classList.toggle('hidden', user.role !== 'admin');
   applyScadaVisibility(user);
   // Populate account info on settings screen
@@ -755,10 +757,58 @@ async function loadDashboardStats() {
         <div class="stat-label">Running Wells</div>
         <div class="stat-sublabel">CVC Well Inflow: ${rwCvc} cfs</div>
       </div>
+      <div class="stat-card${isScadaAllowed(currentUser?.role) ? '' : ' hidden'}" id="scada-flow-stat" style="cursor:pointer">
+        <div class="stat-value" id="scada-flow-value">—</div>
+        <div class="stat-label">SCADA Dashboard</div>
+        <div class="stat-sublabel">DWR Total Flow (cfs)</div>
+        <svg id="scada-flow-spark" class="scada-flow-spark" viewBox="0 0 100 24" preserveAspectRatio="none"></svg>
+      </div>
     `;
     el('running-wells-stat').addEventListener('click', openRunningWellsModal);
     el('kf-complete-stat').addEventListener('click', openKFSetsModal);
+    el('scada-flow-stat').addEventListener('click', () => showScreen('scada'));
+    loadScadaFlowWidget();
   } catch { /* non-critical */ }
+}
+
+// ── SCADA DWR flow widget (dashboard stat card) ─────────────────────────────
+// Shows the live DWR total (sum of the computed flow sensors on the config'd
+// site) plus an 8-hour sparkline. One history call supplies both: the summed
+// series draws the sparkline and its last point is the current value.
+let _scadaFlowCfg = null; // cached { tags } from /api/scada/config
+
+async function loadScadaFlowWidget() {
+  const card = el('scada-flow-stat');
+  if (!card || card.classList.contains('hidden')) return;
+  try {
+    if (!_scadaFlowCfg) {
+      const cfg = await api('GET', '/api/scada/config');
+      const site = (cfg.sites || []).find(s =>
+        (s.computedSensors || []).some(c => c.kind === 'flow' || /flow|dwr/i.test(c.label)));
+      if (!site) { el('scada-flow-value').textContent = '—'; return; }
+      const comp = site.computedSensors.find(c => c.kind === 'flow' || /flow|dwr/i.test(c.label));
+      _scadaFlowCfg = { tags: comp.sum.map(s => `${site.influxSite}.${s}.SCL.PV`) };
+    }
+    const { tags } = _scadaFlowCfg;
+    const r = await api('GET', `/api/scada/history?tags=${encodeURIComponent(tags.join(','))}&range=8h`);
+    const pts = new Map();
+    tags.forEach(t => (r.series?.[t] || []).forEach(([tm, v]) => pts.set(tm, (pts.get(tm) || 0) + v)));
+    const series = [...pts.entries()].sort((a, b) => a[0] - b[0]);
+    if (!series.length) { el('scada-flow-value').textContent = '—'; return; }
+
+    el('scada-flow-value').textContent = series[series.length - 1][1].toFixed(1);
+
+    // Sparkline: map the summed series onto the 100×24 viewBox with 2px pad.
+    const vals = series.map(p => p[1]);
+    const min = Math.min(...vals), max = Math.max(...vals);
+    const span = (max - min) || 1;
+    const t0 = series[0][0], t1 = series[series.length - 1][0];
+    const tSpan = (t1 - t0) || 1;
+    const d = series.map(([t, v]) =>
+      `${((t - t0) / tSpan * 100).toFixed(1)},${(22 - (v - min) / span * 20).toFixed(1)}`).join(' ');
+    el('scada-flow-spark').innerHTML =
+      `<polyline points="${d}" fill="none" stroke="var(--accent)" stroke-width="1.5" vector-effect="non-scaling-stroke"/>`;
+  } catch { /* non-critical — leave placeholder */ }
 }
 
 function onLogout() {
@@ -6971,7 +7021,7 @@ el('scada-roles-save-btn').addEventListener('click', async () => {
     // Reflect immediately for the current admin
     const ok = isScadaAllowed(currentUser.role);
     el('nav-scada-item').classList.toggle('hidden', !ok);
-    el('dash-scada-tile').classList.toggle('hidden', !ok);
+    el('scada-flow-stat')?.classList.toggle('hidden', !ok);
     showToast('SCADA access updated', 'success');
   } catch (err) {
     showToast('Failed to save: ' + err.message, 'error');
