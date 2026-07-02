@@ -3340,6 +3340,16 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
 
 .scada-chart-controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
 .scada-chart-controls .ctrl-select { flex: 1; max-width: 240px; }
+
+/* Range button rows: one row that scrolls horizontally on narrow screens
+   instead of squishing/clipping the 1h…30d/Custom buttons. */
+#screen-scada .seg-group {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+#screen-scada .seg-group::-webkit-scrollbar { display: none; }
+#screen-scada .seg-btn { flex: 1 0 auto; min-width: 64px; padding: 10px 14px; }
 .scada-chart-wrap {
   position: relative; height: 260px;
   background: var(--surface); border: 1px solid var(--border);

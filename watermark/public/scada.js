@@ -510,7 +510,9 @@ function bldgTempColHtml(g) {
     return `<div>${escHtml(tag)}&nbsp;<strong data-scada-sensor="InTmp" data-scada-tag="${path}"${style}>${fmtSensor('InTmp', v)}</strong>°</div>`;
   }).join('');
   const dsDis = siteOverridesDisabled(g.a);
-  return `<div style="flex:0 0 auto;padding-left:10px;font-size:0.73rem;line-height:1.55;color:var(--text-dim)">
+  // text-align:right keeps the temp rows on a fixed right edge so the wider
+  // "Overrides Disabled" text below doesn't shift them.
+  return `<div style="flex:0 0 auto;padding-left:10px;font-size:0.73rem;line-height:1.55;color:var(--text-dim);text-align:right">
     <div style="font-size:0.62rem;text-transform:uppercase;letter-spacing:.04em;opacity:.8">Bldg °F</div>
     ${rows}
     <div data-ov-dsdis="${escHtml(g.a.influxSite)}" style="font-size:0.66rem;font-weight:700;color:#ef4444;margin-top:2px${dsDis ? '' : ';display:none'}">Overrides Disabled</div>
