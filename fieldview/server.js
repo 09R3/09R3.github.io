@@ -1041,6 +1041,8 @@ app.get('/api/reports/well-monthly/pools', requireDB, async (req, res) => {
 });
 
 // GET /api/reports/well-monthly — flat rows (day × well) for all wells in a pool for a given month
+// cfs_day and af_day are calculated from totalizer diffs; elapsed time uses actual reading timestamps
+// so that when a well turns off mid-day the off-time is the correct endpoint for that day's CFS.
 app.get('/api/reports/well-monthly', requireDB, async (req, res) => {
   const { pool: poolFilter, month } = req.query;
   if (!poolFilter || !month) {
@@ -1064,31 +1066,62 @@ app.get('/api/reports/well-monthly', requireDB, async (req, res) => {
           WHERE discharge_pool = $1
           ORDER BY area NULLS LAST, common_name
         ),
-        well_readings AS (
+        daily_readings AS (
           SELECT DISTINCT ON (r.well_id, r.reading_date)
             r.well_id,
             r.reading_date,
-            r.flow_cfs,
-            r.on_off,
-            r.hour_reading
+            r.reading_time,
+            r.totalizer,
+            r.on_off
           FROM readings_well r
           JOIN pool_wells pw ON pw.well_id = r.well_id
           WHERE r.reading_date >= (SELECT d FROM month_start)
             AND r.reading_date <= (SELECT d FROM month_end)
           ORDER BY r.well_id, r.reading_date, r.reading_time DESC NULLS LAST
+        ),
+        with_calc AS (
+          SELECT
+            dr.*,
+            (dr.reading_date + COALESCE(dr.reading_time, '00:00:00'::time))::timestamp AS curr_ts,
+            prev.totalizer AS prev_totalizer,
+            prev.ts        AS prev_ts
+          FROM daily_readings dr
+          LEFT JOIN LATERAL (
+            SELECT p.totalizer,
+                   (p.reading_date + COALESCE(p.reading_time, '00:00:00'::time))::timestamp AS ts
+            FROM readings_well p
+            WHERE p.well_id = dr.well_id
+              AND p.totalizer IS NOT NULL
+              AND (p.reading_date + COALESCE(p.reading_time, '00:00:00'::time))::timestamp
+                  < (dr.reading_date + COALESCE(dr.reading_time, '00:00:00'::time))::timestamp
+            ORDER BY (p.reading_date + COALESCE(p.reading_time, '00:00:00'::time))::timestamp DESC
+            LIMIT 1
+          ) prev ON true
         )
       SELECT
         d.day,
         pw.well_id,
         pw.common_name,
         pw.area,
-        wr.flow_cfs,
-        wr.on_off,
-        wr.hour_reading
+        wc.on_off,
+        wc.totalizer,
+        CASE
+          WHEN wc.totalizer IS NULL OR wc.prev_totalizer IS NULL THEN NULL
+          ELSE GREATEST(ROUND((wc.totalizer - wc.prev_totalizer)::numeric, 4), 0)
+        END AS af_day,
+        CASE
+          WHEN wc.totalizer IS NULL
+            OR wc.prev_totalizer IS NULL
+            OR wc.prev_ts IS NULL
+            OR EXTRACT(EPOCH FROM (wc.curr_ts - wc.prev_ts)) <= 0
+          THEN NULL
+          ELSE GREATEST(ROUND(
+            ((wc.totalizer - wc.prev_totalizer) * 43560.0 /
+             EXTRACT(EPOCH FROM (wc.curr_ts - wc.prev_ts)))::numeric, 3), 0)
+        END AS cfs_day
       FROM days d
       CROSS JOIN pool_wells pw
-      LEFT JOIN well_readings wr
-        ON wr.well_id = pw.well_id AND wr.reading_date = d.day
+      LEFT JOIN with_calc wc ON wc.well_id = pw.well_id AND wc.reading_date = d.day
       ORDER BY d.day, pw.area NULLS LAST, pw.common_name
     `, [poolFilter, month]);
     res.json(result.rows);

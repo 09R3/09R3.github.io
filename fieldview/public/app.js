@@ -1136,7 +1136,7 @@ function renderWellMonthlyTable(gridEl, rows) {
     const dayMap = pivot.get(day) || new Map();
     const cells = wells.map(w => {
       const r = dayMap.get(w.well_id);
-      const val = r && r.flow_cfs != null ? r.flow_cfs : '';
+      const val = r && r.cfs_day != null ? r.cfs_day : '';
       const on = r && r.on_off === 'ON';
       return `<td class="${on ? 'wmr-on' : ''}">${val}</td>`;
     }).join('');
@@ -1786,7 +1786,7 @@ $('rwm-export').addEventListener('click', () => {
     const dayMap = pivot.get(day) || new Map();
     for (const w of wells) {
       const r = dayMap.get(w.well_id);
-      row[w.common_name] = r && r.flow_cfs != null ? r.flow_cfs : '';
+      row[w.common_name] = r && r.cfs_day != null ? r.cfs_day : '';
     }
     return row;
   });
