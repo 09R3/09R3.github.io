@@ -13637,11 +13637,17 @@ function initWellReportPanel() {
       el('well-daily-toolbar').style.display   = tab === 'daily'   ? '' : 'none';
       el('well-detail-toolbar').style.display  = tab === 'detail'  ? '' : 'none';
       el('well-dripper-toolbar').style.display = tab === 'dripper' ? '' : 'none';
+      el('well-monthly-toolbar').style.display = tab === 'monthly' ? '' : 'none';
       el('report-wells-output').innerHTML = '';
       if (tab === 'daily')   renderWellDailyReport();
       else if (tab === 'detail')  renderWellDetailReport();
       else if (tab === 'dripper') renderWellDripperReport();
+      else if (tab === 'monthly') renderWellMonthlyReport();
     });
+
+    // Monthly grid nav
+    el('well-monthly-month').addEventListener('change', renderWellMonthlyReport);
+    el('well-monthly-pool').addEventListener('change', renderWellMonthlyReport);
 
     el('well-dripper-amount').addEventListener('change', recalcDripper);
 
@@ -13681,7 +13687,19 @@ function initWellReportPanel() {
     el('well-daily-toolbar').style.display   = '';
     el('well-detail-toolbar').style.display  = 'none';
     el('well-dripper-toolbar').style.display = 'none';
+    el('well-monthly-toolbar').style.display = 'none';
   }
+
+  // Default the month picker to the current month
+  if (!el('well-monthly-month').value) el('well-monthly-month').value = todayISO().slice(0, 7);
+
+  // Load pool options every open (may have changed)
+  api('GET', '/api/reports/wells/pools').then(pools => {
+    const sel = el('well-monthly-pool');
+    const prev = sel.value;
+    sel.innerHTML = pools.map(p => `<option value="${escHtml(p)}">${escHtml(p)}</option>`).join('');
+    if (prev && pools.includes(prev)) sel.value = prev;
+  }).catch(() => {});
 
   // Load well dropdown every open (may have changed)
   api('GET', '/api/reports/wells/list').then(wells => {
@@ -13709,6 +13727,59 @@ function initWellReportPanel() {
   }).catch(() => {});
 
   renderWellDailyReport();
+}
+
+// Monthly grid: days of the month down the left, every well discharging in the
+// selected pool across the top (grouped by area). Cell = last flow_cfs that day.
+async function renderWellMonthlyReport() {
+  const month = el('well-monthly-month').value;
+  const poolName = el('well-monthly-pool').value;
+  const out = el('report-wells-output');
+  if (!month || !poolName) { out.innerHTML = '<div class="placeholder-msg">Select a month and pool.</div>'; return; }
+  out.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const { wells, data, daysInMonth } = await api('GET',
+      `/api/reports/wells/monthly?month=${encodeURIComponent(month)}&pool=${encodeURIComponent(poolName)}`);
+    if (!wells.length) { out.innerHTML = '<div class="placeholder-msg">No wells discharging in this pool.</div>'; return; }
+
+    // Group wells by area (server already ordered by area, common_name)
+    const areas = [], areaMap = {};
+    wells.forEach(w => {
+      const a = w.area || 'Other';
+      if (!areaMap[a]) { areaMap[a] = []; areas.push(a); }
+      areaMap[a].push(w);
+    });
+    const ordered = areas.flatMap(a => areaMap[a]);
+
+    let areaRow = '<tr><th class="wm-day-col" rowspan="2">Day</th>';
+    areas.forEach(a => { areaRow += `<th colspan="${areaMap[a].length}" class="wm-area-hdr">${escHtml(a)}</th>`; });
+    areaRow += '</tr>';
+
+    let wellRow = '<tr>';
+    ordered.forEach(w => { wellRow += `<th class="report-num wm-well-hdr">${escHtml(w.common_name)}</th>`; });
+    wellRow += '</tr>';
+
+    let body = '';
+    for (let d = 1; d <= daysInMonth; d++) {
+      body += `<tr><td class="wm-day-col">${d}</td>`;
+      ordered.forEach(w => {
+        const v = data[w.well_id]?.[d];
+        body += `<td class="report-num">${v != null ? Number(v).toFixed(2) : ''}</td>`;
+      });
+      body += '</tr>';
+    }
+
+    const monthLabel = new Date(month + '-01T00:00:00').toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+    out.innerHTML = `<div class="report-card">
+      <div class="report-title">Monthly Well Report — ${escHtml(poolName)}</div>
+      <div class="report-subtitle">${monthLabel} · flow (cfs)</div>
+      <table class="report-table wm-table">
+        <thead>${areaRow}${wellRow}</thead>
+        <tbody>${body}</tbody>
+      </table></div>`;
+  } catch (err) {
+    out.innerHTML = '<div class="placeholder-msg">Failed to load.</div>';
+  }
 }
 
 async function renderWellDailyReport() {

@@ -1393,6 +1393,20 @@ input[type="date"].ctrl-input { min-height: 44px; }
 .report-table tr:last-child td { border-bottom: none; }
 .report-table .report-num { text-align: right; font-variant-numeric: tabular-nums; }
 .report-empty { font-size: 0.88rem; color: var(--text-dim); font-style: italic; padding: 8px 0; }
+
+/* Monthly well grid — wide table with a sticky day column + grouped area headers */
+.wm-table th, .wm-table td { white-space: nowrap; }
+.wm-table .wm-area-hdr {
+  text-align: center; border-left: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.wm-table .wm-well-hdr { text-align: right; font-size: 0.68rem; }
+.wm-table .wm-day-col {
+  position: sticky; left: 0; z-index: 2;
+  background: var(--surface); text-align: center; font-weight: 700;
+  border-right: 1px solid var(--border);
+}
+.wm-table thead .wm-day-col { z-index: 3; }
 .report-meta  { font-size: 0.82rem; color: var(--text-dim); margin: 0 0 8px; }
 .kf-op-bar-wrap { background: var(--surface2); border-radius: 4px; height: 8px; min-width: 80px; overflow: hidden; }
 .kf-op-bar { background: var(--accent); height: 100%; border-radius: 4px; transition: width 0.4s ease; }

@@ -4101,6 +4101,61 @@ app.get('/api/reports/wells/daily', requireAuth, async (req, res) => {
   }
 });
 
+// Distinct discharge pools (for the monthly grid pool selector).
+app.get('/api/reports/wells/pools', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT DISTINCT discharge_pool
+      FROM wells
+      WHERE discharge_pool IS NOT NULL AND discharge_pool <> ''
+        AND LOWER(well_type) LIKE '%operational%'
+        AND LOWER(COALESCE(status,'')) NOT IN ('inactive','removed')
+      ORDER BY discharge_pool
+    `);
+    res.json(rows.map(r => r.discharge_pool));
+  } catch (err) { handleErr(res, err); }
+});
+
+// Monthly grid: every day of the month (rows) × every well discharging in a pool
+// (columns, grouped by area). Cell = last flow_cfs reading that day, blank if none.
+app.get('/api/reports/wells/monthly', requireAuth, async (req, res) => {
+  const month = /^\d{4}-\d{2}$/.test(String(req.query.month || '')) ? String(req.query.month) : null;
+  const poolName = req.query.pool ? String(req.query.pool) : null;
+  if (!month || !poolName) return res.status(400).json({ error: 'month and pool required' });
+  const [y, m] = month.split('-').map(Number);
+  const start = `${month}-01`;
+  const nextM = m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, '0')}-01`;
+  const daysInMonth = new Date(y, m, 0).getDate();
+  try {
+    const wellsQ = await pool.query(`
+      SELECT well_id, common_name, area
+      FROM wells
+      WHERE discharge_pool = $1
+        AND LOWER(well_type) LIKE '%operational%'
+        AND LOWER(COALESCE(status,'')) NOT IN ('inactive','removed')
+      ORDER BY area NULLS LAST, common_name
+    `, [poolName]);
+
+    const readingsQ = await pool.query(`
+      SELECT DISTINCT ON (r.well_id, r.reading_date)
+        r.well_id, EXTRACT(DAY FROM r.reading_date)::int AS day, r.flow_cfs
+      FROM readings_well r
+      JOIN wells w ON w.well_id = r.well_id
+      WHERE w.discharge_pool = $1
+        AND r.reading_date >= $2 AND r.reading_date < $3
+      ORDER BY r.well_id, r.reading_date, r.reading_time DESC NULLS LAST
+    `, [poolName, start, nextM]);
+
+    const data = {};
+    readingsQ.rows.forEach(r => {
+      if (r.flow_cfs == null) return;
+      if (!data[r.well_id]) data[r.well_id] = {};
+      data[r.well_id][r.day] = Number(r.flow_cfs);
+    });
+    res.json({ month, pool: poolName, daysInMonth, wells: wellsQ.rows, data });
+  } catch (err) { handleErr(res, err); }
+});
+
 app.get('/api/reports/wells/daily/export', async (req, res) => {
   const { date, token } = req.query;
   const exportDate = date || new Date().toISOString().slice(0,10);

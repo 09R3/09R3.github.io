@@ -129,7 +129,7 @@
         Sign in with Microsoft 365
       </a>
       <div id="ms-login-error" class="error-msg hidden"></div>
-      <div class="login-version">v 2.92</div>
+      <div class="login-version">v 2.93</div>
     </div>
   </div>
 </div>
@@ -1641,6 +1641,7 @@
           <button class="seg-btn active" data-val="daily">Daily Overview</button>
           <button class="seg-btn" data-val="detail">Well Detail</button>
           <button class="seg-btn" data-val="dripper">Dripper Oil</button>
+          <button class="seg-btn" data-val="monthly">Monthly Grid</button>
         </div>
         <button class="btn btn-secondary btn-sm" id="well-export-btn" style="margin-left:auto"><span class="app-icon" style="width:14px;height:14px;-webkit-mask-image:url(/marv-site/icons/icon-download.svg);mask-image:url(/marv-site/icons/icon-download.svg)"></span> Export</button>
       </div>
@@ -1673,6 +1674,12 @@
           <option value="14">14</option>
           <option value="15">15</option>
         </select>
+      </div>
+
+      <!-- Tab 4 toolbar: month + pool selector -->
+      <div id="well-monthly-toolbar" class="report-toolbar" style="display:none">
+        <input type="month" id="well-monthly-month" class="ctrl-input ctrl-input-sm">
+        <select id="well-monthly-pool" class="ctrl-input ctrl-input-sm" style="max-width:200px"></select>
       </div>
 
       <div id="report-wells-output" style="padding:12px;overflow-x:auto"></div>
@@ -1837,7 +1844,7 @@
     <div id="settings-panel-appinfo" class="settings-panel hidden">
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 2.92</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 2.93</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>
