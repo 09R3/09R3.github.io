@@ -10250,6 +10250,17 @@ el('export-csv-btn').addEventListener('click', async () => {
     return;
   }
 
+  if (exportContext === 'wells-monthly') {
+    if (!lastWellMonthly) return;
+    const csvEsc = v => (v == null || v === '') ? '' : /[,"\n]/.test(String(v)) ? `"${String(v).replace(/"/g,'""')}"` : String(v);
+    const rows = wellMonthlyMatrix();
+    const csv = rows.map(r => r.map(csvEsc).join(',')).join('\r\n');
+    await shareFile(new Blob([csv], { type: 'text/csv' }),
+      `WellMonthly_${lastWellMonthly.pool.replace(/[^a-z0-9]+/gi,'-')}_${lastWellMonthly.month}.csv`,
+      'Monthly Well Report');
+    return;
+  }
+
   if (exportContext === 'wells-dripper') {
     const csvEsc = v => (v == null || v === '') ? '' : /[,"\n]/.test(String(v)) ? `"${String(v).replace(/"/g,'""')}"` : String(v);
     const fillTo = parseInt(el('well-dripper-amount').value) || 12;
@@ -13582,6 +13593,7 @@ el('pond-maps-btn').addEventListener('click', openAllPondsMap);
 // ── Well Readings Report Panel ─────────────────────────────────────────────────
 
 let lastWellDailyRows = [];
+let lastWellMonthly = null;  // { month, pool, daysInMonth, areas, areaMap, ordered, data }
 
 function makeSvgSparkline(values, { width=160, height=40, inverted=false, color='#4caf50' } = {}) {
   const valid = values.map((v,i) => ({v: Number(v), i})).filter(x => !isNaN(x.v) && x.v != null);
@@ -13648,6 +13660,14 @@ function initWellReportPanel() {
     // Monthly grid nav
     el('well-monthly-month').addEventListener('change', renderWellMonthlyReport);
     el('well-monthly-pool').addEventListener('change', renderWellMonthlyReport);
+    el('well-monthly-copy').addEventListener('click', () => {
+      const rows = wellMonthlyMatrix();
+      if (!rows.length) return showToast('Nothing to copy', 'error');
+      const tsv = rows.map(r => r.join('\t')).join('\n');
+      const done = () => showToast('Grid copied — paste into Excel', 'success');
+      if (navigator.clipboard?.writeText) navigator.clipboard.writeText(tsv).then(done).catch(() => fallbackCopyText(tsv, done));
+      else fallbackCopyText(tsv, done);
+    });
 
     el('well-dripper-amount').addEventListener('change', recalcDripper);
 
@@ -13676,8 +13696,12 @@ function initWellReportPanel() {
         if (!lastWellDripperRows.length) return showToast('No report data to export', 'error');
         exportContext = 'wells-dripper';
         el('export-modal-subtitle').textContent = `Dripper Oil Levels (fill target: ${el('well-dripper-amount').value} gal)`;
+      } else if (activeTab === 'monthly') {
+        if (!lastWellMonthly) return showToast('No report data to export', 'error');
+        exportContext = 'wells-monthly';
+        el('export-modal-subtitle').textContent = `Monthly Well Report — ${lastWellMonthly.pool} · ${lastWellMonthly.month}`;
       } else {
-        return showToast('Export available on Daily Overview and Dripper Oil tabs', 'info');
+        return showToast('Export available on Daily, Dripper Oil, and Monthly tabs', 'info');
       }
       el('export-modal').classList.remove('hidden');
     });
@@ -13735,6 +13759,7 @@ async function renderWellMonthlyReport() {
   const month = el('well-monthly-month').value;
   const poolName = el('well-monthly-pool').value;
   const out = el('report-wells-output');
+  lastWellMonthly = null;
   if (!month || !poolName) { out.innerHTML = '<div class="placeholder-msg">Select a month and pool.</div>'; return; }
   out.innerHTML = '<div class="placeholder-msg">Loading…</div>';
   try {
@@ -13750,6 +13775,7 @@ async function renderWellMonthlyReport() {
       areaMap[a].push(w);
     });
     const ordered = areas.flatMap(a => areaMap[a]);
+    lastWellMonthly = { month, pool: poolName, daysInMonth, areas, areaMap, ordered, data };
 
     let areaRow = '<tr><th class="wm-day-col" rowspan="2">Day</th>';
     areas.forEach(a => { areaRow += `<th colspan="${areaMap[a].length}" class="wm-area-hdr">${escHtml(a)}</th>`; });
@@ -13772,7 +13798,7 @@ async function renderWellMonthlyReport() {
     const monthLabel = new Date(month + '-01T00:00:00').toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
     out.innerHTML = `<div class="report-card">
       <div class="report-title">Monthly Well Report — ${escHtml(poolName)}</div>
-      <div class="report-subtitle">${monthLabel} · flow (cfs)</div>
+      <div class="report-subtitle">${monthLabel} · calculated cfs (from totalizer)</div>
       <table class="report-table wm-table">
         <thead>${areaRow}${wellRow}</thead>
         <tbody>${body}</tbody>
@@ -13780,6 +13806,36 @@ async function renderWellMonthlyReport() {
   } catch (err) {
     out.innerHTML = '<div class="placeholder-msg">Failed to load.</div>';
   }
+}
+
+// Clipboard fallback for browsers without navigator.clipboard (e.g. non-secure ctx).
+function fallbackCopyText(text, onDone) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand('copy'); if (onDone) onDone(); } catch { showToast('Copy failed', 'error'); }
+  document.body.removeChild(ta);
+}
+
+// Flatten the monthly grid into rows of cells (2 header rows + one row per day),
+// shared by the Copy-for-Excel (TSV) and CSV export paths.
+function wellMonthlyMatrix() {
+  const m = lastWellMonthly;
+  if (!m) return [];
+  const rows = [];
+  const areaHdr = ['Day'];
+  m.areas.forEach(a => m.areaMap[a].forEach((w, i) => areaHdr.push(i === 0 ? a : '')));
+  rows.push(areaHdr);
+  rows.push(['', ...m.ordered.map(w => w.common_name)]);
+  for (let d = 1; d <= m.daysInMonth; d++) {
+    rows.push([String(d), ...m.ordered.map(w => {
+      const v = m.data[w.well_id]?.[d];
+      return v != null ? Number(v).toFixed(2) : '';
+    })]);
+  }
+  return rows;
 }
 
 async function renderWellDailyReport() {

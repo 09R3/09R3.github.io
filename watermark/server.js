@@ -4117,7 +4117,11 @@ app.get('/api/reports/wells/pools', requireAuth, async (req, res) => {
 });
 
 // Monthly grid: every day of the month (rows) × every well discharging in a pool
-// (columns, grouped by area). Cell = last flow_cfs reading that day, blank if none.
+// (columns, grouped by area). Cell = calculated cfs for that day from the
+// totalizer delta ((ΔAF × 43560) / elapsed seconds) between the day's last
+// reading and the prior reading. The day's last reading is the interval end, so
+// a shut-off ("off") reading naturally bounds the calc for its day. Blank if the
+// well wasn't read that day or the totalizer math isn't possible.
 app.get('/api/reports/wells/monthly', requireAuth, async (req, res) => {
   const month = /^\d{4}-\d{2}$/.test(String(req.query.month || '')) ? String(req.query.month) : null;
   const poolName = req.query.pool ? String(req.query.pool) : null;
@@ -4137,20 +4141,43 @@ app.get('/api/reports/wells/monthly', requireAuth, async (req, res) => {
     `, [poolName]);
 
     const readingsQ = await pool.query(`
-      SELECT DISTINCT ON (r.well_id, r.reading_date)
-        r.well_id, EXTRACT(DAY FROM r.reading_date)::int AS day, r.flow_cfs
-      FROM readings_well r
-      JOIN wells w ON w.well_id = r.well_id
+      SELECT w.well_id,
+             EXTRACT(DAY FROM r.reading_date)::int AS day,
+             CASE
+               WHEN r.totalizer IS NULL OR prev.totalizer IS NULL
+                 OR prev.elapsed_secs IS NULL OR prev.elapsed_secs <= 0
+               THEN NULL
+               ELSE ROUND(((r.totalizer - prev.totalizer) * 43560.0 / prev.elapsed_secs)::numeric, 2)
+             END AS cfs
+      FROM wells w
+      JOIN LATERAL (
+        SELECT DISTINCT ON (reading_date) reading_date, reading_time, totalizer
+        FROM readings_well
+        WHERE well_id = w.well_id AND reading_date >= $2 AND reading_date < $3
+        ORDER BY reading_date, reading_time DESC NULLS LAST
+      ) r ON true
+      LEFT JOIN LATERAL (
+        SELECT p.totalizer,
+               EXTRACT(EPOCH FROM (
+                 (r.reading_date + COALESCE(r.reading_time,'00:00:00'::time))::timestamp -
+                 (p.reading_date + COALESCE(p.reading_time,'00:00:00'::time))::timestamp
+               )) AS elapsed_secs
+        FROM readings_well p
+        WHERE p.well_id = w.well_id
+          AND (p.reading_date + COALESCE(p.reading_time,'00:00:00'::time))::timestamp <
+              (r.reading_date + COALESCE(r.reading_time,'00:00:00'::time))::timestamp
+        ORDER BY (p.reading_date + COALESCE(p.reading_time,'00:00:00'::time))::timestamp DESC LIMIT 1
+      ) prev ON true
       WHERE w.discharge_pool = $1
-        AND r.reading_date >= $2 AND r.reading_date < $3
-      ORDER BY r.well_id, r.reading_date, r.reading_time DESC NULLS LAST
+        AND LOWER(w.well_type) LIKE '%operational%'
+        AND LOWER(COALESCE(w.status,'')) NOT IN ('inactive','removed')
     `, [poolName, start, nextM]);
 
     const data = {};
     readingsQ.rows.forEach(r => {
-      if (r.flow_cfs == null) return;
+      if (r.cfs == null) return;
       if (!data[r.well_id]) data[r.well_id] = {};
-      data[r.well_id][r.day] = Number(r.flow_cfs);
+      data[r.well_id][r.day] = Number(r.cfs);
     });
     res.json({ month, pool: poolName, daysInMonth, wells: wellsQ.rows, data });
   } catch (err) { handleErr(res, err); }
