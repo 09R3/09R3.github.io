@@ -1028,6 +1028,75 @@ app.get('/api/reports/well-readings', requireDB, async (req, res) => {
   }
 });
 
+// GET /api/reports/well-monthly/pools — distinct discharge_pool values that have wells
+app.get('/api/reports/well-monthly/pools', requireDB, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT DISTINCT discharge_pool FROM wells WHERE discharge_pool IS NOT NULL ORDER BY discharge_pool`
+    );
+    res.json(result.rows.map(r => r.discharge_pool));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reports/well-monthly — flat rows (day × well) for all wells in a pool for a given month
+app.get('/api/reports/well-monthly', requireDB, async (req, res) => {
+  const { pool: poolFilter, month } = req.query;
+  if (!poolFilter || !month) {
+    return res.status(400).json({ error: 'pool and month are required.' });
+  }
+  try {
+    const result = await pool.query(`
+      WITH
+        month_start AS (SELECT date_trunc('month', ($2 || '-01')::date)::date AS d),
+        month_end   AS (SELECT (date_trunc('month', ($2 || '-01')::date) + interval '1 month' - interval '1 day')::date AS d),
+        days AS (
+          SELECT generate_series(
+            (SELECT d FROM month_start),
+            (SELECT d FROM month_end),
+            '1 day'::interval
+          )::date AS day
+        ),
+        pool_wells AS (
+          SELECT well_id, common_name, area
+          FROM wells
+          WHERE discharge_pool = $1
+          ORDER BY area NULLS LAST, common_name
+        ),
+        well_readings AS (
+          SELECT DISTINCT ON (r.well_id, r.reading_date)
+            r.well_id,
+            r.reading_date,
+            r.flow_cfs,
+            r.on_off,
+            r.hour_reading
+          FROM readings_well r
+          JOIN pool_wells pw ON pw.well_id = r.well_id
+          WHERE r.reading_date >= (SELECT d FROM month_start)
+            AND r.reading_date <= (SELECT d FROM month_end)
+          ORDER BY r.well_id, r.reading_date, r.reading_time DESC NULLS LAST
+        )
+      SELECT
+        d.day,
+        pw.well_id,
+        pw.common_name,
+        pw.area,
+        wr.flow_cfs,
+        wr.on_off,
+        wr.hour_reading
+      FROM days d
+      CROSS JOIN pool_wells pw
+      LEFT JOIN well_readings wr
+        ON wr.well_id = pw.well_id AND wr.reading_date = d.day
+      ORDER BY d.day, pw.area NULLS LAST, pw.common_name
+    `, [poolFilter, month]);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── Additional Reading Reports ───────────────────────────────────────────────
 
 // Helper: build optional integer filter clause

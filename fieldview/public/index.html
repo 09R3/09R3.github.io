@@ -92,6 +92,7 @@
         <div class="sidebar-section-body" id="reports-section-body">
           <button class="report-item" id="report-pump-hours">⏱ Pump Hours</button>
           <button class="report-item" id="report-well-readings">📊 Well Readings</button>
+          <button class="report-item" id="report-well-monthly">📅 Monthly Well Report</button>
           <button class="report-item" id="report-canal-readings">🌊 Monthly Turnout Readings</button>
           <button class="report-item" id="report-compressor-hours">⚙️ Compressor Hours</button>
           <button class="report-item" id="report-kf-monthly">📋 KF Monthly</button>
@@ -453,6 +454,24 @@
         </div>
         <div class="report-status" id="rpond-status"></div>
         <div class="report-grid-wrap" id="rpond-grid"></div>
+      </div>
+
+      <!-- Monthly Well Report -->
+      <div class="hidden" id="rwm-panel">
+        <div class="report-controls">
+          <div class="report-control-group">
+            <span class="report-label">Pool</span>
+            <select class="report-select" id="rwm-pool"></select>
+          </div>
+          <div class="report-control-group">
+            <span class="report-label">Month</span>
+            <input type="month" class="report-date report-month-select" id="rwm-month" />
+          </div>
+          <button class="btn btn-primary btn-sm" id="rwm-run">▶ Run</button>
+          <button class="btn btn-ghost btn-sm hidden" id="rwm-export">↓ Export</button>
+        </div>
+        <div class="report-status" id="rwm-status"></div>
+        <div class="report-grid-wrap" id="rwm-grid"></div>
       </div>
 
     </div><!-- end #report-panel -->

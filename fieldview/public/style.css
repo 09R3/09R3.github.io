@@ -415,6 +415,12 @@ select { cursor: pointer; }
 .data-table .json-val { color: #f6e05e; font-family: var(--mono); font-size: 11px; }
 .data-table .date-val { color: #76e4f7; cursor: default; }
 
+/* ── Monthly Well Report Table ── */
+.wmr-area-hdr { background: rgba(102,126,234,0.18); text-align: center; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+.wmr-well-hdr { font-size: 11px; max-width: 80px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wmr-day { font-family: var(--mono); font-size: 12px; white-space: nowrap; min-width: 52px; }
+td.wmr-on { color: var(--success); }
+
 /* ── Pagination ── */
 .pagination {
   height: 44px; padding: 0 20px;

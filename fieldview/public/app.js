@@ -977,7 +977,7 @@ let rcrData = [];
 const colSel = { copy: null, clear: null };
 
 // One-time button setup — avoids stacking listeners on re-runs
-for (const pfx of ['rph', 'rwr', 'rcr', 'rch', 'rkf', 'rpge', 'rpm', 'rdwr', 'rvm', 'rdo', 'tbl', 'sql']) {
+for (const pfx of ['rph', 'rwr', 'rcr', 'rwm', 'rch', 'rkf', 'rpge', 'rpm', 'rdwr', 'rvm', 'rdo', 'tbl', 'sql']) {
   $(`${pfx}-col-copy`)?.addEventListener('click', () => colSel.copy?.());
   $(`${pfx}-col-clear`)?.addEventListener('click', () => colSel.clear?.());
   wireMonthSelect(`${pfx}-month`, $(`${pfx}-from`), $(`${pfx}-to`));
@@ -1087,6 +1087,70 @@ function renderReportTable(gridEl, data, colKeys, colHdrs, copyBar, copyLbl, del
   html += '</tbody></table>';
   gridEl.innerHTML = html;
   if (copyBar) initColSelect(gridEl, copyBar, copyLbl);
+}
+
+function renderWellMonthlyTable(gridEl, rows) {
+  if (!rows.length) { gridEl.innerHTML = '<div class="placeholder-msg">No data found.</div>'; return; }
+
+  // Build ordered well list (preserving server sort: area, common_name)
+  const seen = new Set();
+  const wells = [];
+  for (const r of rows) {
+    if (!seen.has(r.well_id)) {
+      seen.add(r.well_id);
+      wells.push({ well_id: r.well_id, common_name: r.common_name, area: r.area || '' });
+    }
+  }
+
+  // Group wells by area for the colspan header row
+  const areaGroups = [];
+  for (const w of wells) {
+    const last = areaGroups[areaGroups.length - 1];
+    if (last && last.area === w.area) last.wells.push(w);
+    else areaGroups.push({ area: w.area, wells: [w] });
+  }
+
+  // Pivot: day → well_id → reading
+  const pivot = new Map();
+  const daySet = new Set();
+  for (const r of rows) {
+    const day = r.day ? r.day.slice(0, 10) : '';
+    daySet.add(day);
+    if (!pivot.has(day)) pivot.set(day, new Map());
+    pivot.get(day).set(r.well_id, r);
+  }
+  const days = [...daySet].sort();
+
+  // Header row 1: Day + area groups (with colspan)
+  const areaHdrs = areaGroups.map(g =>
+    `<th colspan="${g.wells.length}" class="wmr-area-hdr">${esc(g.area || '—')}</th>`
+  ).join('');
+
+  // Header row 2: well names
+  const wellHdrs = wells.map(w =>
+    `<th class="wmr-well-hdr">${esc(w.common_name)}</th>`
+  ).join('');
+
+  // Data rows
+  const bodyRows = days.map(day => {
+    const dayMap = pivot.get(day) || new Map();
+    const cells = wells.map(w => {
+      const r = dayMap.get(w.well_id);
+      const val = r && r.flow_cfs != null ? r.flow_cfs : '';
+      const on = r && r.on_off === 'ON';
+      return `<td class="${on ? 'wmr-on' : ''}">${val}</td>`;
+    }).join('');
+    const label = day ? new Date(day + 'T00:00:00').toLocaleDateString('en-US', { month: '2-digit', day: '2-digit' }) : day;
+    return `<tr><td class="wmr-day">${label}</td>${cells}</tr>`;
+  }).join('');
+
+  gridEl.innerHTML = `<div style="overflow-x:auto"><table class="data-table">
+    <thead>
+      <tr><th rowspan="2" class="wmr-day">Day</th>${areaHdrs}</tr>
+      <tr>${wellHdrs}</tr>
+    </thead>
+    <tbody>${bodyRows}</tbody>
+  </table></div>`;
 }
 
 function setupDeltaBar(pfx, gridEl, getData, colKeys, colHdrs, copyBar, copyLbl, onDeltaChange, colFormatters = {}) {
@@ -1638,6 +1702,99 @@ makeReport({
   filterParam: 'location_id',
   cols: ['location_name', 'pond_name', 'reading_date', 'reading_time', 'level_ft', 'entered_by'],
   hdrs: ['Location', 'Pond', 'Date', 'Time', 'Level (ft)', 'Entered By'],
+});
+
+// ── Monthly Well Report ──────────────────────────────────────────────────────────────────
+let rwmData = [];
+
+$('report-well-monthly').addEventListener('click', async () => {
+  showReport('well-monthly', 'Monthly Well Report');
+  showSubPanel('rwm-panel');
+  const monthEl = $('rwm-month');
+  if (!monthEl.value) {
+    const now = new Date();
+    monthEl.value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  }
+  const status = $('rwm-status');
+  status.textContent = 'Loading pools…';
+  $('rwm-export').classList.add('hidden');
+  rwmData = [];
+  try {
+    const pools = await get('/api/reports/well-monthly/pools');
+    const poolSel = $('rwm-pool');
+    poolSel.innerHTML = pools.map(p => `<option value="${esc(p)}">${esc(p)}</option>`).join('');
+    status.textContent = `${pools.length} pool(s) loaded.`;
+  } catch (err) {
+    $('rwm-status').textContent = `Error loading pools: ${err.message}`;
+  }
+});
+
+$('rwm-run').addEventListener('click', async () => {
+  const pool = $('rwm-pool').value;
+  const month = $('rwm-month').value;
+  const status = $('rwm-status');
+  const grid = $('rwm-grid');
+  if (!pool) { status.textContent = 'Select a pool.'; return; }
+  if (!month) { status.textContent = 'Select a month.'; return; }
+  status.textContent = 'Running…';
+  grid.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  $('rwm-export').classList.add('hidden');
+  rwmData = [];
+  try {
+    const params = new URLSearchParams({ pool, month });
+    rwmData = await get(`/api/reports/well-monthly?${params}`);
+    if (!rwmData.length) {
+      grid.innerHTML = '<div class="placeholder-msg">No data found.</div>';
+      status.textContent = 'No results.';
+      return;
+    }
+    renderWellMonthlyTable(grid, rwmData);
+    const wells = [...new Set(rwmData.map(r => r.well_id))].length;
+    const days  = [...new Set(rwmData.map(r => r.day ? r.day.slice(0, 10) : ''))].length;
+    status.textContent = `${days} days × ${wells} well(s).`;
+    $('rwm-export').classList.remove('hidden');
+  } catch (err) {
+    grid.innerHTML = '<div class="placeholder-msg">Failed to load.</div>';
+    status.textContent = `Error: ${err.message}`;
+  }
+});
+
+$('rwm-export').addEventListener('click', () => {
+  if (!rwmData.length) return;
+  const pool = $('rwm-pool').value;
+  const month = $('rwm-month').value;
+
+  // Build export rows from the pivoted data
+  const seen = new Set();
+  const wells = [];
+  for (const r of rwmData) {
+    if (!seen.has(r.well_id)) { seen.add(r.well_id); wells.push({ well_id: r.well_id, common_name: r.common_name }); }
+  }
+  const daySet = new Set();
+  const pivot = new Map();
+  for (const r of rwmData) {
+    const day = r.day ? r.day.slice(0, 10) : '';
+    daySet.add(day);
+    if (!pivot.has(day)) pivot.set(day, new Map());
+    pivot.get(day).set(r.well_id, r);
+  }
+  const days = [...daySet].sort();
+  const columns = ['Day', ...wells.map(w => w.common_name)];
+  const rows = days.map(day => {
+    const label = day ? new Date(day + 'T00:00:00').toLocaleDateString('en-US', { month: '2-digit', day: '2-digit' }) : day;
+    const row = { Day: label };
+    const dayMap = pivot.get(day) || new Map();
+    for (const w of wells) {
+      const r = dayMap.get(w.well_id);
+      row[w.common_name] = r && r.flow_cfs != null ? r.flow_cfs : '';
+    }
+    return row;
+  });
+  showExportPreview(
+    `Monthly Well Report — ${pool} (${month})`,
+    { rows, columns, title: `WellReport_${pool}_${month}`.replace(/\s+/g, '_') },
+    { rows, columns, rowCount: rows.length }
+  );
 });
 
 // ── Version ─────────────────────────────────────────────────────────────────────────────
