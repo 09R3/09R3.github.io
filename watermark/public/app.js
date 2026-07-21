@@ -13660,6 +13660,7 @@ function initWellReportPanel() {
     // Monthly grid nav
     el('well-monthly-month').addEventListener('change', renderWellMonthlyReport);
     el('well-monthly-pool').addEventListener('change', renderWellMonthlyReport);
+    el('well-monthly-fill').addEventListener('change', renderWellMonthlyReport);
     el('well-monthly-copy').addEventListener('click', () => {
       const rows = wellMonthlyMatrix();
       if (!rows.length) return showToast('Nothing to copy', 'error');
@@ -13775,7 +13776,21 @@ async function renderWellMonthlyReport() {
       areaMap[a].push(w);
     });
     const ordered = areas.flatMap(a => areaMap[a]);
-    lastWellMonthly = { month, pool: poolName, daysInMonth, areas, areaMap, ordered, data };
+
+    // Build the display map. With "fill" on, blank days carry the previous day's
+    // value forward (within the month); otherwise blanks stay blank.
+    const fill = el('well-monthly-fill').checked;
+    const display = {};
+    ordered.forEach(w => {
+      display[w.well_id] = {};
+      let last = null;
+      for (let d = 1; d <= daysInMonth; d++) {
+        const raw = data[w.well_id]?.[d];
+        if (raw != null) { last = raw; display[w.well_id][d] = raw; }
+        else if (fill && last != null) display[w.well_id][d] = last;
+      }
+    });
+    lastWellMonthly = { month, pool: poolName, daysInMonth, areas, areaMap, ordered, data, display };
 
     let areaRow = '<tr><th class="wm-day-col" rowspan="2">Day</th>';
     areas.forEach(a => { areaRow += `<th colspan="${areaMap[a].length}" class="wm-area-hdr">${escHtml(a)}</th>`; });
@@ -13789,7 +13804,7 @@ async function renderWellMonthlyReport() {
     for (let d = 1; d <= daysInMonth; d++) {
       body += `<tr><td class="wm-day-col">${d}</td>`;
       ordered.forEach(w => {
-        const v = data[w.well_id]?.[d];
+        const v = display[w.well_id]?.[d];
         body += `<td class="report-num">${v != null ? Number(v).toFixed(2) : ''}</td>`;
       });
       body += '</tr>';
@@ -13831,7 +13846,7 @@ function wellMonthlyMatrix() {
   rows.push(['', ...m.ordered.map(w => w.common_name)]);
   for (let d = 1; d <= m.daysInMonth; d++) {
     rows.push([String(d), ...m.ordered.map(w => {
-      const v = m.data[w.well_id]?.[d];
+      const v = m.display[w.well_id]?.[d];
       return v != null ? Number(v).toFixed(2) : '';
     })]);
   }
