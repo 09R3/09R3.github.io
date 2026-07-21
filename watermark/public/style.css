@@ -3205,6 +3205,35 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
   margin-bottom: 6px;
 }
 .safety-attend-count { font-size: 0.82rem; color: var(--text-dim); }
+
+/* ── JHA form + view ─────────────────────────────────────────────────────── */
+.jha-section-label {
+  display: block; font-weight: 700; font-size: 0.78rem; text-transform: uppercase;
+  letter-spacing: 0.04em; color: var(--text-dim); margin: 14px 0 6px;
+}
+.jha-cb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 4px 12px; margin-bottom: 10px; }
+.jha-cb { display: flex; align-items: center; gap: 6px; font-size: 0.88rem; cursor: pointer; }
+.jha-task-row {
+  display: grid; grid-template-columns: 1fr 1fr 1fr auto; gap: 6px;
+  align-items: start; margin-bottom: 6px;
+}
+.jha-task-row textarea { resize: vertical; min-height: 40px; }
+.jha-task-del {
+  background: none; border: none; color: var(--text-dim); font-size: 1rem;
+  cursor: pointer; padding: 4px 6px; align-self: center;
+}
+.jha-view-table { margin: 4px 0 12px; }
+.jha-view-table th, .jha-view-table td { font-size: 0.82rem; vertical-align: top; }
+.jha-view-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 4px 0 10px; }
+.jha-view-grid label { display: block; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dim); margin-bottom: 4px; }
+.jha-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.jha-chip { background: var(--surface-raised, var(--surface)); border: 1px solid var(--border); border-radius: 12px; padding: 2px 9px; font-size: 0.78rem; }
+.jha-completed { font-size: 0.85rem; color: var(--text-dim); margin-top: 8px; }
+@media (max-width: 560px) {
+  .jha-task-row { grid-template-columns: 1fr; }
+  .jha-task-del { justify-self: end; }
+  .jha-view-grid { grid-template-columns: 1fr; }
+}
 .safety-signin-card {
   max-width: min(500px, 96vw);
   width: 96vw;

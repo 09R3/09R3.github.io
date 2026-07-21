@@ -708,6 +708,34 @@ pool.query(`
   )
 `)).catch(err => console.error('Migration error (safety tables):', err.message));
 
+// Job Hazard Analysis (JHA): a record holds the whole form in `data` (JSONB) so
+// the many form sections stay flexible; signatures mirror safety-meeting attendees.
+pool.query(`
+  CREATE TABLE IF NOT EXISTS jha (
+    jha_id            SERIAL PRIMARY KEY,
+    title             TEXT NOT NULL,
+    work_location     TEXT,
+    jha_date          DATE,
+    template_key      TEXT,
+    data              JSONB NOT NULL DEFAULT '{}',
+    completed_by      TEXT,
+    completed_by_date DATE,
+    status            TEXT NOT NULL DEFAULT 'active',
+    created_by        INTEGER REFERENCES users(user_id),
+    created_at        TIMESTAMPTZ DEFAULT NOW(),
+    updated_at        TIMESTAMPTZ DEFAULT NOW()
+  )
+`).then(() => pool.query(`
+  CREATE TABLE IF NOT EXISTS jha_signatures (
+    sig_id         SERIAL PRIMARY KEY,
+    jha_id         INTEGER REFERENCES jha(jha_id) ON DELETE CASCADE,
+    full_name      TEXT NOT NULL,
+    signature_data TEXT,
+    signed_date    DATE,
+    created_at     TIMESTAMPTZ DEFAULT NOW()
+  )
+`)).catch(err => console.error('Migration error (jha tables):', err.message));
+
 // ─────────────────────────────────────────────────────────────────────────────
 const SESSION_TTL = 8 * 60 * 60 * 1000; // 8 hours
 const sessions = new Map();
@@ -5174,6 +5202,94 @@ app.delete('/api/safety-meetings/:id/attendees/:aid', requireAuth, requireRole(.
   try {
     await pool.query('DELETE FROM safety_meeting_attendees WHERE attendee_id = $1 AND meeting_id = $2',
       [req.params.aid, req.params.id]);
+    res.json({ ok: true });
+  } catch (err) { handleErr(res, err); }
+});
+
+// ── Job Hazard Analysis (JHA) ─────────────────────────────────────────────────
+app.get('/api/jha', requireAuth, async (req, res) => {
+  const q = req.query.q ? `%${String(req.query.q)}%` : null;
+  try {
+    const { rows } = await pool.query(`
+      SELECT j.jha_id, j.title, j.work_location, j.jha_date, j.completed_by, j.status,
+             COUNT(s.sig_id)::int AS signature_count
+      FROM jha j
+      LEFT JOIN jha_signatures s ON s.jha_id = j.jha_id
+      WHERE j.status = 'active' AND ($1::text IS NULL OR j.title ILIKE $1 OR j.work_location ILIKE $1)
+      GROUP BY j.jha_id
+      ORDER BY j.jha_date DESC NULLS LAST, j.created_at DESC
+    `, [q]);
+    res.json(rows);
+  } catch (err) { handleErr(res, err); }
+});
+
+app.post('/api/jha', requireAuth, async (req, res) => {
+  const { title, work_location, jha_date, template_key, data, completed_by, completed_by_date } = req.body;
+  if (!title || !String(title).trim()) return res.status(400).json({ error: 'title is required' });
+  try {
+    const { rows } = await pool.query(`
+      INSERT INTO jha (title, work_location, jha_date, template_key, data, completed_by, completed_by_date, created_by)
+      VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8) RETURNING jha_id
+    `, [String(title).trim(), work_location || null, jha_date || null, template_key || null,
+        JSON.stringify(data || {}), completed_by || null, completed_by_date || null, req.user.user_id]);
+    res.json({ ok: true, jha_id: rows[0].jha_id });
+  } catch (err) { handleErr(res, err); }
+});
+
+app.get('/api/jha/:id', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM jha WHERE jha_id = $1', [req.params.id]);
+    if (!rows[0]) return res.status(404).json({ error: 'JHA not found' });
+    const sigs = await pool.query(
+      'SELECT * FROM jha_signatures WHERE jha_id = $1 ORDER BY created_at', [req.params.id]);
+    res.json({ ...rows[0], signatures: sigs.rows });
+  } catch (err) { handleErr(res, err); }
+});
+
+app.patch('/api/jha/:id', requireAuth, async (req, res) => {
+  const { title, work_location, jha_date, data, completed_by, completed_by_date, status } = req.body;
+  try {
+    await pool.query(`
+      UPDATE jha SET
+        title             = COALESCE($1, title),
+        work_location     = COALESCE($2, work_location),
+        jha_date          = COALESCE($3, jha_date),
+        data              = COALESCE($4::jsonb, data),
+        completed_by      = COALESCE($5, completed_by),
+        completed_by_date = COALESCE($6, completed_by_date),
+        status            = COALESCE($7, status),
+        updated_at        = NOW()
+      WHERE jha_id = $8
+    `, [title != null ? String(title).trim() : null, work_location ?? null, jha_date || null,
+        data !== undefined ? JSON.stringify(data) : null, completed_by ?? null,
+        completed_by_date || null, status || null, req.params.id]);
+    res.json({ ok: true });
+  } catch (err) { handleErr(res, err); }
+});
+
+app.post('/api/jha/:id/sign', requireAuth, async (req, res) => {
+  const { full_name, signature_data, signed_date } = req.body;
+  if (!full_name) return res.status(400).json({ error: 'full_name required' });
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO jha_signatures (jha_id, full_name, signature_data, signed_date)
+       VALUES ($1,$2,$3,$4) RETURNING sig_id`,
+      [req.params.id, full_name, signature_data || null, signed_date || null]);
+    res.json({ ok: true, sig_id: rows[0].sig_id });
+  } catch (err) { handleErr(res, err); }
+});
+
+app.delete('/api/jha/:id/signatures/:sid', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
+  try {
+    await pool.query('DELETE FROM jha_signatures WHERE sig_id = $1 AND jha_id = $2',
+      [req.params.sid, req.params.id]);
+    res.json({ ok: true });
+  } catch (err) { handleErr(res, err); }
+});
+
+app.delete('/api/jha/:id', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
+  try {
+    await pool.query('DELETE FROM jha WHERE jha_id = $1', [req.params.id]);
     res.json({ ok: true });
   } catch (err) { handleErr(res, err); }
 });

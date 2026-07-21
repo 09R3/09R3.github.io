@@ -129,7 +129,7 @@
         Sign in with Microsoft 365
       </a>
       <div id="ms-login-error" class="error-msg hidden"></div>
-      <div class="login-version">v 2.95</div>
+      <div class="login-version">v 2.96</div>
     </div>
   </div>
 </div>
@@ -1846,7 +1846,7 @@
     <div id="settings-panel-appinfo" class="settings-panel hidden">
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 2.95</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 2.96</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>
@@ -2377,8 +2377,15 @@
         </div>
         <div class="dash-label">Safety Meetings</div>
       </button>
+      <button class="dash-tile" data-safety-panel="jha">
+        <div class="dash-icon-wrap">
+          <span class="app-icon" style="width:32px;height:32px;-webkit-mask-image:url(/marv-site/icons/icon-reports.svg);mask-image:url(/marv-site/icons/icon-reports.svg)"></span>
+        </div>
+        <div class="dash-label">JHA</div>
+      </button>
     </div>
     <div id="safety-panel-meetings" class="maint-panel hidden"></div>
+    <div id="safety-panel-jha" class="maint-panel hidden"></div>
   </div><!-- /screen-safety -->
 
   <!-- ── Charts ────────────────────────────────────────────────────────────── -->
@@ -2936,6 +2943,34 @@
       </div>
       <div id="safety-signin-error" class="error-msg hidden"></div>
       <button class="btn btn-save" id="safety-signin-save">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- JHA sign modal -->
+<div id="jha-signin-modal" class="modal-overlay hidden">
+  <div class="modal-card safety-signin-card">
+    <div class="modal-header">
+      <h2>Sign JHA</h2>
+      <button class="modal-close" id="jha-signin-close">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>Your Name</label>
+        <select id="jha-signin-name-sel" class="ctrl-select"></select>
+        <input type="text" id="jha-signin-name-other" class="ctrl-input" placeholder="Enter name…" style="display:none;margin-top:6px">
+      </div>
+      <div class="form-group">
+        <label>Signature <span style="color:var(--text-dim);font-weight:400;font-size:0.8rem">— draw with finger or mouse</span></label>
+        <canvas id="jha-sig-canvas" class="safety-sig-canvas"></canvas>
+        <button class="btn btn-secondary btn-sm" id="jha-sig-clear" style="margin-top:6px">Clear</button>
+      </div>
+      <div class="form-group">
+        <label>Date</label>
+        <input type="date" id="jha-signin-date" class="ctrl-input ctrl-input-sm">
+      </div>
+      <div id="jha-signin-error" class="error-msg hidden"></div>
+      <button class="btn btn-save" id="jha-signin-save">Save</button>
     </div>
   </div>
 </div>

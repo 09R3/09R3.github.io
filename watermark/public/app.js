@@ -11813,7 +11813,7 @@ el('tor-submit-btn').addEventListener('click', () => {
 let _safetyInited = false;
 let _safetySigninMeetingId = null;
 
-const SAFETY_PANEL_NAMES = { meetings: 'Safety Meetings' };
+const SAFETY_PANEL_NAMES = { meetings: 'Safety Meetings', jha: 'Job Hazard Analysis' };
 
 function initSafetyScreen() {
   if (_safetyInited) return;
@@ -11829,6 +11829,7 @@ function openSafetyPanel(id) {
   el(`safety-panel-${id}`).classList.remove('hidden');
   setPanelNav(el('screen-safety'), closeSafetyPanel, 'Safety – ' + (SAFETY_PANEL_NAMES[id] || id));
   if (id === 'meetings') buildSafetyMeetingsPanel(el('safety-panel-meetings'));
+  if (id === 'jha') buildJHAPanel(el('safety-panel-jha'));
 }
 
 function closeSafetyPanel() {
@@ -12299,6 +12300,476 @@ function exportSafetyMeetingPDF(meeting, attendees) {
       b.disabled = false; b.innerHTML = '&#8679; Share / Export';
     }
   });
+}
+
+/* ── JHA (Job Hazard Analysis) ─────────────────────────────────────────────── */
+const JHA_PPE = [
+  ['hardHat','Hard Hat'], ['gloves','Gloves'], ['eye','Eye Protection'],
+  ['fallHarness','Fall Harness'], ['boots','Boots (steel toe)'],
+  ['hearing','Hearing Protection'], ['faceCovering','Face Covering'],
+];
+const JHA_PERMITS = [
+  ['loto','Hazardous Energy Control (LOTO)'], ['hotWork','Hot Work'],
+  ['confinedSpace','Confined Space Entry'], ['excavation','Excavation & Trenching'],
+  ['liftPlan','Lift Plan / Crane Operations'], ['overhead','Work near Overhead Conductors'],
+  ['electrical','Electrical Work Hazard Assessment'],
+];
+
+function emptyJHAData() {
+  return {
+    tasks: [{ seq:'', hazards:'', mitigation:'' }],
+    ppe: { other:'' }, permits: {},
+    atmospheric: { required:false, method:'' },
+    sds: { substances:'', reviewed:'' },
+    isolation: { required:false, method:'' },
+    environmental: { weather:'', terrain:'', other:'' },
+    training: { verified:false, list:'' },
+    notes: '',
+  };
+}
+
+// Prefilled starting points (edit per-JHA as needed). Best-effort content from
+// the KCWA JHA templates; operators adjust after copying.
+const JHA_TEMPLATES = {
+  blank: { name: 'New Blank', title: '', data: emptyJHAData() },
+  motor_install: { name: 'CVC Motor Installation', title: 'CVC Motor Installation', data: {
+    tasks: [
+      { seq:'Rig and lift motor into position', hazards:'Overhead load, pinch points, dropped load', mitigation:'Proper lifting eyes / shackles / slings; tag lines; keep clear of pinch points' },
+      { seq:'Set and secure motor', hazards:'Pinch points; motor starting unexpectedly', mitigation:'Keep hands clear; verify electrical disconnected & locked out (LOTO)' },
+      { seq:'Reconnect electrical & test', hazards:'Electrical energy; unexpected start', mitigation:'Isolation of hazardous energy (LOTO); verify de-energized before work' },
+    ],
+    ppe:{ hardHat:true, gloves:true, eye:true, boots:true, other:'' },
+    permits:{ loto:true, liftPlan:true, overhead:true, electrical:true },
+    atmospheric:{ required:false, method:'' }, sds:{ substances:'', reviewed:'' },
+    isolation:{ required:true, method:'Lock Out Tag Out' },
+    environmental:{ weather:'', terrain:'', other:'' }, training:{ verified:false, list:'' }, notes:'',
+  }},
+  motor_removal: { name: 'CVC Motor Removal', title: 'CVC Motor Removal', data: {
+    tasks: [
+      { seq:'De-energize and lock out motor', hazards:'Motor starting unexpectedly; electrical energy', mitigation:'Isolation of hazardous energy (LOTO); verify electrical disconnected & locked' },
+      { seq:'Disconnect and rig motor', hazards:'Pinch points; dropped load', mitigation:'Proper rigging; keep clear of pinch points' },
+      { seq:'Lift and remove motor', hazards:'Overhead load', mitigation:'Proper lifting eyes / shackles / slings; tag lines' },
+    ],
+    ppe:{ hardHat:true, gloves:true, eye:true, boots:true, other:'' },
+    permits:{ loto:true, liftPlan:true, overhead:true, electrical:true },
+    atmospheric:{ required:false, method:'' }, sds:{ substances:'', reviewed:'' },
+    isolation:{ required:true, method:'Lock Out Tag Out' },
+    environmental:{ weather:'', terrain:'', other:'' }, training:{ verified:false, list:'' }, notes:'',
+  }},
+  install_pump: { name: 'Install Pump', title: 'Install Pump', data: {
+    tasks: [
+      { seq:'Set support beams', hazards:'Pinch points; falling objects', mitigation:'Keep clear; secure beams before applying load' },
+      { seq:'Lower pump sections while unfastening', hazards:'Pinch points; dropped load; unexpected movement', mitigation:'Keep hands clear of pinch points; controlled lower; proper rigging' },
+      { seq:'Fasten and align pump', hazards:'Pinch points', mitigation:'Keep clear; use proper tools' },
+    ],
+    ppe:{ hardHat:true, gloves:true, eye:true, boots:true, other:'' },
+    permits:{ liftPlan:true },
+    atmospheric:{ required:false, method:'' }, sds:{ substances:'', reviewed:'' },
+    isolation:{ required:false, method:'' },
+    environmental:{ weather:'', terrain:'', other:'' }, training:{ verified:false, list:'' }, notes:'',
+  }},
+  overhead_lift: { name: 'Overhead Lift Work', title: 'Overhead Lift Work', data: {
+    tasks: [
+      { seq:'Setup crane', hazards:'Pinch points (outriggers); tip-over', mitigation:'Keep clear of pinch points; level & set outriggers on firm ground' },
+      { seq:'Install / lift', hazards:'Equipment failure; dropped load; overhead load', mitigation:'Use proper lifting eyes, shackles / clevises, straps / slings; inspect rigging; keep clear' },
+      { seq:'Breakdown crane', hazards:'Pinch points (outriggers)', mitigation:'Keep clear of pinch points' },
+    ],
+    ppe:{ hardHat:true, gloves:true, eye:true, boots:true, other:'' },
+    permits:{ liftPlan:true, overhead:true },
+    atmospheric:{ required:false, method:'' }, sds:{ substances:'', reviewed:'' },
+    isolation:{ required:false, method:'' },
+    environmental:{ weather:'', terrain:'', other:'' }, training:{ verified:false, list:'' }, notes:'',
+  }},
+};
+
+let _jhaEditId = null;
+
+function buildJHAPanel(contentEl) {
+  if (contentEl.firstElementChild) { loadJHAList(); return; }
+  contentEl.innerHTML = `
+    <div class="issue-toolbar" style="gap:8px">
+      <button class="btn btn-primary btn-sm" id="jha-new-btn">+ New JHA</button>
+      <input type="search" id="jha-search" class="ctrl-input" placeholder="Search by job or location…" style="flex:1;min-width:0">
+    </div>
+    <div id="jha-form-wrap" class="settings-card hidden" style="margin:0 0 14px"><div class="settings-pad" id="jha-form-body"></div></div>
+    <div id="jha-list"><div class="placeholder-msg">Loading…</div></div>`;
+  el('jha-new-btn').addEventListener('click', () => openJHAForm(null));
+  let t;
+  el('jha-search').addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => loadJHAList(el('jha-search').value.trim()), 300); });
+  loadJHAList();
+}
+
+async function loadJHAList(q = '') {
+  const listEl = el('jha-list');
+  if (!listEl) return;
+  listEl.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const rows = await api('GET', `/api/jha${q ? `?q=${encodeURIComponent(q)}` : ''}`);
+    if (!rows.length) { listEl.innerHTML = '<div class="placeholder-msg">No JHAs found.</div>'; return; }
+    listEl.innerHTML = rows.map(j => {
+      const dateStr = j.jha_date ? localDateStr(j.jha_date, { month:'short', day:'numeric', year:'numeric' }) : 'No date';
+      return `<div class="safety-meeting-item" data-jid="${j.jha_id}">
+        <div class="safety-meeting-header">
+          <div class="safety-meeting-info">
+            <div class="safety-meeting-topic">${escHtml(j.title)}</div>
+            <div class="safety-meeting-date">${dateStr}${j.work_location ? ' · ' + escHtml(j.work_location) : ''}
+              <span class="safety-attend-count">${j.signature_count} sig${j.signature_count !== 1 ? 's' : ''}</span>
+            </div>
+          </div>
+          <span class="safety-meeting-chevron">›</span>
+        </div>
+        <div class="safety-meeting-body hidden"></div>
+      </div>`;
+    }).join('');
+    listEl.querySelectorAll('.safety-meeting-item').forEach(item => {
+      item.querySelector('.safety-meeting-header').addEventListener('click', () => toggleJHA(item));
+    });
+  } catch (err) {
+    listEl.innerHTML = `<div class="placeholder-msg">Failed to load: ${escHtml(err.message)}</div>`;
+  }
+}
+
+async function toggleJHA(item) {
+  const body = item.querySelector('.safety-meeting-body');
+  const chevron = item.querySelector('.safety-meeting-chevron');
+  if (!body.classList.contains('hidden')) { body.classList.add('hidden'); chevron.style.transform = ''; return; }
+  body.classList.remove('hidden');
+  chevron.style.transform = 'rotate(90deg)';
+  body.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const data = await api('GET', `/api/jha/${item.dataset.jid}`);
+    renderJHABody(body, data);
+  } catch { body.innerHTML = '<div class="placeholder-msg">Failed to load.</div>'; }
+}
+
+function renderJHABody(body, j) {
+  const d = j.data || {};
+  const tasks = (d.tasks || []).filter(t => t.seq || t.hazards || t.mitigation);
+  const ppe = JHA_PPE.filter(([k]) => d.ppe?.[k]).map(([, l]) => l);
+  if (d.ppe?.other) ppe.push(d.ppe.other);
+  const permits = JHA_PERMITS.filter(([k]) => d.permits?.[k]).map(([, l]) => l);
+
+  const taskTable = tasks.length ? `
+    <table class="report-table jha-view-table"><thead><tr>
+      <th>Sequence of Job Task</th><th>Potential Hazards</th><th>Hazard Mitigation</th>
+    </tr></thead><tbody>${tasks.map(t => `<tr>
+      <td>${escHtml(t.seq || '')}</td><td>${escHtml(t.hazards || '')}</td><td>${escHtml(t.mitigation || '')}</td>
+    </tr>`).join('')}</tbody></table>` : '<div class="placeholder-msg" style="padding:6px 0">No tasks listed.</div>';
+
+  const chips = arr => arr.length ? arr.map(x => `<span class="jha-chip">${escHtml(x)}</span>`).join('') : '<span style="color:var(--text-dim)">None</span>';
+  const canDel = isSupervisorLevel(currentUser?.role);
+
+  body.innerHTML = `
+    <div class="jha-view">
+      <div class="report-section-title" style="margin-top:0">Job Tasks & Hazards</div>
+      ${taskTable}
+      <div class="jha-view-grid">
+        <div><label>Required PPE</label><div class="jha-chips">${chips(ppe)}</div></div>
+        <div><label>Permits / Programs</label><div class="jha-chips">${chips(permits)}</div></div>
+      </div>
+      ${d.notes ? `<div class="form-group"><label>Notes</label><div class="safety-meeting-notes">${escHtml(d.notes)}</div></div>` : ''}
+      ${j.completed_by ? `<div class="jha-completed">JHA completed by <strong>${escHtml(j.completed_by)}</strong>${j.completed_by_date ? ' · ' + localDateStr(j.completed_by_date, { month:'short', day:'numeric', year:'numeric' }) : ''}</div>` : ''}
+    </div>
+    <div class="safety-attend-section">
+      <div class="safety-attend-header">
+        <span class="report-section-title" style="margin:0">Signatures</span>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-secondary btn-sm jha-edit-btn">Edit</button>
+          <button class="btn btn-primary btn-sm jha-sign-btn">Sign JHA</button>
+          <button class="btn btn-secondary btn-sm jha-export-btn">${icon('print',14)} Export PDF</button>
+          ${canDel ? '<button class="btn btn-danger btn-sm jha-delete-btn">Delete</button>' : ''}
+        </div>
+      </div>
+      <div class="safety-attend-list"></div>
+    </div>`;
+
+  renderJHASignatures(body.querySelector('.safety-attend-list'), j.signatures || [], j.jha_id, body);
+  body.querySelector('.jha-edit-btn').addEventListener('click', () => openJHAForm(j));
+  body.querySelector('.jha-sign-btn').addEventListener('click', () => openJHASignModal(j.jha_id, body));
+  body.querySelector('.jha-export-btn').addEventListener('click', () => exportJHAPDF(j));
+  if (canDel) body.querySelector('.jha-delete-btn').addEventListener('click', async () => {
+    if (!confirm('Delete this JHA and all its signatures?')) return;
+    try { await api('DELETE', `/api/jha/${j.jha_id}`); showToast('JHA deleted'); loadJHAList(el('jha-search')?.value.trim() || ''); }
+    catch (err) { showToast('Failed to delete: ' + err.message); }
+  });
+}
+
+function renderJHASignatures(listEl, sigs, jhaId, bodyEl) {
+  const canDel = isSupervisorLevel(currentUser?.role);
+  if (!sigs.length) { listEl.innerHTML = '<div class="placeholder-msg" style="padding:12px 0">No signatures yet.</div>'; return; }
+  listEl.innerHTML = `<table class="safety-attend-table">
+    <thead><tr><th>#</th><th>Print Name</th><th>Signature</th><th>Date</th>${canDel ? '<th></th>' : ''}</tr></thead>
+    <tbody>${sigs.map((a, i) => `<tr>
+      <td style="color:var(--text-dim);font-size:0.82rem">${i + 1}</td>
+      <td>${escHtml(a.full_name)}</td>
+      <td>${a.signature_data ? `<img src="${escHtml(a.signature_data)}" alt="signature">` : '<span style="color:var(--text-dim)">—</span>'}</td>
+      <td style="white-space:nowrap">${a.signed_date ? localDateStr(a.signed_date, { month:'short', day:'numeric', year:'numeric' }) : '—'}</td>
+      ${canDel ? `<td><button class="safety-attend-del" data-sid="${a.sig_id}" title="Delete">✕</button></td>` : ''}
+    </tr>`).join('')}</tbody></table>`;
+  if (canDel) listEl.querySelectorAll('.safety-attend-del').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('Remove this signature?')) return;
+      try {
+        await api('DELETE', `/api/jha/${jhaId}/signatures/${btn.dataset.sid}`);
+        const data = await api('GET', `/api/jha/${jhaId}`);
+        renderJHASignatures(listEl, data.signatures || [], jhaId, bodyEl);
+        const item = bodyEl.closest('.safety-meeting-item');
+        const c = item?.querySelector('.safety-attend-count');
+        if (c) c.textContent = `${data.signatures.length} sig${data.signatures.length !== 1 ? 's' : ''}`;
+      } catch (err) { showToast('Failed to delete: ' + err.message); }
+    });
+  });
+}
+
+// ── JHA create/edit form ──
+function jhaFormHtml(showTemplate) {
+  const cb = (id, label) => `<label class="jha-cb"><input type="checkbox" id="${id}"> ${escHtml(label)}</label>`;
+  return `
+    ${showTemplate ? `<div class="form-group"><label>Start from Template</label><select id="jf-template" class="ctrl-select"></select></div>` : ''}
+    <div class="form-group"><label>Job</label><input type="text" id="jf-title" class="ctrl-input" placeholder="Job / task name"></div>
+    <div class="two-col">
+      <div class="form-group"><label>Date</label><input type="date" id="jf-date" class="ctrl-input ctrl-input-sm"></div>
+      <div class="form-group"><label>Work Location</label><input type="text" id="jf-location" class="ctrl-input"></div>
+    </div>
+    <label class="jha-section-label">Sequence of Job Tasks / Potential Hazards / Mitigation</label>
+    <div id="jf-tasks"></div>
+    <button type="button" class="btn btn-secondary btn-sm" id="jf-add-task" style="margin-bottom:12px">+ Add Task</button>
+    <label class="jha-section-label">Required PPE</label>
+    <div class="jha-cb-grid">${JHA_PPE.map(([k, l]) => cb('jf-ppe-' + k, l)).join('')}</div>
+    <div class="form-group"><label>Other PPE</label><input type="text" id="jf-ppe-other" class="ctrl-input ctrl-input-sm"></div>
+    <label class="jha-section-label">Required Permits / Applicable Safety Programs</label>
+    <div class="jha-cb-grid">${JHA_PERMITS.map(([k, l]) => cb('jf-permit-' + k, l)).join('')}</div>
+    <label class="jha-section-label">Additional Checks</label>
+    <label class="jha-cb"><input type="checkbox" id="jf-atm-req"> Atmospheric testing required</label>
+    <input type="text" id="jf-atm-method" class="ctrl-input ctrl-input-sm" placeholder="Method of monitoring atmosphere" style="margin-bottom:8px">
+    <div class="form-group"><label>Hazardous substances (review SDS)</label><input type="text" id="jf-sds-sub" class="ctrl-input ctrl-input-sm"></div>
+    <div class="form-group"><label>SDS Reviewed?</label><select id="jf-sds-reviewed" class="ctrl-select ctrl-input-sm"><option value="">—</option><option value="yes">Yes</option><option value="na">N/A</option></select></div>
+    <label class="jha-cb"><input type="checkbox" id="jf-iso-req"> Isolation of hazardous energy required</label>
+    <input type="text" id="jf-iso-method" class="ctrl-input ctrl-input-sm" placeholder="Method of isolation (e.g. Lock Out Tag Out)" style="margin-bottom:8px">
+    <div class="two-col">
+      <div class="form-group"><label>Weather</label><input type="text" id="jf-env-weather" class="ctrl-input ctrl-input-sm"></div>
+      <div class="form-group"><label>Terrain</label><input type="text" id="jf-env-terrain" class="ctrl-input ctrl-input-sm"></div>
+    </div>
+    <label class="jha-cb"><input type="checkbox" id="jf-train-verified"> Applicable training verified</label>
+    <input type="text" id="jf-train-list" class="ctrl-input ctrl-input-sm" placeholder="List applicable training" style="margin-bottom:8px">
+    <div class="form-group"><label>Notes</label><textarea id="jf-notes" class="ctrl-input" rows="2"></textarea></div>
+    <div class="two-col">
+      <div class="form-group"><label>JHA Completed By</label><input type="text" id="jf-completed-by" class="ctrl-input ctrl-input-sm"></div>
+      <div class="form-group"><label>Completed Date</label><input type="date" id="jf-completed-date" class="ctrl-input ctrl-input-sm"></div>
+    </div>
+    <div id="jf-error" class="error-msg hidden"></div>
+    <div class="form-row"><button class="btn btn-save" id="jf-save">Save JHA</button><button class="btn btn-secondary" id="jf-cancel">Cancel</button></div>`;
+}
+
+function jhaTaskRowHtml(t = {}) {
+  return `<div class="jha-task-row">
+    <textarea class="jf-task-seq ctrl-input" rows="2" placeholder="Job task">${escHtml(t.seq || '')}</textarea>
+    <textarea class="jf-task-haz ctrl-input" rows="2" placeholder="Potential hazards">${escHtml(t.hazards || '')}</textarea>
+    <textarea class="jf-task-mit ctrl-input" rows="2" placeholder="Mitigation">${escHtml(t.mitigation || '')}</textarea>
+    <button type="button" class="jha-task-del" title="Remove">✕</button>
+  </div>`;
+}
+
+function renderJHATasks(tasks) {
+  const wrap = el('jf-tasks');
+  wrap.innerHTML = (tasks && tasks.length ? tasks : [{}]).map(jhaTaskRowHtml).join('');
+  wrap.querySelectorAll('.jha-task-del').forEach(b => b.addEventListener('click', () => {
+    if (wrap.querySelectorAll('.jha-task-row').length > 1) b.closest('.jha-task-row').remove();
+  }));
+}
+
+function fillJHAForm(title, location, date, data) {
+  const d = { ...emptyJHAData(), ...(data || {}) };
+  el('jf-title').value = title || '';
+  el('jf-location').value = location || '';
+  el('jf-date').value = date ? String(date).slice(0, 10) : el('jf-date').value;
+  JHA_PPE.forEach(([k]) => { el('jf-ppe-' + k).checked = !!d.ppe?.[k]; });
+  el('jf-ppe-other').value = d.ppe?.other || '';
+  JHA_PERMITS.forEach(([k]) => { el('jf-permit-' + k).checked = !!d.permits?.[k]; });
+  el('jf-atm-req').checked = !!d.atmospheric?.required;
+  el('jf-atm-method').value = d.atmospheric?.method || '';
+  el('jf-sds-sub').value = d.sds?.substances || '';
+  el('jf-sds-reviewed').value = d.sds?.reviewed || '';
+  el('jf-iso-req').checked = !!d.isolation?.required;
+  el('jf-iso-method').value = d.isolation?.method || '';
+  el('jf-env-weather').value = d.environmental?.weather || '';
+  el('jf-env-terrain').value = d.environmental?.terrain || '';
+  el('jf-train-verified').checked = !!d.training?.verified;
+  el('jf-train-list').value = d.training?.list || '';
+  el('jf-notes').value = d.notes || '';
+  renderJHATasks(d.tasks);
+}
+
+function collectJHAForm() {
+  const tasks = [...el('jf-tasks').querySelectorAll('.jha-task-row')].map(r => ({
+    seq: r.querySelector('.jf-task-seq').value.trim(),
+    hazards: r.querySelector('.jf-task-haz').value.trim(),
+    mitigation: r.querySelector('.jf-task-mit').value.trim(),
+  })).filter(t => t.seq || t.hazards || t.mitigation);
+  const ppe = { other: el('jf-ppe-other').value.trim() };
+  JHA_PPE.forEach(([k]) => { if (el('jf-ppe-' + k).checked) ppe[k] = true; });
+  const permits = {};
+  JHA_PERMITS.forEach(([k]) => { if (el('jf-permit-' + k).checked) permits[k] = true; });
+  return {
+    title: el('jf-title').value.trim(),
+    work_location: el('jf-location').value.trim(),
+    jha_date: el('jf-date').value || null,
+    completed_by: el('jf-completed-by').value.trim(),
+    completed_by_date: el('jf-completed-date').value || null,
+    data: {
+      tasks, ppe, permits,
+      atmospheric: { required: el('jf-atm-req').checked, method: el('jf-atm-method').value.trim() },
+      sds: { substances: el('jf-sds-sub').value.trim(), reviewed: el('jf-sds-reviewed').value },
+      isolation: { required: el('jf-iso-req').checked, method: el('jf-iso-method').value.trim() },
+      environmental: { weather: el('jf-env-weather').value.trim(), terrain: el('jf-env-terrain').value.trim(), other: '' },
+      training: { verified: el('jf-train-verified').checked, list: el('jf-train-list').value.trim() },
+      notes: el('jf-notes').value.trim(),
+    },
+  };
+}
+
+function openJHAForm(existing) {
+  _jhaEditId = existing ? existing.jha_id : null;
+  el('jha-new-btn').style.display = 'none';
+  const wrap = el('jha-form-wrap');
+  wrap.classList.remove('hidden');
+  el('jha-form-body').innerHTML = jhaFormHtml(!existing);
+
+  el('jf-add-task').addEventListener('click', () => {
+    el('jf-tasks').insertAdjacentHTML('beforeend', jhaTaskRowHtml());
+    const row = el('jf-tasks').lastElementChild;
+    row.querySelector('.jha-task-del').addEventListener('click', () => {
+      if (el('jf-tasks').querySelectorAll('.jha-task-row').length > 1) row.remove();
+    });
+  });
+  el('jf-cancel').addEventListener('click', () => { wrap.classList.add('hidden'); el('jha-new-btn').style.display = ''; });
+  el('jf-save').addEventListener('click', saveJHAForm);
+
+  if (existing) {
+    el('jf-date').value = new Date().toLocaleDateString('en-CA');
+    fillJHAForm(existing.title, existing.work_location, existing.jha_date, existing.data);
+    el('jf-completed-by').value = existing.completed_by || '';
+    el('jf-completed-date').value = existing.completed_by_date ? String(existing.completed_by_date).slice(0, 10) : '';
+  } else {
+    el('jf-date').value = new Date().toLocaleDateString('en-CA');
+    el('jf-template').innerHTML = Object.entries(JHA_TEMPLATES).map(([k, t]) => `<option value="${k}">${escHtml(t.name)}</option>`).join('');
+    el('jf-template').addEventListener('change', () => {
+      const t = JHA_TEMPLATES[el('jf-template').value] || JHA_TEMPLATES.blank;
+      fillJHAForm(t.title, el('jf-location').value, el('jf-date').value, JSON.parse(JSON.stringify(t.data)));
+    });
+    fillJHAForm('', '', el('jf-date').value, emptyJHAData());
+  }
+  wrap.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+async function saveJHAForm() {
+  const payload = collectJHAForm();
+  const errEl = el('jf-error');
+  errEl.classList.add('hidden');
+  if (!payload.title) { errEl.textContent = 'Job name is required.'; errEl.classList.remove('hidden'); return; }
+  const _save = beginSave(el('jf-save'));
+  try {
+    if (_jhaEditId) await api('PATCH', `/api/jha/${_jhaEditId}`, payload);
+    else await api('POST', '/api/jha', { ...payload, template_key: el('jf-template')?.value || 'blank' });
+    el('jha-form-wrap').classList.add('hidden');
+    el('jha-new-btn').style.display = '';
+    showToast(_jhaEditId ? 'JHA updated' : 'JHA created');
+    loadJHAList(el('jha-search')?.value.trim() || '');
+  } catch (err) {
+    errEl.textContent = err.message; errEl.classList.remove('hidden');
+  } finally { _save(); }
+}
+
+// ── JHA sign modal (own canvas + state, reuses initSigCanvas) ──
+let _jhaSigCanvas = null, _jhaSigCtx = null, _jhaSigInited = false, _jhaSignId = null;
+
+function openJHASignModal(jhaId, bodyEl) {
+  _jhaSignId = jhaId;
+  el('jha-signin-modal').classList.remove('hidden');
+  el('jha-signin-date').value = new Date().toLocaleDateString('en-CA');
+  el('jha-signin-error').classList.add('hidden');
+  if (!_jhaSigInited) {
+    _jhaSigInited = true;
+    _jhaSigCanvas = el('jha-sig-canvas');
+    _jhaSigCtx = _jhaSigCanvas.getContext('2d');
+    initSigCanvas(_jhaSigCanvas, _jhaSigCtx);
+    el('jha-sig-clear').addEventListener('click', () => _jhaSigCtx.clearRect(0, 0, _jhaSigCanvas.width, _jhaSigCanvas.height));
+    el('jha-signin-close').addEventListener('click', () => el('jha-signin-modal').classList.add('hidden'));
+    el('jha-signin-modal').addEventListener('click', e => { if (e.target === el('jha-signin-modal')) el('jha-signin-modal').classList.add('hidden'); });
+    el('jha-signin-name-sel').addEventListener('change', () => {
+      el('jha-signin-name-other').style.display = el('jha-signin-name-sel').value === '__other__' ? '' : 'none';
+    });
+  } else {
+    _jhaSigCtx.clearRect(0, 0, _jhaSigCanvas.width, _jhaSigCanvas.height);
+  }
+  el('jha-signin-save').onclick = () => saveJHASign(bodyEl);
+  api('GET', '/api/users/list').then(users => {
+    const sel = el('jha-signin-name-sel');
+    const current = currentUser?.full_name || '';
+    sel.innerHTML = users.map(u => {
+      const n = u.full_name || u.username;
+      return `<option value="${escHtml(n)}" ${n === current ? 'selected' : ''}>${escHtml(n)}</option>`;
+    }).join('') + '<option value="__other__">Other (type below)…</option>';
+    el('jha-signin-name-other').style.display = 'none';
+  }).catch(() => {});
+}
+
+async function saveJHASign(bodyEl) {
+  const sel = el('jha-signin-name-sel');
+  const name = sel.value === '__other__' ? el('jha-signin-name-other').value.trim() : sel.value;
+  const errEl = el('jha-signin-error');
+  errEl.classList.add('hidden');
+  if (!name) { errEl.textContent = 'Please enter your name.'; errEl.classList.remove('hidden'); return; }
+  const blank = !_jhaSigCanvas.toDataURL().includes('data:image/png;base64,iVBOR');
+  const sigData = blank ? '' : _jhaSigCanvas.toDataURL('image/png');
+  const btn = el('jha-signin-save');
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try {
+    await api('POST', `/api/jha/${_jhaSignId}/sign`, { full_name: name, signature_data: sigData || null, signed_date: el('jha-signin-date').value });
+    el('jha-signin-modal').classList.add('hidden');
+    showToast('Signed');
+    const data = await api('GET', `/api/jha/${_jhaSignId}`);
+    renderJHASignatures(bodyEl.querySelector('.safety-attend-list'), data.signatures || [], _jhaSignId, bodyEl);
+    const item = bodyEl.closest('.safety-meeting-item');
+    const c = item?.querySelector('.safety-attend-count');
+    if (c) c.textContent = `${data.signatures.length} sig${data.signatures.length !== 1 ? 's' : ''}`;
+  } catch (err) {
+    btn.disabled = false; btn.textContent = 'Save';
+    errEl.textContent = err.message; errEl.classList.remove('hidden');
+  }
+}
+
+function exportJHAPDF(j) {
+  const d = j.data || {};
+  const esc = escHtml;
+  const fmt = x => x ? localDateStr(x, { month:'long', day:'numeric', year:'numeric' }) : '—';
+  const tasks = (d.tasks || []).filter(t => t.seq || t.hazards || t.mitigation);
+  const ppe = JHA_PPE.filter(([k]) => d.ppe?.[k]).map(([, l]) => l);
+  if (d.ppe?.other) ppe.push(d.ppe.other);
+  const permits = JHA_PERMITS.filter(([k]) => d.permits?.[k]).map(([, l]) => l);
+  const sigs = j.signatures || [];
+  const css = `
+    h1{font-size:16px;margin:0 0 2px} .sub{font-size:11px;color:#555;margin:0 0 10px}
+    table{width:100%;border-collapse:collapse;margin:6px 0 12px;font-size:11px}
+    th,td{border:1px solid #999;padding:4px 6px;text-align:left;vertical-align:top}
+    th{background:#eee} .lbl{font-weight:700;font-size:11px;margin:8px 0 2px}
+    .sig img{height:40px;filter:brightness(0)}`;
+  const inner = `
+    <h1>Kern County Water Agency — Job Hazard Analysis</h1>
+    <div class="sub"><strong>Job:</strong> ${esc(j.title)} &nbsp;·&nbsp; <strong>Date:</strong> ${fmt(j.jha_date)} &nbsp;·&nbsp; <strong>Location:</strong> ${esc(j.work_location || '—')}</div>
+    <table><thead><tr><th style="width:34%">Sequence of Job Task</th><th style="width:33%">Potential Hazards</th><th style="width:33%">Hazard Mitigation</th></tr></thead>
+    <tbody>${tasks.map(t => `<tr><td>${esc(t.seq || '')}</td><td>${esc(t.hazards || '')}</td><td>${esc(t.mitigation || '')}</td></tr>`).join('') || '<tr><td colspan="3">—</td></tr>'}</tbody></table>
+    <div class="lbl">Required PPE</div><div>${ppe.length ? ppe.map(esc).join(', ') : '—'}</div>
+    <div class="lbl">Permits / Applicable Safety Programs</div><div>${permits.length ? permits.map(esc).join(', ') : '—'}</div>
+    ${d.notes ? `<div class="lbl">Notes</div><div>${esc(d.notes)}</div>` : ''}
+    ${j.completed_by ? `<div class="lbl">JHA Completed By</div><div>${esc(j.completed_by)}${j.completed_by_date ? ' · ' + fmt(j.completed_by_date) : ''}</div>` : ''}
+    <div class="lbl">JHA Reviewed / Signed By</div>
+    <table><thead><tr><th>Name</th><th>Signature</th><th>Date</th></tr></thead>
+    <tbody>${sigs.length ? sigs.map(s => `<tr><td>${esc(s.full_name)}</td><td class="sig">${s.signature_data ? `<img src="${esc(s.signature_data)}">` : ''}</td><td>${s.signed_date ? fmt(s.signed_date) : ''}</td></tr>`).join('') : '<tr><td colspan="3">No signatures</td></tr>'}</tbody></table>
+    <div style="margin-top:10px;font-size:10px;color:#666">COMPLETED JHA FORM MUST BE POSTED AT JOB LOCATION</div>`;
+  const filename = `JHA_${(j.title || 'form').replace(/[^a-z0-9]+/gi, '-')}.pdf`;
+  sharePdfFromHtml(inner, css, filename, 'Job Hazard Analysis', {})
+    .catch(err => { if (err.name !== 'AbortError') showToast('Export failed: ' + err.message, 'error'); });
 }
 
 /* ── Global Search ───────────────────────────────────────────────────────── */
