@@ -713,10 +713,7 @@ el('sync-now-btn').addEventListener('click', syncPendingQueue);
 el('export-pending-btn').addEventListener('click', async () => {
   const items = await offlineGetAll();
   const blob = new Blob([JSON.stringify(items, null, 2)], { type: 'application/json' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = `watermark-pending-${new Date().toISOString().slice(0, 10)}.json`;
-  a.click();
+  downloadBlob(blob, `watermark-pending-${new Date().toISOString().slice(0, 10)}.json`);
 });
 
 /* ── Dashboard Stats ─────────────────────────────────────────────────────── */
@@ -4044,21 +4041,49 @@ function buildMaintenanceReportHtml({ reportLabel, title, rows, description, map
    forced download or print dialog. On platforms without file-share support
    (most desktop browsers) they transparently fall back to a download. */
 
+// Trigger a plain browser download of a blob. The anchor is appended to the DOM
+// before clicking — a detached anchor is ignored by some browsers.
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.rel = 'noopener';
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 1000);
+}
+
 // Share a ready-made file blob, or download it if sharing isn't available.
+// The Web Share sheet is only the right UX on phones/tablets, where it offers
+// real targets (Files, Mail, AirDrop). Desktop Chrome also reports
+// canShare({files}) === true, but its share flyout usually dismisses itself
+// immediately and throws AbortError — indistinguishable from a real user
+// cancel, so the user got a flash of the file and then nothing. Desktop
+// therefore always takes the download path, which is what's expected there.
+function canUseShareSheet() {
+  return !!navigator.canShare
+    && !!window.matchMedia?.('(hover: none) and (pointer: coarse)').matches;
+}
+
 async function shareFile(blob, filename, title) {
   const file = new File([blob], filename, { type: blob.type || 'application/octet-stream' });
-  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+  if (canUseShareSheet() && navigator.canShare({ files: [file] })) {
+    const t0 = Date.now();
     try {
       await navigator.share({ files: [file], title });
       return;
     } catch (err) {
-      if (err.name === 'AbortError') return; // user dismissed the sheet
-      // any other share error → fall through to download
+      // A real user cancel takes at least a moment; an AbortError that comes
+      // back almost instantly means the sheet dismissed itself, so still save
+      // the file rather than leaving the user with nothing.
+      if (err.name === 'AbortError' && Date.now() - t0 > 400) return;
+      // any other share error (e.g. NotAllowedError when the user-activation
+      // window expired during PDF rendering) → fall through to download
     }
   }
-  const url = URL.createObjectURL(blob);
-  Object.assign(document.createElement('a'), { href: url, download: filename }).click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  downloadBlob(blob, filename);
 }
 
 // Render an in-DOM element to a PDF blob and share it.
