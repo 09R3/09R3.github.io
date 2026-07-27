@@ -4100,17 +4100,62 @@ async function sharePdfFromElement(element, filename, title, opts = {}) {
     if (h > maxH) { h = maxH; w = h * ratio; }
     img.style.cssText += `;width:${Math.round(w)}px;height:${Math.round(h)}px;max-width:none;max-height:none;object-fit:unset`;
   });
-  const blob = await html2pdf()
+  const name = filename.endsWith('.pdf') ? filename : `${filename}.pdf`;
+
+  // opts.onePage renders to a single fitted page; if that path can't run
+  // (no jsPDF global and offline, oversized canvas) fall back to paged output
+  // so the export still succeeds.
+  let blob = null;
+  if (opts.onePage) {
+    blob = await buildOnePagePdfBlob(element, opts)
+      .catch(err => { console.warn('[pdf] one-page render failed, using paged layout', err); return null; });
+  }
+  if (!blob) {
+    blob = await html2pdf()
+      .set({
+        margin: opts.margin ?? 8,
+        image: { type: 'jpeg', quality: 0.92 },
+        html2canvas: { scale: 2, useCORS: true, backgroundColor: '#fff', logging: false },
+        jsPDF: { unit: 'mm', format: opts.format || 'a4', orientation: opts.orientation || 'portrait' },
+        pagebreak: { mode: ['css', 'legacy'] },
+      })
+      .from(element)
+      .outputPdf('blob');
+  }
+  await shareFile(blob, name, title);
+}
+
+// Render an element onto exactly one page: rasterise it as a single canvas and
+// scale that to fit inside the page box, rather than letting html2pdf slice it
+// across sheets. Content that already fits is unaffected (width stays the
+// limiting dimension); taller content shrinks just enough to land on one page.
+async function buildOnePagePdfBlob(element, opts = {}) {
+  await loadJsPDF();
+  const jsPDF = window.jspdf?.jsPDF;
+  if (!jsPDF) throw new Error('jsPDF unavailable');
+
+  const format = opts.format || 'a4';
+  const orientation = opts.orientation || 'portrait';
+  const canvas = await html2pdf()
     .set({
-      margin: opts.margin ?? 8,
-      image: { type: 'jpeg', quality: 0.92 },
-      html2canvas: { scale: 2, useCORS: true, backgroundColor: '#fff', logging: false },
-      jsPDF: { unit: 'mm', format: opts.format || 'a4', orientation: opts.orientation || 'portrait' },
-      pagebreak: { mode: ['css', 'legacy'] },
+      margin: 0,
+      html2canvas: { scale: opts.scale ?? 2, useCORS: true, backgroundColor: '#fff', logging: false },
+      jsPDF: { unit: 'mm', format, orientation },
     })
     .from(element)
-    .outputPdf('blob');
-  await shareFile(blob, filename.endsWith('.pdf') ? filename : `${filename}.pdf`, title);
+    .toCanvas()
+    .get('canvas');
+  if (!canvas?.width || !canvas?.height) throw new Error('canvas render failed');
+
+  const pdf = new jsPDF({ unit: 'mm', format, orientation });
+  const margin = opts.margin ?? 8;
+  const boxW = pdf.internal.pageSize.getWidth()  - margin * 2;
+  const boxH = pdf.internal.pageSize.getHeight() - margin * 2;
+  const fit  = Math.min(boxW / canvas.width, boxH / canvas.height);
+  const w = canvas.width * fit, h = canvas.height * fit;
+  pdf.addImage(canvas.toDataURL('image/jpeg', 0.95), 'JPEG',
+    margin + (boxW - w) / 2, margin, w, h);
+  return pdf.output('blob');
 }
 
 // Wait for all <img> in a freshly-built off-screen node to finish loading,
@@ -10616,12 +10661,13 @@ el('export-pdf-btn').addEventListener('click', async () => {
       const s1 = el('piez-cmp-start1').value, s2 = el('piez-cmp-start2').value;
       await sharePdfFromHtml(card.outerHTML, REPORT_PDF_CSS, `Piezometers_Compare_${s1}_${s2}`, 'Piezometer Comparison');
     } else {
-      // vehicles / mileage — compact so the whole fleet fits one portrait page
+      // vehicles / mileage — onePage guarantees the whole fleet lands on a
+      // single portrait sheet however many units there are (it scales to fit)
       const html = buildMileageHTML(lastReportRows, reportsYear, reportsMonth);
       const monthName = new Date(reportsYear, reportsMonth - 1, 1).toLocaleDateString('en-US', { month: 'long' });
       const fname = `${reportsMonth}-${monthName}-${String(reportsYear).slice(2)}-Mileage`;
       await sharePdfFromHtml(html, MILEAGE_PDF_CSS, fname, 'CVC Mileage',
-        { orientation: 'portrait', format: 'letter', widthPx: 794, margin: 6 });
+        { orientation: 'portrait', format: 'letter', widthPx: 794, margin: 6, onePage: true, scale: 3 });
     }
   } catch (err) {
     if (err.name !== 'AbortError') showToast('Export failed: ' + err.message, 'error');
