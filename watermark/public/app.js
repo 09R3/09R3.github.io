@@ -12121,8 +12121,17 @@ function renderSafetyMeetingBody(body, data) {
   body.querySelector('.safety-signin-btn').addEventListener('click', () => {
     openSafetySigninModal(data.meeting_id, body);
   });
-  body.querySelector('.safety-export-btn').addEventListener('click', () => {
-    exportSafetyMeetingPDF(data, data.attendees || []);
+  // `data` is a snapshot from when this row was expanded — re-read it so
+  // attendees who signed in since then appear on the exported sheet.
+  body.querySelector('.safety-export-btn').addEventListener('click', async e => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    try {
+      const fresh = await api('GET', `/api/safety-meetings/${data.meeting_id}`).catch(() => data);
+      exportSafetyMeetingPDF(fresh, fresh.attendees || []);
+    } finally {
+      btn.disabled = false;
+    }
   });
 }
 
@@ -12599,7 +12608,18 @@ function renderJHABody(body, j) {
   renderJHASignatures(body.querySelector('.safety-attend-list'), j.signatures || [], j.jha_id, body);
   body.querySelector('.jha-edit-btn').addEventListener('click', () => openJHAForm(j));
   body.querySelector('.jha-sign-btn').addEventListener('click', () => openJHASignModal(j.jha_id, body));
-  body.querySelector('.jha-export-btn').addEventListener('click', () => exportJHAPDF(j));
+  // `j` is a snapshot from when this row was expanded, so signatures added or
+  // removed since then wouldn't be in the PDF. Re-read the record first.
+  body.querySelector('.jha-export-btn').addEventListener('click', async e => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    try {
+      const fresh = await api('GET', `/api/jha/${j.jha_id}`).catch(() => j);
+      await exportJHAPDF(fresh);
+    } finally {
+      btn.disabled = false;
+    }
+  });
   if (canDel) body.querySelector('.jha-delete-btn').addEventListener('click', async () => {
     if (!confirm('Delete this JHA and all its signatures?')) return;
     try { await api('DELETE', `/api/jha/${j.jha_id}`); showToast('JHA deleted'); loadJHAList(el('jha-search')?.value.trim() || ''); }
@@ -12967,7 +12987,7 @@ function exportJHAPDF(j) {
     <tbody>${sigs.length ? sigs.map(s => `<tr><td>${esc(s.full_name)}</td><td class="sig">${s.signature_data ? `<img src="${esc(s.signature_data)}">` : ''}</td><td>${s.signed_date ? fmt(s.signed_date) : ''}</td></tr>`).join('') : '<tr><td colspan="3">No signatures</td></tr>'}</tbody></table>
     <div class="foot">COMPLETED JHA FORM MUST BE POSTED AT JOB LOCATION</div>`;
   const filename = `JHA_${(j.title || 'form').replace(/[^a-z0-9]+/gi, '-')}.pdf`;
-  sharePdfFromHtml(inner, css, filename, 'Job Hazard Analysis', {})
+  return sharePdfFromHtml(inner, css, filename, 'Job Hazard Analysis', {})
     .catch(err => { if (err.name !== 'AbortError') showToast('Export failed: ' + err.message, 'error'); });
 }
 
