@@ -12386,13 +12386,15 @@ const JHA_PERMITS = [
   ['electrical','Electrical Work Hazard Assessment'],
 ];
 
+// required fields are tri-state: true = Yes, false = No, null = unanswered.
 function emptyJHAData() {
   return {
     tasks: [{ seq:'', hazards:'', mitigation:'' }],
     ppe: { other:'' }, permits: {},
     atmospheric: { required:false, method:'' },
-    sds: { substances:'', reviewed:'' },
-    isolation: { required:false, method:'' },
+    sds: { substances:'', reviewed:'na' },
+    isolation: { required:null, loto:false, other:false, otherText:'' },
+    diagram: { required:null },
     environmental: { weather:'', terrain:'', other:'' },
     training: { verified:false, list:'' },
     notes: '',
@@ -12437,6 +12439,32 @@ const JHA_TEMPLATES = {
     permits:{ liftPlan:true },
     atmospheric:{ required:false, method:'' }, sds:{ substances:'', reviewed:'' },
     isolation:{ required:false, method:'' },
+    environmental:{ weather:'', terrain:'', other:'' }, training:{ verified:false, list:'' }, notes:'',
+  }},
+  pull_pump: { name: 'Pulling CVC Pump', title: 'Pulling CVC Pump', data: {
+    tasks: [
+      { seq:'Set up crane', hazards:'Pinch points', mitigation:'Crane certification; motor disconnected and removed; keep clear of pinch points' },
+      { seq:'Rig and remove pump', hazards:'Pinch points; overhead lift; heavy parts', mitigation:'Keep clear of pinch points and overhead loads; use proper lifting techniques; use beams to support lower sections of pump while unfastening' },
+      { seq:'Rig and load pump', hazards:'Pinch points', mitigation:'Keep clear of pinch points' },
+      { seq:'Break down crane', hazards:'Pinch points', mitigation:'Keep clear of pinch points' },
+    ],
+    ppe:{ hardHat:true, gloves:true, eye:true, boots:true, other:'' },
+    permits:{ loto:true, liftPlan:true, overhead:true },
+    atmospheric:{ required:false, method:'' }, sds:{ substances:'', reviewed:'na' },
+    isolation:{ required:true, loto:true, other:false, otherText:'' }, diagram:{ required:false },
+    environmental:{ weather:'', terrain:'', other:'' }, training:{ verified:false, list:'' }, notes:'',
+  }},
+  well_motor_swap: { name: 'Well Motor Swap', title: 'Well Motor Swap', data: {
+    tasks: [
+      { seq:'Set up crane', hazards:'Electric shock from contact between crane and overhead lines; pinch points', mitigation:'Verify location of any overhead power lines; crane certification; isolation of hazardous energy — lockout/tagout, disconnected; stay 10 ft or greater from power lines; keep clear of pinch points and outriggers' },
+      { seq:'Rig and remove hut', hazards:'Fall from height; overhead load', mitigation:'Use ladder or extension pole to rig; keep clear' },
+      { seq:'Rig and remove motor', hazards:'Overhead load', mitigation:"Keep clear — don't stand under overhead load; ensure slings are away from load when hoisting up" },
+      { seq:'Break down crane', hazards:'Pinch points', mitigation:'Keep clear of pinch points and outriggers' },
+    ],
+    ppe:{ hardHat:true, gloves:true, eye:true, boots:true, other:'' },
+    permits:{ loto:true, liftPlan:true, overhead:true, electrical:true },
+    atmospheric:{ required:false, method:'' }, sds:{ substances:'', reviewed:'na' },
+    isolation:{ required:true, loto:true, other:false, otherText:'' }, diagram:{ required:false },
     environmental:{ weather:'', terrain:'', other:'' }, training:{ verified:false, list:'' }, notes:'',
   }},
   overhead_lift: { name: 'Overhead Lift Work', title: 'Overhead Lift Work', data: {
@@ -12513,6 +12541,18 @@ async function toggleJHA(item) {
   } catch { body.innerHTML = '<div class="placeholder-msg">Failed to load.</div>'; }
 }
 
+function jhaYesNo(v) { return v === true ? 'Yes' : v === false ? 'No' : '—'; }
+
+// "Yes — Lock Out / Tag Out, <other>" | "No" | "—"
+function jhaIsolationText(d) {
+  const iso = d.isolation || {};
+  if (iso.required !== true) return jhaYesNo(iso.required);
+  const parts = [];
+  if (iso.loto) parts.push('Lock Out / Tag Out');
+  if (iso.other) parts.push(iso.otherText || 'Other');
+  return parts.length ? `Yes — ${parts.join(', ')}` : 'Yes';
+}
+
 function renderJHABody(body, j) {
   const d = j.data || {};
   const tasks = (d.tasks || []).filter(t => t.seq || t.hazards || t.mitigation);
@@ -12537,6 +12577,8 @@ function renderJHABody(body, j) {
       <div class="jha-view-grid">
         <div><label>Required PPE</label><div class="jha-chips">${chips(ppe)}</div></div>
         <div><label>Permits / Programs</label><div class="jha-chips">${chips(permits)}</div></div>
+        <div><label>Isolation of Hazardous Energy</label><div>${escHtml(jhaIsolationText(d))}</div></div>
+        <div><label>Work Site Diagram</label><div>${escHtml(jhaYesNo(d.diagram?.required))}</div></div>
       </div>
       ${d.notes ? `<div class="form-group"><label>Notes</label><div class="safety-meeting-notes">${escHtml(d.notes)}</div></div>` : ''}
       ${j.completed_by ? `<div class="jha-completed">JHA completed by <strong>${escHtml(j.completed_by)}</strong>${j.completed_by_date ? ' · ' + localDateStr(j.completed_by_date, { month:'short', day:'numeric', year:'numeric' }) : ''}</div>` : ''}
@@ -12613,10 +12655,28 @@ function jhaFormHtml(showTemplate) {
     <label class="jha-section-label">Additional Checks</label>
     <label class="jha-cb"><input type="checkbox" id="jf-atm-req"> Atmospheric testing required</label>
     <input type="text" id="jf-atm-method" class="ctrl-input ctrl-input-sm" placeholder="Method of monitoring atmosphere" style="margin-bottom:8px">
-    <div class="form-group"><label>Hazardous substances (review SDS)</label><input type="text" id="jf-sds-sub" class="ctrl-input ctrl-input-sm"></div>
-    <div class="form-group"><label>SDS Reviewed?</label><select id="jf-sds-reviewed" class="ctrl-select ctrl-input-sm"><option value="">—</option><option value="yes">Yes</option><option value="na">N/A</option></select></div>
-    <label class="jha-cb"><input type="checkbox" id="jf-iso-req"> Isolation of hazardous energy required</label>
-    <input type="text" id="jf-iso-method" class="ctrl-input ctrl-input-sm" placeholder="Method of isolation (e.g. Lock Out Tag Out)" style="margin-bottom:8px">
+    <div class="jha-sds-row">
+      <div class="form-group"><label>Hazardous substances (review SDS)</label><input type="text" id="jf-sds-sub" class="ctrl-input ctrl-input-sm"></div>
+      <div class="form-group"><label>SDS Reviewed?</label><select id="jf-sds-reviewed" class="ctrl-select ctrl-input-sm"><option value="na">N/A</option><option value="yes">Yes</option><option value="">—</option></select></div>
+    </div>
+    <label class="jha-section-label">Is Isolation of Hazardous Energy Required?</label>
+    <div class="jha-yn">
+      <label class="jha-cb"><input type="checkbox" id="jf-iso-yes" data-yn="iso"> Yes</label>
+      <label class="jha-cb"><input type="checkbox" id="jf-iso-no" data-yn="iso"> No</label>
+    </div>
+    <div id="jf-iso-detail" class="jha-yn-detail">
+      <label class="jha-sub-label">If Yes, Method of Isolation</label>
+      <div class="jha-yn">
+        <label class="jha-cb"><input type="checkbox" id="jf-iso-loto"> Lock Out / Tag Out</label>
+        <label class="jha-cb"><input type="checkbox" id="jf-iso-other"> Other</label>
+      </div>
+      <input type="text" id="jf-iso-other-text" class="ctrl-input ctrl-input-sm" placeholder="Other method of isolation" style="margin-top:6px">
+    </div>
+    <label class="jha-section-label">Is There a Work Site Diagram?</label>
+    <div class="jha-yn" style="margin-bottom:8px">
+      <label class="jha-cb"><input type="checkbox" id="jf-diagram-yes" data-yn="diagram"> Yes</label>
+      <label class="jha-cb"><input type="checkbox" id="jf-diagram-no" data-yn="diagram"> No</label>
+    </div>
     <div class="two-col">
       <div class="form-group"><label>Weather</label><input type="text" id="jf-env-weather" class="ctrl-input ctrl-input-sm"></div>
       <div class="form-group"><label>Terrain</label><input type="text" id="jf-env-terrain" class="ctrl-input ctrl-input-sm"></div>
@@ -12634,19 +12694,57 @@ function jhaFormHtml(showTemplate) {
 
 function jhaTaskRowHtml(t = {}) {
   return `<div class="jha-task-row">
-    <textarea class="jf-task-seq ctrl-input" rows="2" placeholder="Job task">${escHtml(t.seq || '')}</textarea>
-    <textarea class="jf-task-haz ctrl-input" rows="2" placeholder="Potential hazards">${escHtml(t.hazards || '')}</textarea>
-    <textarea class="jf-task-mit ctrl-input" rows="2" placeholder="Mitigation">${escHtml(t.mitigation || '')}</textarea>
-    <button type="button" class="jha-task-del" title="Remove">✕</button>
+    <div class="jha-task-num"></div>
+    <textarea class="jf-task-seq ctrl-input" rows="4" placeholder="Job task">${escHtml(t.seq || '')}</textarea>
+    <textarea class="jf-task-haz ctrl-input" rows="4" placeholder="Potential hazards">${escHtml(t.hazards || '')}</textarea>
+    <textarea class="jf-task-mit ctrl-input" rows="4" placeholder="Mitigation">${escHtml(t.mitigation || '')}</textarea>
+    <div class="jha-task-ctrls">
+      <button type="button" class="jha-task-btn jha-task-up" title="Move up">▲</button>
+      <button type="button" class="jha-task-btn jha-task-down" title="Move down">▼</button>
+      <button type="button" class="jha-task-btn jha-task-del" title="Remove">✕</button>
+    </div>
   </div>`;
+}
+
+// Number the rows and grey out the arrows that can't move any further.
+function renumberJHATasks() {
+  const rows = [...el('jf-tasks').querySelectorAll('.jha-task-row')];
+  rows.forEach((row, i) => {
+    row.querySelector('.jha-task-num').textContent = i + 1;
+    row.querySelector('.jha-task-up').disabled   = i === 0;
+    row.querySelector('.jha-task-down').disabled = i === rows.length - 1;
+    row.querySelector('.jha-task-del').disabled  = rows.length === 1;
+  });
 }
 
 function renderJHATasks(tasks) {
   const wrap = el('jf-tasks');
   wrap.innerHTML = (tasks && tasks.length ? tasks : [{}]).map(jhaTaskRowHtml).join('');
-  wrap.querySelectorAll('.jha-task-del').forEach(b => b.addEventListener('click', () => {
-    if (wrap.querySelectorAll('.jha-task-row').length > 1) b.closest('.jha-task-row').remove();
-  }));
+  // Delegated so rows added or reordered later stay wired. The form body is
+  // rebuilt on every open, so this listener goes away with it.
+  if (!wrap.dataset.wired) {
+    wrap.dataset.wired = '1';
+    wrap.addEventListener('click', e => {
+      const btn = e.target.closest('.jha-task-btn');
+      if (!btn || btn.disabled) return;
+      const row = btn.closest('.jha-task-row');
+      if (btn.classList.contains('jha-task-up'))   row.previousElementSibling?.before(row);
+      else if (btn.classList.contains('jha-task-down')) row.nextElementSibling?.after(row);
+      else if (wrap.querySelectorAll('.jha-task-row').length > 1) row.remove();
+      renumberJHATasks();
+    });
+  }
+  renumberJHATasks();
+}
+
+// Method-of-isolation only applies when "Yes" is checked; the free-text box
+// only applies when "Other" is checked.
+function syncJHAIsolation() {
+  const yes = el('jf-iso-yes')?.checked;
+  const detail = el('jf-iso-detail');
+  if (detail) detail.style.display = yes ? '' : 'none';
+  const otherBox = el('jf-iso-other-text');
+  if (otherBox) otherBox.style.display = (yes && el('jf-iso-other')?.checked) ? '' : 'none';
 }
 
 function fillJHAForm(title, location, date, data) {
@@ -12660,9 +12758,16 @@ function fillJHAForm(title, location, date, data) {
   el('jf-atm-req').checked = !!d.atmospheric?.required;
   el('jf-atm-method').value = d.atmospheric?.method || '';
   el('jf-sds-sub').value = d.sds?.substances || '';
-  el('jf-sds-reviewed').value = d.sds?.reviewed || '';
-  el('jf-iso-req').checked = !!d.isolation?.required;
-  el('jf-iso-method').value = d.isolation?.method || '';
+  el('jf-sds-reviewed').value = d.sds?.reviewed ?? 'na';
+  const iso = d.isolation || {};
+  el('jf-iso-yes').checked = iso.required === true;
+  el('jf-iso-no').checked  = iso.required === false;
+  el('jf-iso-loto').checked = !!iso.loto;
+  el('jf-iso-other').checked = !!iso.other;
+  el('jf-iso-other-text').value = iso.otherText || '';
+  el('jf-diagram-yes').checked = d.diagram?.required === true;
+  el('jf-diagram-no').checked  = d.diagram?.required === false;
+  syncJHAIsolation();
   el('jf-env-weather').value = d.environmental?.weather || '';
   el('jf-env-terrain').value = d.environmental?.terrain || '';
   el('jf-train-verified').checked = !!d.training?.verified;
@@ -12691,7 +12796,15 @@ function collectJHAForm() {
       tasks, ppe, permits,
       atmospheric: { required: el('jf-atm-req').checked, method: el('jf-atm-method').value.trim() },
       sds: { substances: el('jf-sds-sub').value.trim(), reviewed: el('jf-sds-reviewed').value },
-      isolation: { required: el('jf-iso-req').checked, method: el('jf-iso-method').value.trim() },
+      isolation: {
+        required: el('jf-iso-yes').checked ? true : (el('jf-iso-no').checked ? false : null),
+        loto: el('jf-iso-loto').checked,
+        other: el('jf-iso-other').checked,
+        otherText: el('jf-iso-other-text').value.trim(),
+      },
+      diagram: {
+        required: el('jf-diagram-yes').checked ? true : (el('jf-diagram-no').checked ? false : null),
+      },
       environmental: { weather: el('jf-env-weather').value.trim(), terrain: el('jf-env-terrain').value.trim(), other: '' },
       training: { verified: el('jf-train-verified').checked, list: el('jf-train-list').value.trim() },
       notes: el('jf-notes').value.trim(),
@@ -12708,11 +12821,19 @@ function openJHAForm(existing) {
 
   el('jf-add-task').addEventListener('click', () => {
     el('jf-tasks').insertAdjacentHTML('beforeend', jhaTaskRowHtml());
-    const row = el('jf-tasks').lastElementChild;
-    row.querySelector('.jha-task-del').addEventListener('click', () => {
-      if (el('jf-tasks').querySelectorAll('.jha-task-row').length > 1) row.remove();
+    renumberJHATasks();
+  });
+  // Yes/No pairs behave like radios (either can also be cleared).
+  el('jha-form-body').querySelectorAll('[data-yn]').forEach(box => {
+    box.addEventListener('change', () => {
+      if (box.checked) {
+        el('jha-form-body').querySelectorAll(`[data-yn="${box.dataset.yn}"]`)
+          .forEach(o => { if (o !== box) o.checked = false; });
+      }
+      if (box.dataset.yn === 'iso') syncJHAIsolation();
     });
   });
+  el('jf-iso-other').addEventListener('change', syncJHAIsolation);
   el('jf-cancel').addEventListener('click', () => { wrap.classList.add('hidden'); el('jha-new-btn').style.display = ''; });
   el('jf-save').addEventListener('click', saveJHAForm);
 
@@ -12819,25 +12940,32 @@ function exportJHAPDF(j) {
   if (d.ppe?.other) ppe.push(d.ppe.other);
   const permits = JHA_PERMITS.filter(([k]) => d.permits?.[k]).map(([, l]) => l);
   const sigs = j.signatures || [];
+  // html2pdf clones .pdf-root out of its holder, so it would otherwise inherit
+  // the app's dark-theme text colour and print light grey. Force solid black.
   const css = `
-    h1{font-size:16px;margin:0 0 2px} .sub{font-size:11px;color:#555;margin:0 0 10px}
+    .pdf-root, .pdf-root *{color:#000 !important}
+    h1{font-size:16px;margin:0 0 2px} .sub{font-size:11px;margin:0 0 10px}
     table{width:100%;border-collapse:collapse;margin:6px 0 12px;font-size:11px}
-    th,td{border:1px solid #999;padding:4px 6px;text-align:left;vertical-align:top}
-    th{background:#eee} .lbl{font-weight:700;font-size:11px;margin:8px 0 2px}
+    th,td{border:1px solid #666;padding:4px 6px;text-align:left;vertical-align:top}
+    th{background:#e8e8e8;font-weight:700} .lbl{font-weight:700;font-size:11px;margin:8px 0 2px}
+    .val{font-size:11px} .foot{margin-top:10px;font-size:10px;font-weight:700}
     .sig img{height:40px;filter:brightness(0)}`;
   const inner = `
     <h1>Kern County Water Agency — Job Hazard Analysis</h1>
     <div class="sub"><strong>Job:</strong> ${esc(j.title)} &nbsp;·&nbsp; <strong>Date:</strong> ${fmt(j.jha_date)} &nbsp;·&nbsp; <strong>Location:</strong> ${esc(j.work_location || '—')}</div>
     <table><thead><tr><th style="width:34%">Sequence of Job Task</th><th style="width:33%">Potential Hazards</th><th style="width:33%">Hazard Mitigation</th></tr></thead>
     <tbody>${tasks.map(t => `<tr><td>${esc(t.seq || '')}</td><td>${esc(t.hazards || '')}</td><td>${esc(t.mitigation || '')}</td></tr>`).join('') || '<tr><td colspan="3">—</td></tr>'}</tbody></table>
-    <div class="lbl">Required PPE</div><div>${ppe.length ? ppe.map(esc).join(', ') : '—'}</div>
-    <div class="lbl">Permits / Applicable Safety Programs</div><div>${permits.length ? permits.map(esc).join(', ') : '—'}</div>
-    ${d.notes ? `<div class="lbl">Notes</div><div>${esc(d.notes)}</div>` : ''}
-    ${j.completed_by ? `<div class="lbl">JHA Completed By</div><div>${esc(j.completed_by)}${j.completed_by_date ? ' · ' + fmt(j.completed_by_date) : ''}</div>` : ''}
+    <div class="lbl">Required PPE</div><div class="val">${ppe.length ? ppe.map(esc).join(', ') : '—'}</div>
+    <div class="lbl">Permits / Applicable Safety Programs</div><div class="val">${permits.length ? permits.map(esc).join(', ') : '—'}</div>
+    ${d.sds?.substances ? `<div class="lbl">Hazardous Substances</div><div class="val">${esc(d.sds.substances)} &nbsp;·&nbsp; SDS Reviewed: ${esc(d.sds.reviewed === 'yes' ? 'Yes' : d.sds.reviewed === 'na' ? 'N/A' : '—')}</div>` : ''}
+    <div class="lbl">Is Isolation of Hazardous Energy Required?</div><div class="val">${esc(jhaIsolationText(d))}</div>
+    <div class="lbl">Is There a Work Site Diagram?</div><div class="val">${esc(jhaYesNo(d.diagram?.required))}</div>
+    ${d.notes ? `<div class="lbl">Notes</div><div class="val">${esc(d.notes)}</div>` : ''}
+    ${j.completed_by ? `<div class="lbl">JHA Completed By</div><div class="val">${esc(j.completed_by)}${j.completed_by_date ? ' · ' + fmt(j.completed_by_date) : ''}</div>` : ''}
     <div class="lbl">JHA Reviewed / Signed By</div>
     <table><thead><tr><th>Name</th><th>Signature</th><th>Date</th></tr></thead>
     <tbody>${sigs.length ? sigs.map(s => `<tr><td>${esc(s.full_name)}</td><td class="sig">${s.signature_data ? `<img src="${esc(s.signature_data)}">` : ''}</td><td>${s.signed_date ? fmt(s.signed_date) : ''}</td></tr>`).join('') : '<tr><td colspan="3">No signatures</td></tr>'}</tbody></table>
-    <div style="margin-top:10px;font-size:10px;color:#666">COMPLETED JHA FORM MUST BE POSTED AT JOB LOCATION</div>`;
+    <div class="foot">COMPLETED JHA FORM MUST BE POSTED AT JOB LOCATION</div>`;
   const filename = `JHA_${(j.title || 'form').replace(/[^a-z0-9]+/gi, '-')}.pdf`;
   sharePdfFromHtml(inner, css, filename, 'Job Hazard Analysis', {})
     .catch(err => { if (err.name !== 'AbortError') showToast('Export failed: ' + err.message, 'error'); });
