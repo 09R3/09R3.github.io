@@ -572,8 +572,9 @@ function patchScadaOverview() {
     const total = vals.every(v => v != null) ? vals.reduce((a, b) => a + b, 0) : null;
     elm.textContent = `— DWR ${total == null ? '—' : total.toFixed(1)} ${elm.dataset.ovDwrUnit || ''}`;
   });
+  const flowGroups = scadaPlantGroups();  // built once per tick, not per card
   body.querySelectorAll('[data-ov-flow]').forEach(elm => {
-    const g = scadaPlantGroups().find(x => x.key === elm.dataset.ovFlow);
+    const g = flowGroups.find(x => x.key === elm.dataset.ovFlow);
     if (!g) return;
     const total = plantGroupFlow(g);
     const strong = elm.querySelector('strong');
@@ -667,31 +668,6 @@ async function loadOverviewCharts() {
       _overviewCharts.set(g.key, chart);
     } catch { /* skip — no data or offline */ }
   }));
-}
-
-function plantSideHtml(site) {
-  const total = site.pumps.length;
-  let running = 0, faulted = 0;
-  site.pumps.forEach(p => {
-    if (isOn(scadaVal(scadaPumpPath(site, p, 'MTR.Cntrl.Run')))) running++;
-    if (isOn(scadaVal(scadaPumpPath(site, p, 'MTR.Cntrl.Fail')))) faulted++;
-  });
-  const dot = faulted ? 'alarm' : (running ? 'ok' : 'idle');
-  const fb = fmtSensor('FBLvl', scadaVal(scadaSensorPath(site, 'FBLvl')));
-  const tr = fmtSensor('TRLvl', scadaVal(scadaSensorPath(site, 'TRLvl')));
-  const ab = fmtSensor('ABLvl', scadaVal(scadaSensorPath(site, 'ABLvl')));
-  return `<div class="scada-plant-side">
-    <div class="scada-side-head">
-      <span class="scada-side-label">${escHtml(shortSiteName(site))}</span>
-      <span class="scada-dot scada-dot-${dot}"></span>
-      <span class="scada-pump-count">${running}/${total}</span>
-    </div>
-    <div class="scada-side-readings">
-      <div class="scada-mini-row"><span>Forebay</span><strong>${fb}</strong> ft</div>
-      <div class="scada-mini-row"><span>Trash Rack</span><strong>${tr}</strong> ft</div>
-      <div class="scada-mini-row"><span>Afterbay</span><strong>${ab}</strong> ft</div>
-    </div>
-  </div>`;
 }
 
 // ── Plant detail (A+B combined view) ─────────────────────────────────────────

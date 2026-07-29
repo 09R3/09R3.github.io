@@ -85,6 +85,22 @@ function scadaAllTagPaths(config) {
   return tags;
 }
 
+// Allow-list of every tag the history endpoint may query. Because tag paths are
+// interpolated into Flux, we only accept known paths (prevents Flux injection).
+// Also covers the analog .SCL.Raw sensors used by the scaling-test tool.
+let _scadaAllowedTags = null;
+function scadaAllowedTagSet() {
+  if (_scadaAllowedTags) return _scadaAllowedTags;
+  const set = new Set(SCADA_CONFIG ? scadaAllTagPaths(SCADA_CONFIG) : []);
+  if (SCADA_CONFIG) {
+    for (const site of SCADA_CONFIG.sites)
+      for (const sensor of SCADA_RAW_SENSORS)
+        set.add(`${site.influxSite}.${sensor}.SCL.Raw`);
+  }
+  _scadaAllowedTags = set;
+  return set;
+}
+
 // Latest value per tag. Chunks of 20 avoid Flux's "program nested too deep" error.
 async function scadaGetCurrent(tagPaths) {
   const qApi = getInfluxQuery();
@@ -107,6 +123,9 @@ async function scadaGetCurrent(tagPaths) {
   }
   return result;
 }
+
+// Preset range → Flux relative-start string, shared by the history/runtime helpers.
+const SCADA_RANGE_START = { '1h':'-1h','8h':'-8h','12h':'-12h','6h':'-6h','24h':'-24h','7d':'-7d','30d':'-30d' };
 
 // Aggregated history for one tag. mean for analog, max for status bits.
 // Pick aggregation window automatically from span (targets ~200–300 points).
@@ -132,9 +151,8 @@ async function scadaGetHistory(tagPath, rangeOpts) {
     rangeClause = `range(start: ${s.toISOString()}, stop: ${e.toISOString()})`;
     every = calcAggEvery(s.getTime(), e.getTime());
   } else {
-    const startMap = { '1h':'-1h','8h':'-8h','12h':'-12h','6h':'-6h','24h':'-24h','7d':'-7d','30d':'-30d' };
     const everyMap = { '1h':'30s','8h':'2m','12h':'2m','6h':'2m','24h':'5m','7d':'30m','30d':'2h' };
-    rangeClause = `range(start: ${startMap[rangeOpts] || '-1h'})`;
+    rangeClause = `range(start: ${SCADA_RANGE_START[rangeOpts] || '-1h'})`;
     every = everyMap[rangeOpts] || '30s';
   }
   const flux = `
@@ -159,8 +177,7 @@ async function scadaGetRuntime(tagPaths, rangeOpts) {
     if (isNaN(s) || isNaN(e)) throw new Error('invalid custom range');
     rangeClause = `range(start: ${s.toISOString()}, stop: ${e.toISOString()})`;
   } else {
-    const startMap = { '1h':'-1h','8h':'-8h','12h':'-12h','6h':'-6h','24h':'-24h','7d':'-7d','30d':'-30d' };
-    rangeClause = `range(start: ${startMap[rangeOpts] || '-24h'})`;
+    rangeClause = `range(start: ${SCADA_RANGE_START[rangeOpts] || '-24h'})`;
   }
   const result = {};
   const CHUNK = 10;
@@ -207,9 +224,8 @@ async function scadaGetReverseHours(influxSite, rangeOpts, pumps) {
     rangeClause = `range(start: ${s.toISOString()}, stop: ${e.toISOString()})`;
     spanHours = (e.getTime() - s.getTime()) / 3600000;
   } else {
-    const startMap = { '1h':'-1h','8h':'-8h','12h':'-12h','6h':'-6h','24h':'-24h','7d':'-7d','30d':'-30d' };
     const hrsMap   = { '1h':1,'8h':8,'12h':12,'6h':6,'24h':24,'7d':168,'30d':720 };
-    rangeClause = `range(start: ${startMap[rangeOpts] || '-24h'})`;
+    rangeClause = `range(start: ${SCADA_RANGE_START[rangeOpts] || '-24h'})`;
     spanHours   = hrsMap[rangeOpts] || 24;
   }
   const grid = reverseGridSeconds(spanHours);
@@ -691,6 +707,34 @@ pool.query(`
     created_at     TIMESTAMPTZ DEFAULT NOW()
   )
 `)).catch(err => console.error('Migration error (safety tables):', err.message));
+
+// Job Hazard Analysis (JHA): a record holds the whole form in `data` (JSONB) so
+// the many form sections stay flexible; signatures mirror safety-meeting attendees.
+pool.query(`
+  CREATE TABLE IF NOT EXISTS jha (
+    jha_id            SERIAL PRIMARY KEY,
+    title             TEXT NOT NULL,
+    work_location     TEXT,
+    jha_date          DATE,
+    template_key      TEXT,
+    data              JSONB NOT NULL DEFAULT '{}',
+    completed_by      TEXT,
+    completed_by_date DATE,
+    status            TEXT NOT NULL DEFAULT 'active',
+    created_by        INTEGER REFERENCES users(user_id),
+    created_at        TIMESTAMPTZ DEFAULT NOW(),
+    updated_at        TIMESTAMPTZ DEFAULT NOW()
+  )
+`).then(() => pool.query(`
+  CREATE TABLE IF NOT EXISTS jha_signatures (
+    sig_id         SERIAL PRIMARY KEY,
+    jha_id         INTEGER REFERENCES jha(jha_id) ON DELETE CASCADE,
+    full_name      TEXT NOT NULL,
+    signature_data TEXT,
+    signed_date    DATE,
+    created_at     TIMESTAMPTZ DEFAULT NOW()
+  )
+`)).catch(err => console.error('Migration error (jha tables):', err.message));
 
 // ─────────────────────────────────────────────────────────────────────────────
 const SESSION_TTL = 8 * 60 * 60 * 1000; // 8 hours
@@ -4085,6 +4129,88 @@ app.get('/api/reports/wells/daily', requireAuth, async (req, res) => {
   }
 });
 
+// Distinct discharge pools (for the monthly grid pool selector).
+app.get('/api/reports/wells/pools', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT DISTINCT discharge_pool
+      FROM wells
+      WHERE discharge_pool IS NOT NULL AND discharge_pool <> ''
+        AND LOWER(well_type) LIKE '%operational%'
+        AND LOWER(COALESCE(status,'')) NOT IN ('inactive','removed')
+      ORDER BY discharge_pool
+    `);
+    res.json(rows.map(r => r.discharge_pool));
+  } catch (err) { handleErr(res, err); }
+});
+
+// Monthly grid: every day of the month (rows) × every well discharging in a pool
+// (columns, grouped by area). Cell = calculated cfs for that day from the
+// totalizer delta ((ΔAF × 43560) / elapsed seconds) between the day's last
+// reading and the prior reading. The day's last reading is the interval end, so
+// a shut-off ("off") reading naturally bounds the calc for its day. Blank if the
+// well wasn't read that day or the totalizer math isn't possible.
+app.get('/api/reports/wells/monthly', requireAuth, async (req, res) => {
+  const month = /^\d{4}-\d{2}$/.test(String(req.query.month || '')) ? String(req.query.month) : null;
+  const poolName = req.query.pool ? String(req.query.pool) : null;
+  if (!month || !poolName) return res.status(400).json({ error: 'month and pool required' });
+  const [y, m] = month.split('-').map(Number);
+  const start = `${month}-01`;
+  const nextM = m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, '0')}-01`;
+  const daysInMonth = new Date(y, m, 0).getDate();
+  try {
+    const wellsQ = await pool.query(`
+      SELECT well_id, common_name, area
+      FROM wells
+      WHERE discharge_pool = $1
+        AND LOWER(well_type) LIKE '%operational%'
+        AND LOWER(COALESCE(status,'')) NOT IN ('inactive','removed')
+      ORDER BY area NULLS LAST, common_name
+    `, [poolName]);
+
+    const readingsQ = await pool.query(`
+      SELECT w.well_id,
+             EXTRACT(DAY FROM r.reading_date)::int AS day,
+             CASE
+               WHEN r.totalizer IS NULL OR prev.totalizer IS NULL
+                 OR prev.elapsed_secs IS NULL OR prev.elapsed_secs <= 0
+               THEN NULL
+               ELSE ROUND(((r.totalizer - prev.totalizer) * 43560.0 / prev.elapsed_secs)::numeric, 2)
+             END AS cfs
+      FROM wells w
+      JOIN LATERAL (
+        SELECT DISTINCT ON (reading_date) reading_date, reading_time, totalizer
+        FROM readings_well
+        WHERE well_id = w.well_id AND reading_date >= $2 AND reading_date < $3
+        ORDER BY reading_date, reading_time DESC NULLS LAST
+      ) r ON true
+      LEFT JOIN LATERAL (
+        SELECT p.totalizer,
+               EXTRACT(EPOCH FROM (
+                 (r.reading_date + COALESCE(r.reading_time,'00:00:00'::time))::timestamp -
+                 (p.reading_date + COALESCE(p.reading_time,'00:00:00'::time))::timestamp
+               )) AS elapsed_secs
+        FROM readings_well p
+        WHERE p.well_id = w.well_id
+          AND (p.reading_date + COALESCE(p.reading_time,'00:00:00'::time))::timestamp <
+              (r.reading_date + COALESCE(r.reading_time,'00:00:00'::time))::timestamp
+        ORDER BY (p.reading_date + COALESCE(p.reading_time,'00:00:00'::time))::timestamp DESC LIMIT 1
+      ) prev ON true
+      WHERE w.discharge_pool = $1
+        AND LOWER(w.well_type) LIKE '%operational%'
+        AND LOWER(COALESCE(w.status,'')) NOT IN ('inactive','removed')
+    `, [poolName, start, nextM]);
+
+    const data = {};
+    readingsQ.rows.forEach(r => {
+      if (r.cfs == null) return;
+      if (!data[r.well_id]) data[r.well_id] = {};
+      data[r.well_id][r.day] = Number(r.cfs);
+    });
+    res.json({ month, pool: poolName, daysInMonth, wells: wellsQ.rows, data });
+  } catch (err) { handleErr(res, err); }
+});
+
 app.get('/api/reports/wells/daily/export', async (req, res) => {
   const { date, token } = req.query;
   const exportDate = date || new Date().toISOString().slice(0,10);
@@ -5080,6 +5206,94 @@ app.delete('/api/safety-meetings/:id/attendees/:aid', requireAuth, requireRole(.
   } catch (err) { handleErr(res, err); }
 });
 
+// ── Job Hazard Analysis (JHA) ─────────────────────────────────────────────────
+app.get('/api/jha', requireAuth, async (req, res) => {
+  const q = req.query.q ? `%${String(req.query.q)}%` : null;
+  try {
+    const { rows } = await pool.query(`
+      SELECT j.jha_id, j.title, j.work_location, j.jha_date, j.completed_by, j.status,
+             COUNT(s.sig_id)::int AS signature_count
+      FROM jha j
+      LEFT JOIN jha_signatures s ON s.jha_id = j.jha_id
+      WHERE j.status = 'active' AND ($1::text IS NULL OR j.title ILIKE $1 OR j.work_location ILIKE $1)
+      GROUP BY j.jha_id
+      ORDER BY j.jha_date DESC NULLS LAST, j.created_at DESC
+    `, [q]);
+    res.json(rows);
+  } catch (err) { handleErr(res, err); }
+});
+
+app.post('/api/jha', requireAuth, async (req, res) => {
+  const { title, work_location, jha_date, template_key, data, completed_by, completed_by_date } = req.body;
+  if (!title || !String(title).trim()) return res.status(400).json({ error: 'title is required' });
+  try {
+    const { rows } = await pool.query(`
+      INSERT INTO jha (title, work_location, jha_date, template_key, data, completed_by, completed_by_date, created_by)
+      VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8) RETURNING jha_id
+    `, [String(title).trim(), work_location || null, jha_date || null, template_key || null,
+        JSON.stringify(data || {}), completed_by || null, completed_by_date || null, req.user.user_id]);
+    res.json({ ok: true, jha_id: rows[0].jha_id });
+  } catch (err) { handleErr(res, err); }
+});
+
+app.get('/api/jha/:id', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM jha WHERE jha_id = $1', [req.params.id]);
+    if (!rows[0]) return res.status(404).json({ error: 'JHA not found' });
+    const sigs = await pool.query(
+      'SELECT * FROM jha_signatures WHERE jha_id = $1 ORDER BY created_at', [req.params.id]);
+    res.json({ ...rows[0], signatures: sigs.rows });
+  } catch (err) { handleErr(res, err); }
+});
+
+app.patch('/api/jha/:id', requireAuth, async (req, res) => {
+  const { title, work_location, jha_date, data, completed_by, completed_by_date, status } = req.body;
+  try {
+    await pool.query(`
+      UPDATE jha SET
+        title             = COALESCE($1, title),
+        work_location     = COALESCE($2, work_location),
+        jha_date          = COALESCE($3, jha_date),
+        data              = COALESCE($4::jsonb, data),
+        completed_by      = COALESCE($5, completed_by),
+        completed_by_date = COALESCE($6, completed_by_date),
+        status            = COALESCE($7, status),
+        updated_at        = NOW()
+      WHERE jha_id = $8
+    `, [title != null ? String(title).trim() : null, work_location ?? null, jha_date || null,
+        data !== undefined ? JSON.stringify(data) : null, completed_by ?? null,
+        completed_by_date || null, status || null, req.params.id]);
+    res.json({ ok: true });
+  } catch (err) { handleErr(res, err); }
+});
+
+app.post('/api/jha/:id/sign', requireAuth, async (req, res) => {
+  const { full_name, signature_data, signed_date } = req.body;
+  if (!full_name) return res.status(400).json({ error: 'full_name required' });
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO jha_signatures (jha_id, full_name, signature_data, signed_date)
+       VALUES ($1,$2,$3,$4) RETURNING sig_id`,
+      [req.params.id, full_name, signature_data || null, signed_date || null]);
+    res.json({ ok: true, sig_id: rows[0].sig_id });
+  } catch (err) { handleErr(res, err); }
+});
+
+app.delete('/api/jha/:id/signatures/:sid', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
+  try {
+    await pool.query('DELETE FROM jha_signatures WHERE sig_id = $1 AND jha_id = $2',
+      [req.params.sid, req.params.id]);
+    res.json({ ok: true });
+  } catch (err) { handleErr(res, err); }
+});
+
+app.delete('/api/jha/:id', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
+  try {
+    await pool.query('DELETE FROM jha WHERE jha_id = $1', [req.params.id]);
+    res.json({ ok: true });
+  } catch (err) { handleErr(res, err); }
+});
+
 // ── SCADA Dashboard API ─────────────────────────────────────────────────────
 // Access is driven by the `scada_roles` app_setting (admin-managed). Admin is
 // always allowed so the setting can never lock everyone out. Live data is
@@ -5165,14 +5379,18 @@ app.get('/api/scada/raw-current', requireAuth, requireScadaAccess, async (req, r
 app.get('/api/scada/history', requireAuth, requireScadaAccess, async (req, res) => {
   const { tag, tags, range, start, end } = req.query;
   const rangeOpts = (start && end) ? { start: String(start), end: String(end) } : String(range || '1h');
+  const allowed = scadaAllowedTagSet();
   try {
     if (tags) {
       const list = String(tags).split(',').map(s => s.trim()).filter(Boolean).slice(0, 8);
+      const valid = list.filter(t => allowed.has(t));
+      if (!valid.length) return res.status(400).json({ error: 'no valid tags' });
       const series = {};
-      await Promise.all(list.map(async t => { series[t] = await scadaGetHistory(t, rangeOpts); }));
+      await Promise.all(valid.map(async t => { series[t] = await scadaGetHistory(t, rangeOpts); }));
       return res.json({ series });
     }
     if (!tag) return res.status(400).json({ error: 'tag required' });
+    if (!allowed.has(String(tag))) return res.status(400).json({ error: 'unknown tag' });
     res.json(await scadaGetHistory(String(tag), rangeOpts));
   } catch (err) { handleErr(res, err); }
 });

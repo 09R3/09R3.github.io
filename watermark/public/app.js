@@ -680,7 +680,7 @@ function onLogin(user) {
   el('screen-login').classList.remove('active');
   el('app-shell').classList.remove('hidden');
   el('user-badge').textContent = user.initials || user.username.slice(0, 2).toUpperCase();
-  el('drawer-user').innerHTML = `<strong>${user.full_name || user.username}</strong>${user.role}`;
+  el('drawer-user').innerHTML = `<strong>${escHtml(user.full_name || user.username)}</strong>${escHtml(user.role)}`;
 
   // Reset all role-gated elements before applying role
   el('nav-reports-item').classList.add('hidden');
@@ -713,10 +713,7 @@ el('sync-now-btn').addEventListener('click', syncPendingQueue);
 el('export-pending-btn').addEventListener('click', async () => {
   const items = await offlineGetAll();
   const blob = new Blob([JSON.stringify(items, null, 2)], { type: 'application/json' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = `watermark-pending-${new Date().toISOString().slice(0, 10)}.json`;
-  a.click();
+  downloadBlob(blob, `watermark-pending-${new Date().toISOString().slice(0, 10)}.json`);
 });
 
 /* ── Dashboard Stats ─────────────────────────────────────────────────────── */
@@ -4044,21 +4041,49 @@ function buildMaintenanceReportHtml({ reportLabel, title, rows, description, map
    forced download or print dialog. On platforms without file-share support
    (most desktop browsers) they transparently fall back to a download. */
 
+// Trigger a plain browser download of a blob. The anchor is appended to the DOM
+// before clicking — a detached anchor is ignored by some browsers.
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.rel = 'noopener';
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 1000);
+}
+
 // Share a ready-made file blob, or download it if sharing isn't available.
+// The Web Share sheet is only the right UX on phones/tablets, where it offers
+// real targets (Files, Mail, AirDrop). Desktop Chrome also reports
+// canShare({files}) === true, but its share flyout usually dismisses itself
+// immediately and throws AbortError — indistinguishable from a real user
+// cancel, so the user got a flash of the file and then nothing. Desktop
+// therefore always takes the download path, which is what's expected there.
+function canUseShareSheet() {
+  return !!navigator.canShare
+    && !!window.matchMedia?.('(hover: none) and (pointer: coarse)').matches;
+}
+
 async function shareFile(blob, filename, title) {
   const file = new File([blob], filename, { type: blob.type || 'application/octet-stream' });
-  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+  if (canUseShareSheet() && navigator.canShare({ files: [file] })) {
+    const t0 = Date.now();
     try {
       await navigator.share({ files: [file], title });
       return;
     } catch (err) {
-      if (err.name === 'AbortError') return; // user dismissed the sheet
-      // any other share error → fall through to download
+      // A real user cancel takes at least a moment; an AbortError that comes
+      // back almost instantly means the sheet dismissed itself, so still save
+      // the file rather than leaving the user with nothing.
+      if (err.name === 'AbortError' && Date.now() - t0 > 400) return;
+      // any other share error (e.g. NotAllowedError when the user-activation
+      // window expired during PDF rendering) → fall through to download
     }
   }
-  const url = URL.createObjectURL(blob);
-  Object.assign(document.createElement('a'), { href: url, download: filename }).click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  downloadBlob(blob, filename);
 }
 
 // Render an in-DOM element to a PDF blob and share it.
@@ -4075,17 +4100,62 @@ async function sharePdfFromElement(element, filename, title, opts = {}) {
     if (h > maxH) { h = maxH; w = h * ratio; }
     img.style.cssText += `;width:${Math.round(w)}px;height:${Math.round(h)}px;max-width:none;max-height:none;object-fit:unset`;
   });
-  const blob = await html2pdf()
+  const name = filename.endsWith('.pdf') ? filename : `${filename}.pdf`;
+
+  // opts.onePage renders to a single fitted page; if that path can't run
+  // (no jsPDF global and offline, oversized canvas) fall back to paged output
+  // so the export still succeeds.
+  let blob = null;
+  if (opts.onePage) {
+    blob = await buildOnePagePdfBlob(element, opts)
+      .catch(err => { console.warn('[pdf] one-page render failed, using paged layout', err); return null; });
+  }
+  if (!blob) {
+    blob = await html2pdf()
+      .set({
+        margin: opts.margin ?? 8,
+        image: { type: 'jpeg', quality: 0.92 },
+        html2canvas: { scale: 2, useCORS: true, backgroundColor: '#fff', logging: false },
+        jsPDF: { unit: 'mm', format: opts.format || 'a4', orientation: opts.orientation || 'portrait' },
+        pagebreak: { mode: ['css', 'legacy'] },
+      })
+      .from(element)
+      .outputPdf('blob');
+  }
+  await shareFile(blob, name, title);
+}
+
+// Render an element onto exactly one page: rasterise it as a single canvas and
+// scale that to fit inside the page box, rather than letting html2pdf slice it
+// across sheets. Content that already fits is unaffected (width stays the
+// limiting dimension); taller content shrinks just enough to land on one page.
+async function buildOnePagePdfBlob(element, opts = {}) {
+  await loadJsPDF();
+  const jsPDF = window.jspdf?.jsPDF;
+  if (!jsPDF) throw new Error('jsPDF unavailable');
+
+  const format = opts.format || 'a4';
+  const orientation = opts.orientation || 'portrait';
+  const canvas = await html2pdf()
     .set({
-      margin: opts.margin ?? 8,
-      image: { type: 'jpeg', quality: 0.92 },
-      html2canvas: { scale: 2, useCORS: true, backgroundColor: '#fff', logging: false },
-      jsPDF: { unit: 'mm', format: opts.format || 'a4', orientation: opts.orientation || 'portrait' },
-      pagebreak: { mode: ['css', 'legacy'] },
+      margin: 0,
+      html2canvas: { scale: opts.scale ?? 2, useCORS: true, backgroundColor: '#fff', logging: false },
+      jsPDF: { unit: 'mm', format, orientation },
     })
     .from(element)
-    .outputPdf('blob');
-  await shareFile(blob, filename.endsWith('.pdf') ? filename : `${filename}.pdf`, title);
+    .toCanvas()
+    .get('canvas');
+  if (!canvas?.width || !canvas?.height) throw new Error('canvas render failed');
+
+  const pdf = new jsPDF({ unit: 'mm', format, orientation });
+  const margin = opts.margin ?? 8;
+  const boxW = pdf.internal.pageSize.getWidth()  - margin * 2;
+  const boxH = pdf.internal.pageSize.getHeight() - margin * 2;
+  const fit  = Math.min(boxW / canvas.width, boxH / canvas.height);
+  const w = canvas.width * fit, h = canvas.height * fit;
+  pdf.addImage(canvas.toDataURL('image/jpeg', 0.95), 'JPEG',
+    margin + (boxW - w) / 2, margin, w, h);
+  return pdf.output('blob');
 }
 
 // Wait for all <img> in a freshly-built off-screen node to finish loading,
@@ -4431,7 +4501,7 @@ function renderIssueAttachQueue(issueId) {
   queueEl.innerHTML = pending.map((a, i) => `
     <div class="maint-aq-item">
       <span class="maint-aq-badge">${a.fileType === 'invoice' ? 'INV' : 'PIC'}</span>
-      <span style="flex:1;font-size:0.8rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${a.file.name}</span>
+      <span style="flex:1;font-size:0.8rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(a.file.name)}</span>
       ${a.gps ? `<button type="button" class="canal-aq-map-btn" data-lat="${a.gps.lat}" data-lon="${a.gps.lon}" style="padding:2px 7px;font-size:0.8rem;border:1px solid var(--border);border-radius:6px;background:var(--surface2);cursor:pointer">&#127757;</button>` : ''}
       <button class="maint-aq-remove" data-idx="${i}">×</button>
     </div>`).join('');
@@ -4529,7 +4599,7 @@ function renderVehCardQueue(id) {
       ${isPdf ? `<span class="maint-aq-icon">${icon('invoice', 28)}</span>` : `<img src="${URL.createObjectURL(a.file)}" alt="">`}
       <span class="maint-aq-badge">${a.fileType === 'invoice' ? 'INV' : 'PIC'}</span>
       <button class="maint-aq-remove" data-cardid="${id}" data-idx="${i}">&times;</button>
-      <div class="maint-aq-name">${a.file.name}</div>
+      <div class="maint-aq-name">${escHtml(a.file.name)}</div>
     </div>`;
   }).join('');
   el2.querySelectorAll('.maint-aq-remove').forEach(btn => {
@@ -5224,7 +5294,7 @@ function renderMaintAttachQueue() {
       ${thumb}
       <span class="maint-aq-badge">${badge}</span>
       <button class="maint-aq-remove" data-idx="${i}">&times;</button>
-      <div class="maint-aq-name">${a.file.name}</div>
+      <div class="maint-aq-name">${escHtml(a.file.name)}</div>
     </div>`;
   }).join('');
   queue.querySelectorAll('.maint-aq-remove').forEach(btn => {
@@ -6363,7 +6433,7 @@ el('exif-back-btn').addEventListener('click', () => {
       const items = await api('GET', url);
       sel.innerHTML = items.map(item => {
         const id = type === 'outlet' ? item.outlet_id : item.pond_id;
-        return `<option value="${id}">${item.name} (${id})</option>`;
+        return `<option value="${escHtml(String(id))}">${escHtml(item.name)} (${escHtml(String(id))})</option>`;
       }).join('');
       onEntitySelect();
     } catch (e) {
@@ -7200,8 +7270,8 @@ async function loadTodayReadings() {
     list.innerHTML = rows.map(r => `
       <div class="today-reading-row" data-type="${r.type}" data-id="${r.id}">
         <div class="today-reading-info">
-          <div class="today-reading-name">${r.name}</div>
-          <div class="today-reading-meta">${r.reading_time ? r.reading_time.slice(0,5) : ''} &bull; ${r.summary || ''}</div>
+          <div class="today-reading-name">${escHtml(r.name || '')}</div>
+          <div class="today-reading-meta">${r.reading_time ? escHtml(r.reading_time.slice(0,5)) : ''} &bull; ${escHtml(r.summary || '')}</div>
         </div>
         <button class="today-reading-del" data-type="${r.type}" data-id="${r.id}" title="Delete">&times;</button>
       </div>
@@ -7351,16 +7421,16 @@ async function loadBugReports() {
         <div class="bug-report-card ${r.resolved ? 'bug-resolved' : ''}">
           <div class="bug-report-header">
             <span class="bug-severity" style="color:${sevColor[r.severity] || sevColor.minor}">${r.severity.toUpperCase()}</span>
-            ${r.screen_area ? `<span class="bug-area">${r.screen_area}</span>` : ''}
+            ${r.screen_area ? `<span class="bug-area">${escHtml(r.screen_area)}</span>` : ''}
             ${r.is_repeatable ? '<span class="bug-tag">Repeatable</span>' : ''}
-            <span class="bug-meta">${r.submitted_by} &bull; ${new Date(r.submitted_at).toLocaleDateString()}</span>
+            <span class="bug-meta">${escHtml(r.submitted_by)} &bull; ${new Date(r.submitted_at).toLocaleDateString()}</span>
           </div>
-          <div class="bug-description">${r.description}</div>
-          ${r.app_version ? `<div class="bug-version">${r.app_version}</div>` : ''}
+          <div class="bug-description">${escHtml(r.description)}</div>
+          ${r.app_version ? `<div class="bug-version">${escHtml(r.app_version)}</div>` : ''}
           <div class="bug-resolve-row">
             <label class="bug-resolve-label">
               <input type="checkbox" class="bug-resolve-check" data-id="${r.report_id}" ${r.resolved ? 'checked' : ''}>
-              ${r.resolved ? `Resolved by ${r.resolved_by} on ${new Date(r.resolved_at).toLocaleDateString()}` : 'Mark resolved'}
+              ${r.resolved ? `Resolved by ${escHtml(r.resolved_by || '')} on ${new Date(r.resolved_at).toLocaleDateString()}` : 'Mark resolved'}
             </label>
           </div>
         </div>
@@ -7400,12 +7470,12 @@ async function loadUserList() {
       const card = document.createElement('div');
       card.className = `user-card${u.is_active ? '' : ' user-inactive'}`;
       card.innerHTML = `
-        <div class="user-avatar">${(u.initials || u.username.slice(0,2)).toUpperCase()}</div>
+        <div class="user-avatar">${escHtml((u.initials || u.username.slice(0,2)).toUpperCase())}</div>
         <div class="user-info">
-          <div class="user-name">${u.full_name || u.username}</div>
-          <div class="user-sub">@${u.username}${u.is_active ? '' : ' · Inactive'}</div>
+          <div class="user-name">${escHtml(u.full_name || u.username)}</div>
+          <div class="user-sub">@${escHtml(u.username)}${u.is_active ? '' : ' · Inactive'}</div>
         </div>
-        <span class="role-badge role-${u.role}">${formatRole(u.role)}</span>
+        <span class="role-badge role-${escHtml(u.role)}">${formatRole(u.role)}</span>
         ${currentUser.role === 'admin'
           ? `<button class="user-edit-btn" data-id="${u.user_id}">Edit</button>`
           : ''}
@@ -8560,77 +8630,6 @@ function showPMRecord(record, def) {
     ${record.notes ? `<div class="pm-view-notes"><strong>Notes:</strong> ${escHtml(record.notes)}</div>` : ''}`;
   el('pm-view-modal-body').querySelectorAll('input').forEach(i => i.disabled = true);
   el('pm-view-modal').classList.remove('hidden');
-}
-
-// ── PM PDF Export ─────────────────────────────────────────────────────────────
-function exportPMRecordAsPDF(record, def) {
-  const d = localDateStr(record.completed_date, { month: 'long', day: 'numeric', year: 'numeric' });
-  const t = record.completed_time?.slice(0, 5) || '';
-  const fileDate = record.completed_date ? String(record.completed_date).slice(0, 10) : '';
-  const filename = `${def.title} ${fileDate}`.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '');
-
-  const PM_CSS = `
-    body{font-family:Arial,sans-serif;font-size:12px;color:#000;margin:0}
-    h1{font-size:14px;margin:0 0 2px}
-    .sub{font-size:11px;color:#555;margin:0 0 12px}
-    table{border-collapse:collapse;margin-bottom:14px}
-    td{padding:2px 14px 2px 0;font-size:12px}
-    .item{margin:5px 0;line-height:1.5}
-    .pm-view-row{display:flex;gap:8px;padding:4px 0;border-bottom:1px solid #eee}
-    .pv-loc{font-weight:600;min-width:40px}.pv-note{color:#555;font-style:italic}
-    .pass{color:#388e3c}.fail{color:#d32f2f}.ac-group{margin-bottom:12px}
-    .ac-title{font-weight:700;font-size:11px;text-transform:uppercase;margin-bottom:4px}
-    .ac-row{display:flex;gap:6px;padding:2px 0}.ac-dot{width:10px;height:10px;border-radius:50%;margin-top:2px}
-    .ac-dot.pass{background:#388e3c}.ac-dot.fail{background:#d32f2f}.ac-dot.empty{background:#ccc}
-    .notes{margin-top:14px;border-top:1px solid #ccc;padding-top:10px}
-    .footer{margin-top:20px;border-top:2px solid #000;padding-top:8px;font-weight:bold}`;
-
-  let inner;
-  if (def.customType) {
-    const body = def.customType === 'siphon' ? renderSBRecordView(record) : renderACRecordView(record, def);
-    inner = `
-      <h1>${escHtml(def.title)}</h1>
-      <table><tr><td><strong>Location:</strong></td><td>${escHtml(record.building||'—')}</td>
-      <td><strong>Date:</strong></td><td>${d}${t?' · '+t:''}</td>
-      <td><strong>By:</strong></td><td>${escHtml(record.completed_by_name||'—')}</td></tr></table>
-      ${body}
-      ${record.notes?`<div class="notes"><strong>Notes:</strong><br>${escHtml(record.notes).replace(/\n/g,'<br>')}</div>`:''}`;
-  } else {
-    let itemNum = 0;
-    const itemsHTML = def.items.map(item => {
-      if (item.condBuilding && item.condBuilding !== record.building) return '';
-      itemNum++;
-      const val = record.checklist[item.key];
-      let checked = false, extra = '';
-      if (item.type === 'twc' || item.type === 'twc-area') {
-        checked = val?.checked || false;
-        if (val?.value) extra = ` — <strong>${escHtml(val.value)}</strong>`;
-      } else if (item.type === 'text') {
-        extra = val ? `: <strong>${escHtml(val)}</strong>` : '';
-        checked = !!val;
-      } else {
-        checked = val === true;
-      }
-      const sym = checked ? '&#9745;' : '&#9744;';
-      return `<div class="item">${sym} <strong>${itemNum}.</strong> ${escHtml(item.label)}${extra}</div>`;
-    }).filter(Boolean).join('');
-
-    inner = `
-      <h1>${escHtml(def.subtitle || def.title)}</h1>
-      <div class="sub">${escHtml(def.formRef || '')}</div>
-      <table>
-        <tr><td><strong>Inspector:</strong></td><td>${escHtml(record.completed_by_name || '—')}</td>
-            <td><strong>Location:</strong></td><td>${escHtml(record.building || '—')}</td></tr>
-        <tr><td><strong>Date:</strong></td><td>${d}</td>
-            <td><strong>Time:</strong></td><td>${t}</td></tr>
-      </table>
-      ${itemsHTML}
-      ${record.notes ? `<div class="notes"><strong>Notes:</strong><br>${escHtml(record.notes).replace(/\n/g,'<br>')}</div>` : ''}
-      <div class="footer">INITIAL: Completed in accordance with ${escHtml(def.formRef || 'PM Checklist')} &nbsp;&nbsp; Date: ${d} &nbsp;&nbsp; Time: ${t}</div>`;
-  }
-
-  sharePdfFromHtml(inner, PM_CSS, filename, def.title, { margin: 12 })
-    .catch(err => { if (err.name !== 'AbortError') showToast('Export failed: ' + err.message, 'error'); });
 }
 
 /* ── Pesticides ──────────────────────────────────────────────────────────── */
@@ -10321,6 +10320,17 @@ el('export-csv-btn').addEventListener('click', async () => {
     return;
   }
 
+  if (exportContext === 'wells-monthly') {
+    if (!lastWellMonthly) return;
+    const csvEsc = v => (v == null || v === '') ? '' : /[,"\n]/.test(String(v)) ? `"${String(v).replace(/"/g,'""')}"` : String(v);
+    const rows = wellMonthlyMatrix();
+    const csv = rows.map(r => r.map(csvEsc).join(',')).join('\r\n');
+    await shareFile(new Blob([csv], { type: 'text/csv' }),
+      `WellMonthly_${lastWellMonthly.pool.replace(/[^a-z0-9]+/gi,'-')}_${lastWellMonthly.month}.csv`,
+      'Monthly Well Report');
+    return;
+  }
+
   if (exportContext === 'wells-dripper') {
     const csvEsc = v => (v == null || v === '') ? '' : /[,"\n]/.test(String(v)) ? `"${String(v).replace(/"/g,'""')}"` : String(v);
     const fillTo = parseInt(el('well-dripper-amount').value) || 12;
@@ -10651,12 +10661,13 @@ el('export-pdf-btn').addEventListener('click', async () => {
       const s1 = el('piez-cmp-start1').value, s2 = el('piez-cmp-start2').value;
       await sharePdfFromHtml(card.outerHTML, REPORT_PDF_CSS, `Piezometers_Compare_${s1}_${s2}`, 'Piezometer Comparison');
     } else {
-      // vehicles / mileage — compact so the whole fleet fits one portrait page
+      // vehicles / mileage — onePage guarantees the whole fleet lands on a
+      // single portrait sheet however many units there are (it scales to fit)
       const html = buildMileageHTML(lastReportRows, reportsYear, reportsMonth);
       const monthName = new Date(reportsYear, reportsMonth - 1, 1).toLocaleDateString('en-US', { month: 'long' });
       const fname = `${reportsMonth}-${monthName}-${String(reportsYear).slice(2)}-Mileage`;
       await sharePdfFromHtml(html, MILEAGE_PDF_CSS, fname, 'CVC Mileage',
-        { orientation: 'portrait', format: 'letter', widthPx: 794, margin: 6 });
+        { orientation: 'portrait', format: 'letter', widthPx: 794, margin: 6, onePage: true, scale: 3 });
     }
   } catch (err) {
     if (err.name !== 'AbortError') showToast('Export failed: ' + err.message, 'error');
@@ -11873,7 +11884,7 @@ el('tor-submit-btn').addEventListener('click', () => {
 let _safetyInited = false;
 let _safetySigninMeetingId = null;
 
-const SAFETY_PANEL_NAMES = { meetings: 'Safety Meetings' };
+const SAFETY_PANEL_NAMES = { meetings: 'Safety Meetings', jha: 'Job Hazard Analysis' };
 
 function initSafetyScreen() {
   if (_safetyInited) return;
@@ -11889,6 +11900,7 @@ function openSafetyPanel(id) {
   el(`safety-panel-${id}`).classList.remove('hidden');
   setPanelNav(el('screen-safety'), closeSafetyPanel, 'Safety – ' + (SAFETY_PANEL_NAMES[id] || id));
   if (id === 'meetings') buildSafetyMeetingsPanel(el('safety-panel-meetings'));
+  if (id === 'jha') buildJHAPanel(el('safety-panel-jha'));
 }
 
 function closeSafetyPanel() {
@@ -12109,8 +12121,17 @@ function renderSafetyMeetingBody(body, data) {
   body.querySelector('.safety-signin-btn').addEventListener('click', () => {
     openSafetySigninModal(data.meeting_id, body);
   });
-  body.querySelector('.safety-export-btn').addEventListener('click', () => {
-    exportSafetyMeetingPDF(data, data.attendees || []);
+  // `data` is a snapshot from when this row was expanded — re-read it so
+  // attendees who signed in since then appear on the exported sheet.
+  body.querySelector('.safety-export-btn').addEventListener('click', async e => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    try {
+      const fresh = await api('GET', `/api/safety-meetings/${data.meeting_id}`).catch(() => data);
+      exportSafetyMeetingPDF(fresh, fresh.attendees || []);
+    } finally {
+      btn.disabled = false;
+    }
   });
 }
 
@@ -12359,6 +12380,615 @@ function exportSafetyMeetingPDF(meeting, attendees) {
       b.disabled = false; b.innerHTML = '&#8679; Share / Export';
     }
   });
+}
+
+/* ── JHA (Job Hazard Analysis) ─────────────────────────────────────────────── */
+const JHA_PPE = [
+  ['hardHat','Hard Hat'], ['gloves','Gloves'], ['eye','Eye Protection'],
+  ['fallHarness','Fall Harness'], ['boots','Boots (steel toe)'],
+  ['hearing','Hearing Protection'], ['faceCovering','Face Covering'],
+];
+const JHA_PERMITS = [
+  ['loto','Hazardous Energy Control (LOTO)'], ['hotWork','Hot Work'],
+  ['confinedSpace','Confined Space Entry'], ['excavation','Excavation & Trenching'],
+  ['liftPlan','Lift Plan / Crane Operations'], ['overhead','Work near Overhead Conductors'],
+  ['electrical','Electrical Work Hazard Assessment'],
+];
+
+// required fields are tri-state: true = Yes, false = No, null = unanswered.
+function emptyJHAData() {
+  return {
+    tasks: [{ seq:'', hazards:'', mitigation:'' }],
+    ppe: { other:'' }, permits: {},
+    atmospheric: { required:false, method:'' },
+    sds: { substances:'', reviewed:'na' },
+    isolation: { required:null, loto:false, other:false, otherText:'' },
+    diagram: { required:null },
+    environmental: { weather:'', terrain:'', other:'' },
+    training: { verified:false, list:'' },
+    notes: '',
+  };
+}
+
+// Prefilled starting points (edit per-JHA as needed). Best-effort content from
+// the KCWA JHA templates; operators adjust after copying.
+const JHA_TEMPLATES = {
+  blank: { name: 'New Blank', title: '', data: emptyJHAData() },
+  motor_install: { name: 'CVC Motor Installation', title: 'CVC Motor Installation', data: {
+    tasks: [
+      { seq:'Rig and lift motor into position', hazards:'Overhead load, pinch points, dropped load', mitigation:'Proper lifting eyes / shackles / slings; tag lines; keep clear of pinch points' },
+      { seq:'Set and secure motor', hazards:'Pinch points; motor starting unexpectedly', mitigation:'Keep hands clear; verify electrical disconnected & locked out (LOTO)' },
+      { seq:'Reconnect electrical & test', hazards:'Electrical energy; unexpected start', mitigation:'Isolation of hazardous energy (LOTO); verify de-energized before work' },
+    ],
+    ppe:{ hardHat:true, gloves:true, eye:true, boots:true, other:'' },
+    permits:{ loto:true, liftPlan:true, overhead:true, electrical:true },
+    atmospheric:{ required:false, method:'' }, sds:{ substances:'', reviewed:'' },
+    isolation:{ required:true, method:'Lock Out Tag Out' },
+    environmental:{ weather:'', terrain:'', other:'' }, training:{ verified:false, list:'' }, notes:'',
+  }},
+  motor_removal: { name: 'CVC Motor Removal', title: 'CVC Motor Removal', data: {
+    tasks: [
+      { seq:'De-energize and lock out motor', hazards:'Motor starting unexpectedly; electrical energy', mitigation:'Isolation of hazardous energy (LOTO); verify electrical disconnected & locked' },
+      { seq:'Disconnect and rig motor', hazards:'Pinch points; dropped load', mitigation:'Proper rigging; keep clear of pinch points' },
+      { seq:'Lift and remove motor', hazards:'Overhead load', mitigation:'Proper lifting eyes / shackles / slings; tag lines' },
+    ],
+    ppe:{ hardHat:true, gloves:true, eye:true, boots:true, other:'' },
+    permits:{ loto:true, liftPlan:true, overhead:true, electrical:true },
+    atmospheric:{ required:false, method:'' }, sds:{ substances:'', reviewed:'' },
+    isolation:{ required:true, method:'Lock Out Tag Out' },
+    environmental:{ weather:'', terrain:'', other:'' }, training:{ verified:false, list:'' }, notes:'',
+  }},
+  install_pump: { name: 'Install Pump', title: 'Install Pump', data: {
+    tasks: [
+      { seq:'Set support beams', hazards:'Pinch points; falling objects', mitigation:'Keep clear; secure beams before applying load' },
+      { seq:'Lower pump sections while unfastening', hazards:'Pinch points; dropped load; unexpected movement', mitigation:'Keep hands clear of pinch points; controlled lower; proper rigging' },
+      { seq:'Fasten and align pump', hazards:'Pinch points', mitigation:'Keep clear; use proper tools' },
+    ],
+    ppe:{ hardHat:true, gloves:true, eye:true, boots:true, other:'' },
+    permits:{ liftPlan:true },
+    atmospheric:{ required:false, method:'' }, sds:{ substances:'', reviewed:'' },
+    isolation:{ required:false, method:'' },
+    environmental:{ weather:'', terrain:'', other:'' }, training:{ verified:false, list:'' }, notes:'',
+  }},
+  pull_pump: { name: 'Pulling CVC Pump', title: 'Pulling CVC Pump', data: {
+    tasks: [
+      { seq:'Set up crane', hazards:'Pinch points', mitigation:'Crane certification; motor disconnected and removed; keep clear of pinch points' },
+      { seq:'Rig and remove pump', hazards:'Pinch points; overhead lift; heavy parts', mitigation:'Keep clear of pinch points and overhead loads; use proper lifting techniques; use beams to support lower sections of pump while unfastening' },
+      { seq:'Rig and load pump', hazards:'Pinch points', mitigation:'Keep clear of pinch points' },
+      { seq:'Break down crane', hazards:'Pinch points', mitigation:'Keep clear of pinch points' },
+    ],
+    ppe:{ hardHat:true, gloves:true, eye:true, boots:true, other:'' },
+    permits:{ loto:true, liftPlan:true, overhead:true },
+    atmospheric:{ required:false, method:'' }, sds:{ substances:'', reviewed:'na' },
+    isolation:{ required:true, loto:true, other:false, otherText:'' }, diagram:{ required:false },
+    environmental:{ weather:'', terrain:'', other:'' }, training:{ verified:false, list:'' }, notes:'',
+  }},
+  well_motor_swap: { name: 'Well Motor Swap', title: 'Well Motor Swap', data: {
+    tasks: [
+      { seq:'Set up crane', hazards:'Electric shock from contact between crane and overhead lines; pinch points', mitigation:'Verify location of any overhead power lines; crane certification; isolation of hazardous energy — lockout/tagout, disconnected; stay 10 ft or greater from power lines; keep clear of pinch points and outriggers' },
+      { seq:'Rig and remove hut', hazards:'Fall from height; overhead load', mitigation:'Use ladder or extension pole to rig; keep clear' },
+      { seq:'Rig and remove motor', hazards:'Overhead load', mitigation:"Keep clear — don't stand under overhead load; ensure slings are away from load when hoisting up" },
+      { seq:'Break down crane', hazards:'Pinch points', mitigation:'Keep clear of pinch points and outriggers' },
+    ],
+    ppe:{ hardHat:true, gloves:true, eye:true, boots:true, other:'' },
+    permits:{ loto:true, liftPlan:true, overhead:true, electrical:true },
+    atmospheric:{ required:false, method:'' }, sds:{ substances:'', reviewed:'na' },
+    isolation:{ required:true, loto:true, other:false, otherText:'' }, diagram:{ required:false },
+    environmental:{ weather:'', terrain:'', other:'' }, training:{ verified:false, list:'' }, notes:'',
+  }},
+  overhead_lift: { name: 'Overhead Lift Work', title: 'Overhead Lift Work', data: {
+    tasks: [
+      { seq:'Setup crane', hazards:'Pinch points (outriggers); tip-over', mitigation:'Keep clear of pinch points; level & set outriggers on firm ground' },
+      { seq:'Install / lift', hazards:'Equipment failure; dropped load; overhead load', mitigation:'Use proper lifting eyes, shackles / clevises, straps / slings; inspect rigging; keep clear' },
+      { seq:'Breakdown crane', hazards:'Pinch points (outriggers)', mitigation:'Keep clear of pinch points' },
+    ],
+    ppe:{ hardHat:true, gloves:true, eye:true, boots:true, other:'' },
+    permits:{ liftPlan:true, overhead:true },
+    atmospheric:{ required:false, method:'' }, sds:{ substances:'', reviewed:'' },
+    isolation:{ required:false, method:'' },
+    environmental:{ weather:'', terrain:'', other:'' }, training:{ verified:false, list:'' }, notes:'',
+  }},
+};
+
+let _jhaEditId = null;
+
+function buildJHAPanel(contentEl) {
+  if (contentEl.firstElementChild) { loadJHAList(); return; }
+  contentEl.innerHTML = `
+    <div class="issue-toolbar" style="gap:8px">
+      <button class="btn btn-primary btn-sm" id="jha-new-btn">+ New JHA</button>
+      <input type="search" id="jha-search" class="ctrl-input" placeholder="Search by job or location…" style="flex:1;min-width:0">
+    </div>
+    <div id="jha-form-wrap" class="settings-card hidden" style="margin:0 0 14px"><div class="settings-pad" id="jha-form-body"></div></div>
+    <div id="jha-list"><div class="placeholder-msg">Loading…</div></div>`;
+  el('jha-new-btn').addEventListener('click', () => openJHAForm(null));
+  let t;
+  el('jha-search').addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => loadJHAList(el('jha-search').value.trim()), 300); });
+  loadJHAList();
+}
+
+async function loadJHAList(q = '') {
+  const listEl = el('jha-list');
+  if (!listEl) return;
+  listEl.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const rows = await api('GET', `/api/jha${q ? `?q=${encodeURIComponent(q)}` : ''}`);
+    if (!rows.length) { listEl.innerHTML = '<div class="placeholder-msg">No JHAs found.</div>'; return; }
+    listEl.innerHTML = rows.map(j => {
+      const dateStr = j.jha_date ? localDateStr(j.jha_date, { month:'short', day:'numeric', year:'numeric' }) : 'No date';
+      return `<div class="safety-meeting-item" data-jid="${j.jha_id}">
+        <div class="safety-meeting-header">
+          <div class="safety-meeting-info">
+            <div class="safety-meeting-topic">${escHtml(j.title)}</div>
+            <div class="safety-meeting-date">${dateStr}${j.work_location ? ' · ' + escHtml(j.work_location) : ''}
+              <span class="safety-attend-count">${j.signature_count} sig${j.signature_count !== 1 ? 's' : ''}</span>
+            </div>
+          </div>
+          <span class="safety-meeting-chevron">›</span>
+        </div>
+        <div class="safety-meeting-body hidden"></div>
+      </div>`;
+    }).join('');
+    listEl.querySelectorAll('.safety-meeting-item').forEach(item => {
+      item.querySelector('.safety-meeting-header').addEventListener('click', () => toggleJHA(item));
+    });
+  } catch (err) {
+    listEl.innerHTML = `<div class="placeholder-msg">Failed to load: ${escHtml(err.message)}</div>`;
+  }
+}
+
+async function toggleJHA(item) {
+  const body = item.querySelector('.safety-meeting-body');
+  const chevron = item.querySelector('.safety-meeting-chevron');
+  if (!body.classList.contains('hidden')) { body.classList.add('hidden'); chevron.style.transform = ''; return; }
+  body.classList.remove('hidden');
+  chevron.style.transform = 'rotate(90deg)';
+  body.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const data = await api('GET', `/api/jha/${item.dataset.jid}`);
+    renderJHABody(body, data);
+  } catch { body.innerHTML = '<div class="placeholder-msg">Failed to load.</div>'; }
+}
+
+function jhaYesNo(v) { return v === true ? 'Yes' : v === false ? 'No' : '—'; }
+
+// "Yes — Lock Out / Tag Out, <other>" | "No" | "—"
+function jhaIsolationText(d) {
+  const iso = d.isolation || {};
+  if (iso.required !== true) return jhaYesNo(iso.required);
+  const parts = [];
+  if (iso.loto) parts.push('Lock Out / Tag Out');
+  if (iso.other) parts.push(iso.otherText || 'Other');
+  return parts.length ? `Yes — ${parts.join(', ')}` : 'Yes';
+}
+
+function renderJHABody(body, j) {
+  const d = j.data || {};
+  const tasks = (d.tasks || []).filter(t => t.seq || t.hazards || t.mitigation);
+  const ppe = JHA_PPE.filter(([k]) => d.ppe?.[k]).map(([, l]) => l);
+  if (d.ppe?.other) ppe.push(d.ppe.other);
+  const permits = JHA_PERMITS.filter(([k]) => d.permits?.[k]).map(([, l]) => l);
+
+  const taskTable = tasks.length ? `
+    <table class="report-table jha-view-table"><thead><tr>
+      <th>Sequence of Job Task</th><th>Potential Hazards</th><th>Hazard Mitigation</th>
+    </tr></thead><tbody>${tasks.map(t => `<tr>
+      <td>${escHtml(t.seq || '')}</td><td>${escHtml(t.hazards || '')}</td><td>${escHtml(t.mitigation || '')}</td>
+    </tr>`).join('')}</tbody></table>` : '<div class="placeholder-msg" style="padding:6px 0">No tasks listed.</div>';
+
+  const chips = arr => arr.length ? arr.map(x => `<span class="jha-chip">${escHtml(x)}</span>`).join('') : '<span style="color:var(--text-dim)">None</span>';
+  const canDel = isSupervisorLevel(currentUser?.role);
+
+  body.innerHTML = `
+    <div class="jha-view">
+      <div class="report-section-title" style="margin-top:0">Job Tasks & Hazards</div>
+      ${taskTable}
+      <div class="jha-view-grid">
+        <div><label>Required PPE</label><div class="jha-chips">${chips(ppe)}</div></div>
+        <div><label>Permits / Programs</label><div class="jha-chips">${chips(permits)}</div></div>
+        <div><label>Isolation of Hazardous Energy</label><div>${escHtml(jhaIsolationText(d))}</div></div>
+        <div><label>Work Site Diagram</label><div>${escHtml(jhaYesNo(d.diagram?.required))}</div></div>
+      </div>
+      ${d.notes ? `<div class="form-group"><label>Notes</label><div class="safety-meeting-notes">${escHtml(d.notes)}</div></div>` : ''}
+      ${j.completed_by ? `<div class="jha-completed">JHA completed by <strong>${escHtml(j.completed_by)}</strong>${j.completed_by_date ? ' · ' + localDateStr(j.completed_by_date, { month:'short', day:'numeric', year:'numeric' }) : ''}</div>` : ''}
+    </div>
+    <div class="safety-attend-section">
+      <div class="safety-attend-header">
+        <span class="report-section-title" style="margin:0">Signatures</span>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-secondary btn-sm jha-edit-btn">Edit</button>
+          <button class="btn btn-primary btn-sm jha-sign-btn">Sign JHA</button>
+          <button class="btn btn-secondary btn-sm jha-export-btn">${icon('print',14)} Export PDF</button>
+          ${canDel ? '<button class="btn btn-danger btn-sm jha-delete-btn">Delete</button>' : ''}
+        </div>
+      </div>
+      <div class="safety-attend-list"></div>
+    </div>`;
+
+  renderJHASignatures(body.querySelector('.safety-attend-list'), j.signatures || [], j.jha_id, body);
+  body.querySelector('.jha-edit-btn').addEventListener('click', () => openJHAForm(j));
+  body.querySelector('.jha-sign-btn').addEventListener('click', () => openJHASignModal(j.jha_id, body));
+  // `j` is a snapshot from when this row was expanded, so signatures added or
+  // removed since then wouldn't be in the PDF. Re-read the record first.
+  body.querySelector('.jha-export-btn').addEventListener('click', async e => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    try {
+      const fresh = await api('GET', `/api/jha/${j.jha_id}`).catch(() => j);
+      await exportJHAPDF(fresh);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+  if (canDel) body.querySelector('.jha-delete-btn').addEventListener('click', async () => {
+    if (!confirm('Delete this JHA and all its signatures?')) return;
+    try { await api('DELETE', `/api/jha/${j.jha_id}`); showToast('JHA deleted'); loadJHAList(el('jha-search')?.value.trim() || ''); }
+    catch (err) { showToast('Failed to delete: ' + err.message); }
+  });
+}
+
+function renderJHASignatures(listEl, sigs, jhaId, bodyEl) {
+  const canDel = isSupervisorLevel(currentUser?.role);
+  if (!sigs.length) { listEl.innerHTML = '<div class="placeholder-msg" style="padding:12px 0">No signatures yet.</div>'; return; }
+  listEl.innerHTML = `<table class="safety-attend-table">
+    <thead><tr><th>#</th><th>Print Name</th><th>Signature</th><th>Date</th>${canDel ? '<th></th>' : ''}</tr></thead>
+    <tbody>${sigs.map((a, i) => `<tr>
+      <td style="color:var(--text-dim);font-size:0.82rem">${i + 1}</td>
+      <td>${escHtml(a.full_name)}</td>
+      <td>${a.signature_data ? `<img src="${escHtml(a.signature_data)}" alt="signature">` : '<span style="color:var(--text-dim)">—</span>'}</td>
+      <td style="white-space:nowrap">${a.signed_date ? localDateStr(a.signed_date, { month:'short', day:'numeric', year:'numeric' }) : '—'}</td>
+      ${canDel ? `<td><button class="safety-attend-del" data-sid="${a.sig_id}" title="Delete">✕</button></td>` : ''}
+    </tr>`).join('')}</tbody></table>`;
+  if (canDel) listEl.querySelectorAll('.safety-attend-del').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('Remove this signature?')) return;
+      try {
+        await api('DELETE', `/api/jha/${jhaId}/signatures/${btn.dataset.sid}`);
+        const data = await api('GET', `/api/jha/${jhaId}`);
+        renderJHASignatures(listEl, data.signatures || [], jhaId, bodyEl);
+        const item = bodyEl.closest('.safety-meeting-item');
+        const c = item?.querySelector('.safety-attend-count');
+        if (c) c.textContent = `${data.signatures.length} sig${data.signatures.length !== 1 ? 's' : ''}`;
+      } catch (err) { showToast('Failed to delete: ' + err.message); }
+    });
+  });
+}
+
+// ── JHA create/edit form ──
+function jhaFormHtml(showTemplate) {
+  const cb = (id, label) => `<label class="jha-cb"><input type="checkbox" id="${id}"> ${escHtml(label)}</label>`;
+  return `
+    ${showTemplate ? `<div class="form-group"><label>Start from Template</label><select id="jf-template" class="ctrl-select"></select></div>` : ''}
+    <div class="form-group"><label>Job</label><input type="text" id="jf-title" class="ctrl-input" placeholder="Job / task name"></div>
+    <div class="two-col">
+      <div class="form-group"><label>Date</label><input type="date" id="jf-date" class="ctrl-input ctrl-input-sm"></div>
+      <div class="form-group"><label>Work Location</label><input type="text" id="jf-location" class="ctrl-input"></div>
+    </div>
+    <label class="jha-section-label">Sequence of Job Tasks / Potential Hazards / Mitigation</label>
+    <div id="jf-tasks"></div>
+    <button type="button" class="btn btn-secondary btn-sm" id="jf-add-task" style="margin-bottom:12px">+ Add Task</button>
+    <label class="jha-section-label">Required PPE</label>
+    <div class="jha-cb-grid">${JHA_PPE.map(([k, l]) => cb('jf-ppe-' + k, l)).join('')}</div>
+    <div class="form-group"><label>Other PPE</label><input type="text" id="jf-ppe-other" class="ctrl-input ctrl-input-sm"></div>
+    <label class="jha-section-label">Required Permits / Applicable Safety Programs</label>
+    <div class="jha-cb-grid">${JHA_PERMITS.map(([k, l]) => cb('jf-permit-' + k, l)).join('')}</div>
+    <label class="jha-section-label">Additional Checks</label>
+    <label class="jha-cb"><input type="checkbox" id="jf-atm-req"> Atmospheric testing required</label>
+    <input type="text" id="jf-atm-method" class="ctrl-input ctrl-input-sm" placeholder="Method of monitoring atmosphere" style="margin-bottom:8px">
+    <div class="jha-sds-row">
+      <div class="form-group"><label>Hazardous substances (review SDS)</label><input type="text" id="jf-sds-sub" class="ctrl-input ctrl-input-sm"></div>
+      <div class="form-group"><label>SDS Reviewed?</label><select id="jf-sds-reviewed" class="ctrl-select ctrl-input-sm"><option value="na">N/A</option><option value="yes">Yes</option><option value="">—</option></select></div>
+    </div>
+    <label class="jha-section-label">Is Isolation of Hazardous Energy Required?</label>
+    <div class="jha-yn">
+      <label class="jha-cb"><input type="checkbox" id="jf-iso-yes" data-yn="iso"> Yes</label>
+      <label class="jha-cb"><input type="checkbox" id="jf-iso-no" data-yn="iso"> No</label>
+    </div>
+    <div id="jf-iso-detail" class="jha-yn-detail">
+      <label class="jha-sub-label">If Yes, Method of Isolation</label>
+      <div class="jha-yn">
+        <label class="jha-cb"><input type="checkbox" id="jf-iso-loto"> Lock Out / Tag Out</label>
+        <label class="jha-cb"><input type="checkbox" id="jf-iso-other"> Other</label>
+      </div>
+      <input type="text" id="jf-iso-other-text" class="ctrl-input ctrl-input-sm" placeholder="Other method of isolation" style="margin-top:6px">
+    </div>
+    <label class="jha-section-label">Is There a Work Site Diagram?</label>
+    <div class="jha-yn" style="margin-bottom:8px">
+      <label class="jha-cb"><input type="checkbox" id="jf-diagram-yes" data-yn="diagram"> Yes</label>
+      <label class="jha-cb"><input type="checkbox" id="jf-diagram-no" data-yn="diagram"> No</label>
+    </div>
+    <div class="two-col">
+      <div class="form-group"><label>Weather</label><input type="text" id="jf-env-weather" class="ctrl-input ctrl-input-sm"></div>
+      <div class="form-group"><label>Terrain</label><input type="text" id="jf-env-terrain" class="ctrl-input ctrl-input-sm"></div>
+    </div>
+    <label class="jha-cb"><input type="checkbox" id="jf-train-verified"> Applicable training verified</label>
+    <input type="text" id="jf-train-list" class="ctrl-input ctrl-input-sm" placeholder="List applicable training" style="margin-bottom:8px">
+    <div class="form-group"><label>Notes</label><textarea id="jf-notes" class="ctrl-input" rows="2"></textarea></div>
+    <div class="two-col">
+      <div class="form-group"><label>JHA Completed By</label><input type="text" id="jf-completed-by" class="ctrl-input ctrl-input-sm"></div>
+      <div class="form-group"><label>Completed Date</label><input type="date" id="jf-completed-date" class="ctrl-input ctrl-input-sm"></div>
+    </div>
+    <div id="jf-error" class="error-msg hidden"></div>
+    <div class="form-row"><button class="btn btn-save" id="jf-save">Save JHA</button><button class="btn btn-secondary" id="jf-cancel">Cancel</button></div>`;
+}
+
+function jhaTaskRowHtml(t = {}) {
+  return `<div class="jha-task-row">
+    <div class="jha-task-num"></div>
+    <textarea class="jf-task-seq ctrl-input" rows="4" placeholder="Job task">${escHtml(t.seq || '')}</textarea>
+    <textarea class="jf-task-haz ctrl-input" rows="4" placeholder="Potential hazards">${escHtml(t.hazards || '')}</textarea>
+    <textarea class="jf-task-mit ctrl-input" rows="4" placeholder="Mitigation">${escHtml(t.mitigation || '')}</textarea>
+    <div class="jha-task-ctrls">
+      <button type="button" class="jha-task-btn jha-task-up" title="Move up">▲</button>
+      <button type="button" class="jha-task-btn jha-task-down" title="Move down">▼</button>
+      <button type="button" class="jha-task-btn jha-task-del" title="Remove">✕</button>
+    </div>
+  </div>`;
+}
+
+// Number the rows and grey out the arrows that can't move any further.
+function renumberJHATasks() {
+  const rows = [...el('jf-tasks').querySelectorAll('.jha-task-row')];
+  rows.forEach((row, i) => {
+    row.querySelector('.jha-task-num').textContent = i + 1;
+    row.querySelector('.jha-task-up').disabled   = i === 0;
+    row.querySelector('.jha-task-down').disabled = i === rows.length - 1;
+    row.querySelector('.jha-task-del').disabled  = rows.length === 1;
+  });
+}
+
+function renderJHATasks(tasks) {
+  const wrap = el('jf-tasks');
+  wrap.innerHTML = (tasks && tasks.length ? tasks : [{}]).map(jhaTaskRowHtml).join('');
+  // Delegated so rows added or reordered later stay wired. The form body is
+  // rebuilt on every open, so this listener goes away with it.
+  if (!wrap.dataset.wired) {
+    wrap.dataset.wired = '1';
+    wrap.addEventListener('click', e => {
+      const btn = e.target.closest('.jha-task-btn');
+      if (!btn || btn.disabled) return;
+      const row = btn.closest('.jha-task-row');
+      if (btn.classList.contains('jha-task-up'))   row.previousElementSibling?.before(row);
+      else if (btn.classList.contains('jha-task-down')) row.nextElementSibling?.after(row);
+      else if (wrap.querySelectorAll('.jha-task-row').length > 1) row.remove();
+      renumberJHATasks();
+    });
+  }
+  renumberJHATasks();
+}
+
+// Method-of-isolation only applies when "Yes" is checked; the free-text box
+// only applies when "Other" is checked.
+function syncJHAIsolation() {
+  const yes = el('jf-iso-yes')?.checked;
+  const detail = el('jf-iso-detail');
+  if (detail) detail.style.display = yes ? '' : 'none';
+  const otherBox = el('jf-iso-other-text');
+  if (otherBox) otherBox.style.display = (yes && el('jf-iso-other')?.checked) ? '' : 'none';
+}
+
+function fillJHAForm(title, location, date, data) {
+  const d = { ...emptyJHAData(), ...(data || {}) };
+  el('jf-title').value = title || '';
+  el('jf-location').value = location || '';
+  el('jf-date').value = date ? String(date).slice(0, 10) : el('jf-date').value;
+  JHA_PPE.forEach(([k]) => { el('jf-ppe-' + k).checked = !!d.ppe?.[k]; });
+  el('jf-ppe-other').value = d.ppe?.other || '';
+  JHA_PERMITS.forEach(([k]) => { el('jf-permit-' + k).checked = !!d.permits?.[k]; });
+  el('jf-atm-req').checked = !!d.atmospheric?.required;
+  el('jf-atm-method').value = d.atmospheric?.method || '';
+  el('jf-sds-sub').value = d.sds?.substances || '';
+  el('jf-sds-reviewed').value = d.sds?.reviewed ?? 'na';
+  const iso = d.isolation || {};
+  el('jf-iso-yes').checked = iso.required === true;
+  el('jf-iso-no').checked  = iso.required === false;
+  el('jf-iso-loto').checked = !!iso.loto;
+  el('jf-iso-other').checked = !!iso.other;
+  el('jf-iso-other-text').value = iso.otherText || '';
+  el('jf-diagram-yes').checked = d.diagram?.required === true;
+  el('jf-diagram-no').checked  = d.diagram?.required === false;
+  syncJHAIsolation();
+  el('jf-env-weather').value = d.environmental?.weather || '';
+  el('jf-env-terrain').value = d.environmental?.terrain || '';
+  el('jf-train-verified').checked = !!d.training?.verified;
+  el('jf-train-list').value = d.training?.list || '';
+  el('jf-notes').value = d.notes || '';
+  renderJHATasks(d.tasks);
+}
+
+function collectJHAForm() {
+  const tasks = [...el('jf-tasks').querySelectorAll('.jha-task-row')].map(r => ({
+    seq: r.querySelector('.jf-task-seq').value.trim(),
+    hazards: r.querySelector('.jf-task-haz').value.trim(),
+    mitigation: r.querySelector('.jf-task-mit').value.trim(),
+  })).filter(t => t.seq || t.hazards || t.mitigation);
+  const ppe = { other: el('jf-ppe-other').value.trim() };
+  JHA_PPE.forEach(([k]) => { if (el('jf-ppe-' + k).checked) ppe[k] = true; });
+  const permits = {};
+  JHA_PERMITS.forEach(([k]) => { if (el('jf-permit-' + k).checked) permits[k] = true; });
+  return {
+    title: el('jf-title').value.trim(),
+    work_location: el('jf-location').value.trim(),
+    jha_date: el('jf-date').value || null,
+    completed_by: el('jf-completed-by').value.trim(),
+    completed_by_date: el('jf-completed-date').value || null,
+    data: {
+      tasks, ppe, permits,
+      atmospheric: { required: el('jf-atm-req').checked, method: el('jf-atm-method').value.trim() },
+      sds: { substances: el('jf-sds-sub').value.trim(), reviewed: el('jf-sds-reviewed').value },
+      isolation: {
+        required: el('jf-iso-yes').checked ? true : (el('jf-iso-no').checked ? false : null),
+        loto: el('jf-iso-loto').checked,
+        other: el('jf-iso-other').checked,
+        otherText: el('jf-iso-other-text').value.trim(),
+      },
+      diagram: {
+        required: el('jf-diagram-yes').checked ? true : (el('jf-diagram-no').checked ? false : null),
+      },
+      environmental: { weather: el('jf-env-weather').value.trim(), terrain: el('jf-env-terrain').value.trim(), other: '' },
+      training: { verified: el('jf-train-verified').checked, list: el('jf-train-list').value.trim() },
+      notes: el('jf-notes').value.trim(),
+    },
+  };
+}
+
+function openJHAForm(existing) {
+  _jhaEditId = existing ? existing.jha_id : null;
+  el('jha-new-btn').style.display = 'none';
+  const wrap = el('jha-form-wrap');
+  wrap.classList.remove('hidden');
+  el('jha-form-body').innerHTML = jhaFormHtml(!existing);
+
+  el('jf-add-task').addEventListener('click', () => {
+    el('jf-tasks').insertAdjacentHTML('beforeend', jhaTaskRowHtml());
+    renumberJHATasks();
+  });
+  // Yes/No pairs behave like radios (either can also be cleared).
+  el('jha-form-body').querySelectorAll('[data-yn]').forEach(box => {
+    box.addEventListener('change', () => {
+      if (box.checked) {
+        el('jha-form-body').querySelectorAll(`[data-yn="${box.dataset.yn}"]`)
+          .forEach(o => { if (o !== box) o.checked = false; });
+      }
+      if (box.dataset.yn === 'iso') syncJHAIsolation();
+    });
+  });
+  el('jf-iso-other').addEventListener('change', syncJHAIsolation);
+  el('jf-cancel').addEventListener('click', () => { wrap.classList.add('hidden'); el('jha-new-btn').style.display = ''; });
+  el('jf-save').addEventListener('click', saveJHAForm);
+
+  if (existing) {
+    el('jf-date').value = new Date().toLocaleDateString('en-CA');
+    fillJHAForm(existing.title, existing.work_location, existing.jha_date, existing.data);
+    el('jf-completed-by').value = existing.completed_by || '';
+    el('jf-completed-date').value = existing.completed_by_date ? String(existing.completed_by_date).slice(0, 10) : '';
+  } else {
+    el('jf-date').value = new Date().toLocaleDateString('en-CA');
+    el('jf-template').innerHTML = Object.entries(JHA_TEMPLATES).map(([k, t]) => `<option value="${k}">${escHtml(t.name)}</option>`).join('');
+    el('jf-template').addEventListener('change', () => {
+      const t = JHA_TEMPLATES[el('jf-template').value] || JHA_TEMPLATES.blank;
+      fillJHAForm(t.title, el('jf-location').value, el('jf-date').value, JSON.parse(JSON.stringify(t.data)));
+    });
+    fillJHAForm('', '', el('jf-date').value, emptyJHAData());
+  }
+  wrap.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+async function saveJHAForm() {
+  const payload = collectJHAForm();
+  const errEl = el('jf-error');
+  errEl.classList.add('hidden');
+  if (!payload.title) { errEl.textContent = 'Job name is required.'; errEl.classList.remove('hidden'); return; }
+  const _save = beginSave(el('jf-save'));
+  try {
+    if (_jhaEditId) await api('PATCH', `/api/jha/${_jhaEditId}`, payload);
+    else await api('POST', '/api/jha', { ...payload, template_key: el('jf-template')?.value || 'blank' });
+    el('jha-form-wrap').classList.add('hidden');
+    el('jha-new-btn').style.display = '';
+    showToast(_jhaEditId ? 'JHA updated' : 'JHA created');
+    loadJHAList(el('jha-search')?.value.trim() || '');
+  } catch (err) {
+    errEl.textContent = err.message; errEl.classList.remove('hidden');
+  } finally { _save(); }
+}
+
+// ── JHA sign modal (own canvas + state, reuses initSigCanvas) ──
+let _jhaSigCanvas = null, _jhaSigCtx = null, _jhaSigInited = false, _jhaSignId = null;
+
+function openJHASignModal(jhaId, bodyEl) {
+  _jhaSignId = jhaId;
+  el('jha-signin-modal').classList.remove('hidden');
+  el('jha-signin-date').value = new Date().toLocaleDateString('en-CA');
+  el('jha-signin-error').classList.add('hidden');
+  if (!_jhaSigInited) {
+    _jhaSigInited = true;
+    _jhaSigCanvas = el('jha-sig-canvas');
+    _jhaSigCtx = _jhaSigCanvas.getContext('2d');
+    initSigCanvas(_jhaSigCanvas, _jhaSigCtx);
+    el('jha-sig-clear').addEventListener('click', () => _jhaSigCtx.clearRect(0, 0, _jhaSigCanvas.width, _jhaSigCanvas.height));
+    el('jha-signin-close').addEventListener('click', () => el('jha-signin-modal').classList.add('hidden'));
+    el('jha-signin-modal').addEventListener('click', e => { if (e.target === el('jha-signin-modal')) el('jha-signin-modal').classList.add('hidden'); });
+    el('jha-signin-name-sel').addEventListener('change', () => {
+      el('jha-signin-name-other').style.display = el('jha-signin-name-sel').value === '__other__' ? '' : 'none';
+    });
+  } else {
+    _jhaSigCtx.clearRect(0, 0, _jhaSigCanvas.width, _jhaSigCanvas.height);
+  }
+  el('jha-signin-save').onclick = () => saveJHASign(bodyEl);
+  api('GET', '/api/users/list').then(users => {
+    const sel = el('jha-signin-name-sel');
+    const current = currentUser?.full_name || '';
+    sel.innerHTML = users.map(u => {
+      const n = u.full_name || u.username;
+      return `<option value="${escHtml(n)}" ${n === current ? 'selected' : ''}>${escHtml(n)}</option>`;
+    }).join('') + '<option value="__other__">Other (type below)…</option>';
+    el('jha-signin-name-other').style.display = 'none';
+  }).catch(() => {});
+}
+
+async function saveJHASign(bodyEl) {
+  const sel = el('jha-signin-name-sel');
+  const name = sel.value === '__other__' ? el('jha-signin-name-other').value.trim() : sel.value;
+  const errEl = el('jha-signin-error');
+  errEl.classList.add('hidden');
+  if (!name) { errEl.textContent = 'Please enter your name.'; errEl.classList.remove('hidden'); return; }
+  const blank = !_jhaSigCanvas.toDataURL().includes('data:image/png;base64,iVBOR');
+  const sigData = blank ? '' : _jhaSigCanvas.toDataURL('image/png');
+  const btn = el('jha-signin-save');
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try {
+    await api('POST', `/api/jha/${_jhaSignId}/sign`, { full_name: name, signature_data: sigData || null, signed_date: el('jha-signin-date').value });
+    el('jha-signin-modal').classList.add('hidden');
+    showToast('Signed');
+    const data = await api('GET', `/api/jha/${_jhaSignId}`);
+    renderJHASignatures(bodyEl.querySelector('.safety-attend-list'), data.signatures || [], _jhaSignId, bodyEl);
+    const item = bodyEl.closest('.safety-meeting-item');
+    const c = item?.querySelector('.safety-attend-count');
+    if (c) c.textContent = `${data.signatures.length} sig${data.signatures.length !== 1 ? 's' : ''}`;
+  } catch (err) {
+    btn.disabled = false; btn.textContent = 'Save';
+    errEl.textContent = err.message; errEl.classList.remove('hidden');
+  }
+}
+
+function exportJHAPDF(j) {
+  const d = j.data || {};
+  const esc = escHtml;
+  const fmt = x => x ? localDateStr(x, { month:'long', day:'numeric', year:'numeric' }) : '—';
+  const tasks = (d.tasks || []).filter(t => t.seq || t.hazards || t.mitigation);
+  const ppe = JHA_PPE.filter(([k]) => d.ppe?.[k]).map(([, l]) => l);
+  if (d.ppe?.other) ppe.push(d.ppe.other);
+  const permits = JHA_PERMITS.filter(([k]) => d.permits?.[k]).map(([, l]) => l);
+  const sigs = j.signatures || [];
+  // html2pdf clones .pdf-root out of its holder, so it would otherwise inherit
+  // the app's dark-theme text colour and print light grey. Force solid black.
+  const css = `
+    .pdf-root, .pdf-root *{color:#000 !important}
+    h1{font-size:16px;margin:0 0 2px} .sub{font-size:11px;margin:0 0 10px}
+    table{width:100%;border-collapse:collapse;margin:6px 0 12px;font-size:11px}
+    th,td{border:1px solid #666;padding:4px 6px;text-align:left;vertical-align:top}
+    th{background:#e8e8e8;font-weight:700} .lbl{font-weight:700;font-size:11px;margin:8px 0 2px}
+    .val{font-size:11px} .foot{margin-top:10px;font-size:10px;font-weight:700}
+    .sig img{height:40px;filter:brightness(0)}`;
+  const inner = `
+    <h1>Kern County Water Agency — Job Hazard Analysis</h1>
+    <div class="sub"><strong>Job:</strong> ${esc(j.title)} &nbsp;·&nbsp; <strong>Date:</strong> ${fmt(j.jha_date)} &nbsp;·&nbsp; <strong>Location:</strong> ${esc(j.work_location || '—')}</div>
+    <table><thead><tr><th style="width:34%">Sequence of Job Task</th><th style="width:33%">Potential Hazards</th><th style="width:33%">Hazard Mitigation</th></tr></thead>
+    <tbody>${tasks.map(t => `<tr><td>${esc(t.seq || '')}</td><td>${esc(t.hazards || '')}</td><td>${esc(t.mitigation || '')}</td></tr>`).join('') || '<tr><td colspan="3">—</td></tr>'}</tbody></table>
+    <div class="lbl">Required PPE</div><div class="val">${ppe.length ? ppe.map(esc).join(', ') : '—'}</div>
+    <div class="lbl">Permits / Applicable Safety Programs</div><div class="val">${permits.length ? permits.map(esc).join(', ') : '—'}</div>
+    ${d.sds?.substances ? `<div class="lbl">Hazardous Substances</div><div class="val">${esc(d.sds.substances)} &nbsp;·&nbsp; SDS Reviewed: ${esc(d.sds.reviewed === 'yes' ? 'Yes' : d.sds.reviewed === 'na' ? 'N/A' : '—')}</div>` : ''}
+    <div class="lbl">Is Isolation of Hazardous Energy Required?</div><div class="val">${esc(jhaIsolationText(d))}</div>
+    <div class="lbl">Is There a Work Site Diagram?</div><div class="val">${esc(jhaYesNo(d.diagram?.required))}</div>
+    ${d.notes ? `<div class="lbl">Notes</div><div class="val">${esc(d.notes)}</div>` : ''}
+    ${j.completed_by ? `<div class="lbl">JHA Completed By</div><div class="val">${esc(j.completed_by)}${j.completed_by_date ? ' · ' + fmt(j.completed_by_date) : ''}</div>` : ''}
+    <div class="lbl">JHA Reviewed / Signed By</div>
+    <table><thead><tr><th>Name</th><th>Signature</th><th>Date</th></tr></thead>
+    <tbody>${sigs.length ? sigs.map(s => `<tr><td>${esc(s.full_name)}</td><td class="sig">${s.signature_data ? `<img src="${esc(s.signature_data)}">` : ''}</td><td>${s.signed_date ? fmt(s.signed_date) : ''}</td></tr>`).join('') : '<tr><td colspan="3">No signatures</td></tr>'}</tbody></table>
+    <div class="foot">COMPLETED JHA FORM MUST BE POSTED AT JOB LOCATION</div>`;
+  const filename = `JHA_${(j.title || 'form').replace(/[^a-z0-9]+/gi, '-')}.pdf`;
+  return sharePdfFromHtml(inner, css, filename, 'Job Hazard Analysis', {})
+    .catch(err => { if (err.name !== 'AbortError') showToast('Export failed: ' + err.message, 'error'); });
 }
 
 /* ── Global Search ───────────────────────────────────────────────────────── */
@@ -13653,6 +14283,7 @@ el('pond-maps-btn').addEventListener('click', openAllPondsMap);
 // ── Well Readings Report Panel ─────────────────────────────────────────────────
 
 let lastWellDailyRows = [];
+let lastWellMonthly = null;  // { month, pool, daysInMonth, areas, areaMap, ordered, data }
 
 function makeSvgSparkline(values, { width=160, height=40, inverted=false, color='#4caf50' } = {}) {
   const valid = values.map((v,i) => ({v: Number(v), i})).filter(x => !isNaN(x.v) && x.v != null);
@@ -13708,10 +14339,25 @@ function initWellReportPanel() {
       el('well-daily-toolbar').style.display   = tab === 'daily'   ? '' : 'none';
       el('well-detail-toolbar').style.display  = tab === 'detail'  ? '' : 'none';
       el('well-dripper-toolbar').style.display = tab === 'dripper' ? '' : 'none';
+      el('well-monthly-toolbar').style.display = tab === 'monthly' ? '' : 'none';
       el('report-wells-output').innerHTML = '';
       if (tab === 'daily')   renderWellDailyReport();
       else if (tab === 'detail')  renderWellDetailReport();
       else if (tab === 'dripper') renderWellDripperReport();
+      else if (tab === 'monthly') renderWellMonthlyReport();
+    });
+
+    // Monthly grid nav
+    el('well-monthly-month').addEventListener('change', renderWellMonthlyReport);
+    el('well-monthly-pool').addEventListener('change', renderWellMonthlyReport);
+    el('well-monthly-fill').addEventListener('change', renderWellMonthlyReport);
+    el('well-monthly-copy').addEventListener('click', () => {
+      const rows = wellMonthlyMatrix();
+      if (!rows.length) return showToast('Nothing to copy', 'error');
+      const tsv = rows.map(r => r.join('\t')).join('\n');
+      const done = () => showToast('Grid copied — paste into Excel', 'success');
+      if (navigator.clipboard?.writeText) navigator.clipboard.writeText(tsv).then(done).catch(() => fallbackCopyText(tsv, done));
+      else fallbackCopyText(tsv, done);
     });
 
     el('well-dripper-amount').addEventListener('change', recalcDripper);
@@ -13741,8 +14387,12 @@ function initWellReportPanel() {
         if (!lastWellDripperRows.length) return showToast('No report data to export', 'error');
         exportContext = 'wells-dripper';
         el('export-modal-subtitle').textContent = `Dripper Oil Levels (fill target: ${el('well-dripper-amount').value} gal)`;
+      } else if (activeTab === 'monthly') {
+        if (!lastWellMonthly) return showToast('No report data to export', 'error');
+        exportContext = 'wells-monthly';
+        el('export-modal-subtitle').textContent = `Monthly Well Report — ${lastWellMonthly.pool} · ${lastWellMonthly.month}`;
       } else {
-        return showToast('Export available on Daily Overview and Dripper Oil tabs', 'info');
+        return showToast('Export available on Daily, Dripper Oil, and Monthly tabs', 'info');
       }
       el('export-modal').classList.remove('hidden');
     });
@@ -13752,7 +14402,19 @@ function initWellReportPanel() {
     el('well-daily-toolbar').style.display   = '';
     el('well-detail-toolbar').style.display  = 'none';
     el('well-dripper-toolbar').style.display = 'none';
+    el('well-monthly-toolbar').style.display = 'none';
   }
+
+  // Default the month picker to the current month
+  if (!el('well-monthly-month').value) el('well-monthly-month').value = todayISO().slice(0, 7);
+
+  // Load pool options every open (may have changed)
+  api('GET', '/api/reports/wells/pools').then(pools => {
+    const sel = el('well-monthly-pool');
+    const prev = sel.value;
+    sel.innerHTML = pools.map(p => `<option value="${escHtml(p)}">${escHtml(p)}</option>`).join('');
+    if (prev && pools.includes(prev)) sel.value = prev;
+  }).catch(() => {});
 
   // Load well dropdown every open (may have changed)
   api('GET', '/api/reports/wells/list').then(wells => {
@@ -13780,6 +14442,105 @@ function initWellReportPanel() {
   }).catch(() => {});
 
   renderWellDailyReport();
+}
+
+// Monthly grid: days of the month down the left, every well discharging in the
+// selected pool across the top (grouped by area). Cell = last flow_cfs that day.
+async function renderWellMonthlyReport() {
+  const month = el('well-monthly-month').value;
+  const poolName = el('well-monthly-pool').value;
+  const out = el('report-wells-output');
+  lastWellMonthly = null;
+  if (!month || !poolName) { out.innerHTML = '<div class="placeholder-msg">Select a month and pool.</div>'; return; }
+  out.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const { wells, data, daysInMonth } = await api('GET',
+      `/api/reports/wells/monthly?month=${encodeURIComponent(month)}&pool=${encodeURIComponent(poolName)}`);
+    if (!wells.length) { out.innerHTML = '<div class="placeholder-msg">No wells discharging in this pool.</div>'; return; }
+
+    // Group wells by area (server already ordered by area, common_name)
+    const areas = [], areaMap = {};
+    wells.forEach(w => {
+      const a = w.area || 'Other';
+      if (!areaMap[a]) { areaMap[a] = []; areas.push(a); }
+      areaMap[a].push(w);
+    });
+    const ordered = areas.flatMap(a => areaMap[a]);
+
+    // Build the display map. With "fill" on, blank days carry the previous day's
+    // value forward (within the month); otherwise blanks stay blank.
+    const fill = el('well-monthly-fill').checked;
+    const display = {};
+    ordered.forEach(w => {
+      display[w.well_id] = {};
+      let last = null;
+      for (let d = 1; d <= daysInMonth; d++) {
+        const raw = data[w.well_id]?.[d];
+        if (raw != null) { last = raw; display[w.well_id][d] = raw; }
+        else if (fill && last != null) display[w.well_id][d] = last;
+      }
+    });
+    lastWellMonthly = { month, pool: poolName, daysInMonth, areas, areaMap, ordered, data, display };
+
+    let areaRow = '<tr><th class="wm-day-col" rowspan="2">Day</th>';
+    areas.forEach(a => { areaRow += `<th colspan="${areaMap[a].length}" class="wm-area-hdr">${escHtml(a)}</th>`; });
+    areaRow += '</tr>';
+
+    let wellRow = '<tr>';
+    ordered.forEach(w => { wellRow += `<th class="report-num wm-well-hdr">${escHtml(w.common_name)}</th>`; });
+    wellRow += '</tr>';
+
+    let body = '';
+    for (let d = 1; d <= daysInMonth; d++) {
+      body += `<tr><td class="wm-day-col">${d}</td>`;
+      ordered.forEach(w => {
+        const v = display[w.well_id]?.[d];
+        body += `<td class="report-num">${v != null ? Number(v).toFixed(2) : ''}</td>`;
+      });
+      body += '</tr>';
+    }
+
+    const monthLabel = new Date(month + '-01T00:00:00').toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+    out.innerHTML = `<div class="report-card">
+      <div class="report-title">Monthly Well Report — ${escHtml(poolName)}</div>
+      <div class="report-subtitle">${monthLabel} · calculated cfs (from totalizer)</div>
+      <table class="report-table wm-table">
+        <thead>${areaRow}${wellRow}</thead>
+        <tbody>${body}</tbody>
+      </table></div>`;
+  } catch (err) {
+    out.innerHTML = '<div class="placeholder-msg">Failed to load.</div>';
+  }
+}
+
+// Clipboard fallback for browsers without navigator.clipboard (e.g. non-secure ctx).
+function fallbackCopyText(text, onDone) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand('copy'); if (onDone) onDone(); } catch { showToast('Copy failed', 'error'); }
+  document.body.removeChild(ta);
+}
+
+// Flatten the monthly grid into rows of cells (2 header rows + one row per day),
+// shared by the Copy-for-Excel (TSV) and CSV export paths.
+function wellMonthlyMatrix() {
+  const m = lastWellMonthly;
+  if (!m) return [];
+  const rows = [];
+  const areaHdr = ['Day'];
+  m.areas.forEach(a => m.areaMap[a].forEach((w, i) => areaHdr.push(i === 0 ? a : '')));
+  rows.push(areaHdr);
+  rows.push(['', ...m.ordered.map(w => w.common_name)]);
+  for (let d = 1; d <= m.daysInMonth; d++) {
+    rows.push([String(d), ...m.ordered.map(w => {
+      const v = m.display[w.well_id]?.[d];
+      return v != null ? Number(v).toFixed(2) : '';
+    })]);
+  }
+  return rows;
 }
 
 async function renderWellDailyReport() {

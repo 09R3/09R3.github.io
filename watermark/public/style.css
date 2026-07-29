@@ -1393,6 +1393,24 @@ input[type="date"].ctrl-input { min-height: 44px; }
 .report-table tr:last-child td { border-bottom: none; }
 .report-table .report-num { text-align: right; font-variant-numeric: tabular-nums; }
 .report-empty { font-size: 0.88rem; color: var(--text-dim); font-style: italic; padding: 8px 0; }
+
+/* Monthly well grid — wide table with a sticky day column + grouped area headers */
+.wm-table th, .wm-table td { white-space: nowrap; }
+.wm-table .wm-area-hdr {
+  text-align: center; border-left: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.wm-table .wm-well-hdr { text-align: right; font-size: 0.68rem; }
+.wm-table .wm-day-col {
+  position: sticky; left: 0; z-index: 2;
+  background: var(--surface); text-align: center; font-weight: 700;
+  border-right: 1px solid var(--border);
+}
+.wm-table thead .wm-day-col { z-index: 3; }
+.wm-fill-toggle {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 0.82rem; color: var(--text-dim); white-space: nowrap; cursor: pointer;
+}
 .report-meta  { font-size: 0.82rem; color: var(--text-dim); margin: 0 0 8px; }
 .kf-op-bar-wrap { background: var(--surface2); border-radius: 4px; height: 8px; min-width: 80px; overflow: hidden; }
 .kf-op-bar { background: var(--accent); height: 100%; border-radius: 4px; transition: width 0.4s ease; }
@@ -3187,6 +3205,52 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
   margin-bottom: 6px;
 }
 .safety-attend-count { font-size: 0.82rem; color: var(--text-dim); }
+
+/* ── JHA form + view ─────────────────────────────────────────────────────── */
+.jha-section-label {
+  display: block; font-weight: 700; font-size: 0.78rem; text-transform: uppercase;
+  letter-spacing: 0.04em; color: var(--text-dim); margin: 14px 0 6px;
+}
+.jha-cb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 4px 12px; margin-bottom: 10px; }
+.jha-cb { display: flex; align-items: center; gap: 6px; font-size: 0.88rem; cursor: pointer; }
+.jha-task-row {
+  display: grid; grid-template-columns: auto 1fr 1fr 1fr auto; gap: 6px;
+  align-items: start; margin-bottom: 8px;
+}
+.jha-task-row textarea { resize: vertical; min-height: 84px; font-size: 0.9rem; line-height: 1.4; }
+.jha-task-num {
+  font-size: 0.78rem; font-weight: 700; color: var(--text-dim);
+  padding-top: 10px; min-width: 16px; text-align: right;
+}
+.jha-task-ctrls { display: flex; flex-direction: column; gap: 2px; padding-top: 4px; }
+.jha-task-btn {
+  background: none; border: 1px solid var(--border); border-radius: 4px;
+  color: var(--text-dim); font-size: 0.72rem; line-height: 1;
+  cursor: pointer; padding: 4px 6px; min-height: 24px;
+}
+.jha-task-btn:hover:not(:disabled) { background: var(--surface-raised, var(--surface)); color: var(--text); }
+.jha-task-btn:disabled { opacity: 0.3; cursor: default; }
+.jha-sds-row { display: grid; grid-template-columns: 1fr 140px; gap: 12px; align-items: start; }
+.jha-yn { display: flex; gap: 18px; flex-wrap: wrap; margin-bottom: 4px; }
+.jha-yn-detail {
+  border-left: 2px solid var(--border); padding-left: 10px;
+  margin: 4px 0 10px;
+}
+.jha-sub-label { display: block; font-size: 0.8rem; color: var(--text-dim); margin-bottom: 4px; }
+.jha-view-table { margin: 4px 0 12px; }
+.jha-view-table th, .jha-view-table td { font-size: 0.82rem; vertical-align: top; }
+.jha-view-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 4px 0 10px; }
+.jha-view-grid label { display: block; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dim); margin-bottom: 4px; }
+.jha-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.jha-chip { background: var(--surface-raised, var(--surface)); border: 1px solid var(--border); border-radius: 12px; padding: 2px 9px; font-size: 0.78rem; }
+.jha-completed { font-size: 0.85rem; color: var(--text-dim); margin-top: 8px; }
+@media (max-width: 560px) {
+  .jha-task-row { grid-template-columns: auto 1fr; }
+  .jha-task-row textarea { grid-column: 2; }
+  .jha-task-ctrls { grid-column: 2; flex-direction: row; justify-content: flex-end; }
+  .jha-sds-row { grid-template-columns: 1fr; }
+  .jha-view-grid { grid-template-columns: 1fr; }
+}
 .safety-signin-card {
   max-width: min(500px, 96vw);
   width: 96vw;
