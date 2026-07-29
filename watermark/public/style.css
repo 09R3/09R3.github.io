@@ -519,6 +519,8 @@ html, body {
 .btn-secondary:hover { background: var(--border); }
 .btn-save  { background: var(--green); color: #fff; }
 .btn-save:hover  { background: var(--green-light); }
+.btn-danger { background: var(--red); color: #fff; }
+.btn-danger:hover { background: var(--red-light); }
 .btn-full  { width: 100%; }
 
 /* ── Toggle / Segment Controls ───────────────────────────────────────────── */

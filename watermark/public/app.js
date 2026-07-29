@@ -99,6 +99,17 @@ function nowHHMM() {
   return d.toTimeString().slice(0, 5);
 }
 
+// Sounder Number is usually the same instrument for a whole run, so remember
+// the last one entered and pre-fill it. Auto-fill is only a default — the
+// operator can always change it.
+function lastSounderNo() { return localStorage.getItem('watermark-last-sounder') || ''; }
+// Stores the value (when non-blank) and returns it normalised for the payload.
+function rememberSounderNo(v) {
+  const s = (v || '').trim();
+  if (s) localStorage.setItem('watermark-last-sounder', s);
+  return s || null;
+}
+
 function fmt(val, decimals = 1) {
   if (val == null || val === '') return '—';
   return Number(val).toFixed(decimals);
@@ -911,9 +922,9 @@ const HIST_COLS = {
   pge:         [{ key: 'value',         label: 'kWh' }],
   monitor:     [{ key: 'value',         label: 'kWh' }],
   well:        [{ key: 'hour_reading',  label: 'Hours' }, { key: 'flow_cfs', label: 'Flow (cfs)' }, { key: 'totalizer', label: 'Totalizer' }],
-  kf:          [{ key: 'value',         label: 'DTW (ft)' }, { key: 'method', label: 'Method' }, { key: 'on_off', label: 'On/Off' }, { key: 'entered_by', label: 'Operator' }],
-  piezometer:  [{ key: 'value',         label: 'DTW (ft)' }, { key: 'method', label: 'Method' }, { key: 'wet_dry_moist', label: 'Condition' }, { key: 'entered_by', label: 'Operator' }],
-  dwr:         [{ key: 'value',         label: 'DTW (ft)' }, { key: 'method', label: 'Method' }, { key: 'entered_by', label: 'Operator' }],
+  kf:          [{ key: 'value',         label: 'DTW (ft)' }, { key: 'method', label: 'Method' }, { key: 'on_off', label: 'On/Off' }, { key: 'entered_by', label: 'Operator' }, { key: 'sounder_number', label: 'Sounder #' }],
+  piezometer:  [{ key: 'value',         label: 'DTW (ft)' }, { key: 'method', label: 'Method' }, { key: 'wet_dry_moist', label: 'Condition' }, { key: 'entered_by', label: 'Operator' }, { key: 'sounder_number', label: 'Sounder #' }],
+  dwr:         [{ key: 'value',         label: 'DTW (ft)' }, { key: 'method', label: 'Method' }, { key: 'entered_by', label: 'Operator' }, { key: 'sounder_number', label: 'Sounder #' }],
   canal:       [{ key: 'flow',          label: 'Flow (cfs)' }, { key: 'totalizer', label: 'Totalizer (AF)' }, { key: 'gate_setting', label: 'Gate' }],
   vehicle:       [{ key: 'odometer_miles', label: 'Odometer' }, { key: 'engine_hours', label: 'Eng. Hrs' }],
   'staff-gauge': [{ key: 'value',          label: 'Level (ft)' }, { key: 'entered_by', label: 'By' }],
@@ -5654,15 +5665,20 @@ function createKFItem(w, dateInput, timeInput) {
         <div class="form-group toggle-row">
           <label>Condition</label>
           <div class="toggle-group">
-            <button class="toggle-btn kf-c-wet">Wet</button>
-            <button class="toggle-btn kf-c-dry">Dry</button>
             <button class="toggle-btn kf-c-moist">Moist</button>
+            <button class="toggle-btn kf-c-dry">Dry</button>
           </div>
         </div>
       </div>
-      <div class="form-group">
-        <label>Operator</label>
-        <input type="text" class="ctrl-input kf-op" placeholder="Initials">
+      <div class="two-col">
+        <div class="form-group">
+          <label>Operator</label>
+          <input type="text" class="ctrl-input kf-op" placeholder="Initials">
+        </div>
+        <div class="form-group">
+          <label>Sounder Number</label>
+          <input type="text" class="ctrl-input kf-sounder-no" placeholder="Sounder #" value="${escHtml(lastSounderNo())}">
+        </div>
       </div>
       <div class="form-group">
         <label>Notes</label>
@@ -5740,18 +5756,19 @@ function createKFItem(w, dateInput, timeInput) {
     div.querySelector(`.kf-m-${kfMethod}`).classList.add('active');
   }
 
-  // Condition toggles (Wet / Dry / Moist) — tap again to deselect
+  // Condition toggles (Moist / Dry) — tap again to deselect
   let kfCond = null;
-  const cWet = div.querySelector('.kf-c-wet');
   const cDry = div.querySelector('.kf-c-dry');
   const cMo  = div.querySelector('.kf-c-moist');
-  [['wet', cWet, [cDry, cMo]], ['dry', cDry, [cWet, cMo]], ['moist', cMo, [cWet, cDry]]].forEach(([val, btn, rest]) => {
+  [['moist', cMo, [cDry]], ['dry', cDry, [cMo]]].forEach(([val, btn, rest]) => {
     btn.addEventListener('click', () => {
       if (kfCond === val) { kfCond = null; btn.classList.remove('active'); return; }
       kfCond = val; btn.classList.add('active'); rest.forEach(b => b.classList.remove('active'));
     });
   });
-  if (w.last_wet_dry_moist && ['wet', 'dry', 'moist'].includes(w.last_wet_dry_moist)) {
+  // Legacy readings may still carry 'wet'; ignore it rather than pre-selecting
+  // a button that no longer exists.
+  if (['dry', 'moist'].includes(w.last_wet_dry_moist)) {
     kfCond = w.last_wet_dry_moist;
     div.querySelector(`.kf-c-${kfCond}`).classList.add('active');
   }
@@ -5786,6 +5803,7 @@ function createKFItem(w, dateInput, timeInput) {
       plopper_sounder: kfMethod || null,
       wet_dry_moist:   kfCond || null,
       operator:        div.querySelector('.kf-op').value || null,
+      sounder_number:  rememberSounderNo(div.querySelector('.kf-sounder-no').value),
       notes:           div.querySelector('.kf-notes').value || null,
       access:          kfAccess,
     };
@@ -5967,15 +5985,20 @@ function createPiezItem(p, dateInput, timeInput) {
         <div class="form-group toggle-row">
           <label>Condition</label>
           <div class="toggle-group">
-            <button class="toggle-btn active piez-wet">Wet</button>
+            <button class="toggle-btn active piez-moist">Moist</button>
             <button class="toggle-btn piez-dry">Dry</button>
-            <button class="toggle-btn piez-moist">Moist</button>
           </div>
         </div>
       </div>
-      <div class="form-group">
-        <label>Operator</label>
-        <input type="text" class="ctrl-input piez-op" placeholder="Initials">
+      <div class="two-col">
+        <div class="form-group">
+          <label>Operator</label>
+          <input type="text" class="ctrl-input piez-op" placeholder="Initials">
+        </div>
+        <div class="form-group">
+          <label>Sounder Number</label>
+          <input type="text" class="ctrl-input piez-sounder-no" placeholder="Sounder #" value="${escHtml(lastSounderNo())}">
+        </div>
       </div>
       <div class="form-group">
         <label>Notes</label>
@@ -5997,11 +6020,10 @@ function createPiezItem(p, dateInput, timeInput) {
 
   // Toggle state
   let piezMethod = 'plopper';
-  let piezCond   = 'wet';
+  let piezCond   = 'moist';
 
   const plBtn  = div.querySelector('.piez-plopper');
   const soBtn  = div.querySelector('.piez-sounder');
-  const wetBtn = div.querySelector('.piez-wet');
   const dryBtn = div.querySelector('.piez-dry');
   const moBtn  = div.querySelector('.piez-moist');
 
@@ -6011,9 +6033,9 @@ function createPiezItem(p, dateInput, timeInput) {
     plBtn.classList.remove('active');
     soBtn.classList.add('active');
   }
-  if (p.last_wet_dry_moist) {
+  // Legacy readings may still carry 'wet'; fall back to the Moist default.
+  if (['dry', 'moist'].includes(p.last_wet_dry_moist)) {
     piezCond = p.last_wet_dry_moist;
-    wetBtn.classList.remove('active');
     dryBtn.classList.remove('active');
     moBtn.classList.remove('active');
     div.querySelector(`.piez-${piezCond}`).classList.add('active');
@@ -6027,17 +6049,13 @@ function createPiezItem(p, dateInput, timeInput) {
     piezMethod = 'sounder';
     soBtn.classList.add('active'); plBtn.classList.remove('active');
   });
-  wetBtn.addEventListener('click', e => {
-    piezCond = 'wet';
-    wetBtn.classList.add('active'); dryBtn.classList.remove('active'); moBtn.classList.remove('active');
-  });
   dryBtn.addEventListener('click', e => {
     piezCond = 'dry';
-    dryBtn.classList.add('active'); wetBtn.classList.remove('active'); moBtn.classList.remove('active');
+    dryBtn.classList.add('active'); moBtn.classList.remove('active');
   });
   moBtn.addEventListener('click', e => {
     piezCond = 'moist';
-    moBtn.classList.add('active'); wetBtn.classList.remove('active'); dryBtn.classList.remove('active');
+    moBtn.classList.add('active'); dryBtn.classList.remove('active');
   });
 
   const mapBtn = div.querySelector('.piez-map-btn');
@@ -6080,6 +6098,7 @@ function createPiezItem(p, dateInput, timeInput) {
       operator:       div.querySelector('.piez-op').value || null,
       plopper_sounder: piezMethod,
       wet_dry_moist:  piezCond,
+      sounder_number: rememberSounderNo(div.querySelector('.piez-sounder-no').value),
       notes:          div.querySelector('.piez-notes').value || null,
     };
     try {
@@ -11244,9 +11263,15 @@ function createDWRItem(w, dateInput, timeInput) {
           <button class="toggle-btn dwr-access-plug${w.access === 'Plug' ? ' active' : ''}">Plug</button>
         </div>
       </div>
-      <div class="form-group">
-        <label>Operator</label>
-        <input type="text" class="ctrl-input dwr-op" placeholder="Initials" readonly>
+      <div class="two-col">
+        <div class="form-group">
+          <label>Operator</label>
+          <input type="text" class="ctrl-input dwr-op" placeholder="Initials" readonly>
+        </div>
+        <div class="form-group">
+          <label>Sounder Number</label>
+          <input type="text" class="ctrl-input dwr-sounder-no" placeholder="Sounder #" value="${escHtml(lastSounderNo())}">
+        </div>
       </div>
       <div class="form-group">
         <label>Notes</label>
@@ -11350,6 +11375,7 @@ function createDWRItem(w, dateInput, timeInput) {
       depth_to_water:           isNM ? null : parseFloat(dtwRaw),
       method:                   div.querySelector('.dwr-method').value || null,
       operator:                 div.querySelector('.dwr-op').value || null,
+      sounder_number:           rememberSounderNo(div.querySelector('.dwr-sounder-no').value),
       no_measurement:           nmCodes,
       questionable_measurement: qmCodes,
       notes:                    div.querySelector('.dwr-notes').value || null,
@@ -11883,6 +11909,7 @@ el('tor-submit-btn').addEventListener('click', () => {
 /* ── Safety ──────────────────────────────────────────────────────────────── */
 let _safetyInited = false;
 let _safetySigninMeetingId = null;
+let _smEditId = null;   // meeting being edited, null when creating
 
 const SAFETY_PANEL_NAMES = { meetings: 'Safety Meetings', jha: 'Job Hazard Analysis' };
 
@@ -11930,9 +11957,15 @@ function buildSafetyMeetingsPanel(contentEl) {
             <input type="time" id="sm-time" class="ctrl-input ctrl-input-sm">
           </div>
         </div>
-        <div class="form-group">
-          <label>Presented By</label>
-          <select id="sm-presenter" class="ctrl-select"></select>
+        <div class="two-col">
+          <div class="form-group">
+            <label>Duration <span style="color:var(--text-dim);font-weight:400">(minutes)</span></label>
+            <input type="number" id="sm-duration" class="ctrl-input ctrl-input-sm" min="0" step="5" placeholder="e.g. 30">
+          </div>
+          <div class="form-group">
+            <label>Presented By</label>
+            <select id="sm-presenter" class="ctrl-select"></select>
+          </div>
         </div>
         <div class="form-group">
           <label>Topic</label>
@@ -11955,10 +11988,11 @@ function buildSafetyMeetingsPanel(contentEl) {
     </div>
     <div id="safety-meetings-list"><div class="placeholder-msg">Loading…</div></div>`;
 
-  el('safety-new-btn').addEventListener('click', openNewSafetyMeetingForm);
+  el('safety-new-btn').addEventListener('click', () => openNewSafetyMeetingForm());
   el('sm-cancel').addEventListener('click', () => {
     el('safety-meeting-form').classList.add('hidden');
     el('safety-new-btn').style.display = '';
+    _smEditId = null;
   });
   el('sm-submit').addEventListener('click', submitSafetyMeeting);
 
@@ -11971,33 +12005,40 @@ function buildSafetyMeetingsPanel(contentEl) {
   loadSafetyMeetings();
 }
 
-async function openNewSafetyMeetingForm() {
+// Opens the inline form for a new meeting, or pre-filled to edit an existing
+// one (supervisors/admins only — the Edit button is gated on the same check).
+async function openNewSafetyMeetingForm(existing = null) {
+  _smEditId = existing ? existing.meeting_id : null;
   el('safety-new-btn').style.display = 'none';
   el('safety-meeting-form').classList.remove('hidden');
-  el('sm-date').value = new Date().toLocaleDateString('en-CA');
-  el('sm-time').value = nowHHMM();
-  el('sm-topic').value = '';
-  el('sm-link').value  = '';
-  el('sm-notes').value = '';
+  el('sm-date').value     = existing?.meeting_date
+    ? String(existing.meeting_date).slice(0, 10) : new Date().toLocaleDateString('en-CA');
+  el('sm-time').value     = existing?.meeting_time ? String(existing.meeting_time).slice(0, 5) : nowHHMM();
+  el('sm-duration').value = existing?.duration_min ?? '';
+  el('sm-topic').value    = existing?.topic || '';
+  el('sm-link').value     = existing?.link  || '';
+  el('sm-notes').value    = existing?.notes || '';
+  el('sm-submit').textContent = existing ? 'Save Changes' : 'Create Meeting';
   el('sm-error').classList.add('hidden');
+  el('safety-meeting-form').scrollIntoView({ behavior: 'smooth', block: 'start' });
 
   // Populate presenter dropdown
   const sel = el('sm-presenter');
   sel.innerHTML = '<option value="">Loading…</option>';
+  const want = existing?.presented_by || currentUser?.full_name || '';
   try {
     const users = await api('GET', '/api/users/list');
     const fullNames = users.map(u => u.full_name || u.username).filter(Boolean);
-    const current = currentUser?.full_name || '';
     sel.innerHTML = fullNames.map(n =>
-      `<option value="${escHtml(n)}" ${n === current ? 'selected' : ''}>${escHtml(n)}</option>`
+      `<option value="${escHtml(n)}" ${n === want ? 'selected' : ''}>${escHtml(n)}</option>`
     ).join('');
-    if (!sel.value && current) {
+    if (!sel.value && want) {
       const opt = document.createElement('option');
-      opt.value = current; opt.textContent = current; opt.selected = true;
+      opt.value = want; opt.textContent = want; opt.selected = true;
       sel.prepend(opt);
     }
   } catch {
-    sel.innerHTML = `<option value="${escHtml(currentUser?.full_name || '')}">${escHtml(currentUser?.full_name || 'Unknown')}</option>`;
+    sel.innerHTML = `<option value="${escHtml(want)}">${escHtml(want || 'Unknown')}</option>`;
   }
 }
 
@@ -12013,17 +12054,21 @@ async function submitSafetyMeeting() {
   const btn = el('sm-submit');
   const _save = beginSave(btn);
   try {
-    await api('POST', '/api/safety-meetings', {
+    const payload = {
       meeting_date: el('sm-date').value,
       meeting_time: el('sm-time').value,
       presented_by: el('sm-presenter').value,
       topic,
       link:  el('sm-link').value.trim(),
       notes: el('sm-notes').value.trim(),
-    });
+      duration_min: el('sm-duration').value,
+    };
+    if (_smEditId) await api('PATCH', `/api/safety-meetings/${_smEditId}`, payload);
+    else await api('POST', '/api/safety-meetings', payload);
     el('safety-meeting-form').classList.add('hidden');
     el('safety-new-btn').style.display = '';
-    showToast('Meeting created');
+    showToast(_smEditId ? 'Meeting updated' : 'Meeting created');
+    _smEditId = null;
     loadSafetyMeetings(el('safety-topic-search').value.trim());
   } catch (err) {
     errEl.textContent = err.message;
@@ -12046,11 +12091,12 @@ async function loadSafetyMeetings(q = '') {
     listEl.innerHTML = meetings.map(m => {
       const dateStr = localDateStr(m.meeting_date, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
       const time = m.meeting_time ? ' · ' + m.meeting_time.slice(0,5) : '';
+      const dur  = m.duration_min != null ? ` · ${m.duration_min} min` : '';
       return `<div class="safety-meeting-item" data-mid="${m.meeting_id}">
         <div class="safety-meeting-header">
           <div class="safety-meeting-info">
             <div class="safety-meeting-topic">${escHtml(m.topic)}</div>
-            <div class="safety-meeting-date">${dateStr}${time} · ${escHtml(m.presented_by || '')}
+            <div class="safety-meeting-date">${dateStr}${time}${dur} · ${escHtml(m.presented_by || '')}
               <span class="safety-attend-count">${m.attendee_count} attendee${m.attendee_count !== 1 ? 's' : ''}</span>
             </div>
           </div>
@@ -12102,15 +12148,19 @@ function renderSafetyMeetingBody(body, data) {
     ? `<div class="form-group"><label>Notes</label><div class="safety-meeting-notes">${escHtml(data.notes)}</div></div>`
     : '';
 
+  const canManage = isSupervisorLevel(currentUser?.role);
+
   body.innerHTML = `
     ${linkHtml}
     ${notesHtml}
     <div class="safety-attend-section">
       <div class="safety-attend-header">
         <span class="report-section-title" style="margin:0">Attendance</span>
-        <div style="display:flex;gap:8px">
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          ${canManage ? '<button class="btn btn-secondary btn-sm safety-edit-btn">Edit</button>' : ''}
           <button class="btn btn-primary btn-sm safety-signin-btn">Sign In</button>
           <button class="btn btn-secondary btn-sm safety-export-btn">${icon('print',14)} Export PDF</button>
+          ${canManage ? '<button class="btn btn-danger btn-sm safety-delete-btn">Delete</button>' : ''}
         </div>
       </div>
       <div class="safety-attend-list"></div>
@@ -12121,6 +12171,24 @@ function renderSafetyMeetingBody(body, data) {
   body.querySelector('.safety-signin-btn').addEventListener('click', () => {
     openSafetySigninModal(data.meeting_id, body);
   });
+  if (canManage) {
+    body.querySelector('.safety-edit-btn').addEventListener('click', async () => {
+      // Re-read first so the form shows current values, not the expand-time snapshot.
+      const fresh = await api('GET', `/api/safety-meetings/${data.meeting_id}`).catch(() => data);
+      openNewSafetyMeetingForm(fresh);
+    });
+    body.querySelector('.safety-delete-btn').addEventListener('click', async () => {
+      if (!confirm('Delete this meeting and all of its attendance records?')) return;
+      try {
+        await api('DELETE', `/api/safety-meetings/${data.meeting_id}`);
+        showToast('Meeting deleted');
+        loadSafetyMeetings(el('safety-topic-search')?.value.trim() || '');
+      } catch (err) {
+        showToast('Failed to delete: ' + err.message, 'error');
+      }
+    });
+  }
+
   // `data` is a snapshot from when this row was expanded — re-read it so
   // attendees who signed in since then appear on the exported sheet.
   body.querySelector('.safety-export-btn').addEventListener('click', async e => {
@@ -12330,6 +12398,7 @@ function buildSafetySheetHtml(meeting, attendees) {
     <table class="sf-meta-table">
       <tr><th>Date</th><td>${fmtDate(meeting.meeting_date)}</td><th>Time</th><td>${meeting.meeting_time ? meeting.meeting_time.slice(0,5) : '—'}</td></tr>
       <tr><th>Topic</th><td>${esc(meeting.topic)}</td><th>Presented By</th><td>${esc(meeting.presented_by || '—')}</td></tr>
+      ${meeting.duration_min != null ? `<tr><th>Duration</th><td colspan="3">${meeting.duration_min} minutes</td></tr>` : ''}
       ${meeting.link  ? `<tr><th>Reference</th><td colspan="3">${esc(meeting.link)}</td></tr>` : ''}
       ${meeting.notes ? `<tr><th>Notes</th><td colspan="3">${esc(meeting.notes)}</td></tr>` : ''}
     </table>

@@ -490,6 +490,12 @@ pool.query(`
   )
 `).catch(err => console.error('Migration error:', err.message));
 
+// Sounder Number, recorded alongside the operator on well-run / KF readings.
+pool.query(`ALTER TABLE readings_kf_monthly  ADD COLUMN IF NOT EXISTS sounder_number TEXT`)
+  .then(() => pool.query(`ALTER TABLE readings_piezometers ADD COLUMN IF NOT EXISTS sounder_number TEXT`))
+  .then(() => pool.query(`ALTER TABLE readings_run_dwr     ADD COLUMN IF NOT EXISTS sounder_number TEXT`))
+  .catch(err => console.error('Migration error (sounder_number):', err.message));
+
 pool.query(`ALTER TABLE maintenance_vehicles ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'open'`)
   .catch(err => console.error('Migration error (mv_status):', err.message));
 
@@ -706,7 +712,9 @@ pool.query(`
     signed_date    DATE,
     created_at     TIMESTAMPTZ DEFAULT NOW()
   )
-`)).catch(err => console.error('Migration error (safety tables):', err.message));
+`)).then(() => pool.query(
+  `ALTER TABLE safety_meetings ADD COLUMN IF NOT EXISTS duration_min INTEGER`
+)).catch(err => console.error('Migration error (safety tables):', err.message));
 
 // Job Hazard Analysis (JHA): a record holds the whole form in `data` (JSONB) so
 // the many form sections stay flexible; signatures mirror safety-meeting attendees.
@@ -1522,7 +1530,7 @@ app.get('/api/wells/operational', requireAuth, async (req, res) => {
 app.post('/api/readings/kf-monthly', requireAuth, async (req, res) => {
   const {
     well_id, reading_date, reading_time,
-    dtw_reading, well_on_off, plopper_sounder, wet_dry_moist, operator, notes, access,
+    dtw_reading, well_on_off, plopper_sounder, wet_dry_moist, operator, sounder_number, notes, access,
   } = req.body;
   if (!well_id) {
     return res.status(400).json({ error: 'well_id is required' });
@@ -1530,12 +1538,13 @@ app.post('/api/readings/kf-monthly', requireAuth, async (req, res) => {
   try {
     const { rows } = await pool.query(
       `INSERT INTO readings_kf_monthly
-         (well_id, common_name, reading_date, reading_time, dtw_reading, well_on_off, plopper_sounder, wet_dry_moist, operator, notes)
-       SELECT $1, common_name, $2, $3, $4, $5, $6, $7, $8, $9
+         (well_id, common_name, reading_date, reading_time, dtw_reading, well_on_off, plopper_sounder, wet_dry_moist, operator, sounder_number, notes)
+       SELECT $1, common_name, $2, $3, $4, $5, $6, $7, $8, $9, $10
        FROM wells WHERE well_id = $1
        RETURNING kf_reading_id`,
       [well_id, reading_date, reading_time, dtw_reading ?? null,
-       well_on_off ?? null, plopper_sounder || null, wet_dry_moist || null, operator || null, notes || null]
+       well_on_off ?? null, plopper_sounder || null, wet_dry_moist || null, operator || null,
+       sounder_number || null, notes || null]
     );
     if (access === 'Tube' || access === 'Plug') {
       await pool.query(`UPDATE wells SET access = $1 WHERE well_id = $2`, [access, well_id]);
@@ -1584,7 +1593,7 @@ app.get('/api/piezometers', requireAuth, async (req, res) => {
 app.post('/api/readings/piezometer', requireAuth, async (req, res) => {
   const {
     piezometer_id, reading_date, reading_time,
-    dtw_reading, operator, plopper_sounder, wet_dry_moist, notes,
+    dtw_reading, operator, plopper_sounder, wet_dry_moist, sounder_number, notes,
   } = req.body;
   if (!piezometer_id || !reading_date) {
     return res.status(400).json({ error: 'piezometer_id and reading_date are required' });
@@ -1592,11 +1601,12 @@ app.post('/api/readings/piezometer', requireAuth, async (req, res) => {
   try {
     const { rows } = await pool.query(
       `INSERT INTO readings_piezometers
-         (piezometer_id, reading_date, reading_time, dtw_reading, operator, plopper_sounder, wet_dry_moist, notes)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+         (piezometer_id, reading_date, reading_time, dtw_reading, operator, plopper_sounder, wet_dry_moist, sounder_number, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
        RETURNING piezometer_reading_id`,
       [piezometer_id, reading_date, reading_time || null, dtw_reading ?? null,
-       operator || null, plopper_sounder || null, wet_dry_moist || null, notes || null]
+       operator || null, plopper_sounder || null, wet_dry_moist || null,
+       sounder_number || null, notes || null]
     );
     res.json({ ok: true, piezometer_reading_id: rows[0].piezometer_reading_id });
   } catch (err) {
@@ -1696,7 +1706,7 @@ app.get('/api/wells/dwr', requireAuth, async (req, res) => {
 app.post('/api/readings/run-dwr', requireAuth, async (req, res) => {
   const {
     well_id, reading_date, reading_time,
-    depth_to_water, method, operator,
+    depth_to_water, method, operator, sounder_number,
     no_measurement, questionable_measurement, notes, access,
   } = req.body;
   if (!well_id || !reading_date) {
@@ -1705,14 +1715,14 @@ app.post('/api/readings/run-dwr', requireAuth, async (req, res) => {
   try {
     const { rows } = await pool.query(
       `INSERT INTO readings_run_dwr
-         (well_id, reading_date, reading_time, depth_to_water, method, operator,
+         (well_id, reading_date, reading_time, depth_to_water, method, operator, sounder_number,
           no_measurement, questionable_measurement, notes, entered_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
        RETURNING reading_id`,
       [
         well_id, reading_date, reading_time || null,
         depth_to_water != null ? depth_to_water : null,
-        method || null, operator || null,
+        method || null, operator || null, sounder_number || null,
         no_measurement?.length ? no_measurement : null,
         questionable_measurement?.length ? questionable_measurement : null,
         notes || null, req.user.username,
@@ -2293,6 +2303,7 @@ app.get('/api/history', requireAuth, async (req, res) => {
     } else if (type === 'kf') {
       ({ rows } = await pool.query(
         `SELECT kf_reading_id AS id, reading_date, reading_time, dtw_reading AS value, plopper_sounder AS method, operator AS entered_by,
+                sounder_number,
                 CASE WHEN well_on_off = true THEN 'On' ELSE 'Off' END AS on_off, notes
          FROM readings_kf_monthly WHERE well_id = $1
          ORDER BY reading_date DESC, reading_time DESC LIMIT $2`, [id, LIMIT]));
@@ -2310,7 +2321,7 @@ app.get('/api/history', requireAuth, async (req, res) => {
     } else if (type === 'dwr') {
       ({ rows } = await pool.query(
         `SELECT reading_id AS id, reading_date, reading_time,
-                depth_to_water AS value, method, operator AS entered_by,
+                depth_to_water AS value, method, operator AS entered_by, sounder_number,
                 no_measurement, questionable_measurement, notes
          FROM readings_run_dwr WHERE well_id = $1
          ORDER BY reading_date DESC, reading_time DESC LIMIT $2`, [id, LIMIT]));
@@ -2318,7 +2329,7 @@ app.get('/api/history', requireAuth, async (req, res) => {
       ({ rows } = await pool.query(
         `SELECT piezometer_reading_id AS id, reading_date, reading_time,
                 dtw_reading AS value, plopper_sounder AS method, wet_dry_moist,
-                operator AS entered_by, notes
+                operator AS entered_by, sounder_number, notes
          FROM readings_piezometers WHERE piezometer_id = $1
          ORDER BY reading_date DESC, reading_time DESC LIMIT $2`, [id, LIMIT]));
     } else if (type === 'staff-gauge') {
@@ -5145,7 +5156,7 @@ app.get('/api/safety-meetings', requireAuth, async (req, res) => {
   try {
     const { rows } = await pool.query(`
       SELECT m.meeting_id, m.meeting_date, m.meeting_time, m.presented_by,
-             m.topic, m.link, m.notes, m.created_at,
+             m.topic, m.link, m.notes, m.duration_min, m.created_at,
              COUNT(a.attendee_id)::int AS attendee_count
       FROM safety_meetings m
       LEFT JOIN safety_meeting_attendees a ON a.meeting_id = m.meeting_id
@@ -5157,17 +5168,53 @@ app.get('/api/safety-meetings', requireAuth, async (req, res) => {
   } catch (err) { handleErr(res, err); }
 });
 
+// Meeting length in whole minutes; blank/garbage becomes NULL.
+function parseDurationMin(v) {
+  if (v === '' || v == null) return null;
+  const n = parseInt(v, 10);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
 app.post('/api/safety-meetings', requireAuth, async (req, res) => {
-  const { meeting_date, meeting_time, presented_by, topic, link, notes } = req.body;
+  const { meeting_date, meeting_time, presented_by, topic, link, notes, duration_min } = req.body;
   if (!topic) return res.status(400).json({ error: 'topic required' });
   try {
     const { rows } = await pool.query(
-      `INSERT INTO safety_meetings (meeting_date, meeting_time, presented_by, topic, link, notes, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING meeting_id`,
+      `INSERT INTO safety_meetings (meeting_date, meeting_time, presented_by, topic, link, notes, duration_min, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING meeting_id`,
       [meeting_date, meeting_time || null, presented_by || null, topic,
-       link || null, notes || null, req.user.user_id]
+       link || null, notes || null, parseDurationMin(duration_min), req.user.user_id]
     );
     res.json({ ok: true, meeting_id: rows[0].meeting_id });
+  } catch (err) { handleErr(res, err); }
+});
+
+// Edit / remove a meeting — supervisors and admins only.
+app.patch('/api/safety-meetings/:id', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
+  const { meeting_date, meeting_time, presented_by, topic, link, notes, duration_min } = req.body;
+  if (topic != null && !String(topic).trim()) return res.status(400).json({ error: 'topic required' });
+  try {
+    await pool.query(`
+      UPDATE safety_meetings SET
+        meeting_date = COALESCE($1, meeting_date),
+        meeting_time = COALESCE($2, meeting_time),
+        presented_by = COALESCE($3, presented_by),
+        topic        = COALESCE($4, topic),
+        link         = COALESCE($5, link),
+        notes        = COALESCE($6, notes),
+        duration_min = $7
+      WHERE meeting_id = $8
+    `, [meeting_date || null, meeting_time || null, presented_by ?? null,
+        topic != null ? String(topic).trim() : null, link ?? null, notes ?? null,
+        parseDurationMin(duration_min), req.params.id]);
+    res.json({ ok: true });
+  } catch (err) { handleErr(res, err); }
+});
+
+app.delete('/api/safety-meetings/:id', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
+  try {
+    await pool.query('DELETE FROM safety_meetings WHERE meeting_id = $1', [req.params.id]);
+    res.json({ ok: true });
   } catch (err) { handleErr(res, err); }
 });
 
