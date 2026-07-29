@@ -706,7 +706,9 @@ pool.query(`
     signed_date    DATE,
     created_at     TIMESTAMPTZ DEFAULT NOW()
   )
-`)).catch(err => console.error('Migration error (safety tables):', err.message));
+`)).then(() => pool.query(
+  `ALTER TABLE safety_meetings ADD COLUMN IF NOT EXISTS duration_min INTEGER`
+)).catch(err => console.error('Migration error (safety tables):', err.message));
 
 // Job Hazard Analysis (JHA): a record holds the whole form in `data` (JSONB) so
 // the many form sections stay flexible; signatures mirror safety-meeting attendees.
@@ -5145,7 +5147,7 @@ app.get('/api/safety-meetings', requireAuth, async (req, res) => {
   try {
     const { rows } = await pool.query(`
       SELECT m.meeting_id, m.meeting_date, m.meeting_time, m.presented_by,
-             m.topic, m.link, m.notes, m.created_at,
+             m.topic, m.link, m.notes, m.duration_min, m.created_at,
              COUNT(a.attendee_id)::int AS attendee_count
       FROM safety_meetings m
       LEFT JOIN safety_meeting_attendees a ON a.meeting_id = m.meeting_id
@@ -5157,17 +5159,53 @@ app.get('/api/safety-meetings', requireAuth, async (req, res) => {
   } catch (err) { handleErr(res, err); }
 });
 
+// Meeting length in whole minutes; blank/garbage becomes NULL.
+function parseDurationMin(v) {
+  if (v === '' || v == null) return null;
+  const n = parseInt(v, 10);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
 app.post('/api/safety-meetings', requireAuth, async (req, res) => {
-  const { meeting_date, meeting_time, presented_by, topic, link, notes } = req.body;
+  const { meeting_date, meeting_time, presented_by, topic, link, notes, duration_min } = req.body;
   if (!topic) return res.status(400).json({ error: 'topic required' });
   try {
     const { rows } = await pool.query(
-      `INSERT INTO safety_meetings (meeting_date, meeting_time, presented_by, topic, link, notes, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING meeting_id`,
+      `INSERT INTO safety_meetings (meeting_date, meeting_time, presented_by, topic, link, notes, duration_min, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING meeting_id`,
       [meeting_date, meeting_time || null, presented_by || null, topic,
-       link || null, notes || null, req.user.user_id]
+       link || null, notes || null, parseDurationMin(duration_min), req.user.user_id]
     );
     res.json({ ok: true, meeting_id: rows[0].meeting_id });
+  } catch (err) { handleErr(res, err); }
+});
+
+// Edit / remove a meeting — supervisors and admins only.
+app.patch('/api/safety-meetings/:id', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
+  const { meeting_date, meeting_time, presented_by, topic, link, notes, duration_min } = req.body;
+  if (topic != null && !String(topic).trim()) return res.status(400).json({ error: 'topic required' });
+  try {
+    await pool.query(`
+      UPDATE safety_meetings SET
+        meeting_date = COALESCE($1, meeting_date),
+        meeting_time = COALESCE($2, meeting_time),
+        presented_by = COALESCE($3, presented_by),
+        topic        = COALESCE($4, topic),
+        link         = COALESCE($5, link),
+        notes        = COALESCE($6, notes),
+        duration_min = $7
+      WHERE meeting_id = $8
+    `, [meeting_date || null, meeting_time || null, presented_by ?? null,
+        topic != null ? String(topic).trim() : null, link ?? null, notes ?? null,
+        parseDurationMin(duration_min), req.params.id]);
+    res.json({ ok: true });
+  } catch (err) { handleErr(res, err); }
+});
+
+app.delete('/api/safety-meetings/:id', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
+  try {
+    await pool.query('DELETE FROM safety_meetings WHERE meeting_id = $1', [req.params.id]);
+    res.json({ ok: true });
   } catch (err) { handleErr(res, err); }
 });
 
