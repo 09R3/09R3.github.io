@@ -490,6 +490,12 @@ pool.query(`
   )
 `).catch(err => console.error('Migration error:', err.message));
 
+// Sounder Number, recorded alongside the operator on well-run / KF readings.
+pool.query(`ALTER TABLE readings_kf_monthly  ADD COLUMN IF NOT EXISTS sounder_number TEXT`)
+  .then(() => pool.query(`ALTER TABLE readings_piezometers ADD COLUMN IF NOT EXISTS sounder_number TEXT`))
+  .then(() => pool.query(`ALTER TABLE readings_run_dwr     ADD COLUMN IF NOT EXISTS sounder_number TEXT`))
+  .catch(err => console.error('Migration error (sounder_number):', err.message));
+
 pool.query(`ALTER TABLE maintenance_vehicles ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'open'`)
   .catch(err => console.error('Migration error (mv_status):', err.message));
 
@@ -1524,7 +1530,7 @@ app.get('/api/wells/operational', requireAuth, async (req, res) => {
 app.post('/api/readings/kf-monthly', requireAuth, async (req, res) => {
   const {
     well_id, reading_date, reading_time,
-    dtw_reading, well_on_off, plopper_sounder, wet_dry_moist, operator, notes, access,
+    dtw_reading, well_on_off, plopper_sounder, wet_dry_moist, operator, sounder_number, notes, access,
   } = req.body;
   if (!well_id) {
     return res.status(400).json({ error: 'well_id is required' });
@@ -1532,12 +1538,13 @@ app.post('/api/readings/kf-monthly', requireAuth, async (req, res) => {
   try {
     const { rows } = await pool.query(
       `INSERT INTO readings_kf_monthly
-         (well_id, common_name, reading_date, reading_time, dtw_reading, well_on_off, plopper_sounder, wet_dry_moist, operator, notes)
-       SELECT $1, common_name, $2, $3, $4, $5, $6, $7, $8, $9
+         (well_id, common_name, reading_date, reading_time, dtw_reading, well_on_off, plopper_sounder, wet_dry_moist, operator, sounder_number, notes)
+       SELECT $1, common_name, $2, $3, $4, $5, $6, $7, $8, $9, $10
        FROM wells WHERE well_id = $1
        RETURNING kf_reading_id`,
       [well_id, reading_date, reading_time, dtw_reading ?? null,
-       well_on_off ?? null, plopper_sounder || null, wet_dry_moist || null, operator || null, notes || null]
+       well_on_off ?? null, plopper_sounder || null, wet_dry_moist || null, operator || null,
+       sounder_number || null, notes || null]
     );
     if (access === 'Tube' || access === 'Plug') {
       await pool.query(`UPDATE wells SET access = $1 WHERE well_id = $2`, [access, well_id]);
@@ -1586,7 +1593,7 @@ app.get('/api/piezometers', requireAuth, async (req, res) => {
 app.post('/api/readings/piezometer', requireAuth, async (req, res) => {
   const {
     piezometer_id, reading_date, reading_time,
-    dtw_reading, operator, plopper_sounder, wet_dry_moist, notes,
+    dtw_reading, operator, plopper_sounder, wet_dry_moist, sounder_number, notes,
   } = req.body;
   if (!piezometer_id || !reading_date) {
     return res.status(400).json({ error: 'piezometer_id and reading_date are required' });
@@ -1594,11 +1601,12 @@ app.post('/api/readings/piezometer', requireAuth, async (req, res) => {
   try {
     const { rows } = await pool.query(
       `INSERT INTO readings_piezometers
-         (piezometer_id, reading_date, reading_time, dtw_reading, operator, plopper_sounder, wet_dry_moist, notes)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+         (piezometer_id, reading_date, reading_time, dtw_reading, operator, plopper_sounder, wet_dry_moist, sounder_number, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
        RETURNING piezometer_reading_id`,
       [piezometer_id, reading_date, reading_time || null, dtw_reading ?? null,
-       operator || null, plopper_sounder || null, wet_dry_moist || null, notes || null]
+       operator || null, plopper_sounder || null, wet_dry_moist || null,
+       sounder_number || null, notes || null]
     );
     res.json({ ok: true, piezometer_reading_id: rows[0].piezometer_reading_id });
   } catch (err) {
@@ -1698,7 +1706,7 @@ app.get('/api/wells/dwr', requireAuth, async (req, res) => {
 app.post('/api/readings/run-dwr', requireAuth, async (req, res) => {
   const {
     well_id, reading_date, reading_time,
-    depth_to_water, method, operator,
+    depth_to_water, method, operator, sounder_number,
     no_measurement, questionable_measurement, notes, access,
   } = req.body;
   if (!well_id || !reading_date) {
@@ -1707,14 +1715,14 @@ app.post('/api/readings/run-dwr', requireAuth, async (req, res) => {
   try {
     const { rows } = await pool.query(
       `INSERT INTO readings_run_dwr
-         (well_id, reading_date, reading_time, depth_to_water, method, operator,
+         (well_id, reading_date, reading_time, depth_to_water, method, operator, sounder_number,
           no_measurement, questionable_measurement, notes, entered_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
        RETURNING reading_id`,
       [
         well_id, reading_date, reading_time || null,
         depth_to_water != null ? depth_to_water : null,
-        method || null, operator || null,
+        method || null, operator || null, sounder_number || null,
         no_measurement?.length ? no_measurement : null,
         questionable_measurement?.length ? questionable_measurement : null,
         notes || null, req.user.username,
@@ -2295,6 +2303,7 @@ app.get('/api/history', requireAuth, async (req, res) => {
     } else if (type === 'kf') {
       ({ rows } = await pool.query(
         `SELECT kf_reading_id AS id, reading_date, reading_time, dtw_reading AS value, plopper_sounder AS method, operator AS entered_by,
+                sounder_number,
                 CASE WHEN well_on_off = true THEN 'On' ELSE 'Off' END AS on_off, notes
          FROM readings_kf_monthly WHERE well_id = $1
          ORDER BY reading_date DESC, reading_time DESC LIMIT $2`, [id, LIMIT]));
@@ -2312,7 +2321,7 @@ app.get('/api/history', requireAuth, async (req, res) => {
     } else if (type === 'dwr') {
       ({ rows } = await pool.query(
         `SELECT reading_id AS id, reading_date, reading_time,
-                depth_to_water AS value, method, operator AS entered_by,
+                depth_to_water AS value, method, operator AS entered_by, sounder_number,
                 no_measurement, questionable_measurement, notes
          FROM readings_run_dwr WHERE well_id = $1
          ORDER BY reading_date DESC, reading_time DESC LIMIT $2`, [id, LIMIT]));
@@ -2320,7 +2329,7 @@ app.get('/api/history', requireAuth, async (req, res) => {
       ({ rows } = await pool.query(
         `SELECT piezometer_reading_id AS id, reading_date, reading_time,
                 dtw_reading AS value, plopper_sounder AS method, wet_dry_moist,
-                operator AS entered_by, notes
+                operator AS entered_by, sounder_number, notes
          FROM readings_piezometers WHERE piezometer_id = $1
          ORDER BY reading_date DESC, reading_time DESC LIMIT $2`, [id, LIMIT]));
     } else if (type === 'staff-gauge') {

@@ -99,6 +99,17 @@ function nowHHMM() {
   return d.toTimeString().slice(0, 5);
 }
 
+// Sounder Number is usually the same instrument for a whole run, so remember
+// the last one entered and pre-fill it. Auto-fill is only a default — the
+// operator can always change it.
+function lastSounderNo() { return localStorage.getItem('watermark-last-sounder') || ''; }
+// Stores the value (when non-blank) and returns it normalised for the payload.
+function rememberSounderNo(v) {
+  const s = (v || '').trim();
+  if (s) localStorage.setItem('watermark-last-sounder', s);
+  return s || null;
+}
+
 function fmt(val, decimals = 1) {
   if (val == null || val === '') return '—';
   return Number(val).toFixed(decimals);
@@ -911,9 +922,9 @@ const HIST_COLS = {
   pge:         [{ key: 'value',         label: 'kWh' }],
   monitor:     [{ key: 'value',         label: 'kWh' }],
   well:        [{ key: 'hour_reading',  label: 'Hours' }, { key: 'flow_cfs', label: 'Flow (cfs)' }, { key: 'totalizer', label: 'Totalizer' }],
-  kf:          [{ key: 'value',         label: 'DTW (ft)' }, { key: 'method', label: 'Method' }, { key: 'on_off', label: 'On/Off' }, { key: 'entered_by', label: 'Operator' }],
-  piezometer:  [{ key: 'value',         label: 'DTW (ft)' }, { key: 'method', label: 'Method' }, { key: 'wet_dry_moist', label: 'Condition' }, { key: 'entered_by', label: 'Operator' }],
-  dwr:         [{ key: 'value',         label: 'DTW (ft)' }, { key: 'method', label: 'Method' }, { key: 'entered_by', label: 'Operator' }],
+  kf:          [{ key: 'value',         label: 'DTW (ft)' }, { key: 'method', label: 'Method' }, { key: 'on_off', label: 'On/Off' }, { key: 'entered_by', label: 'Operator' }, { key: 'sounder_number', label: 'Sounder #' }],
+  piezometer:  [{ key: 'value',         label: 'DTW (ft)' }, { key: 'method', label: 'Method' }, { key: 'wet_dry_moist', label: 'Condition' }, { key: 'entered_by', label: 'Operator' }, { key: 'sounder_number', label: 'Sounder #' }],
+  dwr:         [{ key: 'value',         label: 'DTW (ft)' }, { key: 'method', label: 'Method' }, { key: 'entered_by', label: 'Operator' }, { key: 'sounder_number', label: 'Sounder #' }],
   canal:       [{ key: 'flow',          label: 'Flow (cfs)' }, { key: 'totalizer', label: 'Totalizer (AF)' }, { key: 'gate_setting', label: 'Gate' }],
   vehicle:       [{ key: 'odometer_miles', label: 'Odometer' }, { key: 'engine_hours', label: 'Eng. Hrs' }],
   'staff-gauge': [{ key: 'value',          label: 'Level (ft)' }, { key: 'entered_by', label: 'By' }],
@@ -5654,15 +5665,20 @@ function createKFItem(w, dateInput, timeInput) {
         <div class="form-group toggle-row">
           <label>Condition</label>
           <div class="toggle-group">
-            <button class="toggle-btn kf-c-wet">Wet</button>
-            <button class="toggle-btn kf-c-dry">Dry</button>
             <button class="toggle-btn kf-c-moist">Moist</button>
+            <button class="toggle-btn kf-c-dry">Dry</button>
           </div>
         </div>
       </div>
-      <div class="form-group">
-        <label>Operator</label>
-        <input type="text" class="ctrl-input kf-op" placeholder="Initials">
+      <div class="two-col">
+        <div class="form-group">
+          <label>Operator</label>
+          <input type="text" class="ctrl-input kf-op" placeholder="Initials">
+        </div>
+        <div class="form-group">
+          <label>Sounder Number</label>
+          <input type="text" class="ctrl-input kf-sounder-no" placeholder="Sounder #" value="${escHtml(lastSounderNo())}">
+        </div>
       </div>
       <div class="form-group">
         <label>Notes</label>
@@ -5740,18 +5756,19 @@ function createKFItem(w, dateInput, timeInput) {
     div.querySelector(`.kf-m-${kfMethod}`).classList.add('active');
   }
 
-  // Condition toggles (Wet / Dry / Moist) — tap again to deselect
+  // Condition toggles (Moist / Dry) — tap again to deselect
   let kfCond = null;
-  const cWet = div.querySelector('.kf-c-wet');
   const cDry = div.querySelector('.kf-c-dry');
   const cMo  = div.querySelector('.kf-c-moist');
-  [['wet', cWet, [cDry, cMo]], ['dry', cDry, [cWet, cMo]], ['moist', cMo, [cWet, cDry]]].forEach(([val, btn, rest]) => {
+  [['moist', cMo, [cDry]], ['dry', cDry, [cMo]]].forEach(([val, btn, rest]) => {
     btn.addEventListener('click', () => {
       if (kfCond === val) { kfCond = null; btn.classList.remove('active'); return; }
       kfCond = val; btn.classList.add('active'); rest.forEach(b => b.classList.remove('active'));
     });
   });
-  if (w.last_wet_dry_moist && ['wet', 'dry', 'moist'].includes(w.last_wet_dry_moist)) {
+  // Legacy readings may still carry 'wet'; ignore it rather than pre-selecting
+  // a button that no longer exists.
+  if (['dry', 'moist'].includes(w.last_wet_dry_moist)) {
     kfCond = w.last_wet_dry_moist;
     div.querySelector(`.kf-c-${kfCond}`).classList.add('active');
   }
@@ -5786,6 +5803,7 @@ function createKFItem(w, dateInput, timeInput) {
       plopper_sounder: kfMethod || null,
       wet_dry_moist:   kfCond || null,
       operator:        div.querySelector('.kf-op').value || null,
+      sounder_number:  rememberSounderNo(div.querySelector('.kf-sounder-no').value),
       notes:           div.querySelector('.kf-notes').value || null,
       access:          kfAccess,
     };
@@ -5967,15 +5985,20 @@ function createPiezItem(p, dateInput, timeInput) {
         <div class="form-group toggle-row">
           <label>Condition</label>
           <div class="toggle-group">
-            <button class="toggle-btn active piez-wet">Wet</button>
+            <button class="toggle-btn active piez-moist">Moist</button>
             <button class="toggle-btn piez-dry">Dry</button>
-            <button class="toggle-btn piez-moist">Moist</button>
           </div>
         </div>
       </div>
-      <div class="form-group">
-        <label>Operator</label>
-        <input type="text" class="ctrl-input piez-op" placeholder="Initials">
+      <div class="two-col">
+        <div class="form-group">
+          <label>Operator</label>
+          <input type="text" class="ctrl-input piez-op" placeholder="Initials">
+        </div>
+        <div class="form-group">
+          <label>Sounder Number</label>
+          <input type="text" class="ctrl-input piez-sounder-no" placeholder="Sounder #" value="${escHtml(lastSounderNo())}">
+        </div>
       </div>
       <div class="form-group">
         <label>Notes</label>
@@ -5997,11 +6020,10 @@ function createPiezItem(p, dateInput, timeInput) {
 
   // Toggle state
   let piezMethod = 'plopper';
-  let piezCond   = 'wet';
+  let piezCond   = 'moist';
 
   const plBtn  = div.querySelector('.piez-plopper');
   const soBtn  = div.querySelector('.piez-sounder');
-  const wetBtn = div.querySelector('.piez-wet');
   const dryBtn = div.querySelector('.piez-dry');
   const moBtn  = div.querySelector('.piez-moist');
 
@@ -6011,9 +6033,9 @@ function createPiezItem(p, dateInput, timeInput) {
     plBtn.classList.remove('active');
     soBtn.classList.add('active');
   }
-  if (p.last_wet_dry_moist) {
+  // Legacy readings may still carry 'wet'; fall back to the Moist default.
+  if (['dry', 'moist'].includes(p.last_wet_dry_moist)) {
     piezCond = p.last_wet_dry_moist;
-    wetBtn.classList.remove('active');
     dryBtn.classList.remove('active');
     moBtn.classList.remove('active');
     div.querySelector(`.piez-${piezCond}`).classList.add('active');
@@ -6027,17 +6049,13 @@ function createPiezItem(p, dateInput, timeInput) {
     piezMethod = 'sounder';
     soBtn.classList.add('active'); plBtn.classList.remove('active');
   });
-  wetBtn.addEventListener('click', e => {
-    piezCond = 'wet';
-    wetBtn.classList.add('active'); dryBtn.classList.remove('active'); moBtn.classList.remove('active');
-  });
   dryBtn.addEventListener('click', e => {
     piezCond = 'dry';
-    dryBtn.classList.add('active'); wetBtn.classList.remove('active'); moBtn.classList.remove('active');
+    dryBtn.classList.add('active'); moBtn.classList.remove('active');
   });
   moBtn.addEventListener('click', e => {
     piezCond = 'moist';
-    moBtn.classList.add('active'); wetBtn.classList.remove('active'); dryBtn.classList.remove('active');
+    moBtn.classList.add('active'); dryBtn.classList.remove('active');
   });
 
   const mapBtn = div.querySelector('.piez-map-btn');
@@ -6080,6 +6098,7 @@ function createPiezItem(p, dateInput, timeInput) {
       operator:       div.querySelector('.piez-op').value || null,
       plopper_sounder: piezMethod,
       wet_dry_moist:  piezCond,
+      sounder_number: rememberSounderNo(div.querySelector('.piez-sounder-no').value),
       notes:          div.querySelector('.piez-notes').value || null,
     };
     try {
@@ -11244,9 +11263,15 @@ function createDWRItem(w, dateInput, timeInput) {
           <button class="toggle-btn dwr-access-plug${w.access === 'Plug' ? ' active' : ''}">Plug</button>
         </div>
       </div>
-      <div class="form-group">
-        <label>Operator</label>
-        <input type="text" class="ctrl-input dwr-op" placeholder="Initials" readonly>
+      <div class="two-col">
+        <div class="form-group">
+          <label>Operator</label>
+          <input type="text" class="ctrl-input dwr-op" placeholder="Initials" readonly>
+        </div>
+        <div class="form-group">
+          <label>Sounder Number</label>
+          <input type="text" class="ctrl-input dwr-sounder-no" placeholder="Sounder #" value="${escHtml(lastSounderNo())}">
+        </div>
       </div>
       <div class="form-group">
         <label>Notes</label>
@@ -11350,6 +11375,7 @@ function createDWRItem(w, dateInput, timeInput) {
       depth_to_water:           isNM ? null : parseFloat(dtwRaw),
       method:                   div.querySelector('.dwr-method').value || null,
       operator:                 div.querySelector('.dwr-op').value || null,
+      sounder_number:           rememberSounderNo(div.querySelector('.dwr-sounder-no').value),
       no_measurement:           nmCodes,
       questionable_measurement: qmCodes,
       notes:                    div.querySelector('.dwr-notes').value || null,
