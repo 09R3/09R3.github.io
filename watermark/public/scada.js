@@ -145,6 +145,177 @@ function scadaRangeQS(range) {
   return `range=${encodeURIComponent(range)}`;
 }
 
+// ── Drag-select statistics ────────────────────────────────────────────────────
+// Drag horizontally across a chart to measure that span: high, low, the
+// difference between them, standard deviation, mean and sample count.
+
+// Shades the selected span. Selection is stored in value (time) space on the
+// chart instance so it survives resizes and axis rescaling.
+const scadaSelPlugin = {
+  id: 'scadaSel',
+  afterDatasetsDraw(chart) {
+    const sel = chart.$scadaSel;
+    if (!sel || sel.from == null || sel.to == null) return;
+    const { ctx, chartArea, scales } = chart;
+    let a = scales.x.getPixelForValue(Math.min(sel.from, sel.to));
+    let b = scales.x.getPixelForValue(Math.max(sel.from, sel.to));
+    a = Math.max(a, chartArea.left);
+    b = Math.min(b, chartArea.right);
+    if (b - a < 1) return;
+    ctx.save();
+    ctx.fillStyle = 'rgba(59,130,246,0.15)';
+    ctx.fillRect(a, chartArea.top, b - a, chartArea.bottom - chartArea.top);
+    ctx.strokeStyle = 'rgba(59,130,246,0.75)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(a, chartArea.top); ctx.lineTo(a, chartArea.bottom);
+    ctx.moveTo(b, chartArea.top); ctx.lineTo(b, chartArea.bottom);
+    ctx.stroke();
+    ctx.restore();
+  },
+};
+
+// Single pass so it stays cheap and avoids spreading large arrays into Math.min.
+function scadaSelStats(dataset, lo, hi) {
+  let n = 0, sum = 0, min = Infinity, max = -Infinity;
+  const vals = [];
+  for (const pt of dataset.data || []) {
+    const t = pt?.x, v = pt?.y;
+    if (t == null || v == null || !isFinite(v)) continue;
+    if (t < lo || t > hi) continue;
+    n++; sum += v; vals.push(v);
+    if (v < min) min = v;
+    if (v > max) max = v;
+  }
+  if (!n) return null;
+  const mean = sum / n;
+  let ss = 0;
+  for (const v of vals) ss += (v - mean) ** 2;
+  // Sample standard deviation (n-1); 0 when a single point is selected.
+  const sd = n > 1 ? Math.sqrt(ss / (n - 1)) : 0;
+  return { n, min, max, range: max - min, mean, sd };
+}
+
+// Pick a sensible precision from the magnitude of the values on screen.
+function scadaSelFmt(v, extra = 0) {
+  const a = Math.abs(v);
+  const dp = a >= 1000 ? 0 : a >= 100 ? 1 : 2;
+  return Number(v).toFixed(dp + extra);
+}
+
+function scadaSelStatsEl(canvas) {
+  const wrap = canvas.closest('.scada-chart-wrap') || canvas.parentElement;
+  let box = wrap.nextElementSibling;
+  if (!box || !box.classList.contains('scada-sel-stats')) {
+    box = document.createElement('div');
+    box.className = 'scada-sel-stats';
+    wrap.after(box);
+  }
+  return box;
+}
+
+function renderScadaSelStats(canvas, chart) {
+  const box = scadaSelStatsEl(canvas);
+  // Track the chart's own visibility — the detail/trends wraps get hidden when
+  // nothing is selected, and a stray stats panel below them looks broken.
+  if (canvas.closest('.scada-chart-wrap')?.classList.contains('hidden')) {
+    box.classList.add('hidden');
+    return;
+  }
+  box.classList.remove('hidden');
+  const hint = '<div class="scada-sel-hint">Drag across the chart to measure a span.</div>';
+  const sel = chart?.$scadaSel;
+  if (!chart || !sel) { box.innerHTML = hint; return; }
+
+  const lo = Math.min(sel.from, sel.to), hi = Math.max(sel.from, sel.to);
+  const rows = [];
+  chart.data.datasets.forEach(ds => {
+    if (ds.yAxisID === 'yStatus') return;      // on/off band — stats not meaningful
+    const s = scadaSelStats(ds, lo, hi);
+    if (!s) return;
+    rows.push(`<tr>
+      <td><span class="scada-sel-swatch" style="background:${escHtml(String(ds.borderColor))}"></span>${escHtml(ds.label || '')}</td>
+      <td class="report-num">${scadaSelFmt(s.max)}</td>
+      <td class="report-num">${scadaSelFmt(s.min)}</td>
+      <td class="report-num"><strong>${scadaSelFmt(s.range)}</strong></td>
+      <td class="report-num">${scadaSelFmt(s.sd, 1)}</td>
+      <td class="report-num">${scadaSelFmt(s.mean)}</td>
+      <td class="report-num">${s.n}</td>
+    </tr>`);
+  });
+  if (!rows.length) { box.innerHTML = hint + '<div class="scada-sel-hint">No data points in that span.</div>'; return; }
+
+  const fmtT = ms => new Date(ms).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  const mins = Math.round((hi - lo) / 60000);
+  const span = mins >= 120 ? `${(mins / 60).toFixed(1)} h` : `${mins} min`;
+  box.innerHTML = `
+    <div class="scada-sel-head">
+      <span>${escHtml(fmtT(lo))} → ${escHtml(fmtT(hi))} <span class="scada-sel-span">(${span})</span></span>
+      <button class="btn btn-secondary btn-xs scada-sel-clear">Clear</button>
+    </div>
+    <div class="scada-sel-tablewrap"><table class="report-table scada-sel-table">
+      <thead><tr><th>Series</th><th class="report-num">High</th><th class="report-num">Low</th>
+        <th class="report-num">Diff</th><th class="report-num">Std Dev</th>
+        <th class="report-num">Mean</th><th class="report-num">Pts</th></tr></thead>
+      <tbody>${rows.join('')}</tbody></table></div>`;
+  box.querySelector('.scada-sel-clear').addEventListener('click', () => {
+    chart.$scadaSel = null;
+    chart.render();
+    renderScadaSelStats(canvas, null);
+  });
+}
+
+// Wired once per canvas; the live chart is looked up each time because
+// drawScadaChart replaces the Chart instance on every range/tag change.
+function wireScadaChartSelect(canvas) {
+  if (canvas.dataset.selWired) return;
+  canvas.dataset.selWired = '1';
+  let dragging = false, startVal = null, moved = false;
+
+  const valAt = (chart, clientX) => {
+    const rect = canvas.getBoundingClientRect();
+    const px = Math.min(Math.max(clientX - rect.left, chart.chartArea.left), chart.chartArea.right);
+    return chart.scales.x.getValueForPixel(px);
+  };
+  const live = () => window.Chart?.getChart?.(canvas) || null;
+
+  canvas.addEventListener('pointerdown', e => {
+    const chart = live();
+    if (!chart) return;
+    const rect = canvas.getBoundingClientRect();
+    const y = e.clientY - rect.top;
+    if (y < chart.chartArea.top || y > chart.chartArea.bottom) return;
+    dragging = true; moved = false;
+    startVal = valAt(chart, e.clientX);
+    chart.$scadaSel = { from: startVal, to: startVal };
+    // Suppress the hover tooltip while dragging so it doesn't chase the cursor.
+    if (chart.options.plugins?.tooltip) chart.options.plugins.tooltip.enabled = false;
+    try { canvas.setPointerCapture(e.pointerId); } catch { /* not fatal */ }
+  });
+
+  canvas.addEventListener('pointermove', e => {
+    if (!dragging) return;
+    const chart = live();
+    if (!chart) return;
+    moved = true;
+    chart.$scadaSel = { from: startVal, to: valAt(chart, e.clientX) };
+    chart.render();
+  });
+
+  const finish = () => {
+    if (!dragging) return;
+    dragging = false;
+    const chart = live();
+    if (!chart) return;
+    if (chart.options.plugins?.tooltip) chart.options.plugins.tooltip.enabled = true;
+    // A plain click (no drag) clears any existing selection.
+    if (!moved) { chart.$scadaSel = null; chart.render(); renderScadaSelStats(canvas, null); return; }
+    renderScadaSelStats(canvas, chart);
+  };
+  canvas.addEventListener('pointerup', finish);
+  canvas.addEventListener('pointercancel', finish);
+}
+
 // Draw one or more tags on canvas. Single-series gets gradient fill; multi gets legend.
 // range: preset string OR { start, end } (datetime-local strings) for custom.
 async function drawScadaChart(canvas, tagPaths, range) {
@@ -219,6 +390,7 @@ async function drawScadaChart(canvas, tagPaths, range) {
     if (_scadaChart) { _scadaChart.destroy(); _scadaChart = null; }
     _scadaChart = new window.Chart(canvas.getContext('2d'), {
       type: 'line',
+      plugins: [scadaSelPlugin],
       data: { datasets },
       options: {
         responsive: true, maintainAspectRatio: false, animation: false,
@@ -235,6 +407,9 @@ async function drawScadaChart(canvas, tagPaths, range) {
         },
       },
     });
+    // New Chart instance ⇒ no selection carried over; reset the stats panel.
+    wireScadaChartSelect(canvas);
+    renderScadaSelStats(canvas, null);
   } catch (err) {
     showToast(err.message || 'Chart failed to load', 'error');
   }
@@ -995,7 +1170,10 @@ function refreshScadaTrendChart() {
       ? { start: _scadaTrendCustomStart, end: _scadaTrendCustomEnd }
       : _scadaTrendRange;
     drawScadaChart(canvas, tags, range);
-  } else if (_scadaChart) { _scadaChart.destroy(); _scadaChart = null; }
+  } else {
+    if (_scadaChart) { _scadaChart.destroy(); _scadaChart = null; }
+    if (canvas) renderScadaSelStats(canvas, null);   // wrap is hidden → hides the panel
+  }
 }
 
 // ── Runtime (pump run-hours from InfluxDB integral) ───────────────────────────

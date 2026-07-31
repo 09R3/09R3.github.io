@@ -3424,7 +3424,25 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
   background: var(--surface); border: 1px solid var(--border);
   border-radius: 10px; padding: 10px;
 }
-.scada-chart-canvas { width: 100% !important; height: 240px !important; }
+/* pan-y keeps vertical page scrolling while horizontal drags select a span */
+.scada-chart-canvas { width: 100% !important; height: 240px !important; touch-action: pan-y; }
+
+/* ── Chart drag-select stats ──────────────────────────────────────────────── */
+.scada-sel-stats { margin: 8px 0 4px; }
+.scada-sel-hint { font-size: 0.76rem; color: var(--text-muted); padding: 2px 0; }
+.scada-sel-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  font-size: 0.8rem; color: var(--text-dim); margin-bottom: 4px; flex-wrap: wrap;
+}
+.scada-sel-span { color: var(--text-muted); }
+.scada-sel-tablewrap { overflow-x: auto; }
+.scada-sel-table { font-size: 0.8rem; }
+.scada-sel-table th { font-size: 0.66rem; white-space: nowrap; }
+.scada-sel-table td { padding: 4px 8px; white-space: nowrap; }
+.scada-sel-swatch {
+  display: inline-block; width: 9px; height: 9px; border-radius: 2px;
+  margin-right: 6px; vertical-align: baseline;
+}
 
 /* Top-level Overview | Trends toggle */
 .scada-tabs {
