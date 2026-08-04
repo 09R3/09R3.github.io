@@ -2274,7 +2274,8 @@ app.get('/api/history', requireAuth, async (req, res) => {
   if (!type || !id) return res.status(400).json({ error: 'type and id required' });
   try {
     let rows;
-    const LIMIT = 5;
+    // Client pages through history by growing this limit (10 at a time).
+    const LIMIT = Math.min(Math.max(parseInt(req.query.limit, 10) || 10, 1), 1000);
     if (type === 'pump') {
       ({ rows } = await pool.query(
         `SELECT reading_id AS id, reading_date, reading_time, hour_reading AS value, entered_by, notes
@@ -2354,6 +2355,49 @@ app.get('/api/history', requireAuth, async (req, res) => {
   } catch (err) {
     handleErr(res, err);
   }
+});
+
+// ── Notes history ─────────────────────────────────────────────────────────────
+// Every past note for one reading item, newest first. Table/column names come
+// from this server-side map only — never from the request.
+const NOTES_SOURCES = {
+  pump:        { table: 'readings_pump_hours',       fk: 'position_id',   who: 'entered_by' },
+  compressor:  { table: 'readings_compressor_hours', fk: 'compressor_id', who: 'entered_by' },
+  pge:         { table: 'readings_pge_meters',       fk: 'pge_meter_id',  who: 'entered_by' },
+  monitor:     { table: 'readings_power_monitors',   fk: 'monitor_id',    who: 'entered_by' },
+  well:        { table: 'readings_well',             fk: 'well_id',       who: 'entered_by' },
+  kf:          { table: 'readings_kf_monthly',       fk: 'well_id',       who: 'operator'   },
+  canal:       { table: 'readings_canal',            fk: 'structure_id',  who: 'entered_by' },
+  vehicle:     { table: 'readings_vehicle_monthly',  fk: 'vehicle_id',    who: 'entered_by' },
+  dwr:         { table: 'readings_run_dwr',          fk: 'well_id',       who: 'operator'   },
+  piezometer:  { table: 'readings_piezometers',      fk: 'piezometer_id', who: 'operator'   },
+  'pond-gate': { table: 'readings_pond_gates',       fk: 'gate_id',       who: 'entered_by' },
+};
+
+app.get('/api/notes', requireAuth, async (req, res) => {
+  const { type, id } = req.query;
+  if (!type || !id) return res.status(400).json({ error: 'type and id required' });
+  const LIMIT = 500;
+  try {
+    let src, key = id;
+    if (type === 'staff-gauge') {
+      // Ponds and outlets share the table under different foreign keys.
+      const isOutlet = String(id).startsWith('outlet-');
+      key = parseInt(String(id).replace('outlet-', ''), 10);
+      src = { table: 'readings_staff_gauge', fk: isOutlet ? 'outlet_id' : 'pond_id', who: 'entered_by' };
+    } else {
+      src = NOTES_SOURCES[type];
+    }
+    if (!src) return res.status(400).json({ error: 'unknown type' });
+
+    const { rows } = await pool.query(
+      `SELECT reading_date, reading_time, notes, ${src.who} AS entered_by
+       FROM ${src.table}
+       WHERE ${src.fk} = $1 AND notes IS NOT NULL AND btrim(notes) <> ''
+       ORDER BY reading_date DESC, reading_time DESC NULLS LAST
+       LIMIT $2`, [key, LIMIT]);
+    res.json(rows);
+  } catch (err) { handleErr(res, err); }
 });
 
 // ── History All (no limit) — currently wells only ─────────────────────────────

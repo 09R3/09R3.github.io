@@ -973,14 +973,17 @@ el('att-preview-download').addEventListener('click', () => {
   }
 });
 
+const HIST_PAGE = 10;   // rows shown initially, and added per "Load More"
+
 async function openHistoryModal(type, id, label) {
   const body = el('history-modal-body');
   el('history-modal-title').textContent = `History — ${label}`;
   body.innerHTML = '<div class="placeholder-msg" style="padding:16px">Loading…</div>';
   el('history-modal').classList.remove('hidden');
 
+  let limit = HIST_PAGE;
   try {
-    const rows = await api('GET', `/api/history?type=${type}&id=${encodeURIComponent(id)}`);
+    const rows = await api('GET', `/api/history?type=${type}&id=${encodeURIComponent(id)}&limit=${limit}`);
     if (!rows.length) {
       body.innerHTML = '<div class="placeholder-msg" style="padding:16px">No history found.</div>';
       return;
@@ -1039,28 +1042,76 @@ async function openHistoryModal(type, id, label) {
     body.innerHTML = '';
     body.appendChild(table);
 
-    if (type === 'well') {
-      const showAllBtn = document.createElement('button');
-      showAllBtn.className = 'btn btn-secondary';
-      showAllBtn.style.cssText = 'width:100%;margin-top:12px';
-      showAllBtn.textContent = 'Show All';
-      showAllBtn.addEventListener('click', async () => {
-        showAllBtn.disabled = true;
-        showAllBtn.textContent = 'Loading…';
-        try {
-          const allRows = await api('GET', `/api/history-all?type=well&id=${encodeURIComponent(id)}`);
-          renderHistoryRows(allRows);
-          showAllBtn.remove();
-        } catch (err) {
-          showAllBtn.disabled = false;
-          showAllBtn.textContent = 'Show All';
-          alert('Failed to load: ' + err.message);
-        }
-      });
-      body.appendChild(showAllBtn);
-    }
+    // Load More pages by re-requesting a larger limit, so the list can grow
+    // indefinitely. A short page means we've reached the oldest reading.
+    const moreBtn = document.createElement('button');
+    moreBtn.className = 'btn btn-secondary';
+    moreBtn.style.cssText = 'width:100%;margin-top:12px';
+    moreBtn.textContent = 'Load More';
+    moreBtn.addEventListener('click', async () => {
+      moreBtn.disabled = true;
+      moreBtn.textContent = 'Loading…';
+      const next = limit + HIST_PAGE;
+      try {
+        const more = await api('GET', `/api/history?type=${type}&id=${encodeURIComponent(id)}&limit=${next}`);
+        limit = next;
+        renderHistoryRows(more);
+        if (more.length < next) moreBtn.remove();      // no older readings left
+        else { moreBtn.disabled = false; moreBtn.textContent = 'Load More'; }
+      } catch (err) {
+        moreBtn.disabled = false;
+        moreBtn.textContent = 'Load More';
+        showToast('Failed to load: ' + err.message, 'error');
+      }
+    });
+    if (rows.length >= limit) body.appendChild(moreBtn);
   } catch (err) {
     body.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light);padding:16px">${err.message}</div>`;
+  }
+}
+
+/* ── Notes history ───────────────────────────────────────────────────────────
+   Every past note for a reading item, newest first. Rendered in the shared
+   history modal. The button is wired by one delegated listener, so screens only
+   need the markup from notesBtnHtml(). */
+function notesBtnHtml(type, id, label, opts = {}) {
+  const attrs = `data-notes-type="${escHtml(type)}" data-notes-id="${escHtml(String(id))}" data-notes-label="${escHtml(label)}"`;
+  // compact  = bare icon button, for the dense pumping-plant reading rows
+  // iconOnly = same chrome as the pond rows' History button, no text label
+  // rr-icon-btn (not hist-btn) so row.querySelector('.hist-btn') still finds History
+  if (opts.compact) return `<button type="button" class="rr-icon-btn notes-btn" title="View notes" ${attrs}>${icon('reports')}</button>`;
+  if (opts.iconOnly) return `<button type="button" class="btn btn-secondary btn-sm notes-btn" title="View notes" style="flex-shrink:0" ${attrs}>${icon('reports')}</button>`;
+  return `<button type="button" class="btn btn-secondary btn-sm notes-btn" ${attrs}>${icon('reports')} Notes</button>`;
+}
+
+document.addEventListener('click', e => {
+  const btn = e.target.closest('.notes-btn');
+  if (!btn) return;
+  e.stopPropagation();          // don't collapse the reading row
+  openNotesModal(btn.dataset.notesType, btn.dataset.notesId, btn.dataset.notesLabel);
+});
+
+async function openNotesModal(type, id, label) {
+  const body = el('history-modal-body');
+  el('history-modal-title').textContent = `Notes — ${label}`;
+  body.innerHTML = '<div class="placeholder-msg" style="padding:16px">Loading…</div>';
+  el('history-modal').classList.remove('hidden');
+  try {
+    const rows = await api('GET', `/api/notes?type=${encodeURIComponent(type)}&id=${encodeURIComponent(id)}`);
+    if (!rows.length) {
+      body.innerHTML = '<div class="placeholder-msg" style="padding:16px">No notes recorded.</div>';
+      return;
+    }
+    body.innerHTML = `<div class="notes-hist-list">${rows.map(r => {
+      const d = fmtDate(r.reading_date);
+      const t = r.reading_time ? String(r.reading_time).slice(0, 5) : '';
+      return `<div class="notes-hist-item">
+        <div class="notes-hist-meta">${escHtml(d)}${t ? ' · ' + escHtml(t) : ''}${r.entered_by ? ' · ' + escHtml(r.entered_by) : ''}</div>
+        <div class="notes-hist-text">${escHtml(r.notes)}</div>
+      </div>`;
+    }).join('')}</div>`;
+  } catch (err) {
+    body.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light);padding:16px">${escHtml(err.message)}</div>`;
   }
 }
 
@@ -1235,6 +1286,7 @@ function createReadingRow({ type, id, label, prev, prevDate, prevNotes, unit, de
     <div class="rr-notes-wrap">
       ${prevNotes ? `<div class="prev-note-hint">${escHtml(prevNotes)}</div>` : ''}
       <textarea class="rr-notes-input rr-notes" rows="1" placeholder="Notes…"></textarea>
+      ${notesBtnHtml(type, id, label, { compact: true })}
       <button class="hist-btn" title="View history">${icon('history')}</button>
     </div>
   `;
@@ -1510,6 +1562,7 @@ function createWellItem(w, dateInput, timeInput) {
       <div class="lif-error error-msg hidden"></div>
       <div class="lif-footer">
         ${w.gps_latitude && w.gps_longitude ? `<button class="btn btn-secondary btn-sm w-map-btn">${icon('map-pin')} Map</button>` : ''}
+        ${notesBtnHtml('well', w.well_id, w.common_name)}
         <button class="btn btn-secondary btn-sm w-hist-btn">${icon('history')} History</button>
         <button class="btn btn-save w-save-btn">Save Well Reading</button>
       </div>
@@ -1743,6 +1796,7 @@ function createCanalItem(s, dateInput, timeInput) {
         <textarea class="ctrl-textarea c-notes" rows="2" placeholder="Optional notes…"></textarea></div>
       <div class="lif-error error-msg hidden"></div>
       <div class="lif-footer">
+        ${notesBtnHtml('canal', s.structure_id, s.structure_name)}
         <button class="btn btn-secondary btn-sm c-hist-btn">${icon('history')} History</button>
         <button class="btn btn-save c-save-btn">Save Reading</button>
       </div>
@@ -1977,6 +2031,7 @@ function createVehicleItem(v, dateInput, timeInput) {
       </div>
       <div class="lif-error error-msg hidden"></div>
       <div class="lif-footer">
+        ${notesBtnHtml('vehicle', v.vehicle_id, label)}
         <button class="btn btn-secondary btn-sm v-hist-btn">${icon('history')} History</button>
         <button class="btn btn-save v-save-btn">Save Reading</button>
       </div>
@@ -5688,6 +5743,7 @@ function createKFItem(w, dateInput, timeInput) {
       <div class="lif-error error-msg hidden"></div>
       <div class="lif-footer">
         ${hasGPS ? `<button class="btn btn-secondary btn-sm kf-map-btn">${icon('map-pin')} Map</button>` : ''}
+        ${notesBtnHtml('kf', w.well_id, w.common_name)}
         <button class="btn btn-secondary btn-sm kf-hist-btn">${icon('history')} History</button>
         <button class="btn btn-save kf-save">Save Reading</button>
       </div>
@@ -6008,6 +6064,7 @@ function createPiezItem(p, dateInput, timeInput) {
       <div class="lif-error error-msg hidden"></div>
       <div class="lif-footer">
         ${hasGPS ? `<button class="btn btn-secondary btn-sm piez-map-btn">${icon('map-pin')} Map</button>` : ''}
+        ${notesBtnHtml('piezometer', p.piezometer_id, p.piezometer_name)}
         <button class="btn btn-secondary btn-sm piez-hist-btn">${icon('history')} History</button>
         <button class="btn btn-save piez-save">Save Reading</button>
       </div>
@@ -11353,6 +11410,7 @@ function createDWRItem(w, dateInput, timeInput) {
       <div class="lif-error error-msg hidden"></div>
       <div class="lif-footer">
         ${hasGPS ? `<button class="btn btn-secondary btn-sm dwr-map-item-btn">${icon('map-pin')} Map</button>` : ''}
+        ${notesBtnHtml('dwr', w.well_id, wellLabel)}
         <button class="btn btn-secondary btn-sm dwr-hist-btn">${icon('history')} History</button>
         <button class="btn btn-save dwr-save-btn">Save Reading</button>
       </div>
@@ -13890,7 +13948,8 @@ function buildCanalRow(conn, dateInput, timeInput, cardEl) {
       ${conn.last_canal_notes ? `<div class="prev-note-hint">${escHtml(conn.last_canal_notes)}</div>` : ''}
       <div style="display:flex;gap:4px;align-items:stretch">
         <textarea class="rr-notes-input pg-canal-notes" rows="1" placeholder="Notes…"></textarea>
-        <button class="btn btn-secondary btn-sm" title="History" style="flex-shrink:0">${icon('history')}</button>
+        ${notesBtnHtml('canal', conn.source_canal_id, `${conn.name}${conn.canal_structure_name ? ' — ' + conn.canal_structure_name : ''}`, { iconOnly: true })}
+        <button class="btn btn-secondary btn-sm pond-hist-btn" title="History" style="flex-shrink:0">${icon('history')}</button>
         <button class="btn btn-save btn-sm pg-canal-save" style="flex-shrink:0">Save</button>
       </div>
       <span class="live-delta" style="visibility:hidden;pointer-events:none">x</span>
@@ -13915,7 +13974,7 @@ function buildCanalRow(conn, dateInput, timeInput, cardEl) {
     flowDeltaEl.innerHTML = (!isNaN(v) && !isNaN(ref)) ? pondDelta(v, ref).trim() : '';
   });
 
-  row.querySelector('.btn-secondary').addEventListener('click', () =>
+  row.querySelector('.pond-hist-btn').addEventListener('click', () =>
     openHistoryModal('canal', conn.source_canal_id,
       `${conn.name}${conn.canal_structure_name ? ' — ' + conn.canal_structure_name : ''}`));
 
@@ -13978,7 +14037,8 @@ function buildGaugeForm(pond, dateInput, timeInput, cardEl) {
       ${pond.last_gauge_notes ? `<div class="prev-note-hint">${escHtml(pond.last_gauge_notes)}</div>` : ''}
       <div style="display:flex;gap:4px;align-items:stretch">
         <textarea class="rr-notes-input pg-gauge-notes" rows="1" placeholder="Notes…"></textarea>
-        <button class="btn btn-secondary btn-sm" title="History" style="flex-shrink:0">${icon('history')}</button>
+        ${notesBtnHtml('staff-gauge', pond.outlet_id ? `outlet-${pond.outlet_id}` : pond.pond_id, pond.name + ' — Staff Gauge', { iconOnly: true })}
+        <button class="btn btn-secondary btn-sm pond-hist-btn" title="History" style="flex-shrink:0">${icon('history')}</button>
         <button class="btn btn-save btn-sm pg-gauge-save" style="flex-shrink:0">Save</button>
       </div>
       <span class="live-delta" style="visibility:hidden;pointer-events:none">x</span>
@@ -14003,7 +14063,7 @@ function buildGaugeForm(pond, dateInput, timeInput, cardEl) {
   const saveBtn    = row.querySelector('.pg-gauge-save');
 
   const historyId = pond.outlet_id ? `outlet-${pond.outlet_id}` : pond.pond_id;
-  row.querySelector('.btn-secondary').addEventListener('click', () =>
+  row.querySelector('.pond-hist-btn').addEventListener('click', () =>
     openHistoryModal('staff-gauge', historyId, pond.name + ' — Staff Gauge'));
 
   saveBtn.addEventListener('click', async () => {
@@ -14098,7 +14158,8 @@ function buildGateRow(gate, dateInput, timeInput, cardEl) {
       ${gate.last_notes ? `<div class="prev-note-hint">${escHtml(gate.last_notes)}</div>` : ''}
       <div style="display:flex;gap:4px;align-items:stretch">
         <textarea class="rr-notes-input pg-gate-notes" rows="1" placeholder="Notes…"></textarea>
-        <button class="btn btn-secondary btn-sm" title="History" style="flex-shrink:0">${icon('history')}</button>
+        ${notesBtnHtml('pond-gate', gate.gate_id, gate.label, { iconOnly: true })}
+        <button class="btn btn-secondary btn-sm pond-hist-btn" title="History" style="flex-shrink:0">${icon('history')}</button>
         <button class="btn btn-save btn-sm pg-gate-save" style="flex-shrink:0">Save</button>
       </div>
       <span class="live-delta" style="visibility:hidden;pointer-events:none">x</span>
@@ -14170,7 +14231,7 @@ function buildGateRow(gate, dateInput, timeInput, cardEl) {
   });
   flowInput?.addEventListener('input', () => { updatePondTotal(cardEl); updateFlowDelta(); });
 
-  row.querySelector('.btn-secondary').addEventListener('click', () =>
+  row.querySelector('.pond-hist-btn').addEventListener('click', () =>
     openHistoryModal('pond-gate', gate.gate_id, gate.label));
 
   saveBtn.addEventListener('click', async () => {

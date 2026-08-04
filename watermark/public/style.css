@@ -760,7 +760,8 @@ input[type="date"].ctrl-input { min-height: 44px; }
 }
 .totalizer-calc.neg { color: var(--red-light); }
 
-.hist-btn {
+.hist-btn,
+.rr-icon-btn {
   background: var(--surface2);
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -772,7 +773,8 @@ input[type="date"].ctrl-input { min-height: 44px; }
   line-height: 1;
   flex-shrink: 0;
 }
-.hist-btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+.hist-btn:hover,
+.rr-icon-btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
 
 /* ── History Modal Table ──────────────────────────────────────────────────── */
 .hist-table {
@@ -1409,6 +1411,18 @@ input[type="date"].ctrl-input { min-height: 44px; }
   border-right: 1px solid var(--border);
 }
 .wm-table thead .wm-day-col { z-index: 3; }
+/* ── Notes history modal ──────────────────────────────────────────────────── */
+.notes-hist-list { padding: 4px 0; }
+.notes-hist-item {
+  padding: 10px 12px; border-bottom: 1px solid var(--border);
+}
+.notes-hist-item:last-child { border-bottom: none; }
+.notes-hist-meta {
+  font-size: 0.74rem; font-weight: 700; color: var(--text-dim);
+  text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 3px;
+}
+.notes-hist-text { font-size: 0.9rem; white-space: pre-wrap; word-break: break-word; }
+
 /* Notes sit in the last column — wrap rather than stretching the table wide */
 .canal-notes-cell {
   max-width: 280px; white-space: normal; word-break: break-word;
