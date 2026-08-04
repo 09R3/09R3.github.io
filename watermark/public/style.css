@@ -1409,6 +1409,10 @@ input[type="date"].ctrl-input { min-height: 44px; }
   border-right: 1px solid var(--border);
 }
 .wm-table thead .wm-day-col { z-index: 3; }
+.canal-notes-toggle {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 0.82rem; color: var(--text-dim); white-space: nowrap; cursor: pointer;
+}
 .wm-fill-toggle {
   display: inline-flex; align-items: center; gap: 6px;
   font-size: 0.82rem; color: var(--text-dim); white-space: nowrap; cursor: pointer;

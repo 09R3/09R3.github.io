@@ -3770,6 +3770,61 @@ app.get('/api/reports/canal', requireAuth, requireRole(...SUPERVISOR_ROLES), asy
   } catch (err) { handleErr(res, err); }
 });
 
+// Canal readings as a spreadsheet. Accepts a one-time download token so the
+// export can be fetched without relying on the session cookie.
+app.get('/api/reports/canal/export', async (req, res) => {
+  const { start_date, end_date, token, notes } = req.query;
+  if (token) {
+    const t = downloadTokens.get(token);
+    if (!t || Date.now() > t.expires) return res.status(401).json({ error: 'Invalid or expired token' });
+    downloadTokens.delete(token);
+  } else {
+    const sessionUser = getSession(req.cookies?.fo_session);
+    if (!sessionUser) return res.status(401).json({ error: 'Unauthorized' });
+    if (!SUPERVISOR_ROLES.includes(sessionUser.role)) return res.status(403).json({ error: 'Forbidden' });
+  }
+  if (!start_date || !end_date) return res.status(400).json({ error: 'start_date and end_date required' });
+  const withNotes = notes === 'true';
+  try {
+    const { rows } = await pool.query(`
+      SELECT cs.structure_name, r.reading_date, r.reading_time,
+             r.instantaneous_flow_cfs, r.totalizer_reading_af,
+             r.gate_setting, r.head_reading_ft, r.entered_by, r.notes
+      FROM readings_canal r
+      JOIN canal_structures cs ON cs.structure_id = r.structure_id
+      WHERE r.reading_date BETWEEN $1 AND $2
+      ORDER BY r.reading_date, r.reading_time, cs.structure_name
+    `, [start_date, end_date]);
+
+    const wb = XLSX.utils.book_new();
+    const header = ['Date', 'Time', 'Structure', 'Flow (cfs)', 'Totalizer (af)',
+                    'Gate', 'Head (ft)', 'By', ...(withNotes ? ['Notes'] : [])];
+    const num = v => (v != null ? Number(v) : '');
+    const data = [
+      ['Canal Readings', `${start_date} to ${end_date}`],
+      [],
+      header,
+      ...rows.map(r => [
+        r.reading_date ? dateString(r.reading_date) : '',
+        r.reading_time ? String(r.reading_time).slice(0, 5) : '',
+        r.structure_name || '',
+        num(r.instantaneous_flow_cfs), num(r.totalizer_reading_af),
+        num(r.gate_setting), num(r.head_reading_ft),
+        r.entered_by || '',
+        ...(withNotes ? [r.notes || ''] : []),
+      ]),
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    ws['!cols'] = [{ wch: 12 }, { wch: 8 }, { wch: 26 }, { wch: 11 }, { wch: 14 },
+                   { wch: 9 }, { wch: 10 }, { wch: 12 }, ...(withNotes ? [{ wch: 40 }] : [])];
+    XLSX.utils.book_append_sheet(wb, ws, 'Canal');
+    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="Canal_${start_date}_${end_date}.xlsx"`);
+    return res.send(buf);
+  } catch (err) { handleErr(res, err); }
+});
+
 app.get('/api/reports/ponds', requireAuth, async (req, res) => {
   const { date } = req.query;
   if (!date) return res.status(400).json({ error: 'date required' });
