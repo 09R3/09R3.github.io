@@ -10026,6 +10026,7 @@ async function renderCanalReport() {
 
     const fmtDate = s => s ? localDateStr(s, { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
     const fmtNum  = (v, dec = 2) => v != null ? Number(v).toFixed(dec) : '—';
+    const fmtTime = t => t ? String(t).slice(0, 5) : '—';
 
     // Group by date
     const byDate = {};
@@ -10045,23 +10046,26 @@ async function renderCanalReport() {
         <table class="report-table">
           <thead><tr>
             <th>Structure</th>
+            <th>Time</th>
             <th class="report-num">Flow (cfs)</th>
             <th class="report-num">Totalizer (af)</th>
             <th class="report-num">Gate</th>
             <th class="report-num">Head (ft)</th>
             <th>By</th>
+            ${showNotes ? '<th>Notes</th>' : ''}
           </tr></thead>
           <tbody>`;
       readings.forEach(r => {
         html += `<tr>
           <td>${escHtml(r.structure_name)}</td>
+          <td>${fmtTime(r.reading_time)}</td>
           <td class="report-num">${fmtNum(r.instantaneous_flow_cfs)}</td>
           <td class="report-num">${fmtNum(r.totalizer_reading_af)}</td>
           <td class="report-num">${fmtNum(r.gate_setting)}</td>
           <td class="report-num">${fmtNum(r.head_reading_ft)}</td>
           <td>${escHtml(r.entered_by || '—')}</td>
+          ${showNotes ? `<td class="canal-notes-cell">${escHtml(r.notes || '')}</td>` : ''}
         </tr>`;
-        if (showNotes && r.notes) html += `<tr><td colspan="6" style="color:var(--text-dim);font-size:0.82rem;padding:2px 4px 6px">↳ ${escHtml(r.notes)}</td></tr>`;
       });
       html += '</tbody></table>';
     });
@@ -10374,14 +10378,14 @@ el('export-csv-btn').addEventListener('click', async () => {
     const csvEsc = v => (v == null || v === '') ? '' : /[,"\n]/.test(String(v)) ? `"${String(v).replace(/"/g,'""')}"` : String(v);
     const s = el('canal-report-start-date').value, e = el('canal-report-end-date').value;
     const withNotes = el('canal-report-notes').checked;
-    const head = ['Date','Time','Structure','Flow (cfs)','Totalizer (af)','Gate','Head (ft)','By'];
+    const head = ['Date','Structure','Time','Flow (cfs)','Totalizer (af)','Gate','Head (ft)','By'];
     if (withNotes) head.push('Notes');
     const lines = [`Canal Readings,${s}${s !== e ? ' to ' + e : ''}`, '', head.join(',')];
     lastCanalRows.forEach(r => {
       const row = [
         r.reading_date ? String(r.reading_date).slice(0,10) : '',
-        r.reading_time ? String(r.reading_time).slice(0,5) : '',
         r.structure_name || '',
+        r.reading_time ? String(r.reading_time).slice(0,5) : '',
         r.instantaneous_flow_cfs ?? '', r.totalizer_reading_af ?? '',
         r.gate_setting ?? '', r.head_reading_ft ?? '', r.entered_by || '',
       ];

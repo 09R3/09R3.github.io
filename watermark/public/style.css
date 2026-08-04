@@ -1409,6 +1409,11 @@ input[type="date"].ctrl-input { min-height: 44px; }
   border-right: 1px solid var(--border);
 }
 .wm-table thead .wm-day-col { z-index: 3; }
+/* Notes sit in the last column — wrap rather than stretching the table wide */
+.canal-notes-cell {
+  max-width: 280px; white-space: normal; word-break: break-word;
+  font-size: 0.82rem; color: var(--text-dim);
+}
 .canal-notes-toggle {
   display: inline-flex; align-items: center; gap: 6px;
   font-size: 0.82rem; color: var(--text-dim); white-space: nowrap; cursor: pointer;

@@ -3797,7 +3797,7 @@ app.get('/api/reports/canal/export', async (req, res) => {
     `, [start_date, end_date]);
 
     const wb = XLSX.utils.book_new();
-    const header = ['Date', 'Time', 'Structure', 'Flow (cfs)', 'Totalizer (af)',
+    const header = ['Date', 'Structure', 'Time', 'Flow (cfs)', 'Totalizer (af)',
                     'Gate', 'Head (ft)', 'By', ...(withNotes ? ['Notes'] : [])];
     const num = v => (v != null ? Number(v) : '');
     const data = [
@@ -3806,8 +3806,8 @@ app.get('/api/reports/canal/export', async (req, res) => {
       header,
       ...rows.map(r => [
         r.reading_date ? dateString(r.reading_date) : '',
-        r.reading_time ? String(r.reading_time).slice(0, 5) : '',
         r.structure_name || '',
+        r.reading_time ? String(r.reading_time).slice(0, 5) : '',
         num(r.instantaneous_flow_cfs), num(r.totalizer_reading_af),
         num(r.gate_setting), num(r.head_reading_ft),
         r.entered_by || '',
@@ -3815,7 +3815,7 @@ app.get('/api/reports/canal/export', async (req, res) => {
       ]),
     ];
     const ws = XLSX.utils.aoa_to_sheet(data);
-    ws['!cols'] = [{ wch: 12 }, { wch: 8 }, { wch: 26 }, { wch: 11 }, { wch: 14 },
+    ws['!cols'] = [{ wch: 12 }, { wch: 26 }, { wch: 8 }, { wch: 11 }, { wch: 14 },
                    { wch: 9 }, { wch: 10 }, { wch: 12 }, ...(withNotes ? [{ wch: 40 }] : [])];
     XLSX.utils.book_append_sheet(wb, ws, 'Canal');
     const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
