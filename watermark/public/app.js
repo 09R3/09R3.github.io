@@ -9194,21 +9194,34 @@ el('pest-product-save-btn').addEventListener('click', async () => {
   }
 });
 
-/* ── Pesticide label PDFs ─────────────────────────────────────────────────────
-   Anyone can attach a label and anyone can open it; only supervisors can remove
-   one, and once removed the "+ Add Label" button comes back. */
-function pestLabelHtml(p, isSupervisor) {
-  if (!p.label_path) {
-    return `<button class="btn btn-secondary btn-xs pest-label-add" data-id="${p.pesticide_id}">+ Add Label</button>`;
-  }
-  const url = `/uploads/${String(p.label_path).split('/').map(encodeURIComponent).join('/')}`;
-  return `<a class="pest-label-link" href="${escHtml(url)}" target="_blank" rel="noopener">
-      ${icon('invoice', 14)} ${escHtml(p.label_name || 'Label PDF')}</a>
-    ${isSupervisor ? `<button class="btn btn-secondary btn-xs pest-label-del" data-id="${p.pesticide_id}">Remove</button>` : ''}`;
+/* ── Pesticide document PDFs (product label + SDS) ────────────────────────────
+   Anyone can attach one and anyone can open it; only supervisors can remove one,
+   and once removed the "+ Add …" button comes back. */
+const PEST_DOCS = [
+  { kind: 'label', label: 'Label', pathKey: 'label_path', nameKey: 'label_name' },
+  { kind: 'sds',   label: 'SDS',   pathKey: 'sds_path',   nameKey: 'sds_name'   },
+];
+
+function pestDocsHtml(p, isSupervisor) {
+  return PEST_DOCS.map(d => {
+    const relPath = p[d.pathKey];
+    if (!relPath) {
+      return `<button class="btn btn-secondary btn-xs pest-doc-add"
+        data-id="${p.pesticide_id}" data-kind="${d.kind}">+ Add ${d.label}</button>`;
+    }
+    const url = `/uploads/${String(relPath).split('/').map(encodeURIComponent).join('/')}`;
+    return `<span class="pest-doc-slot">
+      <a class="pest-label-link" href="${escHtml(url)}" target="_blank" rel="noopener"
+         title="${escHtml(p[d.nameKey] || '')}">${icon('invoice', 14)} ${escHtml(d.label)}</a>
+      ${isSupervisor ? `<button class="btn btn-secondary btn-xs pest-doc-del"
+        data-id="${p.pesticide_id}" data-kind="${d.kind}" title="Remove ${d.label}">&times;</button>` : ''}
+    </span>`;
+  }).join('');
 }
 
 function wirePestLabelButtons(list) {
-  list.querySelectorAll('.pest-label-add').forEach(btn => {
+  list.querySelectorAll('.pest-doc-add').forEach(btn => {
+    const kindLabel = btn.dataset.kind === 'sds' ? 'SDS' : 'Label';
     btn.addEventListener('click', () => {
       const input = document.createElement('input');
       input.type = 'file';
@@ -9217,18 +9230,18 @@ function wirePestLabelButtons(list) {
         const file = input.files?.[0];
         if (!file) return;
         if (!/pdf$/i.test(file.name) && file.type !== 'application/pdf') {
-          return showToast('Label must be a PDF', 'error');
+          return showToast(`${kindLabel} must be a PDF`, 'error');
         }
         const orig = btn.textContent;
         btn.disabled = true; btn.textContent = 'Uploading…';
         try {
           const fd = new FormData();
           fd.append('file', file);
-          const res = await fetch(`/api/pesticides/${btn.dataset.id}/label?category=misc`, {
+          const res = await fetch(`/api/pesticides/${btn.dataset.id}/docs/${btn.dataset.kind}?category=misc`, {
             method: 'POST', body: fd,
           });
           if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Upload failed');
-          showToast('Label added');
+          showToast(`${kindLabel} added`);
           await loadPestProductList();
         } catch (err) {
           btn.disabled = false; btn.textContent = orig;
@@ -9239,12 +9252,13 @@ function wirePestLabelButtons(list) {
     });
   });
 
-  list.querySelectorAll('.pest-label-del').forEach(btn => {
+  list.querySelectorAll('.pest-doc-del').forEach(btn => {
+    const kindLabel = btn.dataset.kind === 'sds' ? 'SDS' : 'Label';
     btn.addEventListener('click', async () => {
-      if (!confirm('Remove this label PDF?')) return;
+      if (!confirm(`Remove this ${kindLabel} PDF?`)) return;
       try {
-        await api('DELETE', `/api/pesticides/${btn.dataset.id}/label`);
-        showToast('Label removed');
+        await api('DELETE', `/api/pesticides/${btn.dataset.id}/docs/${btn.dataset.kind}`);
+        showToast(`${kindLabel} removed`);
         await loadPestProductList();
       } catch (err) { showToast(err.message, 'error'); }
     });
@@ -9267,7 +9281,7 @@ async function loadPestProductList() {
         <div class="pest-product-meta">
           ${p.epa_reg_number ? `EPA: ${escHtml(p.epa_reg_number)} · ` : ''}${escHtml(p.unit_of_measure)}
         </div>
-        <div class="pest-label-row">${pestLabelHtml(p, isSupervisor)}</div>
+        <div class="pest-label-row">${pestDocsHtml(p, isSupervisor)}</div>
         ${isSupervisor ? `<div class="pest-product-actions">
           <button class="btn btn-secondary btn-xs pest-toggle-btn" data-id="${p.pesticide_id}" data-active="${p.active}">
             ${p.active ? 'Deactivate' : 'Reactivate'}

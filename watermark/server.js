@@ -4520,18 +4520,23 @@ app.get('/api/reports/wells/dripper', requireAuth, async (req, res) => {
 app.get('/api/pesticides', requireAuth, async (req, res) => {
   try {
     const showAll = SUPERVISOR_ROLES.includes(req.user.role);
-    // Label PDFs live in the shared attachments table under table_name='pesticides'.
+    // Label and SDS PDFs live in the shared attachments table under
+    // table_name='pesticides', distinguished by file_type.
     const { rows } = await pool.query(
       `SELECT p.pesticide_id, p.name, p.epa_reg_number, p.unit_of_measure, p.active, p.created_at,
-              a.attachment_id AS label_id, a.rel_path AS label_path,
-              a.original_name AS label_name, a.mime_type AS label_mime
+              lb.rel_path AS label_path, lb.original_name AS label_name,
+              sd.rel_path AS sds_path,   sd.original_name AS sds_name
        FROM pesticides p
        LEFT JOIN LATERAL (
-         SELECT attachment_id, rel_path, original_name, mime_type
-         FROM maintenance_attachments
+         SELECT rel_path, original_name FROM maintenance_attachments
          WHERE table_name = 'pesticides' AND record_id = p.pesticide_id AND file_type = 'label'
          ORDER BY uploaded_at DESC LIMIT 1
-       ) a ON TRUE
+       ) lb ON TRUE
+       LEFT JOIN LATERAL (
+         SELECT rel_path, original_name FROM maintenance_attachments
+         WHERE table_name = 'pesticides' AND record_id = p.pesticide_id AND file_type = 'sds'
+         ORDER BY uploaded_at DESC LIMIT 1
+       ) sd ON TRUE
        ${showAll ? '' : 'WHERE p.active = TRUE'}
        ORDER BY p.name`
     );
@@ -4651,37 +4656,43 @@ app.delete('/api/pesticide-usage/:id', requireAuth, requireRole(...SUPERVISOR_RO
   } catch (err) { handleErr(res, err); }
 });
 
-// ── Pesticide label PDFs ──────────────────────────────────────────────────────
-// Anyone may attach a label; only supervisors may remove one. Stored in the
-// shared attachments table so it reuses the existing upload plumbing.
-app.post('/api/pesticides/:id/label', requireAuth, upload.single('file'), async (req, res) => {
+// ── Pesticide document PDFs (product label + SDS) ─────────────────────────────
+// Anyone may attach one; only supervisors may remove one. Stored in the shared
+// attachments table so this reuses the existing upload plumbing.
+const PEST_DOC_KINDS = new Set(['label', 'sds']);
+
+app.post('/api/pesticides/:id/docs/:kind', requireAuth, upload.single('file'), async (req, res) => {
+  const cleanup = () => { try { if (req.file) fs.unlinkSync(req.file.path); } catch {} };
   if (!req.file) return res.status(400).json({ error: 'No file received' });
-  const pid = parseInt(req.params.id, 10);
-  if (!Number.isFinite(pid)) {
-    try { fs.unlinkSync(req.file.path); } catch {}
-    return res.status(400).json({ error: 'bad pesticide id' });
+  const pid  = parseInt(req.params.id, 10);
+  const kind = String(req.params.kind);
+  if (!Number.isFinite(pid) || !PEST_DOC_KINDS.has(kind)) {
+    cleanup();
+    return res.status(400).json({ error: 'bad pesticide id or document type' });
   }
   const rel = path.relative(UPLOADS_ROOT, req.file.path).replace(/\\/g, '/');
   try {
     const { rows } = await pool.query(
       `INSERT INTO maintenance_attachments
          (table_name, record_id, rel_path, original_name, file_type, mime_type, uploaded_by)
-       VALUES ('pesticides',$1,$2,$3,'label',$4,$5) RETURNING attachment_id`,
-      [pid, rel, req.file.originalname, req.file.mimetype, req.user.username]);
+       VALUES ('pesticides',$1,$2,$3,$4,$5,$6) RETURNING attachment_id`,
+      [pid, rel, req.file.originalname, kind, req.file.mimetype, req.user.username]);
     res.json({ ok: true, attachment_id: rows[0].attachment_id, rel_path: rel });
   } catch (err) {
-    try { fs.unlinkSync(req.file.path); } catch {}
+    cleanup();
     handleErr(res, err);
   }
 });
 
-app.delete('/api/pesticides/:id/label', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
+app.delete('/api/pesticides/:id/docs/:kind', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
+  const kind = String(req.params.kind);
+  if (!PEST_DOC_KINDS.has(kind)) return res.status(400).json({ error: 'bad document type' });
   try {
     const { rows } = await pool.query(
       `DELETE FROM maintenance_attachments
-       WHERE table_name = 'pesticides' AND record_id = $1 AND file_type = 'label'
-       RETURNING rel_path`, [parseInt(req.params.id, 10)]);
-    if (!rows.length) return res.status(404).json({ error: 'No label to delete' });
+       WHERE table_name = 'pesticides' AND record_id = $1 AND file_type = $2
+       RETURNING rel_path`, [parseInt(req.params.id, 10), kind]);
+    if (!rows.length) return res.status(404).json({ error: 'Nothing to delete' });
     for (const r of rows) {
       const abs = path.join(UPLOADS_ROOT, r.rel_path);
       if (fs.existsSync(abs)) fs.unlinkSync(abs);

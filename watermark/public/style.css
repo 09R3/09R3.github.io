@@ -1862,6 +1862,10 @@ input[type="date"].ctrl-input { min-height: 44px; }
   font-size: 0.82rem; color: var(--accent); text-decoration: none; word-break: break-all;
 }
 .pest-label-link:hover { text-decoration: underline; }
+.pest-doc-slot {
+  display: inline-flex; align-items: center; gap: 4px;
+  border: 1px solid var(--border); border-radius: 12px; padding: 2px 4px 2px 9px;
+}
 .pest-product-inactive { opacity: 0.6; }
 .pest-inactive-badge  {
   font-size: 0.7rem;
