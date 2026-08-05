@@ -1853,6 +1853,15 @@ input[type="date"].ctrl-input { min-height: 44px; }
 .pest-product-name    { font-weight: 600; }
 .pest-product-meta    { font-size: 0.8rem; color: var(--text-dim); }
 .pest-product-actions { margin-top: 6px; }
+.pest-usage-actions { margin-top: 6px; }
+.pest-usage-editform { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
+.pest-usage-editform .form-row { display: flex; gap: 8px; align-items: center; }
+.pest-label-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+.pest-label-link {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 0.82rem; color: var(--accent); text-decoration: none; word-break: break-all;
+}
+.pest-label-link:hover { text-decoration: underline; }
 .pest-product-inactive { opacity: 0.6; }
 .pest-inactive-badge  {
   font-size: 0.7rem;

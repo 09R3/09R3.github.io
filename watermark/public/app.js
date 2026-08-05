@@ -8780,6 +8780,7 @@ el('pest-usage-new-btn').addEventListener('click', () => {
   el('pest-usage-form').classList.remove('hidden');
   el('pest-usage-select').value = '';
   el('pest-usage-qty').value = '';
+  el('pest-usage-date').value = new Date().toLocaleDateString('en-CA');
   el('pest-usage-uom-label').textContent = '';
   el('pest-usage-new-btn').style.display = 'none';
 });
@@ -8796,7 +8797,10 @@ el('pest-usage-save-btn').addEventListener('click', async () => {
   if (!quantity || quantity <= 0) return showToast('Enter a valid quantity', 'error');
   const _save = beginSave(el('pest-usage-save-btn'));
   try {
-    await api('POST', '/api/pesticide-usage', { pesticide_id: parseInt(pesticide_id), quantity });
+    await api('POST', '/api/pesticide-usage', {
+      pesticide_id: parseInt(pesticide_id), quantity,
+      used_date: el('pest-usage-date').value || null,
+    });
     el('pest-usage-form').classList.add('hidden');
     el('pest-usage-new-btn').style.display = '';
     pestUsageLoaded = false;
@@ -8817,20 +8821,96 @@ async function loadPestUsageList() {
   try {
     const rows = await api('GET', '/api/pesticide-usage');
     if (!rows.length) { list.innerHTML = '<div class="placeholder-msg">No usage entries yet.</div>'; return; }
+    const canEdit = isSupervisorLevel(currentUser?.role);
     list.innerHTML = rows.map(r => {
       const d = localDateStr(r.used_date);
       const t = r.used_time ? r.used_time.slice(0, 5) : '';
-      return `<div class="pest-usage-item">
-        <div class="pest-usage-main">
-          <span class="pest-usage-name">${escHtml(r.pesticide_name)}</span>
-          <span class="pest-usage-qty">${Number(r.quantity).toLocaleString()} ${escHtml(r.unit_of_measure)}</span>
+      return `<div class="pest-usage-item" data-usage-id="${r.usage_id}">
+        <div class="pest-usage-view">
+          <div class="pest-usage-main">
+            <span class="pest-usage-name">${escHtml(r.pesticide_name)}</span>
+            <span class="pest-usage-qty">${Number(r.quantity).toLocaleString()} ${escHtml(r.unit_of_measure)}</span>
+          </div>
+          <div class="pest-usage-meta">${d}${t ? ' · ' + t : ''} · ${escHtml(r.applicator_name || 'Unknown')}</div>
+          ${canEdit ? '<div class="pest-usage-actions"><button class="btn btn-secondary btn-xs pest-usage-edit">Edit</button></div>' : ''}
         </div>
-        <div class="pest-usage-meta">${d}${t ? ' · ' + t : ''} · ${escHtml(r.applicator_name || 'Unknown')}</div>
       </div>`;
     }).join('');
+
+    if (!canEdit) return;
+    // Edit is supervisor-only; the server enforces it too.
+    const products = await api('GET', '/api/pesticides').catch(() => []);
+    list.querySelectorAll('.pest-usage-edit').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const item = btn.closest('.pest-usage-item');
+        const row  = rows.find(x => String(x.usage_id) === item.dataset.usageId);
+        if (row) openPestUsageEdit(item, row, products);
+      });
+    });
   } catch (err) {
-    list.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
+    list.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${escHtml(err.message)}</div>`;
   }
+}
+
+// Inline edit for one usage entry: pesticide, date, quantity — plus Delete,
+// which is only reachable from here so it can't be hit by accident.
+function openPestUsageEdit(item, row, products) {
+  const view = item.querySelector('.pest-usage-view');
+  view.classList.add('hidden');
+  const form = document.createElement('div');
+  form.className = 'pest-usage-editform';
+  form.innerHTML = `
+    <div class="form-group">
+      <label>Pesticide</label>
+      <select class="ctrl-select pue-sel">${products.map(p =>
+        `<option value="${p.pesticide_id}" data-uom="${escHtml(p.unit_of_measure)}" ${p.pesticide_id === row.pesticide_id ? 'selected' : ''}>${escHtml(p.name)}</option>`
+      ).join('')}</select>
+    </div>
+    <div class="two-col">
+      <div class="form-group">
+        <label>Date Applied</label>
+        <input type="date" class="ctrl-input ctrl-input-sm pue-date" value="${row.used_date ? String(row.used_date).slice(0,10) : ''}">
+      </div>
+      <div class="form-group">
+        <label>Quantity</label>
+        <input type="number" class="ctrl-input ctrl-input-sm pue-qty" step="0.01" min="0" value="${row.quantity ?? ''}">
+      </div>
+    </div>
+    <div class="form-row">
+      <button class="btn btn-save btn-sm pue-save">Save</button>
+      <button class="btn btn-secondary btn-sm pue-cancel">Cancel</button>
+      <button class="btn btn-danger btn-sm pue-delete" style="margin-left:auto">Delete</button>
+    </div>`;
+  item.appendChild(form);
+
+  const close = () => { form.remove(); view.classList.remove('hidden'); };
+  form.querySelector('.pue-cancel').addEventListener('click', close);
+
+  form.querySelector('.pue-save').addEventListener('click', async () => {
+    const qty = parseFloat(form.querySelector('.pue-qty').value);
+    if (!(qty > 0)) return showToast('Enter a valid quantity', 'error');
+    const _save = beginSave(form.querySelector('.pue-save'));
+    try {
+      await api('PATCH', `/api/pesticide-usage/${row.usage_id}`, {
+        pesticide_id: parseInt(form.querySelector('.pue-sel').value, 10),
+        quantity: qty,
+        used_date: form.querySelector('.pue-date').value || null,
+      });
+      showToast('Usage updated');
+      await loadPestUsageList();
+    } catch (err) {
+      showToast(err.message, 'error');
+    } finally { _save(); }
+  });
+
+  form.querySelector('.pue-delete').addEventListener('click', async () => {
+    if (!confirm('Delete this usage entry?')) return;
+    try {
+      await api('DELETE', `/api/pesticide-usage/${row.usage_id}`);
+      showToast('Usage deleted');
+      await loadPestUsageList();
+    } catch (err) { showToast(err.message, 'error'); }
+  });
 }
 
 // ── Treatment List Panel ──────────────────────────────────────────────────────
@@ -9114,6 +9194,63 @@ el('pest-product-save-btn').addEventListener('click', async () => {
   }
 });
 
+/* ── Pesticide label PDFs ─────────────────────────────────────────────────────
+   Anyone can attach a label and anyone can open it; only supervisors can remove
+   one, and once removed the "+ Add Label" button comes back. */
+function pestLabelHtml(p, isSupervisor) {
+  if (!p.label_path) {
+    return `<button class="btn btn-secondary btn-xs pest-label-add" data-id="${p.pesticide_id}">+ Add Label</button>`;
+  }
+  const url = `/uploads/${String(p.label_path).split('/').map(encodeURIComponent).join('/')}`;
+  return `<a class="pest-label-link" href="${escHtml(url)}" target="_blank" rel="noopener">
+      ${icon('invoice', 14)} ${escHtml(p.label_name || 'Label PDF')}</a>
+    ${isSupervisor ? `<button class="btn btn-secondary btn-xs pest-label-del" data-id="${p.pesticide_id}">Remove</button>` : ''}`;
+}
+
+function wirePestLabelButtons(list) {
+  list.querySelectorAll('.pest-label-add').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'application/pdf,.pdf';
+      input.addEventListener('change', async () => {
+        const file = input.files?.[0];
+        if (!file) return;
+        if (!/pdf$/i.test(file.name) && file.type !== 'application/pdf') {
+          return showToast('Label must be a PDF', 'error');
+        }
+        const orig = btn.textContent;
+        btn.disabled = true; btn.textContent = 'Uploading…';
+        try {
+          const fd = new FormData();
+          fd.append('file', file);
+          const res = await fetch(`/api/pesticides/${btn.dataset.id}/label?category=misc`, {
+            method: 'POST', body: fd,
+          });
+          if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Upload failed');
+          showToast('Label added');
+          await loadPestProductList();
+        } catch (err) {
+          btn.disabled = false; btn.textContent = orig;
+          showToast(err.message, 'error');
+        }
+      });
+      input.click();
+    });
+  });
+
+  list.querySelectorAll('.pest-label-del').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('Remove this label PDF?')) return;
+      try {
+        await api('DELETE', `/api/pesticides/${btn.dataset.id}/label`);
+        showToast('Label removed');
+        await loadPestProductList();
+      } catch (err) { showToast(err.message, 'error'); }
+    });
+  });
+}
+
 async function loadPestProductList() {
   const list = el('pest-product-list');
   list.innerHTML = '<div class="placeholder-msg">Loading…</div>';
@@ -9130,6 +9267,7 @@ async function loadPestProductList() {
         <div class="pest-product-meta">
           ${p.epa_reg_number ? `EPA: ${escHtml(p.epa_reg_number)} · ` : ''}${escHtml(p.unit_of_measure)}
         </div>
+        <div class="pest-label-row">${pestLabelHtml(p, isSupervisor)}</div>
         ${isSupervisor ? `<div class="pest-product-actions">
           <button class="btn btn-secondary btn-xs pest-toggle-btn" data-id="${p.pesticide_id}" data-active="${p.active}">
             ${p.active ? 'Deactivate' : 'Reactivate'}
@@ -9137,6 +9275,7 @@ async function loadPestProductList() {
         </div>` : ''}
       </div>`
     ).join('');
+    wirePestLabelButtons(list);
     if (isSupervisor) {
       list.querySelectorAll('.pest-toggle-btn').forEach(btn => {
         btn.addEventListener('click', async () => {

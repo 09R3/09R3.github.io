@@ -4520,11 +4520,20 @@ app.get('/api/reports/wells/dripper', requireAuth, async (req, res) => {
 app.get('/api/pesticides', requireAuth, async (req, res) => {
   try {
     const showAll = SUPERVISOR_ROLES.includes(req.user.role);
+    // Label PDFs live in the shared attachments table under table_name='pesticides'.
     const { rows } = await pool.query(
-      `SELECT pesticide_id, name, epa_reg_number, unit_of_measure, active, created_at
-       FROM pesticides
-       ${showAll ? '' : 'WHERE active = TRUE'}
-       ORDER BY name`
+      `SELECT p.pesticide_id, p.name, p.epa_reg_number, p.unit_of_measure, p.active, p.created_at,
+              a.attachment_id AS label_id, a.rel_path AS label_path,
+              a.original_name AS label_name, a.mime_type AS label_mime
+       FROM pesticides p
+       LEFT JOIN LATERAL (
+         SELECT attachment_id, rel_path, original_name, mime_type
+         FROM maintenance_attachments
+         WHERE table_name = 'pesticides' AND record_id = p.pesticide_id AND file_type = 'label'
+         ORDER BY uploaded_at DESC LIMIT 1
+       ) a ON TRUE
+       ${showAll ? '' : 'WHERE p.active = TRUE'}
+       ORDER BY p.name`
     );
     res.json(rows);
   } catch (err) {
@@ -4585,16 +4594,17 @@ app.get('/api/pesticide-usage', requireAuth, async (req, res) => {
   }
 });
 
-// Log new usage entry (date/time/user auto from server)
+// Log new usage entry. used_date may be back-dated to record a missed
+// application; time and user still come from the server.
 app.post('/api/pesticide-usage', requireAuth, async (req, res) => {
-  const { pesticide_id, quantity } = req.body;
+  const { pesticide_id, quantity, used_date } = req.body;
   if (!pesticide_id || quantity == null) return res.status(400).json({ error: 'pesticide_id and quantity required' });
   try {
     const { rows } = await pool.query(
-      `INSERT INTO pesticide_usage (pesticide_id, quantity, applied_by)
-       VALUES ($1, $2, $3)
+      `INSERT INTO pesticide_usage (pesticide_id, quantity, used_date, applied_by)
+       VALUES ($1, $2, COALESCE($3::date, CURRENT_DATE), $4)
        RETURNING *`,
-      [pesticide_id, quantity, req.user.user_id]
+      [pesticide_id, quantity, used_date || null, req.user.user_id]
     );
     res.json(rows[0]);
   } catch (err) {
@@ -4602,22 +4612,82 @@ app.post('/api/pesticide-usage', requireAuth, async (req, res) => {
   }
 });
 
-// Update location/notes on a usage entry
+// Update a usage entry. Location/notes stay open to any user (the Application
+// Location panel writes them); changing what/how much/when is supervisor-only.
 app.patch('/api/pesticide-usage/:id', requireAuth, async (req, res) => {
-  const { location_description, notes } = req.body;
+  const { location_description, notes, pesticide_id, quantity, used_date } = req.body;
+  const editsRecord = pesticide_id !== undefined || quantity !== undefined || used_date !== undefined;
+  if (editsRecord && !SUPERVISOR_ROLES.includes(req.user.role)) {
+    return res.status(403).json({ error: 'Insufficient permissions' });
+  }
+  if (quantity !== undefined && !(Number(quantity) > 0)) {
+    return res.status(400).json({ error: 'quantity must be greater than zero' });
+  }
   try {
     const { rows } = await pool.query(
-      `UPDATE pesticide_usage
-       SET location_description = $1, notes = $2
-       WHERE usage_id = $3
+      `UPDATE pesticide_usage SET
+         location_description = COALESCE($1, location_description),
+         notes                = COALESCE($2, notes),
+         pesticide_id         = COALESCE($3, pesticide_id),
+         quantity             = COALESCE($4, quantity),
+         used_date            = COALESCE($5::date, used_date)
+       WHERE usage_id = $6
        RETURNING *`,
-      [location_description || null, notes || null, req.params.id]
+      [location_description ?? null, notes ?? null,
+       pesticide_id ?? null, quantity ?? null, used_date || null, req.params.id]
     );
     if (!rows.length) return res.status(404).json({ error: 'Not found' });
     res.json(rows[0]);
   } catch (err) {
     handleErr(res, err);
   }
+});
+
+app.delete('/api/pesticide-usage/:id', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
+  try {
+    const { rowCount } = await pool.query('DELETE FROM pesticide_usage WHERE usage_id = $1', [req.params.id]);
+    if (!rowCount) return res.status(404).json({ error: 'Not found' });
+    res.json({ ok: true });
+  } catch (err) { handleErr(res, err); }
+});
+
+// ── Pesticide label PDFs ──────────────────────────────────────────────────────
+// Anyone may attach a label; only supervisors may remove one. Stored in the
+// shared attachments table so it reuses the existing upload plumbing.
+app.post('/api/pesticides/:id/label', requireAuth, upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file received' });
+  const pid = parseInt(req.params.id, 10);
+  if (!Number.isFinite(pid)) {
+    try { fs.unlinkSync(req.file.path); } catch {}
+    return res.status(400).json({ error: 'bad pesticide id' });
+  }
+  const rel = path.relative(UPLOADS_ROOT, req.file.path).replace(/\\/g, '/');
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO maintenance_attachments
+         (table_name, record_id, rel_path, original_name, file_type, mime_type, uploaded_by)
+       VALUES ('pesticides',$1,$2,$3,'label',$4,$5) RETURNING attachment_id`,
+      [pid, rel, req.file.originalname, req.file.mimetype, req.user.username]);
+    res.json({ ok: true, attachment_id: rows[0].attachment_id, rel_path: rel });
+  } catch (err) {
+    try { fs.unlinkSync(req.file.path); } catch {}
+    handleErr(res, err);
+  }
+});
+
+app.delete('/api/pesticides/:id/label', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `DELETE FROM maintenance_attachments
+       WHERE table_name = 'pesticides' AND record_id = $1 AND file_type = 'label'
+       RETURNING rel_path`, [parseInt(req.params.id, 10)]);
+    if (!rows.length) return res.status(404).json({ error: 'No label to delete' });
+    for (const r of rows) {
+      const abs = path.join(UPLOADS_ROOT, r.rel_path);
+      if (fs.existsSync(abs)) fs.unlinkSync(abs);
+    }
+    res.json({ ok: true });
+  } catch (err) { handleErr(res, err); }
 });
 
 // ── Treatment List (shared spray/bait checklist) ───────────────────────────
