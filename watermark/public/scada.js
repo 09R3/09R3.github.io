@@ -12,6 +12,7 @@ let _scadaChart        = null;
 let _scadaChartKey     = null;
 let _scadaRuntimeChart = null;
 let _scadaDetailTag  = null;   // selected tag in plant detail view
+let _scadaDetailFlowGroup = null;  // plant group key when charting total flow
 let _scadaDetailRange = '24h';
 let _scadaDetailCustomStart = localStorage.getItem('scadaDetailCustomStart') || '';
 let _scadaDetailCustomEnd   = localStorage.getItem('scadaDetailCustomEnd') || '';
@@ -223,11 +224,26 @@ function renderScadaSelStats(canvas, chart) {
     return;
   }
   box.classList.remove('hidden');
-  const hint = '<div class="scada-sel-hint">Drag across the chart to measure a span.</div>';
-  const sel = chart?.$scadaSel;
-  if (!chart || !sel) { box.innerHTML = hint; return; }
+  if (!chart) {
+    box.innerHTML = '<div class="scada-sel-hint">Drag across the chart to measure a span.</div>';
+    return;
+  }
 
-  const lo = Math.min(sel.from, sel.to), hi = Math.max(sel.from, sel.to);
+  // With no drag-selection, report on everything plotted; a selection narrows it.
+  const sel = chart.$scadaSel;
+  let lo, hi;
+  if (sel) {
+    lo = Math.min(sel.from, sel.to);
+    hi = Math.max(sel.from, sel.to);
+  } else {
+    lo = Infinity; hi = -Infinity;
+    chart.data.datasets.forEach(ds => (ds.data || []).forEach(pt => {
+      if (pt?.x == null) return;
+      if (pt.x < lo) lo = pt.x;
+      if (pt.x > hi) hi = pt.x;
+    }));
+    if (!isFinite(lo)) { box.innerHTML = '<div class="scada-sel-hint">No data to summarise.</div>'; return; }
+  }
   const rows = [];
   chart.data.datasets.forEach(ds => {
     if (ds.yAxisID === 'yStatus') return;      // on/off band — stats not meaningful
@@ -243,25 +259,27 @@ function renderScadaSelStats(canvas, chart) {
       <td class="report-num">${s.n}</td>
     </tr>`);
   });
-  if (!rows.length) { box.innerHTML = hint + '<div class="scada-sel-hint">No data points in that span.</div>'; return; }
+  if (!rows.length) { box.innerHTML = '<div class="scada-sel-hint">No data points in that span.</div>'; return; }
 
   const fmtT = ms => new Date(ms).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
   const mins = Math.round((hi - lo) / 60000);
   const span = mins >= 120 ? `${(mins / 60).toFixed(1)} h` : `${mins} min`;
   box.innerHTML = `
     <div class="scada-sel-head">
-      <span>${escHtml(fmtT(lo))} → ${escHtml(fmtT(hi))} <span class="scada-sel-span">(${span})</span></span>
-      <button class="btn btn-secondary btn-xs scada-sel-clear">Clear</button>
+      <span>${sel ? '' : '<strong>Full range</strong> · '}${escHtml(fmtT(lo))} → ${escHtml(fmtT(hi))} <span class="scada-sel-span">(${span})</span></span>
+      ${sel ? '<button class="btn btn-secondary btn-xs scada-sel-clear">Clear</button>'
+            : '<span class="scada-sel-span">drag to measure a span</span>'}
     </div>
     <div class="scada-sel-tablewrap"><table class="report-table scada-sel-table">
       <thead><tr><th>Series</th><th class="report-num">High</th><th class="report-num">Low</th>
         <th class="report-num">Diff</th><th class="report-num">Std Dev</th>
         <th class="report-num">Mean</th><th class="report-num">Pts</th></tr></thead>
       <tbody>${rows.join('')}</tbody></table></div>`;
-  box.querySelector('.scada-sel-clear').addEventListener('click', () => {
+  // Clearing reverts to whole-chart stats rather than blanking the panel.
+  box.querySelector('.scada-sel-clear')?.addEventListener('click', () => {
     chart.$scadaSel = null;
     chart.render();
-    renderScadaSelStats(canvas, null);
+    renderScadaSelStats(canvas, chart);
   });
 }
 
@@ -270,7 +288,8 @@ function renderScadaSelStats(canvas, chart) {
 function wireScadaChartSelect(canvas) {
   if (canvas.dataset.selWired) return;
   canvas.dataset.selWired = '1';
-  let dragging = false, startVal = null, moved = false;
+  let dragging = false, startVal = null, moved = false, startX = 0;
+  const DRAG_PX = 4;   // ignore jitter so a tap still reads as a tap
 
   const valAt = (chart, clientX) => {
     const rect = canvas.getBoundingClientRect();
@@ -285,7 +304,7 @@ function wireScadaChartSelect(canvas) {
     const rect = canvas.getBoundingClientRect();
     const y = e.clientY - rect.top;
     if (y < chart.chartArea.top || y > chart.chartArea.bottom) return;
-    dragging = true; moved = false;
+    dragging = true; moved = false; startX = e.clientX;
     startVal = valAt(chart, e.clientX);
     chart.$scadaSel = { from: startVal, to: startVal };
     // Suppress the hover tooltip while dragging so it doesn't chase the cursor.
@@ -297,7 +316,9 @@ function wireScadaChartSelect(canvas) {
     if (!dragging) return;
     const chart = live();
     if (!chart) return;
-    moved = true;
+    // Vertical movement is ignored entirely — only the horizontal position
+    // matters, so a wobbly finger doesn't disturb the span being selected.
+    if (Math.abs(e.clientX - startX) >= DRAG_PX) moved = true;
     chart.$scadaSel = { from: startVal, to: valAt(chart, e.clientX) };
     chart.render();
   });
@@ -308,8 +329,9 @@ function wireScadaChartSelect(canvas) {
     const chart = live();
     if (!chart) return;
     if (chart.options.plugins?.tooltip) chart.options.plugins.tooltip.enabled = true;
-    // A plain click (no drag) clears any existing selection.
-    if (!moved) { chart.$scadaSel = null; chart.render(); renderScadaSelStats(canvas, null); return; }
+    // A tap (no real drag) clears the selection, falling back to whole-chart stats.
+    if (!moved) chart.$scadaSel = null;
+    chart.render();
     renderScadaSelStats(canvas, chart);
   };
   canvas.addEventListener('pointerup', finish);
@@ -407,11 +429,104 @@ async function drawScadaChart(canvas, tagPaths, range) {
         },
       },
     });
-    // New Chart instance ⇒ no selection carried over; reset the stats panel.
+    // New Chart instance ⇒ no selection; the panel starts on whole-chart stats.
     wireScadaChartSelect(canvas);
-    renderScadaSelStats(canvas, null);
+    renderScadaSelStats(canvas, _scadaChart);
   } catch (err) {
     showToast(err.message || 'Chart failed to load', 'error');
+  }
+}
+
+// Total plant flow over time. There's no flow tag in Influx — flow is derived —
+// so this replays the same calculation the live tile uses against the history of
+// its inputs: pump Run states, siphon-breaker positions and the plant's
+// forward/reverse mode, carried forward between samples.
+async function drawScadaFlowChart(canvas, g, range) {
+  const sites = g.b ? [g.a, g.b] : [g.a];
+  const key = `~flow~${g.key}@${typeof range === 'object' ? `${range.start}~${range.end}` : range}`;
+  _scadaChartKey = key;
+  try {
+    await loadScadaVendor();
+    const qs = scadaRangeQS(range);
+
+    const tags = [];
+    sites.forEach(site => site.pumps.forEach(p => {
+      tags.push(scadaPumpPath(site, p, 'MTR.Cntrl.Run'),
+                scadaPumpPath(site, p, 'SBVlv.Cntrl.O_Cmd'));
+    }));
+    // Only A-plants carry FRmode; a B site follows its paired A site.
+    const aSite = sites.find(s => /A$/.test(s.influxSite));
+    const frTag = aSite ? `${aSite.influxSite}.Skid.FRmode` : null;
+    if (frTag) tags.push(frTag);
+
+    // The history endpoint accepts at most 8 tags per call.
+    const series = {};
+    for (let i = 0; i < tags.length; i += 8) {
+      const chunk = tags.slice(i, i + 8);
+      const r = await api('GET', `/api/scada/history?tags=${encodeURIComponent(chunk.join(','))}&${qs}`);
+      Object.assign(series, r.series || {});
+      if (_scadaChartKey !== key) return;   // user moved on mid-fetch
+    }
+
+    const maps = {}, times = new Set();
+    tags.forEach(t => {
+      const m = new Map();
+      (series[t] || []).forEach(([ts, v]) => { m.set(ts, v); times.add(ts); });
+      maps[t] = m;
+    });
+    const sorted = [...times].sort((a, b) => a - b);
+    if (!sorted.length) {
+      showToast('No flow history for this range', 'info');
+      return;
+    }
+
+    const cur = {};
+    const data = sorted.map(ts => {
+      tags.forEach(t => { const v = maps[t].get(ts); if (v != null) cur[t] = v; });
+      const rev = frTag ? (cur[frTag] || 0) > 0.5 : false;
+      let flow = 0;
+      sites.forEach(site => {
+        const tbl = (rev ? REVERSE_CFS_TABLE : PUMP_CFS_TABLE)[site.influxSite] || {};
+        site.pumps.forEach(p => {
+          if (rev) {
+            if ((cur[scadaPumpPath(site, p, 'SBVlv.Cntrl.O_Cmd')] || 0) > 0.5) flow -= tbl[p] || 0;
+          } else if ((cur[scadaPumpPath(site, p, 'MTR.Cntrl.Run')] || 0) > 0.5) {
+            flow += tbl[p] || 0;
+          }
+        });
+      });
+      return { x: ts, y: flow };
+    });
+
+    const c = scadaThemeColors();
+    const color = SCADA_COLORS[0];
+    if (_scadaChart) { _scadaChart.destroy(); _scadaChart = null; }
+    _scadaChart = new window.Chart(canvas.getContext('2d'), {
+      type: 'line',
+      plugins: [scadaSelPlugin],
+      data: { datasets: [{
+        label: `${g.name} Total Flow (cfs)`,
+        data, borderColor: color, backgroundColor: scadaGradientFill(color),
+        borderWidth: 1.8, pointRadius: 0, stepped: true, fill: true,
+      }] },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        interaction: { mode: 'nearest', axis: 'x', intersect: false },
+        plugins: {
+          legend: { display: false },
+          tooltip: { backgroundColor: c.surface, titleColor: c.text, bodyColor: c.text, borderColor: c.grid, borderWidth: 1 },
+        },
+        scales: {
+          x: { type: 'time', time: { tooltipFormat: 'MMM d, h:mm a' },
+               ticks: { color: c.dim, maxTicksLimit: 8, autoSkip: true }, grid: { color: c.grid } },
+          y: { ticks: { color: c.dim }, grid: { color: c.grid } },
+        },
+      },
+    });
+    wireScadaChartSelect(canvas);
+    renderScadaSelStats(canvas, _scadaChart);
+  } catch (err) {
+    showToast(err.message || 'Flow chart failed to load', 'error');
   }
 }
 
@@ -508,6 +623,18 @@ function siteReverseMode(site) { return isOn(scadaVal(`${site.influxSite}.Skid.F
 function siteOverridesDisabled(site) { return isOn(scadaVal(`${site.influxSite}.Skid.DSDis`)); }
 // Siphon breaker O_Cmd: true = closed.
 function siphonClosed(site, p) { return isOn(scadaVal(scadaPumpPath(site, p, 'SBVlv.Cntrl.O_Cmd'))); }
+
+// Rated flow for one pump: the forward chart value normally, or the reverse
+// chart value while the plant is in reverse mode. Returns the markup so the
+// card and its live patch stay in sync.
+function pumpRatedCfs(site, p) {
+  const rev = siteReverseMode(site);
+  const val = rev
+    ? (REVERSE_CFS_TABLE[site.influxSite] || {})[p]
+    : (PUMP_CFS_TABLE[site.influxSite] || {})[p];
+  if (val == null) return { html: '' };
+  return { html: `CFS <strong>${val}</strong>${rev ? ' <span class="scada-cfs-rev">rev</span>' : ''}` };
+}
 
 // Plant-group flow total (used for the live overview flow line). In reverse mode
 // (FRmode true) a plant's flow is the reverse-chart CFS of every pump whose siphon
@@ -899,6 +1026,7 @@ function pumpCardHtml(site, p) {
   const spd = scadaVal(spdPath);
   const hp  = (PUMP_HP_TABLE[site.influxSite] || {})[p]; // static label, from chart
   const sbClosed = siphonClosed(site, p);
+  const cfs = pumpRatedCfs(site, p);
   return `<div class="scada-pump-card${run?' run':' stop'}" data-scada-tag="${spdPath}" data-run-path="${runPath}" data-selectable>
     <div class="scada-pump-head">
       <span class="scada-pump-label">Pump ${escHtml(pumpLabel(site, p))}</span>
@@ -908,6 +1036,7 @@ function pumpCardHtml(site, p) {
     <div class="scada-pump-meta">
       <span>RPM <strong data-scada-tag="${spdPath}" data-scada-int="1">${spd==null?'—':Math.round(spd)}</strong></span>
       ${hp!=null?`<span>HP <strong>${hp}</strong></span>`:''}
+      <span data-scada-cfs="${escHtml(site.influxSite)}|${escHtml(p)}">${cfs.html}</span>
     </div>
     <div class="scada-pump-siphon" data-scada-siphon="${sbPath}">Siphon <strong>${sbClosed ? 'Closed' : 'Open'}</strong></div>
   </div>`;
@@ -923,7 +1052,11 @@ function renderScadaPlantDetail(g) {
   const pumpCards = sites.flatMap(s => s.pumps.map(p => pumpCardHtml(s, p))).join('');
 
   el('scada-body').innerHTML = `<div class="scada-detail">
-    <div class="scada-section-hdr">Sensors</div>
+    <div class="scada-detail-flowbar">
+      <div class="scada-section-hdr" style="margin:0">Sensors</div>
+      <button type="button" class="scada-flow-total" id="scada-detail-flow" data-flow-group="${escHtml(g.key)}"
+        title="Show flow over time">Flow <strong>${plantGroupFlow(g)}</strong> cfs ${icon('history', 13)}</button>
+    </div>
     ${sensorSection}
     <div class="scada-section-hdr">Pumps</div>
     <div class="scada-pump-grid">${pumpCards}</div>
@@ -943,8 +1076,9 @@ function renderScadaPlantDetail(g) {
       b.classList.add('active');
       _scadaDetailRange = b.dataset.range;
       el('scada-detail-custom').classList.toggle('hidden', _scadaDetailRange !== 'custom');
-      if (_scadaDetailRange !== 'custom' && _scadaDetailTag)
-        drawScadaChart(el('scada-chart-canvas'), [_scadaDetailTag], detailRangeArg());
+      if (_scadaDetailRange === 'custom') return;
+      if (_scadaDetailFlowGroup) drawScadaFlowChart(el('scada-chart-canvas'), g, detailRangeArg());
+      else if (_scadaDetailTag) drawScadaChart(el('scada-chart-canvas'), [_scadaDetailTag], detailRangeArg());
     }));
 
   el('scada-detail-apply').addEventListener('click', () => {
@@ -952,11 +1086,23 @@ function renderScadaPlantDetail(g) {
     _scadaDetailCustomEnd   = el('scada-detail-to').value;
     localStorage.setItem('scadaDetailCustomStart', _scadaDetailCustomStart);
     localStorage.setItem('scadaDetailCustomEnd',   _scadaDetailCustomEnd);
-    if (_scadaDetailTag) drawScadaChart(el('scada-chart-canvas'), [_scadaDetailTag], detailRangeArg());
+    if (_scadaDetailFlowGroup) drawScadaFlowChart(el('scada-chart-canvas'), g, detailRangeArg());
+    else if (_scadaDetailTag) drawScadaChart(el('scada-chart-canvas'), [_scadaDetailTag], detailRangeArg());
   });
 
   el('scada-body').querySelectorAll('[data-selectable]').forEach(tile =>
     tile.addEventListener('click', () => selectScadaDetailTag(tile)));
+
+  el('scada-detail-flow').addEventListener('click', () => {
+    el('scada-body').querySelectorAll('.selected').forEach(x => x.classList.remove('selected'));
+    el('scada-detail-flow').classList.add('selected');
+    _scadaDetailTag = null;
+    _scadaDetailFlowGroup = g.key;
+    el('scada-chart-hdr').textContent = `${g.name} — Total Flow (cfs)`;
+    el('scada-detail-range').classList.remove('hidden');
+    el('scada-detail-chart-wrap').classList.remove('hidden');
+    drawScadaFlowChart(el('scada-chart-canvas'), g, detailRangeArg());
+  });
 }
 
 function detailRangeArg() {
@@ -969,8 +1115,10 @@ function selectScadaDetailTag(tile) {
   const path = tile.dataset.scadaTag;
   if (!path) return;
   _scadaDetailTag = path;
+  _scadaDetailFlowGroup = null;
 
   el('scada-body').querySelectorAll('[data-selectable]').forEach(t => t.classList.remove('selected'));
+  el('scada-detail-flow')?.classList.remove('selected');
   tile.classList.add('selected');
 
   // Update section header to show what's charted
@@ -1022,6 +1170,18 @@ function patchScadaPlantDetail() {
     const strong = elm.querySelector('strong');
     if (strong) strong.textContent = closed ? 'Closed' : 'Open';
   });
+  // Per-pump rated CFS flips between the forward and reverse charts with mode.
+  body.querySelectorAll('[data-scada-cfs]').forEach(elm => {
+    const [influx, p] = elm.dataset.scadaCfs.split('|');
+    const site = scadaSiteByInflux(influx);
+    if (site) elm.innerHTML = pumpRatedCfs(site, p).html;
+  });
+  const flowEl = body.querySelector('[data-flow-group]');
+  if (flowEl) {
+    const g = scadaPlantGroups().find(x => x.key === flowEl.dataset.flowGroup);
+    const strong = flowEl.querySelector('strong');
+    if (g && strong) strong.textContent = plantGroupFlow(g);
+  }
 }
 
 // ── Trends (plant pills + multi-select chips) ─────────────────────────────────

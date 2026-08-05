@@ -3447,8 +3447,10 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
   background: var(--surface); border: 1px solid var(--border);
   border-radius: 10px; padding: 10px;
 }
-/* pan-y keeps vertical page scrolling while horizontal drags select a span */
-.scada-chart-canvas { width: 100% !important; height: 240px !important; touch-action: pan-y; }
+/* touch-action:none so the browser never steals a drag part-way through — with
+   pan-y, a few pixels of vertical wobble handed the gesture to the scroller and
+   cancelled the selection. Scroll the page from outside the chart. */
+.scada-chart-canvas { width: 100% !important; height: 240px !important; touch-action: none; }
 
 /* ── Chart drag-select stats ──────────────────────────────────────────────── */
 .scada-sel-stats { margin: 8px 0 4px; }
@@ -3524,6 +3526,36 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
 .scada-pump-card.run { border-left: 3px solid #43a047; }
 .scada-pump-card.stop { border-left: 3px solid var(--border); }
 .scada-chart-range { margin-bottom: 8px; }
+
+/* Sensors header row with the live total-flow button */
+.scada-detail-flowbar {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; flex-wrap: wrap; margin: 16px 0 8px;
+}
+.scada-flow-total {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  color: var(--text-dim); font-size: 0.82rem; padding: 5px 10px; cursor: pointer;
+}
+.scada-flow-total strong { color: var(--text); font-size: 0.95rem; font-variant-numeric: tabular-nums; }
+.scada-flow-total:hover { border-color: var(--accent); }
+.scada-flow-total.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.scada-cfs-rev {
+  font-size: 0.62rem; font-weight: 700; text-transform: uppercase;
+  color: #ef4444; letter-spacing: .03em;
+}
+
+/* On a phone the two site columns can't sit side by side without the tiles
+   overflowing into each other — stack them and use fewer tile columns. */
+@media (max-width: 700px) {
+  .scada-detail-split { flex-direction: column; gap: 10px; }
+  .scada-sensor-grid  { grid-template-columns: repeat(2, 1fr); }
+  .scada-sensor-value { font-size: 1.15rem; }
+}
+@media (max-width: 380px) {
+  .scada-sensor-grid { grid-template-columns: 1fr 1fr; gap: 6px; }
+  .scada-sensor-tile { padding: 8px 6px; }
+}
 
 /* ── SCADA plant pills (Trends + Runtime) ────────────────────────────────── */
 .scada-plant-pills { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
