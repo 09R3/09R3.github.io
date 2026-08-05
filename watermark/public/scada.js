@@ -677,11 +677,12 @@ function scadaTagLabel(path) {
   if (parts.length === 4 && parts[2] === 'SCL' && parts[3] === 'PV') {
     return `${sn} · ${_scadaConfig.sensorMeta?.[parts[1]]?.label || parts[1]}`;
   }
-  if (parts[2] === 'MTR' && parts[3] === 'Spd') {
-    return `${sn} · Pump ${site ? pumpLabel(site, parts[1]) : parts[1]} RPM`;
-  }
-  if (parts[2] === 'MTR' && parts[3] === 'Cntrl' && parts[4] === 'Run') {
-    return `${sn} · Pump ${site ? pumpLabel(site, parts[1]) : parts[1]} Run`;
+  // Pump labels carry their HP for clarity, e.g. "PP 6A · Pump A Run (100hp)".
+  if (parts[2] === 'MTR' && (parts[3] === 'Spd' || (parts[3] === 'Cntrl' && parts[4] === 'Run'))) {
+    const hp = site ? (PUMP_HP_TABLE[site.influxSite] || {})[parts[1]] : null;
+    const suffix = hp != null ? ` (${hp}hp)` : '';
+    const kind = parts[3] === 'Spd' ? 'RPM' : 'Run';
+    return `${sn} · Pump ${site ? pumpLabel(site, parts[1]) : parts[1]} ${kind}${suffix}`;
   }
   return path;
 }
