@@ -2274,7 +2274,8 @@ app.get('/api/history', requireAuth, async (req, res) => {
   if (!type || !id) return res.status(400).json({ error: 'type and id required' });
   try {
     let rows;
-    const LIMIT = 5;
+    // Client pages through history by growing this limit (10 at a time).
+    const LIMIT = Math.min(Math.max(parseInt(req.query.limit, 10) || 10, 1), 1000);
     if (type === 'pump') {
       ({ rows } = await pool.query(
         `SELECT reading_id AS id, reading_date, reading_time, hour_reading AS value, entered_by, notes
@@ -2354,6 +2355,49 @@ app.get('/api/history', requireAuth, async (req, res) => {
   } catch (err) {
     handleErr(res, err);
   }
+});
+
+// ── Notes history ─────────────────────────────────────────────────────────────
+// Every past note for one reading item, newest first. Table/column names come
+// from this server-side map only — never from the request.
+const NOTES_SOURCES = {
+  pump:        { table: 'readings_pump_hours',       fk: 'position_id',   who: 'entered_by' },
+  compressor:  { table: 'readings_compressor_hours', fk: 'compressor_id', who: 'entered_by' },
+  pge:         { table: 'readings_pge_meters',       fk: 'pge_meter_id',  who: 'entered_by' },
+  monitor:     { table: 'readings_power_monitors',   fk: 'monitor_id',    who: 'entered_by' },
+  well:        { table: 'readings_well',             fk: 'well_id',       who: 'entered_by' },
+  kf:          { table: 'readings_kf_monthly',       fk: 'well_id',       who: 'operator'   },
+  canal:       { table: 'readings_canal',            fk: 'structure_id',  who: 'entered_by' },
+  vehicle:     { table: 'readings_vehicle_monthly',  fk: 'vehicle_id',    who: 'entered_by' },
+  dwr:         { table: 'readings_run_dwr',          fk: 'well_id',       who: 'operator'   },
+  piezometer:  { table: 'readings_piezometers',      fk: 'piezometer_id', who: 'operator'   },
+  'pond-gate': { table: 'readings_pond_gates',       fk: 'gate_id',       who: 'entered_by' },
+};
+
+app.get('/api/notes', requireAuth, async (req, res) => {
+  const { type, id } = req.query;
+  if (!type || !id) return res.status(400).json({ error: 'type and id required' });
+  const LIMIT = 500;
+  try {
+    let src, key = id;
+    if (type === 'staff-gauge') {
+      // Ponds and outlets share the table under different foreign keys.
+      const isOutlet = String(id).startsWith('outlet-');
+      key = parseInt(String(id).replace('outlet-', ''), 10);
+      src = { table: 'readings_staff_gauge', fk: isOutlet ? 'outlet_id' : 'pond_id', who: 'entered_by' };
+    } else {
+      src = NOTES_SOURCES[type];
+    }
+    if (!src) return res.status(400).json({ error: 'unknown type' });
+
+    const { rows } = await pool.query(
+      `SELECT reading_date, reading_time, notes, ${src.who} AS entered_by
+       FROM ${src.table}
+       WHERE ${src.fk} = $1 AND notes IS NOT NULL AND btrim(notes) <> ''
+       ORDER BY reading_date DESC, reading_time DESC NULLS LAST
+       LIMIT $2`, [key, LIMIT]);
+    res.json(rows);
+  } catch (err) { handleErr(res, err); }
 });
 
 // ── History All (no limit) — currently wells only ─────────────────────────────
@@ -3770,6 +3814,61 @@ app.get('/api/reports/canal', requireAuth, requireRole(...SUPERVISOR_ROLES), asy
   } catch (err) { handleErr(res, err); }
 });
 
+// Canal readings as a spreadsheet. Accepts a one-time download token so the
+// export can be fetched without relying on the session cookie.
+app.get('/api/reports/canal/export', async (req, res) => {
+  const { start_date, end_date, token, notes } = req.query;
+  if (token) {
+    const t = downloadTokens.get(token);
+    if (!t || Date.now() > t.expires) return res.status(401).json({ error: 'Invalid or expired token' });
+    downloadTokens.delete(token);
+  } else {
+    const sessionUser = getSession(req.cookies?.fo_session);
+    if (!sessionUser) return res.status(401).json({ error: 'Unauthorized' });
+    if (!SUPERVISOR_ROLES.includes(sessionUser.role)) return res.status(403).json({ error: 'Forbidden' });
+  }
+  if (!start_date || !end_date) return res.status(400).json({ error: 'start_date and end_date required' });
+  const withNotes = notes === 'true';
+  try {
+    const { rows } = await pool.query(`
+      SELECT cs.structure_name, r.reading_date, r.reading_time,
+             r.instantaneous_flow_cfs, r.totalizer_reading_af,
+             r.gate_setting, r.head_reading_ft, r.entered_by, r.notes
+      FROM readings_canal r
+      JOIN canal_structures cs ON cs.structure_id = r.structure_id
+      WHERE r.reading_date BETWEEN $1 AND $2
+      ORDER BY r.reading_date, r.reading_time, cs.structure_name
+    `, [start_date, end_date]);
+
+    const wb = XLSX.utils.book_new();
+    const header = ['Date', 'Structure', 'Time', 'Flow (cfs)', 'Totalizer (af)',
+                    'Gate', 'Head (ft)', 'By', ...(withNotes ? ['Notes'] : [])];
+    const num = v => (v != null ? Number(v) : '');
+    const data = [
+      ['Canal Readings', `${start_date} to ${end_date}`],
+      [],
+      header,
+      ...rows.map(r => [
+        r.reading_date ? dateString(r.reading_date) : '',
+        r.structure_name || '',
+        r.reading_time ? String(r.reading_time).slice(0, 5) : '',
+        num(r.instantaneous_flow_cfs), num(r.totalizer_reading_af),
+        num(r.gate_setting), num(r.head_reading_ft),
+        r.entered_by || '',
+        ...(withNotes ? [r.notes || ''] : []),
+      ]),
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    ws['!cols'] = [{ wch: 12 }, { wch: 26 }, { wch: 8 }, { wch: 11 }, { wch: 14 },
+                   { wch: 9 }, { wch: 10 }, { wch: 12 }, ...(withNotes ? [{ wch: 40 }] : [])];
+    XLSX.utils.book_append_sheet(wb, ws, 'Canal');
+    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="Canal_${start_date}_${end_date}.xlsx"`);
+    return res.send(buf);
+  } catch (err) { handleErr(res, err); }
+});
+
 app.get('/api/reports/ponds', requireAuth, async (req, res) => {
   const { date } = req.query;
   if (!date) return res.status(400).json({ error: 'date required' });
@@ -4421,11 +4520,25 @@ app.get('/api/reports/wells/dripper', requireAuth, async (req, res) => {
 app.get('/api/pesticides', requireAuth, async (req, res) => {
   try {
     const showAll = SUPERVISOR_ROLES.includes(req.user.role);
+    // Label and SDS PDFs live in the shared attachments table under
+    // table_name='pesticides', distinguished by file_type.
     const { rows } = await pool.query(
-      `SELECT pesticide_id, name, epa_reg_number, unit_of_measure, active, created_at
-       FROM pesticides
-       ${showAll ? '' : 'WHERE active = TRUE'}
-       ORDER BY name`
+      `SELECT p.pesticide_id, p.name, p.epa_reg_number, p.unit_of_measure, p.active, p.created_at,
+              lb.rel_path AS label_path, lb.original_name AS label_name,
+              sd.rel_path AS sds_path,   sd.original_name AS sds_name
+       FROM pesticides p
+       LEFT JOIN LATERAL (
+         SELECT rel_path, original_name FROM maintenance_attachments
+         WHERE table_name = 'pesticides' AND record_id = p.pesticide_id AND file_type = 'label'
+         ORDER BY uploaded_at DESC LIMIT 1
+       ) lb ON TRUE
+       LEFT JOIN LATERAL (
+         SELECT rel_path, original_name FROM maintenance_attachments
+         WHERE table_name = 'pesticides' AND record_id = p.pesticide_id AND file_type = 'sds'
+         ORDER BY uploaded_at DESC LIMIT 1
+       ) sd ON TRUE
+       ${showAll ? '' : 'WHERE p.active = TRUE'}
+       ORDER BY p.name`
     );
     res.json(rows);
   } catch (err) {
@@ -4486,16 +4599,17 @@ app.get('/api/pesticide-usage', requireAuth, async (req, res) => {
   }
 });
 
-// Log new usage entry (date/time/user auto from server)
+// Log new usage entry. used_date may be back-dated to record a missed
+// application; time and user still come from the server.
 app.post('/api/pesticide-usage', requireAuth, async (req, res) => {
-  const { pesticide_id, quantity } = req.body;
+  const { pesticide_id, quantity, used_date } = req.body;
   if (!pesticide_id || quantity == null) return res.status(400).json({ error: 'pesticide_id and quantity required' });
   try {
     const { rows } = await pool.query(
-      `INSERT INTO pesticide_usage (pesticide_id, quantity, applied_by)
-       VALUES ($1, $2, $3)
+      `INSERT INTO pesticide_usage (pesticide_id, quantity, used_date, applied_by)
+       VALUES ($1, $2, COALESCE($3::date, CURRENT_DATE), $4)
        RETURNING *`,
-      [pesticide_id, quantity, req.user.user_id]
+      [pesticide_id, quantity, used_date || null, req.user.user_id]
     );
     res.json(rows[0]);
   } catch (err) {
@@ -4503,22 +4617,88 @@ app.post('/api/pesticide-usage', requireAuth, async (req, res) => {
   }
 });
 
-// Update location/notes on a usage entry
+// Update a usage entry. Location/notes stay open to any user (the Application
+// Location panel writes them); changing what/how much/when is supervisor-only.
 app.patch('/api/pesticide-usage/:id', requireAuth, async (req, res) => {
-  const { location_description, notes } = req.body;
+  const { location_description, notes, pesticide_id, quantity, used_date } = req.body;
+  const editsRecord = pesticide_id !== undefined || quantity !== undefined || used_date !== undefined;
+  if (editsRecord && !SUPERVISOR_ROLES.includes(req.user.role)) {
+    return res.status(403).json({ error: 'Insufficient permissions' });
+  }
+  if (quantity !== undefined && !(Number(quantity) > 0)) {
+    return res.status(400).json({ error: 'quantity must be greater than zero' });
+  }
   try {
     const { rows } = await pool.query(
-      `UPDATE pesticide_usage
-       SET location_description = $1, notes = $2
-       WHERE usage_id = $3
+      `UPDATE pesticide_usage SET
+         location_description = COALESCE($1, location_description),
+         notes                = COALESCE($2, notes),
+         pesticide_id         = COALESCE($3, pesticide_id),
+         quantity             = COALESCE($4, quantity),
+         used_date            = COALESCE($5::date, used_date)
+       WHERE usage_id = $6
        RETURNING *`,
-      [location_description || null, notes || null, req.params.id]
+      [location_description ?? null, notes ?? null,
+       pesticide_id ?? null, quantity ?? null, used_date || null, req.params.id]
     );
     if (!rows.length) return res.status(404).json({ error: 'Not found' });
     res.json(rows[0]);
   } catch (err) {
     handleErr(res, err);
   }
+});
+
+app.delete('/api/pesticide-usage/:id', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
+  try {
+    const { rowCount } = await pool.query('DELETE FROM pesticide_usage WHERE usage_id = $1', [req.params.id]);
+    if (!rowCount) return res.status(404).json({ error: 'Not found' });
+    res.json({ ok: true });
+  } catch (err) { handleErr(res, err); }
+});
+
+// ── Pesticide document PDFs (product label + SDS) ─────────────────────────────
+// Anyone may attach one; only supervisors may remove one. Stored in the shared
+// attachments table so this reuses the existing upload plumbing.
+const PEST_DOC_KINDS = new Set(['label', 'sds']);
+
+app.post('/api/pesticides/:id/docs/:kind', requireAuth, upload.single('file'), async (req, res) => {
+  const cleanup = () => { try { if (req.file) fs.unlinkSync(req.file.path); } catch {} };
+  if (!req.file) return res.status(400).json({ error: 'No file received' });
+  const pid  = parseInt(req.params.id, 10);
+  const kind = String(req.params.kind);
+  if (!Number.isFinite(pid) || !PEST_DOC_KINDS.has(kind)) {
+    cleanup();
+    return res.status(400).json({ error: 'bad pesticide id or document type' });
+  }
+  const rel = path.relative(UPLOADS_ROOT, req.file.path).replace(/\\/g, '/');
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO maintenance_attachments
+         (table_name, record_id, rel_path, original_name, file_type, mime_type, uploaded_by)
+       VALUES ('pesticides',$1,$2,$3,$4,$5,$6) RETURNING attachment_id`,
+      [pid, rel, req.file.originalname, kind, req.file.mimetype, req.user.username]);
+    res.json({ ok: true, attachment_id: rows[0].attachment_id, rel_path: rel });
+  } catch (err) {
+    cleanup();
+    handleErr(res, err);
+  }
+});
+
+app.delete('/api/pesticides/:id/docs/:kind', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
+  const kind = String(req.params.kind);
+  if (!PEST_DOC_KINDS.has(kind)) return res.status(400).json({ error: 'bad document type' });
+  try {
+    const { rows } = await pool.query(
+      `DELETE FROM maintenance_attachments
+       WHERE table_name = 'pesticides' AND record_id = $1 AND file_type = $2
+       RETURNING rel_path`, [parseInt(req.params.id, 10), kind]);
+    if (!rows.length) return res.status(404).json({ error: 'Nothing to delete' });
+    for (const r of rows) {
+      const abs = path.join(UPLOADS_ROOT, r.rel_path);
+      if (fs.existsSync(abs)) fs.unlinkSync(abs);
+    }
+    res.json({ ok: true });
+  } catch (err) { handleErr(res, err); }
 });
 
 // ── Treatment List (shared spray/bait checklist) ───────────────────────────

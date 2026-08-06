@@ -129,7 +129,7 @@
         Sign in with Microsoft 365
       </a>
       <div id="ms-login-error" class="error-msg hidden"></div>
-      <div class="login-version">v 3.03</div>
+      <div class="login-version">v 3.10</div>
     </div>
   </div>
 </div>
@@ -1257,9 +1257,15 @@
             <label>Pesticide</label>
             <select id="pest-usage-select" class="ctrl-select"></select>
           </div>
-          <div class="form-group">
-            <label>Quantity <span id="pest-usage-uom-label" style="color:var(--text-dim);font-weight:400"></span></label>
-            <input type="number" id="pest-usage-qty" class="ctrl-input" step="0.01" min="0" placeholder="0.00">
+          <div class="two-col">
+            <div class="form-group">
+              <label>Date Applied</label>
+              <input type="date" id="pest-usage-date" class="ctrl-input ctrl-input-sm">
+            </div>
+            <div class="form-group">
+              <label>Quantity <span id="pest-usage-uom-label" style="color:var(--text-dim);font-weight:400"></span></label>
+              <input type="number" id="pest-usage-qty" class="ctrl-input" step="0.01" min="0" placeholder="0.00">
+            </div>
           </div>
           <div class="form-row">
             <button class="btn btn-save" id="pest-usage-save-btn">Save</button>
@@ -1606,9 +1612,13 @@
     <!-- Canal Readings panel -->
     <div id="report-panel-canal" class="maint-panel hidden">
       <div class="report-toolbar">
+        <button class="btn btn-secondary btn-sm" id="canal-report-prev" title="Back one day">&#8592;</button>
         <input type="date" id="canal-report-start-date" class="ctrl-input ctrl-input-sm">
         <span class="report-date-sep">&#8211;</span>
         <input type="date" id="canal-report-end-date" class="ctrl-input ctrl-input-sm">
+        <button class="btn btn-secondary btn-sm" id="canal-report-next" title="Forward one day">&#8594;</button>
+        <label class="canal-notes-toggle"><input type="checkbox" id="canal-report-notes"> Include notes</label>
+        <button class="btn btn-secondary btn-sm" id="canal-export-btn" style="margin-left:auto"><span class="app-icon" style="width:14px;height:14px;-webkit-mask-image:url(/marv-site/icons/icon-download.svg);mask-image:url(/marv-site/icons/icon-download.svg)"></span> Export</button>
       </div>
       <div id="report-canal-output"></div>
     </div>
@@ -1846,7 +1856,7 @@
     <div id="settings-panel-appinfo" class="settings-panel hidden">
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 3.03</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 3.10</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>

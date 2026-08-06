@@ -973,14 +973,17 @@ el('att-preview-download').addEventListener('click', () => {
   }
 });
 
+const HIST_PAGE = 10;   // rows shown initially, and added per "Load More"
+
 async function openHistoryModal(type, id, label) {
   const body = el('history-modal-body');
   el('history-modal-title').textContent = `History — ${label}`;
   body.innerHTML = '<div class="placeholder-msg" style="padding:16px">Loading…</div>';
   el('history-modal').classList.remove('hidden');
 
+  let limit = HIST_PAGE;
   try {
-    const rows = await api('GET', `/api/history?type=${type}&id=${encodeURIComponent(id)}`);
+    const rows = await api('GET', `/api/history?type=${type}&id=${encodeURIComponent(id)}&limit=${limit}`);
     if (!rows.length) {
       body.innerHTML = '<div class="placeholder-msg" style="padding:16px">No history found.</div>';
       return;
@@ -1039,28 +1042,76 @@ async function openHistoryModal(type, id, label) {
     body.innerHTML = '';
     body.appendChild(table);
 
-    if (type === 'well') {
-      const showAllBtn = document.createElement('button');
-      showAllBtn.className = 'btn btn-secondary';
-      showAllBtn.style.cssText = 'width:100%;margin-top:12px';
-      showAllBtn.textContent = 'Show All';
-      showAllBtn.addEventListener('click', async () => {
-        showAllBtn.disabled = true;
-        showAllBtn.textContent = 'Loading…';
-        try {
-          const allRows = await api('GET', `/api/history-all?type=well&id=${encodeURIComponent(id)}`);
-          renderHistoryRows(allRows);
-          showAllBtn.remove();
-        } catch (err) {
-          showAllBtn.disabled = false;
-          showAllBtn.textContent = 'Show All';
-          alert('Failed to load: ' + err.message);
-        }
-      });
-      body.appendChild(showAllBtn);
-    }
+    // Load More pages by re-requesting a larger limit, so the list can grow
+    // indefinitely. A short page means we've reached the oldest reading.
+    const moreBtn = document.createElement('button');
+    moreBtn.className = 'btn btn-secondary';
+    moreBtn.style.cssText = 'width:100%;margin-top:12px';
+    moreBtn.textContent = 'Load More';
+    moreBtn.addEventListener('click', async () => {
+      moreBtn.disabled = true;
+      moreBtn.textContent = 'Loading…';
+      const next = limit + HIST_PAGE;
+      try {
+        const more = await api('GET', `/api/history?type=${type}&id=${encodeURIComponent(id)}&limit=${next}`);
+        limit = next;
+        renderHistoryRows(more);
+        if (more.length < next) moreBtn.remove();      // no older readings left
+        else { moreBtn.disabled = false; moreBtn.textContent = 'Load More'; }
+      } catch (err) {
+        moreBtn.disabled = false;
+        moreBtn.textContent = 'Load More';
+        showToast('Failed to load: ' + err.message, 'error');
+      }
+    });
+    if (rows.length >= limit) body.appendChild(moreBtn);
   } catch (err) {
     body.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light);padding:16px">${err.message}</div>`;
+  }
+}
+
+/* ── Notes history ───────────────────────────────────────────────────────────
+   Every past note for a reading item, newest first. Rendered in the shared
+   history modal. The button is wired by one delegated listener, so screens only
+   need the markup from notesBtnHtml(). */
+function notesBtnHtml(type, id, label, opts = {}) {
+  const attrs = `data-notes-type="${escHtml(type)}" data-notes-id="${escHtml(String(id))}" data-notes-label="${escHtml(label)}"`;
+  // compact  = bare icon button, for the dense pumping-plant reading rows
+  // iconOnly = same chrome as the pond rows' History button, no text label
+  // rr-icon-btn (not hist-btn) so row.querySelector('.hist-btn') still finds History
+  if (opts.compact) return `<button type="button" class="rr-icon-btn notes-btn" title="View notes" ${attrs}>${icon('reports')}</button>`;
+  if (opts.iconOnly) return `<button type="button" class="btn btn-secondary btn-sm notes-btn" title="View notes" style="flex-shrink:0" ${attrs}>${icon('reports')}</button>`;
+  return `<button type="button" class="btn btn-secondary btn-sm notes-btn" ${attrs}>${icon('reports')} Notes</button>`;
+}
+
+document.addEventListener('click', e => {
+  const btn = e.target.closest('.notes-btn');
+  if (!btn) return;
+  e.stopPropagation();          // don't collapse the reading row
+  openNotesModal(btn.dataset.notesType, btn.dataset.notesId, btn.dataset.notesLabel);
+});
+
+async function openNotesModal(type, id, label) {
+  const body = el('history-modal-body');
+  el('history-modal-title').textContent = `Notes — ${label}`;
+  body.innerHTML = '<div class="placeholder-msg" style="padding:16px">Loading…</div>';
+  el('history-modal').classList.remove('hidden');
+  try {
+    const rows = await api('GET', `/api/notes?type=${encodeURIComponent(type)}&id=${encodeURIComponent(id)}`);
+    if (!rows.length) {
+      body.innerHTML = '<div class="placeholder-msg" style="padding:16px">No notes recorded.</div>';
+      return;
+    }
+    body.innerHTML = `<div class="notes-hist-list">${rows.map(r => {
+      const d = fmtDate(r.reading_date);
+      const t = r.reading_time ? String(r.reading_time).slice(0, 5) : '';
+      return `<div class="notes-hist-item">
+        <div class="notes-hist-meta">${escHtml(d)}${t ? ' · ' + escHtml(t) : ''}${r.entered_by ? ' · ' + escHtml(r.entered_by) : ''}</div>
+        <div class="notes-hist-text">${escHtml(r.notes)}</div>
+      </div>`;
+    }).join('')}</div>`;
+  } catch (err) {
+    body.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light);padding:16px">${escHtml(err.message)}</div>`;
   }
 }
 
@@ -1235,6 +1286,7 @@ function createReadingRow({ type, id, label, prev, prevDate, prevNotes, unit, de
     <div class="rr-notes-wrap">
       ${prevNotes ? `<div class="prev-note-hint">${escHtml(prevNotes)}</div>` : ''}
       <textarea class="rr-notes-input rr-notes" rows="1" placeholder="Notes…"></textarea>
+      ${notesBtnHtml(type, id, label, { compact: true })}
       <button class="hist-btn" title="View history">${icon('history')}</button>
     </div>
   `;
@@ -1510,6 +1562,7 @@ function createWellItem(w, dateInput, timeInput) {
       <div class="lif-error error-msg hidden"></div>
       <div class="lif-footer">
         ${w.gps_latitude && w.gps_longitude ? `<button class="btn btn-secondary btn-sm w-map-btn">${icon('map-pin')} Map</button>` : ''}
+        ${notesBtnHtml('well', w.well_id, w.common_name)}
         <button class="btn btn-secondary btn-sm w-hist-btn">${icon('history')} History</button>
         <button class="btn btn-save w-save-btn">Save Well Reading</button>
       </div>
@@ -1743,6 +1796,7 @@ function createCanalItem(s, dateInput, timeInput) {
         <textarea class="ctrl-textarea c-notes" rows="2" placeholder="Optional notes…"></textarea></div>
       <div class="lif-error error-msg hidden"></div>
       <div class="lif-footer">
+        ${notesBtnHtml('canal', s.structure_id, s.structure_name)}
         <button class="btn btn-secondary btn-sm c-hist-btn">${icon('history')} History</button>
         <button class="btn btn-save c-save-btn">Save Reading</button>
       </div>
@@ -1977,6 +2031,7 @@ function createVehicleItem(v, dateInput, timeInput) {
       </div>
       <div class="lif-error error-msg hidden"></div>
       <div class="lif-footer">
+        ${notesBtnHtml('vehicle', v.vehicle_id, label)}
         <button class="btn btn-secondary btn-sm v-hist-btn">${icon('history')} History</button>
         <button class="btn btn-save v-save-btn">Save Reading</button>
       </div>
@@ -5688,6 +5743,7 @@ function createKFItem(w, dateInput, timeInput) {
       <div class="lif-error error-msg hidden"></div>
       <div class="lif-footer">
         ${hasGPS ? `<button class="btn btn-secondary btn-sm kf-map-btn">${icon('map-pin')} Map</button>` : ''}
+        ${notesBtnHtml('kf', w.well_id, w.common_name)}
         <button class="btn btn-secondary btn-sm kf-hist-btn">${icon('history')} History</button>
         <button class="btn btn-save kf-save">Save Reading</button>
       </div>
@@ -6008,6 +6064,7 @@ function createPiezItem(p, dateInput, timeInput) {
       <div class="lif-error error-msg hidden"></div>
       <div class="lif-footer">
         ${hasGPS ? `<button class="btn btn-secondary btn-sm piez-map-btn">${icon('map-pin')} Map</button>` : ''}
+        ${notesBtnHtml('piezometer', p.piezometer_id, p.piezometer_name)}
         <button class="btn btn-secondary btn-sm piez-hist-btn">${icon('history')} History</button>
         <button class="btn btn-save piez-save">Save Reading</button>
       </div>
@@ -8723,6 +8780,7 @@ el('pest-usage-new-btn').addEventListener('click', () => {
   el('pest-usage-form').classList.remove('hidden');
   el('pest-usage-select').value = '';
   el('pest-usage-qty').value = '';
+  el('pest-usage-date').value = new Date().toLocaleDateString('en-CA');
   el('pest-usage-uom-label').textContent = '';
   el('pest-usage-new-btn').style.display = 'none';
 });
@@ -8739,7 +8797,10 @@ el('pest-usage-save-btn').addEventListener('click', async () => {
   if (!quantity || quantity <= 0) return showToast('Enter a valid quantity', 'error');
   const _save = beginSave(el('pest-usage-save-btn'));
   try {
-    await api('POST', '/api/pesticide-usage', { pesticide_id: parseInt(pesticide_id), quantity });
+    await api('POST', '/api/pesticide-usage', {
+      pesticide_id: parseInt(pesticide_id), quantity,
+      used_date: el('pest-usage-date').value || null,
+    });
     el('pest-usage-form').classList.add('hidden');
     el('pest-usage-new-btn').style.display = '';
     pestUsageLoaded = false;
@@ -8760,20 +8821,96 @@ async function loadPestUsageList() {
   try {
     const rows = await api('GET', '/api/pesticide-usage');
     if (!rows.length) { list.innerHTML = '<div class="placeholder-msg">No usage entries yet.</div>'; return; }
+    const canEdit = isSupervisorLevel(currentUser?.role);
     list.innerHTML = rows.map(r => {
       const d = localDateStr(r.used_date);
       const t = r.used_time ? r.used_time.slice(0, 5) : '';
-      return `<div class="pest-usage-item">
-        <div class="pest-usage-main">
-          <span class="pest-usage-name">${escHtml(r.pesticide_name)}</span>
-          <span class="pest-usage-qty">${Number(r.quantity).toLocaleString()} ${escHtml(r.unit_of_measure)}</span>
+      return `<div class="pest-usage-item" data-usage-id="${r.usage_id}">
+        <div class="pest-usage-view">
+          <div class="pest-usage-main">
+            <span class="pest-usage-name">${escHtml(r.pesticide_name)}</span>
+            <span class="pest-usage-qty">${Number(r.quantity).toLocaleString()} ${escHtml(r.unit_of_measure)}</span>
+          </div>
+          <div class="pest-usage-meta">${d}${t ? ' · ' + t : ''} · ${escHtml(r.applicator_name || 'Unknown')}</div>
+          ${canEdit ? '<div class="pest-usage-actions"><button class="btn btn-secondary btn-xs pest-usage-edit">Edit</button></div>' : ''}
         </div>
-        <div class="pest-usage-meta">${d}${t ? ' · ' + t : ''} · ${escHtml(r.applicator_name || 'Unknown')}</div>
       </div>`;
     }).join('');
+
+    if (!canEdit) return;
+    // Edit is supervisor-only; the server enforces it too.
+    const products = await api('GET', '/api/pesticides').catch(() => []);
+    list.querySelectorAll('.pest-usage-edit').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const item = btn.closest('.pest-usage-item');
+        const row  = rows.find(x => String(x.usage_id) === item.dataset.usageId);
+        if (row) openPestUsageEdit(item, row, products);
+      });
+    });
   } catch (err) {
-    list.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
+    list.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${escHtml(err.message)}</div>`;
   }
+}
+
+// Inline edit for one usage entry: pesticide, date, quantity — plus Delete,
+// which is only reachable from here so it can't be hit by accident.
+function openPestUsageEdit(item, row, products) {
+  const view = item.querySelector('.pest-usage-view');
+  view.classList.add('hidden');
+  const form = document.createElement('div');
+  form.className = 'pest-usage-editform';
+  form.innerHTML = `
+    <div class="form-group">
+      <label>Pesticide</label>
+      <select class="ctrl-select pue-sel">${products.map(p =>
+        `<option value="${p.pesticide_id}" data-uom="${escHtml(p.unit_of_measure)}" ${p.pesticide_id === row.pesticide_id ? 'selected' : ''}>${escHtml(p.name)}</option>`
+      ).join('')}</select>
+    </div>
+    <div class="two-col">
+      <div class="form-group">
+        <label>Date Applied</label>
+        <input type="date" class="ctrl-input ctrl-input-sm pue-date" value="${row.used_date ? String(row.used_date).slice(0,10) : ''}">
+      </div>
+      <div class="form-group">
+        <label>Quantity</label>
+        <input type="number" class="ctrl-input ctrl-input-sm pue-qty" step="0.01" min="0" value="${row.quantity ?? ''}">
+      </div>
+    </div>
+    <div class="form-row">
+      <button class="btn btn-save btn-sm pue-save">Save</button>
+      <button class="btn btn-secondary btn-sm pue-cancel">Cancel</button>
+      <button class="btn btn-danger btn-sm pue-delete" style="margin-left:auto">Delete</button>
+    </div>`;
+  item.appendChild(form);
+
+  const close = () => { form.remove(); view.classList.remove('hidden'); };
+  form.querySelector('.pue-cancel').addEventListener('click', close);
+
+  form.querySelector('.pue-save').addEventListener('click', async () => {
+    const qty = parseFloat(form.querySelector('.pue-qty').value);
+    if (!(qty > 0)) return showToast('Enter a valid quantity', 'error');
+    const _save = beginSave(form.querySelector('.pue-save'));
+    try {
+      await api('PATCH', `/api/pesticide-usage/${row.usage_id}`, {
+        pesticide_id: parseInt(form.querySelector('.pue-sel').value, 10),
+        quantity: qty,
+        used_date: form.querySelector('.pue-date').value || null,
+      });
+      showToast('Usage updated');
+      await loadPestUsageList();
+    } catch (err) {
+      showToast(err.message, 'error');
+    } finally { _save(); }
+  });
+
+  form.querySelector('.pue-delete').addEventListener('click', async () => {
+    if (!confirm('Delete this usage entry?')) return;
+    try {
+      await api('DELETE', `/api/pesticide-usage/${row.usage_id}`);
+      showToast('Usage deleted');
+      await loadPestUsageList();
+    } catch (err) { showToast(err.message, 'error'); }
+  });
 }
 
 // ── Treatment List Panel ──────────────────────────────────────────────────────
@@ -9057,6 +9194,77 @@ el('pest-product-save-btn').addEventListener('click', async () => {
   }
 });
 
+/* ── Pesticide document PDFs (product label + SDS) ────────────────────────────
+   Anyone can attach one and anyone can open it; only supervisors can remove one,
+   and once removed the "+ Add …" button comes back. */
+const PEST_DOCS = [
+  { kind: 'label', label: 'Label', pathKey: 'label_path', nameKey: 'label_name' },
+  { kind: 'sds',   label: 'SDS',   pathKey: 'sds_path',   nameKey: 'sds_name'   },
+];
+
+function pestDocsHtml(p, isSupervisor) {
+  return PEST_DOCS.map(d => {
+    const relPath = p[d.pathKey];
+    if (!relPath) {
+      return `<button class="btn btn-secondary btn-xs pest-doc-add"
+        data-id="${p.pesticide_id}" data-kind="${d.kind}">+ Add ${d.label}</button>`;
+    }
+    const url = `/uploads/${String(relPath).split('/').map(encodeURIComponent).join('/')}`;
+    return `<span class="pest-doc-slot">
+      <a class="pest-label-link" href="${escHtml(url)}" target="_blank" rel="noopener"
+         title="${escHtml(p[d.nameKey] || '')}">${icon('invoice', 14)} ${escHtml(d.label)}</a>
+      ${isSupervisor ? `<button class="btn btn-secondary btn-xs pest-doc-del"
+        data-id="${p.pesticide_id}" data-kind="${d.kind}" title="Remove ${d.label}">&times;</button>` : ''}
+    </span>`;
+  }).join('');
+}
+
+function wirePestLabelButtons(list) {
+  list.querySelectorAll('.pest-doc-add').forEach(btn => {
+    const kindLabel = btn.dataset.kind === 'sds' ? 'SDS' : 'Label';
+    btn.addEventListener('click', () => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'application/pdf,.pdf';
+      input.addEventListener('change', async () => {
+        const file = input.files?.[0];
+        if (!file) return;
+        if (!/pdf$/i.test(file.name) && file.type !== 'application/pdf') {
+          return showToast(`${kindLabel} must be a PDF`, 'error');
+        }
+        const orig = btn.textContent;
+        btn.disabled = true; btn.textContent = 'Uploading…';
+        try {
+          const fd = new FormData();
+          fd.append('file', file);
+          const res = await fetch(`/api/pesticides/${btn.dataset.id}/docs/${btn.dataset.kind}?category=misc`, {
+            method: 'POST', body: fd,
+          });
+          if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Upload failed');
+          showToast(`${kindLabel} added`);
+          await loadPestProductList();
+        } catch (err) {
+          btn.disabled = false; btn.textContent = orig;
+          showToast(err.message, 'error');
+        }
+      });
+      input.click();
+    });
+  });
+
+  list.querySelectorAll('.pest-doc-del').forEach(btn => {
+    const kindLabel = btn.dataset.kind === 'sds' ? 'SDS' : 'Label';
+    btn.addEventListener('click', async () => {
+      if (!confirm(`Remove this ${kindLabel} PDF?`)) return;
+      try {
+        await api('DELETE', `/api/pesticides/${btn.dataset.id}/docs/${btn.dataset.kind}`);
+        showToast(`${kindLabel} removed`);
+        await loadPestProductList();
+      } catch (err) { showToast(err.message, 'error'); }
+    });
+  });
+}
+
 async function loadPestProductList() {
   const list = el('pest-product-list');
   list.innerHTML = '<div class="placeholder-msg">Loading…</div>';
@@ -9073,6 +9281,7 @@ async function loadPestProductList() {
         <div class="pest-product-meta">
           ${p.epa_reg_number ? `EPA: ${escHtml(p.epa_reg_number)} · ` : ''}${escHtml(p.unit_of_measure)}
         </div>
+        <div class="pest-label-row">${pestDocsHtml(p, isSupervisor)}</div>
         ${isSupervisor ? `<div class="pest-product-actions">
           <button class="btn btn-secondary btn-xs pest-toggle-btn" data-id="${p.pesticide_id}" data-active="${p.active}">
             ${p.active ? 'Deactivate' : 'Reactivate'}
@@ -9080,6 +9289,7 @@ async function loadPestProductList() {
         </div>` : ''}
       </div>`
     ).join('');
+    wirePestLabelButtons(list);
     if (isSupervisor) {
       list.querySelectorAll('.pest-toggle-btn').forEach(btn => {
         btn.addEventListener('click', async () => {
@@ -9970,6 +10180,8 @@ async function openPMGridHistory(pmType, building, label) {
 }
 
 // ── Canal Readings Report Panel ────────────────────────────────────────────────
+let lastCanalRows = [];
+
 function initCanalReportPanel() {
   if (!el('canal-report-start-date').value) {
     el('canal-report-start-date').value = todayISO();
@@ -9980,6 +10192,32 @@ function initCanalReportPanel() {
 
 el('canal-report-start-date').addEventListener('change', renderCanalReport);
 el('canal-report-end-date').addEventListener('change',   renderCanalReport);
+el('canal-report-notes').addEventListener('change',      renderCanalReport);
+
+// Shift the whole range by a day, keeping its length (so a single-day view
+// steps day to day and a multi-day window slides intact).
+function canalStepRange(days) {
+  const s = el('canal-report-start-date'), e = el('canal-report-end-date');
+  if (!s.value || !e.value) return;
+  const shift = iso => {
+    const d = new Date(iso + 'T00:00:00');
+    d.setDate(d.getDate() + days);
+    return d.toLocaleDateString('en-CA');
+  };
+  s.value = shift(s.value);
+  e.value = shift(e.value);
+  renderCanalReport();
+}
+el('canal-report-prev').addEventListener('click', () => canalStepRange(-1));
+el('canal-report-next').addEventListener('click', () => canalStepRange(1));
+
+el('canal-export-btn').addEventListener('click', () => {
+  if (!lastCanalRows.length) return showToast('No report data to export', 'error');
+  exportContext = 'canal';
+  const s = el('canal-report-start-date').value, e = el('canal-report-end-date').value;
+  el('export-modal-subtitle').textContent = `Canal Readings — ${s}${s !== e ? ' to ' + e : ''}`;
+  el('export-modal').classList.remove('hidden');
+});
 
 async function renderCanalReport() {
   const start = el('canal-report-start-date').value;
@@ -9987,8 +10225,10 @@ async function renderCanalReport() {
   if (!start || !end) return;
   const out = el('report-canal-output');
   out.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  const showNotes = el('canal-report-notes').checked;
   try {
     const rows = await api('GET', `/api/reports/canal?start_date=${start}&end_date=${end}`);
+    lastCanalRows = rows;
     if (!rows.length) {
       out.innerHTML = '<div class="placeholder-msg">No canal readings found.</div>';
       return;
@@ -9996,6 +10236,7 @@ async function renderCanalReport() {
 
     const fmtDate = s => s ? localDateStr(s, { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
     const fmtNum  = (v, dec = 2) => v != null ? Number(v).toFixed(dec) : '—';
+    const fmtTime = t => t ? String(t).slice(0, 5) : '—';
 
     // Group by date
     const byDate = {};
@@ -10015,23 +10256,26 @@ async function renderCanalReport() {
         <table class="report-table">
           <thead><tr>
             <th>Structure</th>
+            <th>Time</th>
             <th class="report-num">Flow (cfs)</th>
             <th class="report-num">Totalizer (af)</th>
             <th class="report-num">Gate</th>
             <th class="report-num">Head (ft)</th>
             <th>By</th>
+            ${showNotes ? '<th>Notes</th>' : ''}
           </tr></thead>
           <tbody>`;
       readings.forEach(r => {
         html += `<tr>
           <td>${escHtml(r.structure_name)}</td>
+          <td>${fmtTime(r.reading_time)}</td>
           <td class="report-num">${fmtNum(r.instantaneous_flow_cfs)}</td>
           <td class="report-num">${fmtNum(r.totalizer_reading_af)}</td>
           <td class="report-num">${fmtNum(r.gate_setting)}</td>
           <td class="report-num">${fmtNum(r.head_reading_ft)}</td>
           <td>${escHtml(r.entered_by || '—')}</td>
+          ${showNotes ? `<td class="canal-notes-cell">${escHtml(r.notes || '')}</td>` : ''}
         </tr>`;
-        if (r.notes) html += `<tr><td colspan="6" style="color:var(--text-dim);font-size:0.82rem;padding:2px 4px 6px">↳ ${escHtml(r.notes)}</td></tr>`;
       });
       html += '</tbody></table>';
     });
@@ -10039,7 +10283,8 @@ async function renderCanalReport() {
     html += '</div>';
     out.innerHTML = html;
   } catch (err) {
-    out.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${err.message}</div>`;
+    lastCanalRows = [];
+    out.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${escHtml(err.message)}</div>`;
   }
 }
 
@@ -10339,6 +10584,28 @@ el('export-csv-btn').addEventListener('click', async () => {
     return;
   }
 
+  if (exportContext === 'canal') {
+    const csvEsc = v => (v == null || v === '') ? '' : /[,"\n]/.test(String(v)) ? `"${String(v).replace(/"/g,'""')}"` : String(v);
+    const s = el('canal-report-start-date').value, e = el('canal-report-end-date').value;
+    const withNotes = el('canal-report-notes').checked;
+    const head = ['Date','Structure','Time','Flow (cfs)','Totalizer (af)','Gate','Head (ft)','By'];
+    if (withNotes) head.push('Notes');
+    const lines = [`Canal Readings,${s}${s !== e ? ' to ' + e : ''}`, '', head.join(',')];
+    lastCanalRows.forEach(r => {
+      const row = [
+        r.reading_date ? String(r.reading_date).slice(0,10) : '',
+        r.structure_name || '',
+        r.reading_time ? String(r.reading_time).slice(0,5) : '',
+        r.instantaneous_flow_cfs ?? '', r.totalizer_reading_af ?? '',
+        r.gate_setting ?? '', r.head_reading_ft ?? '', r.entered_by || '',
+      ];
+      if (withNotes) row.push(r.notes || '');
+      lines.push(row.map(csvEsc).join(','));
+    });
+    await shareFile(new Blob([lines.join('\r\n')], { type: 'text/csv' }), `Canal_${s}_${e}.csv`, 'Canal Readings');
+    return;
+  }
+
   if (exportContext === 'wells-monthly') {
     if (!lastWellMonthly) return;
     const csvEsc = v => (v == null || v === '') ? '' : /[,"\n]/.test(String(v)) ? `"${String(v).replace(/"/g,'""')}"` : String(v);
@@ -10399,6 +10666,16 @@ el('export-xlsx-btn').addEventListener('click', async () => {
       const res = await fetch(url);
       if (!res.ok) throw new Error('Export failed');
       await shareFile(await res.blob(), `Piezometers_Compare_${s1}_${s2}.xlsx`, 'Piezometer Comparison');
+      return;
+    }
+    if (exportContext === 'canal') {
+      const s = el('canal-report-start-date').value, e = el('canal-report-end-date').value;
+      const withNotes = el('canal-report-notes').checked;
+      const { token } = await api('POST', '/api/reports/download-token', {});
+      const url = `/api/reports/canal/export?start_date=${s}&end_date=${e}&notes=${withNotes}&token=${token}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('Export failed');
+      await shareFile(await res.blob(), `Canal_${s}_${e}.xlsx`, 'Canal Readings');
       return;
     }
     if (exportContext === 'wells-daily') {
@@ -10670,6 +10947,11 @@ el('export-pdf-btn').addEventListener('click', async () => {
       if (!card) throw new Error('No report to export');
       const date = el('well-report-date').value;
       await sharePdfFromHtml(card.outerHTML, REPORT_PDF_CSS, `WellReadings_${date}`, 'Well Readings');
+    } else if (exportContext === 'canal') {
+      const card = el('report-canal-output').querySelector('.report-card');
+      if (!card) throw new Error('No report to export');
+      const s = el('canal-report-start-date').value, e = el('canal-report-end-date').value;
+      await sharePdfFromHtml(card.outerHTML, REPORT_PDF_CSS, `Canal_${s}_${e}`, 'Canal Readings');
     } else if (exportContext === 'piezometers-status') {
       const card = el('report-piez-output').querySelector('.report-card');
       if (!card) throw new Error('No report to export');
@@ -11281,6 +11563,7 @@ function createDWRItem(w, dateInput, timeInput) {
       <div class="lif-error error-msg hidden"></div>
       <div class="lif-footer">
         ${hasGPS ? `<button class="btn btn-secondary btn-sm dwr-map-item-btn">${icon('map-pin')} Map</button>` : ''}
+        ${notesBtnHtml('dwr', w.well_id, wellLabel)}
         <button class="btn btn-secondary btn-sm dwr-hist-btn">${icon('history')} History</button>
         <button class="btn btn-save dwr-save-btn">Save Reading</button>
       </div>
@@ -13818,7 +14101,8 @@ function buildCanalRow(conn, dateInput, timeInput, cardEl) {
       ${conn.last_canal_notes ? `<div class="prev-note-hint">${escHtml(conn.last_canal_notes)}</div>` : ''}
       <div style="display:flex;gap:4px;align-items:stretch">
         <textarea class="rr-notes-input pg-canal-notes" rows="1" placeholder="Notes…"></textarea>
-        <button class="btn btn-secondary btn-sm" title="History" style="flex-shrink:0">${icon('history')}</button>
+        ${notesBtnHtml('canal', conn.source_canal_id, `${conn.name}${conn.canal_structure_name ? ' — ' + conn.canal_structure_name : ''}`, { iconOnly: true })}
+        <button class="btn btn-secondary btn-sm pond-hist-btn" title="History" style="flex-shrink:0">${icon('history')}</button>
         <button class="btn btn-save btn-sm pg-canal-save" style="flex-shrink:0">Save</button>
       </div>
       <span class="live-delta" style="visibility:hidden;pointer-events:none">x</span>
@@ -13843,7 +14127,7 @@ function buildCanalRow(conn, dateInput, timeInput, cardEl) {
     flowDeltaEl.innerHTML = (!isNaN(v) && !isNaN(ref)) ? pondDelta(v, ref).trim() : '';
   });
 
-  row.querySelector('.btn-secondary').addEventListener('click', () =>
+  row.querySelector('.pond-hist-btn').addEventListener('click', () =>
     openHistoryModal('canal', conn.source_canal_id,
       `${conn.name}${conn.canal_structure_name ? ' — ' + conn.canal_structure_name : ''}`));
 
@@ -13906,7 +14190,8 @@ function buildGaugeForm(pond, dateInput, timeInput, cardEl) {
       ${pond.last_gauge_notes ? `<div class="prev-note-hint">${escHtml(pond.last_gauge_notes)}</div>` : ''}
       <div style="display:flex;gap:4px;align-items:stretch">
         <textarea class="rr-notes-input pg-gauge-notes" rows="1" placeholder="Notes…"></textarea>
-        <button class="btn btn-secondary btn-sm" title="History" style="flex-shrink:0">${icon('history')}</button>
+        ${notesBtnHtml('staff-gauge', pond.outlet_id ? `outlet-${pond.outlet_id}` : pond.pond_id, pond.name + ' — Staff Gauge', { iconOnly: true })}
+        <button class="btn btn-secondary btn-sm pond-hist-btn" title="History" style="flex-shrink:0">${icon('history')}</button>
         <button class="btn btn-save btn-sm pg-gauge-save" style="flex-shrink:0">Save</button>
       </div>
       <span class="live-delta" style="visibility:hidden;pointer-events:none">x</span>
@@ -13931,7 +14216,7 @@ function buildGaugeForm(pond, dateInput, timeInput, cardEl) {
   const saveBtn    = row.querySelector('.pg-gauge-save');
 
   const historyId = pond.outlet_id ? `outlet-${pond.outlet_id}` : pond.pond_id;
-  row.querySelector('.btn-secondary').addEventListener('click', () =>
+  row.querySelector('.pond-hist-btn').addEventListener('click', () =>
     openHistoryModal('staff-gauge', historyId, pond.name + ' — Staff Gauge'));
 
   saveBtn.addEventListener('click', async () => {
@@ -14026,7 +14311,8 @@ function buildGateRow(gate, dateInput, timeInput, cardEl) {
       ${gate.last_notes ? `<div class="prev-note-hint">${escHtml(gate.last_notes)}</div>` : ''}
       <div style="display:flex;gap:4px;align-items:stretch">
         <textarea class="rr-notes-input pg-gate-notes" rows="1" placeholder="Notes…"></textarea>
-        <button class="btn btn-secondary btn-sm" title="History" style="flex-shrink:0">${icon('history')}</button>
+        ${notesBtnHtml('pond-gate', gate.gate_id, gate.label, { iconOnly: true })}
+        <button class="btn btn-secondary btn-sm pond-hist-btn" title="History" style="flex-shrink:0">${icon('history')}</button>
         <button class="btn btn-save btn-sm pg-gate-save" style="flex-shrink:0">Save</button>
       </div>
       <span class="live-delta" style="visibility:hidden;pointer-events:none">x</span>
@@ -14098,7 +14384,7 @@ function buildGateRow(gate, dateInput, timeInput, cardEl) {
   });
   flowInput?.addEventListener('input', () => { updatePondTotal(cardEl); updateFlowDelta(); });
 
-  row.querySelector('.btn-secondary').addEventListener('click', () =>
+  row.querySelector('.pond-hist-btn').addEventListener('click', () =>
     openHistoryModal('pond-gate', gate.gate_id, gate.label));
 
   saveBtn.addEventListener('click', async () => {
