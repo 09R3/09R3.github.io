@@ -3797,6 +3797,9 @@ app.get('/api/reports/piezometers', requireAuth, requireRole(...SUPERVISOR_ROLES
 app.get('/api/reports/canal', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
   const { start_date, end_date } = req.query;
   if (!start_date || !end_date) return res.status(400).json({ error: 'start_date and end_date required' });
+  // Blank / "all" leaves this null, which the query treats as no filter.
+  const structureId = Number.isFinite(parseInt(req.query.structure_id, 10))
+    ? parseInt(req.query.structure_id, 10) : null;
   try {
     const { rows } = await pool.query(`
       SELECT
@@ -3808,8 +3811,9 @@ app.get('/api/reports/canal', requireAuth, requireRole(...SUPERVISOR_ROLES), asy
       FROM readings_canal r
       JOIN canal_structures cs ON cs.structure_id = r.structure_id
       WHERE r.reading_date BETWEEN $1 AND $2
+        AND ($3::int IS NULL OR r.structure_id = $3::int)
       ORDER BY r.reading_date, r.reading_time, cs.structure_name
-    `, [start_date, end_date]);
+    `, [start_date, end_date, structureId]);
     res.json(rows);
   } catch (err) { handleErr(res, err); }
 });
@@ -3829,6 +3833,8 @@ app.get('/api/reports/canal/export', async (req, res) => {
   }
   if (!start_date || !end_date) return res.status(400).json({ error: 'start_date and end_date required' });
   const withNotes = notes === 'true';
+  const structureId = Number.isFinite(parseInt(req.query.structure_id, 10))
+    ? parseInt(req.query.structure_id, 10) : null;
   try {
     const { rows } = await pool.query(`
       SELECT cs.structure_name, r.reading_date, r.reading_time,
@@ -3837,15 +3843,18 @@ app.get('/api/reports/canal/export', async (req, res) => {
       FROM readings_canal r
       JOIN canal_structures cs ON cs.structure_id = r.structure_id
       WHERE r.reading_date BETWEEN $1 AND $2
+        AND ($3::int IS NULL OR r.structure_id = $3::int)
       ORDER BY r.reading_date, r.reading_time, cs.structure_name
-    `, [start_date, end_date]);
+    `, [start_date, end_date, structureId]);
 
     const wb = XLSX.utils.book_new();
     const header = ['Date', 'Structure', 'Time', 'Flow (cfs)', 'Totalizer (af)',
                     'Gate', 'Head (ft)', 'By', ...(withNotes ? ['Notes'] : [])];
     const num = v => (v != null ? Number(v) : '');
+    const structName = structureId
+      ? (rows[0]?.structure_name || `Structure ${structureId}`) : 'All structures';
     const data = [
-      ['Canal Readings', `${start_date} to ${end_date}`],
+      ['Canal Readings', structName, `${start_date} to ${end_date}`],
       [],
       header,
       ...rows.map(r => [

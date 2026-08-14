@@ -10187,12 +10187,22 @@ function initCanalReportPanel() {
     el('canal-report-start-date').value = todayISO();
     el('canal-report-end-date').value   = todayISO();
   }
+  // Structure list may change, so refresh it on every open while keeping the
+  // current pick if it's still there.
+  api('GET', '/api/canal-structures').then(rows => {
+    const sel = el('canal-report-structure');
+    const prev = sel.value;
+    sel.innerHTML = '<option value="">All turnouts / turn-ins</option>' +
+      rows.map(r => `<option value="${r.structure_id}">${escHtml(r.structure_name)}</option>`).join('');
+    if (prev && sel.querySelector(`option[value="${prev}"]`)) sel.value = prev;
+  }).catch(() => {});
   renderCanalReport();
 }
 
 el('canal-report-start-date').addEventListener('change', renderCanalReport);
 el('canal-report-end-date').addEventListener('change',   renderCanalReport);
 el('canal-report-notes').addEventListener('change',      renderCanalReport);
+el('canal-report-structure').addEventListener('change',  renderCanalReport);
 
 // Shift the whole range by a day, keeping its length (so a single-day view
 // steps day to day and a multi-day window slides intact).
@@ -10215,7 +10225,9 @@ el('canal-export-btn').addEventListener('click', () => {
   if (!lastCanalRows.length) return showToast('No report data to export', 'error');
   exportContext = 'canal';
   const s = el('canal-report-start-date').value, e = el('canal-report-end-date').value;
-  el('export-modal-subtitle').textContent = `Canal Readings — ${s}${s !== e ? ' to ' + e : ''}`;
+  const who = el('canal-report-structure').value
+    ? (el('canal-report-structure').selectedOptions[0]?.textContent || '') + ' — ' : '';
+  el('export-modal-subtitle').textContent = `Canal Readings — ${who}${s}${s !== e ? ' to ' + e : ''}`;
   el('export-modal').classList.remove('hidden');
 });
 
@@ -10227,7 +10239,9 @@ async function renderCanalReport() {
   out.innerHTML = '<div class="placeholder-msg">Loading…</div>';
   const showNotes = el('canal-report-notes').checked;
   try {
-    const rows = await api('GET', `/api/reports/canal?start_date=${start}&end_date=${end}`);
+    const sid = el('canal-report-structure').value;
+    const rows = await api('GET',
+      `/api/reports/canal?start_date=${start}&end_date=${end}${sid ? `&structure_id=${encodeURIComponent(sid)}` : ''}`);
     lastCanalRows = rows;
     if (!rows.length) {
       out.innerHTML = '<div class="placeholder-msg">No canal readings found.</div>';
@@ -10238,6 +10252,44 @@ async function renderCanalReport() {
     const fmtNum  = (v, dec = 2) => v != null ? Number(v).toFixed(dec) : '—';
     const fmtTime = t => t ? String(t).slice(0, 5) : '—';
 
+    const structureName = sid
+      ? (el('canal-report-structure').selectedOptions[0]?.textContent || '')
+      : '';
+
+    let html = `<div class="report-card">
+      <div class="report-title">Canal Readings</div>
+      <div class="report-subtitle">${structureName ? escHtml(structureName) + ' · ' : ''}${fmtDate(start)}${start !== end ? ' – ' + fmtDate(end) : ''}</div>`;
+
+    // One structure reads better as a single date-ordered table; grouping by
+    // date would give a header-heavy stack of one-row tables.
+    if (sid) {
+      html += `<table class="report-table">
+        <thead><tr>
+          <th>Date</th><th>Time</th>
+          <th class="report-num">Flow (cfs)</th>
+          <th class="report-num">Totalizer (af)</th>
+          <th class="report-num">Gate</th>
+          <th class="report-num">Head (ft)</th>
+          <th>By</th>
+          ${showNotes ? '<th>Notes</th>' : ''}
+        </tr></thead><tbody>`;
+      rows.forEach(r => {
+        html += `<tr>
+          <td>${fmtDate(r.reading_date)}</td>
+          <td>${fmtTime(r.reading_time)}</td>
+          <td class="report-num">${fmtNum(r.instantaneous_flow_cfs)}</td>
+          <td class="report-num">${fmtNum(r.totalizer_reading_af)}</td>
+          <td class="report-num">${fmtNum(r.gate_setting)}</td>
+          <td class="report-num">${fmtNum(r.head_reading_ft)}</td>
+          <td>${escHtml(r.entered_by || '—')}</td>
+          ${showNotes ? `<td class="canal-notes-cell">${escHtml(r.notes || '')}</td>` : ''}
+        </tr>`;
+      });
+      html += '</tbody></table></div>';
+      out.innerHTML = html;
+      return;
+    }
+
     // Group by date
     const byDate = {};
     rows.forEach(r => {
@@ -10245,10 +10297,6 @@ async function renderCanalReport() {
       if (!byDate[d]) byDate[d] = [];
       byDate[d].push(r);
     });
-
-    let html = `<div class="report-card">
-      <div class="report-title">Canal Readings</div>
-      <div class="report-subtitle">${fmtDate(start)}${start !== end ? ' – ' + fmtDate(end) : ''}</div>`;
 
     Object.keys(byDate).sort().forEach(date => {
       const readings = byDate[date];
@@ -10590,7 +10638,9 @@ el('export-csv-btn').addEventListener('click', async () => {
     const withNotes = el('canal-report-notes').checked;
     const head = ['Date','Structure','Time','Flow (cfs)','Totalizer (af)','Gate','Head (ft)','By'];
     if (withNotes) head.push('Notes');
-    const lines = [`Canal Readings,${s}${s !== e ? ' to ' + e : ''}`, '', head.join(',')];
+    const structOpt = el('canal-report-structure');
+    const structName = structOpt.value ? (structOpt.selectedOptions[0]?.textContent || '') : 'All structures';
+    const lines = [`Canal Readings,${structName},${s}${s !== e ? ' to ' + e : ''}`, '', head.join(',')];
     lastCanalRows.forEach(r => {
       const row = [
         r.reading_date ? String(r.reading_date).slice(0,10) : '',
@@ -10672,7 +10722,9 @@ el('export-xlsx-btn').addEventListener('click', async () => {
       const s = el('canal-report-start-date').value, e = el('canal-report-end-date').value;
       const withNotes = el('canal-report-notes').checked;
       const { token } = await api('POST', '/api/reports/download-token', {});
-      const url = `/api/reports/canal/export?start_date=${s}&end_date=${e}&notes=${withNotes}&token=${token}`;
+      const sid = el('canal-report-structure').value;
+      const url = `/api/reports/canal/export?start_date=${s}&end_date=${e}&notes=${withNotes}`
+        + `${sid ? `&structure_id=${encodeURIComponent(sid)}` : ''}&token=${token}`;
       const res = await fetch(url);
       if (!res.ok) throw new Error('Export failed');
       await shareFile(await res.blob(), `Canal_${s}_${e}.xlsx`, 'Canal Readings');
