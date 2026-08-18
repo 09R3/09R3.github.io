@@ -3545,6 +3545,7 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
   display: flex; align-items: center; justify-content: space-between;
   gap: 10px; flex-wrap: wrap; margin: 16px 0 8px;
 }
+.scada-flow-totals { display: flex; gap: 6px; flex-wrap: wrap; }
 .scada-flow-total {
   display: inline-flex; align-items: center; gap: 6px;
   background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
