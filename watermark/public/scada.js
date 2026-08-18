@@ -79,7 +79,7 @@ const REVERSE_CFS_TABLE = {
   'CVC_PP3A': {A:25, B:56, C:140, D:140, E:140, F:55,  G:25, H:55, J:25},
   'CVC_PP4A': {A:25, B:56, C:140, D:140, E:140, F:55,  G:25, H:55, J:25},
   'CVC_PP5A': {A:25, B:56, C:140, D:140, E:140, F:55,  G:25, H:55, J:25},
-  'CVC_PP6A': {A:25, B:56, C:140, D:140, E:140, F:55,  G:25},
+  'CVC_PP6A': {A:25, B:56, C:140, D:140, E:140, F:55,  G:25, H:25},
   'CVC_PP7A': {A:25, B:56, C:56,  D:56,  E:56,  F:25},
 };
 
@@ -457,10 +457,14 @@ async function drawScadaFlowChart(canvas, g, range, siteId = null) {
       tags.push(scadaPumpPath(site, p, 'MTR.Cntrl.Run'),
                 scadaPumpPath(site, p, 'SBVlv.Cntrl.O_Cmd'));
     }));
-    // Only A-plants carry FRmode; a B site follows its paired A site.
-    const aSite = sites.find(s => /A$/.test(s.influxSite));
-    const frTag = aSite ? `${aSite.influxSite}.Skid.FRmode` : null;
-    if (frTag) tags.push(frTag);
+    // Only A-plants carry FRmode, and the two sides are independent: an A plant
+    // can be reversing while its B plant pumps forward, so mode is per-site.
+    const frTagOf = {};
+    sites.forEach(site => {
+      if (!/A$/.test(site.influxSite)) return;
+      frTagOf[site.influxSite] = `${site.influxSite}.Skid.FRmode`;
+      tags.push(frTagOf[site.influxSite]);
+    });
 
     // The history endpoint accepts at most 8 tags per call.
     const series = {};
@@ -486,9 +490,10 @@ async function drawScadaFlowChart(canvas, g, range, siteId = null) {
     const cur = {};
     const data = sorted.map(ts => {
       tags.forEach(t => { const v = maps[t].get(ts); if (v != null) cur[t] = v; });
-      const rev = frTag ? (cur[frTag] || 0) > 0.5 : false;
       let flow = 0;
       sites.forEach(site => {
+        const frTag = frTagOf[site.influxSite];
+        const rev = frTag ? (cur[frTag] || 0) > 0.5 : false;
         const tbl = (rev ? REVERSE_CFS_TABLE : PUMP_CFS_TABLE)[site.influxSite] || {};
         site.pumps.forEach(p => {
           if (rev) {
