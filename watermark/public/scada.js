@@ -13,6 +13,7 @@ let _scadaChartKey     = null;
 let _scadaRuntimeChart = null;
 let _scadaDetailTag  = null;   // selected tag in plant detail view
 let _scadaDetailFlowGroup = null;  // plant group key when charting total flow
+let _scadaDetailFlowSite  = null;  // restrict that flow chart to one side (id) or null
 let _scadaDetailRange = '24h';
 let _scadaDetailCustomStart = localStorage.getItem('scadaDetailCustomStart') || '';
 let _scadaDetailCustomEnd   = localStorage.getItem('scadaDetailCustomEnd') || '';
@@ -78,7 +79,7 @@ const REVERSE_CFS_TABLE = {
   'CVC_PP3A': {A:25, B:56, C:140, D:140, E:140, F:55,  G:25, H:55, J:25},
   'CVC_PP4A': {A:25, B:56, C:140, D:140, E:140, F:55,  G:25, H:55, J:25},
   'CVC_PP5A': {A:25, B:56, C:140, D:140, E:140, F:55,  G:25, H:55, J:25},
-  'CVC_PP6A': {A:25, B:56, C:140, D:140, E:140, F:55,  G:25},
+  'CVC_PP6A': {A:25, B:56, C:140, D:140, E:140, F:55,  G:25, H:25},
   'CVC_PP7A': {A:25, B:56, C:56,  D:56,  E:56,  F:25},
 };
 
@@ -441,9 +442,11 @@ async function drawScadaChart(canvas, tagPaths, range) {
 // so this replays the same calculation the live tile uses against the history of
 // its inputs: pump Run states, siphon-breaker positions and the plant's
 // forward/reverse mode, carried forward between samples.
-async function drawScadaFlowChart(canvas, g, range) {
-  const sites = g.b ? [g.a, g.b] : [g.a];
-  const key = `~flow~${g.key}@${typeof range === 'object' ? `${range.start}~${range.end}` : range}`;
+async function drawScadaFlowChart(canvas, g, range, siteId = null) {
+  const all = g.b ? [g.a, g.b] : [g.a];
+  const sites = siteId ? all.filter(s => s.id === siteId) : all;
+  if (!sites.length) return;
+  const key = `~flow~${g.key}~${siteId || 'all'}@${typeof range === 'object' ? `${range.start}~${range.end}` : range}`;
   _scadaChartKey = key;
   try {
     await loadScadaVendor();
@@ -454,10 +457,14 @@ async function drawScadaFlowChart(canvas, g, range) {
       tags.push(scadaPumpPath(site, p, 'MTR.Cntrl.Run'),
                 scadaPumpPath(site, p, 'SBVlv.Cntrl.O_Cmd'));
     }));
-    // Only A-plants carry FRmode; a B site follows its paired A site.
-    const aSite = sites.find(s => /A$/.test(s.influxSite));
-    const frTag = aSite ? `${aSite.influxSite}.Skid.FRmode` : null;
-    if (frTag) tags.push(frTag);
+    // Only A-plants carry FRmode, and the two sides are independent: an A plant
+    // can be reversing while its B plant pumps forward, so mode is per-site.
+    const frTagOf = {};
+    sites.forEach(site => {
+      if (!/A$/.test(site.influxSite)) return;
+      frTagOf[site.influxSite] = `${site.influxSite}.Skid.FRmode`;
+      tags.push(frTagOf[site.influxSite]);
+    });
 
     // The history endpoint accepts at most 8 tags per call.
     const series = {};
@@ -483,9 +490,10 @@ async function drawScadaFlowChart(canvas, g, range) {
     const cur = {};
     const data = sorted.map(ts => {
       tags.forEach(t => { const v = maps[t].get(ts); if (v != null) cur[t] = v; });
-      const rev = frTag ? (cur[frTag] || 0) > 0.5 : false;
       let flow = 0;
       sites.forEach(site => {
+        const frTag = frTagOf[site.influxSite];
+        const rev = frTag ? (cur[frTag] || 0) > 0.5 : false;
         const tbl = (rev ? REVERSE_CFS_TABLE : PUMP_CFS_TABLE)[site.influxSite] || {};
         site.pumps.forEach(p => {
           if (rev) {
@@ -505,7 +513,7 @@ async function drawScadaFlowChart(canvas, g, range) {
       type: 'line',
       plugins: [scadaSelPlugin],
       data: { datasets: [{
-        label: `${g.name} Total Flow (cfs)`,
+        label: `${siteId ? shortSiteName(sites[0]) : g.name} Flow (cfs)`,
         data, borderColor: color, backgroundColor: scadaGradientFill(color),
         borderWidth: 1.8, pointRadius: 0, stepped: true, fill: true,
       }] },
@@ -640,21 +648,51 @@ function pumpRatedCfs(site, p) {
 // (FRmode true) a plant's flow is the reverse-chart CFS of every pump whose siphon
 // breaker is closed, shown NEGATIVE since water moves the opposite direction;
 // otherwise it's the forward CFS of every running pump.
-function plantGroupFlow(g) {
-  const sites = g.b ? [g.a, g.b] : [g.a];
+function siteFlow(site) {
   let total = 0;
-  sites.forEach(site => {
-    if (siteReverseMode(site)) {
-      const rev = REVERSE_CFS_TABLE[site.influxSite] || {};
-      site.pumps.forEach(p => { if (siphonClosed(site, p)) total -= rev[p] || 0; });
-    } else {
-      const cfs = PUMP_CFS_TABLE[site.influxSite] || {};
-      site.pumps.forEach(p => {
-        if (isOn(scadaVal(scadaPumpPath(site, p, 'MTR.Cntrl.Run')))) total += cfs[p] || 0;
-      });
-    }
-  });
+  if (siteReverseMode(site)) {
+    const rev = REVERSE_CFS_TABLE[site.influxSite] || {};
+    site.pumps.forEach(p => { if (siphonClosed(site, p)) total -= rev[p] || 0; });
+  } else {
+    const cfs = PUMP_CFS_TABLE[site.influxSite] || {};
+    site.pumps.forEach(p => {
+      if (isOn(scadaVal(scadaPumpPath(site, p, 'MTR.Cntrl.Run')))) total += cfs[p] || 0;
+    });
+  }
   return total;
+}
+
+function plantGroupFlow(g) {
+  return (g.b ? [g.a, g.b] : [g.a]).reduce((sum, site) => sum + siteFlow(site), 0);
+}
+
+// Plants whose A and B sides discharge to different places, so a combined total
+// would be meaningless — report each side separately instead.
+const SCADA_SPLIT_FLOW = new Set(['pp6']);
+
+// One entry per flow figure a plant should show: either a single combined total
+// or one per side. siteId is null for the combined case.
+function groupFlows(g) {
+  if (g.b && SCADA_SPLIT_FLOW.has(g.key)) {
+    return [
+      { label: shortSiteName(g.a), value: siteFlow(g.a), siteId: g.a.id },
+      { label: shortSiteName(g.b), value: siteFlow(g.b), siteId: g.b.id },
+    ];
+  }
+  return [{ label: 'Flow', value: plantGroupFlow(g), siteId: null }];
+}
+
+function flowLinesHtml(g) {
+  return groupFlows(g).map(f =>
+    `<div>${escHtml(f.label)}&nbsp;=&nbsp;<strong>${f.value} cfs</strong></div>`).join('');
+}
+
+// One clickable total per flow figure on the plant detail screen.
+function detailFlowBtnsHtml(g) {
+  return groupFlows(g).map(f =>
+    `<button type="button" class="scada-flow-total" data-flow-site="${escHtml(f.siteId || '')}"
+      title="Show flow over time">${escHtml(f.label)} <strong>${f.value}</strong> cfs ${icon('history', 13)}</button>`
+  ).join('');
 }
 
 // "CVC PP 1A" → "PP 1A"
@@ -742,14 +780,13 @@ function renderScadaOverview() {
     const sides = g.b
       ? `${compactSideHtml(g.a)}<div style="width:1px;background:var(--border);margin:0 4px;flex-shrink:0"></div>${compactSideHtml(g.b)}`
       : compactSideHtml(g.a);
-    const flowTotal = plantGroupFlow(g);
     const revMode = siteReverseMode(g.a);
     return `<div class="scada-plant-card" style="display:flex;align-items:stretch;padding:0;overflow:hidden" data-plant="${g.key}">
       <div style="flex:1;min-width:0;padding:8px 10px">
         <div class="scada-plant-title" style="margin-bottom:4px">${escHtml(g.name)}${dwrTitleHtml(g)}</div>
         <div data-ov-revmode="${escHtml(g.a.influxSite)}" style="font-size:0.72rem;font-weight:700;color:#ef4444;margin-bottom:3px${revMode ? '' : ';display:none'}">(Reverse Mode)</div>
         <div style="display:flex;gap:0;align-items:flex-start">${sides}${bldgTempColHtml(g)}</div>
-        <div style="font-size:0.7rem;color:var(--text-dim);margin-top:3px" data-ov-flow="${escHtml(g.key)}">Flow&nbsp;=&nbsp;<strong>${flowTotal} cfs</strong></div>
+        <div style="font-size:0.7rem;color:var(--text-dim);margin-top:3px" data-ov-flow="${escHtml(g.key)}">${flowLinesHtml(g)}</div>
       </div>
       <div style="flex:0 0 38%;border-left:1px solid var(--border);position:relative;min-height:88px">
         <canvas data-ov-plant="${g.key}" style="position:absolute;inset:0;width:100%;height:100%"></canvas>
@@ -878,10 +915,7 @@ function patchScadaOverview() {
   const flowGroups = scadaPlantGroups();  // built once per tick, not per card
   body.querySelectorAll('[data-ov-flow]').forEach(elm => {
     const g = flowGroups.find(x => x.key === elm.dataset.ovFlow);
-    if (!g) return;
-    const total = plantGroupFlow(g);
-    const strong = elm.querySelector('strong');
-    if (strong) strong.textContent = `${total} cfs`;
+    if (g) elm.innerHTML = flowLinesHtml(g);
   });
   body.querySelectorAll('[data-ov-revmode]').forEach(elm => {
     const site = _scadaConfig?.sites.find(s => s.influxSite === elm.dataset.ovRevmode);
@@ -1055,8 +1089,7 @@ function renderScadaPlantDetail(g) {
   el('scada-body').innerHTML = `<div class="scada-detail">
     <div class="scada-detail-flowbar">
       <div class="scada-section-hdr" style="margin:0">Sensors</div>
-      <button type="button" class="scada-flow-total" id="scada-detail-flow" data-flow-group="${escHtml(g.key)}"
-        title="Show flow over time">Flow <strong>${plantGroupFlow(g)}</strong> cfs ${icon('history', 13)}</button>
+      <div class="scada-flow-totals" data-flow-group="${escHtml(g.key)}">${detailFlowBtnsHtml(g)}</div>
     </div>
     ${sensorSection}
     <div class="scada-section-hdr">Pumps</div>
@@ -1078,7 +1111,7 @@ function renderScadaPlantDetail(g) {
       _scadaDetailRange = b.dataset.range;
       el('scada-detail-custom').classList.toggle('hidden', _scadaDetailRange !== 'custom');
       if (_scadaDetailRange === 'custom') return;
-      if (_scadaDetailFlowGroup) drawScadaFlowChart(el('scada-chart-canvas'), g, detailRangeArg());
+      if (_scadaDetailFlowGroup) drawScadaFlowChart(el('scada-chart-canvas'), g, detailRangeArg(), _scadaDetailFlowSite);
       else if (_scadaDetailTag) drawScadaChart(el('scada-chart-canvas'), [_scadaDetailTag], detailRangeArg());
     }));
 
@@ -1087,22 +1120,27 @@ function renderScadaPlantDetail(g) {
     _scadaDetailCustomEnd   = el('scada-detail-to').value;
     localStorage.setItem('scadaDetailCustomStart', _scadaDetailCustomStart);
     localStorage.setItem('scadaDetailCustomEnd',   _scadaDetailCustomEnd);
-    if (_scadaDetailFlowGroup) drawScadaFlowChart(el('scada-chart-canvas'), g, detailRangeArg());
+    if (_scadaDetailFlowGroup) drawScadaFlowChart(el('scada-chart-canvas'), g, detailRangeArg(), _scadaDetailFlowSite);
     else if (_scadaDetailTag) drawScadaChart(el('scada-chart-canvas'), [_scadaDetailTag], detailRangeArg());
   });
 
   el('scada-body').querySelectorAll('[data-selectable]').forEach(tile =>
     tile.addEventListener('click', () => selectScadaDetailTag(tile)));
 
-  el('scada-detail-flow').addEventListener('click', () => {
-    el('scada-body').querySelectorAll('.selected').forEach(x => x.classList.remove('selected'));
-    el('scada-detail-flow').classList.add('selected');
-    _scadaDetailTag = null;
-    _scadaDetailFlowGroup = g.key;
-    el('scada-chart-hdr').textContent = `${g.name} — Total Flow (cfs)`;
-    el('scada-detail-range').classList.remove('hidden');
-    el('scada-detail-chart-wrap').classList.remove('hidden');
-    drawScadaFlowChart(el('scada-chart-canvas'), g, detailRangeArg());
+  el('scada-body').querySelectorAll('[data-flow-site]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      el('scada-body').querySelectorAll('.selected').forEach(x => x.classList.remove('selected'));
+      btn.classList.add('selected');
+      _scadaDetailTag = null;
+      _scadaDetailFlowSite = btn.dataset.flowSite || null;   // '' ⇒ whole group
+      _scadaDetailFlowGroup = g.key;
+      const site = _scadaDetailFlowSite ? sites.find(s => s.id === _scadaDetailFlowSite) : null;
+      el('scada-chart-hdr').textContent =
+        `${site ? shortSiteName(site) : g.name} — Flow (cfs)`;
+      el('scada-detail-range').classList.remove('hidden');
+      el('scada-detail-chart-wrap').classList.remove('hidden');
+      drawScadaFlowChart(el('scada-chart-canvas'), g, detailRangeArg(), _scadaDetailFlowSite);
+    });
   });
 }
 
@@ -1117,9 +1155,10 @@ function selectScadaDetailTag(tile) {
   if (!path) return;
   _scadaDetailTag = path;
   _scadaDetailFlowGroup = null;
+  _scadaDetailFlowSite = null;
 
   el('scada-body').querySelectorAll('[data-selectable]').forEach(t => t.classList.remove('selected'));
-  el('scada-detail-flow')?.classList.remove('selected');
+  el('scada-body').querySelectorAll('[data-flow-site]').forEach(b => b.classList.remove('selected'));
   tile.classList.add('selected');
 
   // Update section header to show what's charted
@@ -1180,8 +1219,16 @@ function patchScadaPlantDetail() {
   const flowEl = body.querySelector('[data-flow-group]');
   if (flowEl) {
     const g = scadaPlantGroups().find(x => x.key === flowEl.dataset.flowGroup);
-    const strong = flowEl.querySelector('strong');
-    if (g && strong) strong.textContent = plantGroupFlow(g);
+    if (g) {
+      // Update the numbers in place — re-rendering would drop the click
+      // handlers and the highlight on whichever total is being charted.
+      const flows = groupFlows(g);
+      flowEl.querySelectorAll('[data-flow-site]').forEach(btn => {
+        const f = flows.find(x => (x.siteId || '') === btn.dataset.flowSite);
+        const strong = btn.querySelector('strong');
+        if (f && strong) strong.textContent = f.value;
+      });
+    }
   }
 }
 
