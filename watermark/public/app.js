@@ -4900,24 +4900,26 @@ el('veh-record-list').addEventListener('click', async e => {
 
   // Save card changes
   if (e.target.classList.contains('veh-record-save-btn')) {
-    const recordId    = item.dataset.recordId;
-    const status      = item.querySelector('.veh-status-select').value;
-    const notes       = item.querySelector('.veh-notes-input').value.trim()  || null;
-    const performed_by= item.querySelector('.veh-perf-input').value.trim()   || null;
-    const po_number   = item.querySelector('.veh-po-input').value.trim()     || null;
-    const costVal     = item.querySelector('.veh-cost-input').value;
-    const cost        = costVal !== '' ? parseFloat(costVal) : null;
-    const errEl       = item.querySelector('.veh-update-error');
+    const recordId = item.dataset.recordId;
+    const errEl    = item.querySelector('.veh-update-error');
     errEl.classList.add('hidden');
     e.target.disabled = true;
     try {
+      // Read inside the try so a missing field surfaces as an error rather
+      // than throwing before the handler can report anything.
+      const status = item.querySelector('.veh-status-select').value;
+      // Empty string (not null) so a cleared field actually clears — the
+      // server COALESCEs nulls to the existing value.
+      const notes  = item.querySelector('.veh-notes-input').value.trim();
       // Find the record data for naming
       const rec = vehRecords.find(r => String(r.maintenance_id) === String(recordId)) || {};
       const vehicleNum = (rec.vehicle_number || 'vehicle').replace(/[^a-zA-Z0-9-]/g, '_').replace(/_+/g,'_').replace(/^_|_$/,'');
       const [ry, rm, rd] = (rec.work_date || todayISO()).slice(0,10).split('-');
       const dateStr = `${rm}${rd}${ry}`;
       const workType = rec.work_type || 'service';
-      const payload = { status, notes, performed_by, po_number, cost };
+      // Performed by / PO / cost moved into the edit form, so they're only sent
+      // when it's open; omitted fields are left untouched server-side.
+      const payload = { status, notes };
       // Only send the wider fields when the edit form is actually open, so a
       // plain status change stays a status change (and stays open to everyone).
       const edit = item.querySelector('.veh-edit');
@@ -4928,12 +4930,12 @@ el('veh-record-list').addEventListener('click', async e => {
           description:             val('.vef-description'),
           work_type:               val('.vef-work-type'),
           work_date:               val('.vef-work-date') || null,
-          performed_by:            val('.vef-performed-by') || null,
+          performed_by:            val('.vef-performed-by'),
           is_contractor:           edit.querySelector('.vef-contractor')?.checked || false,
           odometer_at_service:     numOrNull('.vef-odometer'),
           engine_hours_at_service: numOrNull('.vef-hours'),
           parts_used:              val('.vef-parts'),
-          po_number:               val('.vef-po') || null,
+          po_number:               val('.vef-po'),
           cost:                    numOrNull('.vef-cost'),
           next_service_date:       val('.vef-next-date') || null,
           next_service_miles:      numOrNull('.vef-next-miles'),
