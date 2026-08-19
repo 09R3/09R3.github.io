@@ -4678,6 +4678,78 @@ function renderVehCardQueue(id) {
   });
 }
 
+/* ── Vehicle maintenance record card ──────────────────────────────────────────
+   The body opens on a read-only summary of everything captured. Edit swaps in a
+   full form — only for whoever entered the record, or a supervisor. The server
+   enforces the same rule. */
+function canEditVehRecord(r) {
+  return isSupervisorLevel(currentUser?.role)
+    || (!!r.entered_by && r.entered_by === currentUser?.username);
+}
+
+function vehRecordViewHtml(r) {
+  const dash = '—';
+  const date = d => d ? String(d).slice(0, 10) : dash;
+  const num  = (v, suffix = '') => v != null && v !== '' ? Number(v).toLocaleString() + suffix : dash;
+  const rows = [
+    ['Description',   escHtml(r.description || dash)],
+    ['Work Type',     escHtml(r.work_type || dash)],
+    ['Work Date',     date(r.work_date)],
+    ['Performed By',  escHtml(r.performed_by || dash) + (r.is_contractor ? ' <span class="veh-tag">Contractor</span>' : '')],
+    ['Odometer',      num(r.odometer_at_service, ' mi')],
+    ['Engine Hours',  num(r.engine_hours_at_service, ' hrs')],
+    ['Parts Used',    escHtml(r.parts_used || dash)],
+    ['PO Number',     escHtml(r.po_number || dash)],
+    ['Cost',          r.cost != null ? '$' + Number(r.cost).toFixed(2) : dash],
+    ['Next Service',  date(r.next_service_date)],
+    ['Next Miles',    num(r.next_service_miles)],
+    ['Next Hours',    num(r.next_service_hours)],
+  ];
+  return `<dl class="veh-view-grid">${rows.map(([k, v]) =>
+    `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>`;
+}
+
+function vehRecordEditHtml(r) {
+  const v = x => x != null ? escHtml(String(x)) : '';
+  return `
+    <div class="form-group"><label>Description</label>
+      <textarea class="ctrl-textarea vef-description" rows="2">${escHtml(r.description || '')}</textarea></div>
+    <div class="two-col">
+      <div class="form-group"><label>Work Type</label>
+        <input type="text" class="ctrl-input ctrl-input-sm vef-work-type" value="${v(r.work_type)}"></div>
+      <div class="form-group"><label>Work Date</label>
+        <input type="date" class="ctrl-input ctrl-input-sm vef-work-date" value="${(r.work_date || '').slice(0,10)}"></div>
+    </div>
+    <div class="two-col">
+      <div class="form-group"><label>Performed By</label>
+        <input type="text" class="ctrl-input ctrl-input-sm vef-performed-by" value="${v(r.performed_by)}"></div>
+      <div class="form-group"><label>&nbsp;</label>
+        <label class="jha-cb"><input type="checkbox" class="vef-contractor" ${r.is_contractor ? 'checked' : ''}> Contractor</label></div>
+    </div>
+    <div class="two-col">
+      <div class="form-group"><label>Odometer</label>
+        <input type="number" class="ctrl-input ctrl-input-sm vef-odometer" step="1" min="0" value="${v(r.odometer_at_service)}"></div>
+      <div class="form-group"><label>Engine Hours</label>
+        <input type="number" class="ctrl-input ctrl-input-sm vef-hours" step="0.1" min="0" value="${v(r.engine_hours_at_service)}"></div>
+    </div>
+    <div class="form-group"><label>Parts Used</label>
+      <textarea class="ctrl-textarea vef-parts" rows="2">${escHtml(r.parts_used || '')}</textarea></div>
+    <div class="two-col">
+      <div class="form-group"><label>PO Number</label>
+        <input type="text" class="ctrl-input ctrl-input-sm vef-po" value="${v(r.po_number)}"></div>
+      <div class="form-group"><label>Cost ($)</label>
+        <input type="number" class="ctrl-input ctrl-input-sm vef-cost" step="0.01" min="0" value="${r.cost != null ? r.cost : ''}"></div>
+    </div>
+    <div class="two-col">
+      <div class="form-group"><label>Next Service Date</label>
+        <input type="date" class="ctrl-input ctrl-input-sm vef-next-date" value="${(r.next_service_date || '').slice(0,10)}"></div>
+      <div class="form-group"><label>Next Service Miles</label>
+        <input type="number" class="ctrl-input ctrl-input-sm vef-next-miles" step="1" min="0" value="${v(r.next_service_miles)}"></div>
+    </div>
+    <div class="form-group"><label>Next Service Hours</label>
+      <input type="number" class="ctrl-input ctrl-input-sm vef-next-hours" step="0.1" min="0" value="${v(r.next_service_hours)}"></div>`;
+}
+
 function renderVehRecords(items) {
   items = items ?? vehRecords;
   const list = el('veh-record-list');
@@ -4710,10 +4782,8 @@ function renderVehRecords(items) {
           </div>
         </div>
         <div class="equip-issue-body hidden">
-          <div class="form-group">
-            <label>Description</label>
-            <div style="font-size:0.9rem;padding:6px 0">${escHtml(r.description || '—')}</div>
-          </div>
+          <div class="veh-view">${vehRecordViewHtml(r)}</div>
+          <div class="veh-edit hidden">${vehRecordEditHtml(r)}</div>
           <div class="form-group">
             <label>Status</label>
             <select class="ctrl-select veh-status-select">
@@ -4727,20 +4797,6 @@ function renderVehRecords(items) {
             <textarea class="ctrl-textarea veh-notes-input" rows="2">${escHtml(r.notes || '')}</textarea>
           </div>
           <div class="form-group">
-            <label>Performed By</label>
-            <input type="text" class="ctrl-input veh-perf-input" value="${escHtml(r.performed_by || '')}" placeholder="Name">
-          </div>
-          <div class="two-col">
-            <div class="form-group">
-              <label>PO Number</label>
-              <input type="text" class="ctrl-input veh-po-input" value="${escHtml(r.po_number || '')}" placeholder="PO #">
-            </div>
-            <div class="form-group">
-              <label>Cost ($)</label>
-              <input type="number" class="ctrl-input veh-cost-input" value="${r.cost != null ? r.cost : ''}" step="0.01" min="0" placeholder="0.00">
-            </div>
-          </div>
-          <div class="form-group">
             <label>Add Attachments</label>
             <div class="maint-attach-btns">
               <button type="button" class="btn btn-secondary btn-sm veh-card-inv-btn" data-id="${id}">${icon('invoice')} Invoice</button>
@@ -4751,7 +4807,8 @@ function renderVehRecords(items) {
           ${existingFiles}
           <div class="error-msg hidden veh-update-error"></div>
           <div class="maint-hist-footer">
-            <span class="maint-hist-by">${escHtml(r.work_type || '')} &middot; ${(r.work_date || '').slice(0,10)}</span>
+            <span class="maint-hist-by">${escHtml(r.entered_by ? 'Entered by ' + r.entered_by : '')}</span>
+            ${canEditVehRecord(r) ? '<button class="btn btn-secondary btn-sm veh-edit-btn">Edit</button>' : ''}
             <button class="btn btn-save btn-sm veh-record-save-btn">Save</button>
           </div>
         </div>
@@ -4832,6 +4889,15 @@ el('veh-record-list').addEventListener('click', async e => {
     return;
   }
 
+  // Toggle edit mode on a record card
+  if (e.target.classList.contains('veh-edit-btn')) {
+    // toggle() reports whether the class is now present, i.e. now hidden.
+    const editing = !item.querySelector('.veh-edit').classList.toggle('hidden');
+    item.querySelector('.veh-view').classList.toggle('hidden', editing);
+    e.target.textContent = editing ? 'Cancel Edit' : 'Edit';
+    return;
+  }
+
   // Save card changes
   if (e.target.classList.contains('veh-record-save-btn')) {
     const recordId    = item.dataset.recordId;
@@ -4851,7 +4917,30 @@ el('veh-record-list').addEventListener('click', async e => {
       const [ry, rm, rd] = (rec.work_date || todayISO()).slice(0,10).split('-');
       const dateStr = `${rm}${rd}${ry}`;
       const workType = rec.work_type || 'service';
-      await api('PATCH', `/api/maintenance/vehicle/${recordId}`, { status, notes, performed_by, po_number, cost });
+      const payload = { status, notes, performed_by, po_number, cost };
+      // Only send the wider fields when the edit form is actually open, so a
+      // plain status change stays a status change (and stays open to everyone).
+      const edit = item.querySelector('.veh-edit');
+      if (edit && !edit.classList.contains('hidden')) {
+        const val = sel => edit.querySelector(sel)?.value.trim() ?? '';
+        const numOrNull = sel => { const x = val(sel); return x === '' ? null : Number(x); };
+        Object.assign(payload, {
+          description:             val('.vef-description'),
+          work_type:               val('.vef-work-type'),
+          work_date:               val('.vef-work-date') || null,
+          performed_by:            val('.vef-performed-by') || null,
+          is_contractor:           edit.querySelector('.vef-contractor')?.checked || false,
+          odometer_at_service:     numOrNull('.vef-odometer'),
+          engine_hours_at_service: numOrNull('.vef-hours'),
+          parts_used:              val('.vef-parts'),
+          po_number:               val('.vef-po') || null,
+          cost:                    numOrNull('.vef-cost'),
+          next_service_date:       val('.vef-next-date') || null,
+          next_service_miles:      numOrNull('.vef-next-miles'),
+          next_service_hours:      numOrNull('.vef-next-hours'),
+        });
+      }
+      await api('PATCH', `/api/maintenance/vehicle/${recordId}`, payload);
       const pending = vehCardFiles.get(recordId) || [];
       if (pending.length) {
         await doUploadAttachments(parseInt(recordId), vehicleNum, dateStr, workType, pending);
@@ -5550,6 +5639,7 @@ el('maint-save-btn').addEventListener('click', async () => {
     el('maint-vehicle-next-miles').value = '';
     el('maint-vehicle-next-hours').value = '';
     el('maint-next-service').value = '';
+    el('maint-vehicle-status').value = 'open';   // next record starts Open again
   } catch (err) {
     showError('maint-error', err.message);
   } finally {

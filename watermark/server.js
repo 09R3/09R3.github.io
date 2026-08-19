@@ -3225,9 +3225,11 @@ app.get('/api/maintenance/vehicles-list', requireAuth, async (req, res) => {
   const includeResolved = req.query.include_resolved === 'true';
   try {
     const { rows } = await pool.query(`
-      SELECT mv.maintenance_id, mv.work_date, mv.work_type, mv.description,
-             mv.status, mv.notes, mv.performed_by, mv.entered_by,
+      SELECT mv.maintenance_id, mv.vehicle_id, mv.work_date, mv.work_type, mv.description,
+             mv.status, mv.notes, mv.performed_by, mv.entered_by, mv.is_contractor,
              mv.parts_used, mv.cost, mv.po_number,
+             mv.odometer_at_service, mv.engine_hours_at_service,
+             mv.next_service_date, mv.next_service_miles, mv.next_service_hours,
              v.vehicle_number, v.make, v.model,
              (SELECT COUNT(*) FROM maintenance_attachments
               WHERE table_name = 'maintenance_vehicles' AND record_id = mv.maintenance_id
@@ -3244,16 +3246,54 @@ app.get('/api/maintenance/vehicles-list', requireAuth, async (req, res) => {
   }
 });
 
+// Quick status/notes updates stay open to everyone (the record card's inline
+// controls). A full edit — dates, readings, description, work type — is limited
+// to whoever entered the record, plus supervisors.
+const VEH_FULL_EDIT_FIELDS = ['work_date', 'work_type', 'description', 'parts_used',
+  'is_contractor', 'odometer_at_service', 'engine_hours_at_service',
+  'next_service_date', 'next_service_miles', 'next_service_hours'];
+
 app.patch('/api/maintenance/vehicle/:id', requireAuth, async (req, res) => {
-  const { status, notes, performed_by, po_number, cost } = req.body;
+  const id = parseInt(req.params.id);
+  const body = req.body || {};
+  const isFullEdit = VEH_FULL_EDIT_FIELDS.some(f => body[f] !== undefined);
+  const num = v => (v === '' || v == null ? null : Number(v));
   try {
+    if (isFullEdit) {
+      const { rows } = await pool.query(
+        'SELECT entered_by FROM maintenance_vehicles WHERE maintenance_id = $1', [id]);
+      if (!rows.length) return res.status(404).json({ error: 'Not found' });
+      const mine = rows[0].entered_by && rows[0].entered_by === req.user.username;
+      if (!mine && !SUPERVISOR_ROLES.includes(req.user.role)) {
+        return res.status(403).json({ error: 'Only the creator or a supervisor can edit this record' });
+      }
+    }
     await pool.query(
-      `UPDATE maintenance_vehicles
-       SET status=$1, notes=$2, performed_by=$3, po_number=$4, cost=$5
-       WHERE maintenance_id=$6`,
-      [status, notes || null, performed_by || null, po_number || null,
-       cost != null && cost !== '' ? parseFloat(cost) : null,
-       parseInt(req.params.id)]
+      `UPDATE maintenance_vehicles SET
+         status                  = COALESCE($1, status),
+         notes                   = COALESCE($2, notes),
+         performed_by            = COALESCE($3, performed_by),
+         po_number               = COALESCE($4, po_number),
+         cost                    = COALESCE($5, cost),
+         work_date               = COALESCE($6::date, work_date),
+         work_type               = COALESCE($7, work_type),
+         description             = COALESCE($8, description),
+         parts_used              = COALESCE($9, parts_used),
+         is_contractor           = COALESCE($10, is_contractor),
+         odometer_at_service     = COALESCE($11, odometer_at_service),
+         engine_hours_at_service = COALESCE($12, engine_hours_at_service),
+         next_service_date       = COALESCE($13::date, next_service_date),
+         next_service_miles      = COALESCE($14, next_service_miles),
+         next_service_hours      = COALESCE($15, next_service_hours)
+       WHERE maintenance_id = $16`,
+      [body.status ?? null, body.notes ?? null, body.performed_by ?? null,
+       body.po_number ?? null, num(body.cost),
+       body.work_date || null, body.work_type ?? null, body.description ?? null,
+       body.parts_used ?? null,
+       body.is_contractor === undefined ? null : !!body.is_contractor,
+       num(body.odometer_at_service), num(body.engine_hours_at_service),
+       body.next_service_date || null, num(body.next_service_miles), num(body.next_service_hours),
+       id]
     );
     res.json({ ok: true });
   } catch (err) {
