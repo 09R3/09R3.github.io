@@ -9388,7 +9388,7 @@ function initVehicleReportPanel() {
 
 async function runVehicleReport() {
   const isCompare = vehicleReportType === 'compare';
-  el('report-export-btn').style.display = vehicleReportType === 'mileage' ? '' : 'none';
+  el('report-export-btn').style.display = vehicleReportType === 'compare' ? 'none' : '';
   // The single-month nav is used by CVC Mileage / Last Service; Compare uses
   // its own two-month picker.
   document.querySelector('#report-panel-vehicles .report-month-nav:not(#vehicle-compare-nav)')
@@ -9569,13 +9569,18 @@ async function renderVehicleCompareReport() {
   }
 }
 
+let lastServiceRows = [];
+
 async function renderVehicleServiceReport() {
   const out = el('report-output');
   out.innerHTML = '<div class="placeholder-msg">Loading…</div>';
   try {
     const rows = await api('GET', '/api/reports/vehicle-service');
+    lastServiceRows = rows;
     const trucks = rows.filter(r => !r.reading_type || r.reading_type === 'odometer' || r.reading_type === 'both');
     const heavy  = rows.filter(r => r.reading_type === 'hours');
+    // Same convention as CVC Mileage: the shared pool isn't a named operator.
+    const ac = v => (v.assigned_user && v.assigned_user.trim().toLowerCase() !== 'ops & maint') ? v.assigned_user : '';
 
     const fmtOdo  = v => v != null ? Number(v).toLocaleString() + ' mi' : '—';
     const fmtHrs  = v => v != null ? Number(v).toFixed(1) + ' hrs' : '—';
@@ -9597,6 +9602,7 @@ async function renderVehicleServiceReport() {
 
     const truckRows = trucks.map(v => `<tr>
       <td>${v.vehicle_number||''}</td>
+      <td>${escHtml(ac(v))}</td>
       <td>${fmtOdo(v.current_odometer)}<br><small style="color:var(--text-dim)">${fmtDate(v.current_reading_date)}</small></td>
       <td>${fmtOdo(v.odometer_at_service)}<br><small style="color:var(--text-dim)">${fmtDate(v.last_service_date)}</small></td>
       ${diffCell(v.current_odometer, v.odometer_at_service)}
@@ -9605,6 +9611,7 @@ async function renderVehicleServiceReport() {
 
     const heavyRows = heavy.map(v => `<tr>
       <td>${v.vehicle_number||''}</td>
+      <td>${escHtml(ac(v))}</td>
       <td>${fmtHrs(v.current_engine_hours)}<br><small style="color:var(--text-dim)">${fmtDate(v.current_reading_date)}</small></td>
       <td>${fmtHrs(v.engine_hours_at_service)}<br><small style="color:var(--text-dim)">${fmtDate(v.last_service_date)}</small></td>
       ${diffCell(v.current_engine_hours, v.engine_hours_at_service)}
@@ -9614,14 +9621,14 @@ async function renderVehicleServiceReport() {
     out.innerHTML = `<div class="report-card">
       <div class="report-title">Last Service</div>
       <div class="report-section-title">Trucks</div>
-      ${trucks.length ? `<table class="report-table">
-        <thead><tr><th>Unit #</th><th class="report-num">Current Odo</th><th class="report-num">Service Odo</th><th class="report-num">Difference</th><th class="report-num">Next Service</th></tr></thead>
-        <tbody>${truckRows}</tbody></table>`
+      ${trucks.length ? `<div class="report-scroll"><table class="report-table">
+        <thead><tr><th>Unit #</th><th>Operator</th><th class="report-num">Current Odo</th><th class="report-num">Service Odo</th><th class="report-num">Difference</th><th class="report-num">Next Service</th></tr></thead>
+        <tbody>${truckRows}</tbody></table></div>`
       : '<div class="report-empty">No trucks.</div>'}
       <div class="report-section-title">Heavy Equipment</div>
-      ${heavy.length ? `<table class="report-table">
-        <thead><tr><th>Unit #</th><th class="report-num">Current Hrs</th><th class="report-num">Service Hrs</th><th class="report-num">Difference</th><th class="report-num">Next Service</th></tr></thead>
-        <tbody>${heavyRows}</tbody></table>`
+      ${heavy.length ? `<div class="report-scroll"><table class="report-table">
+        <thead><tr><th>Unit #</th><th>Operator</th><th class="report-num">Current Hrs</th><th class="report-num">Service Hrs</th><th class="report-num">Difference</th><th class="report-num">Next Service</th></tr></thead>
+        <tbody>${heavyRows}</tbody></table></div>`
       : '<div class="report-empty">No heavy equipment.</div>'}
     </div>`;
   } catch (err) {
@@ -10560,10 +10567,16 @@ async function renderPondGateReport() {
 let exportContext = 'vehicles'; // 'vehicles' | 'piezometers-status' | 'piezometers-compare' | 'wells-daily'
 
 el('report-export-btn').addEventListener('click', () => {
-  if (!lastReportRows.length) return showToast('No report data to export', 'error');
-  exportContext = 'vehicles';
-  const d = new Date(reportsYear, reportsMonth - 1, 1);
-  el('export-modal-subtitle').textContent = `CVC Mileage — ${d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}`;
+  if (vehicleReportType === 'service') {
+    if (!lastServiceRows.length) return showToast('No report data to export', 'error');
+    exportContext = 'vehicle-service';
+    el('export-modal-subtitle').textContent = 'Last Service';
+  } else {
+    if (!lastReportRows.length) return showToast('No report data to export', 'error');
+    exportContext = 'vehicles';
+    const d = new Date(reportsYear, reportsMonth - 1, 1);
+    el('export-modal-subtitle').textContent = `CVC Mileage — ${d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}`;
+  }
   el('export-modal').classList.remove('hidden');
 });
 
@@ -10629,6 +10642,34 @@ el('export-csv-btn').addEventListener('click', async () => {
       ].map(csvEsc).join(','));
     });
     await shareFile(new Blob([lines.join('\r\n')], { type: 'text/csv' }), `WellReadings_${date}.csv`, 'Well Readings');
+    return;
+  }
+
+  if (exportContext === 'vehicle-service') {
+    const csvEsc = v => (v == null || v === '') ? '' : /[,"\n]/.test(String(v)) ? `"${String(v).replace(/"/g,'""')}"` : String(v);
+    const ac = v => (v.assigned_user && v.assigned_user.trim().toLowerCase() !== 'ops & maint') ? v.assigned_user : '';
+    const dt = d => d ? String(d).slice(0, 10) : '';
+    const trucks = lastServiceRows.filter(r => !r.reading_type || r.reading_type === 'odometer' || r.reading_type === 'both');
+    const heavy  = lastServiceRows.filter(r => r.reading_type === 'hours');
+    const lines = ['Last Service', '', 'Trucks',
+      'Unit #,Operator,Current Odo,Current Reading Date,Service Odo,Last Service Date,Difference,Next Service Miles'];
+    trucks.forEach(v => lines.push([
+      v.vehicle_number || '', ac(v),
+      v.current_odometer ?? '', dt(v.current_reading_date),
+      v.odometer_at_service ?? '', dt(v.last_service_date),
+      (v.current_odometer != null && v.odometer_at_service != null) ? Number(v.current_odometer) - Number(v.odometer_at_service) : '',
+      v.next_service_miles ?? '',
+    ].map(csvEsc).join(',')));
+    lines.push('', 'Heavy Equipment',
+      'Unit #,Operator,Current Hrs,Current Reading Date,Service Hrs,Last Service Date,Difference,Next Service Hours');
+    heavy.forEach(v => lines.push([
+      v.vehicle_number || '', ac(v),
+      v.current_engine_hours ?? '', dt(v.current_reading_date),
+      v.engine_hours_at_service ?? '', dt(v.last_service_date),
+      (v.current_engine_hours != null && v.engine_hours_at_service != null) ? Number(v.current_engine_hours) - Number(v.engine_hours_at_service) : '',
+      v.next_service_hours ?? '',
+    ].map(csvEsc).join(',')));
+    await shareFile(new Blob([lines.join('\r\n')], { type: 'text/csv' }), 'LastService.csv', 'Last Service');
     return;
   }
 
@@ -10716,6 +10757,13 @@ el('export-xlsx-btn').addEventListener('click', async () => {
       const res = await fetch(url);
       if (!res.ok) throw new Error('Export failed');
       await shareFile(await res.blob(), `Piezometers_Compare_${s1}_${s2}.xlsx`, 'Piezometer Comparison');
+      return;
+    }
+    if (exportContext === 'vehicle-service') {
+      const { token } = await api('POST', '/api/reports/download-token', {});
+      const res = await fetch(`/api/reports/vehicle-service/export?token=${token}`);
+      if (!res.ok) throw new Error('Export failed');
+      await shareFile(await res.blob(), 'LastService.xlsx', 'Last Service');
       return;
     }
     if (exportContext === 'canal') {
@@ -10999,6 +11047,10 @@ el('export-pdf-btn').addEventListener('click', async () => {
       if (!card) throw new Error('No report to export');
       const date = el('well-report-date').value;
       await sharePdfFromHtml(card.outerHTML, REPORT_PDF_CSS, `WellReadings_${date}`, 'Well Readings');
+    } else if (exportContext === 'vehicle-service') {
+      const card = el('report-output').querySelector('.report-card');
+      if (!card) throw new Error('No report to export');
+      await sharePdfFromHtml(card.outerHTML, REPORT_PDF_CSS, 'LastService', 'Last Service');
     } else if (exportContext === 'canal') {
       const card = el('report-canal-output').querySelector('.report-card');
       if (!card) throw new Error('No report to export');

@@ -3818,6 +3818,78 @@ app.get('/api/reports/canal', requireAuth, requireRole(...SUPERVISOR_ROLES), asy
   } catch (err) { handleErr(res, err); }
 });
 
+// Last Service as a spreadsheet (trucks and heavy equipment on one sheet).
+app.get('/api/reports/vehicle-service/export', async (req, res) => {
+  const { token } = req.query;
+  if (token) {
+    const t = downloadTokens.get(token);
+    if (!t || Date.now() > t.expires) return res.status(401).json({ error: 'Invalid or expired token' });
+    downloadTokens.delete(token);
+  } else {
+    const sessionUser = getSession(req.cookies?.fo_session);
+    if (!sessionUser) return res.status(401).json({ error: 'Unauthorized' });
+    if (!SUPERVISOR_ROLES.includes(sessionUser.role)) return res.status(403).json({ error: 'Forbidden' });
+  }
+  try {
+    const { rows } = await pool.query(`
+      SELECT v.vehicle_number, v.assigned_user, v.reading_type,
+             r.odometer_miles AS current_odometer, r.engine_hours AS current_engine_hours,
+             r.reading_date   AS current_reading_date,
+             m.work_date      AS last_service_date,
+             m.odometer_at_service, m.engine_hours_at_service,
+             m.next_service_miles, m.next_service_hours
+      FROM vehicles v
+      LEFT JOIN LATERAL (
+        SELECT odometer_miles, engine_hours, reading_date FROM readings_vehicle_monthly
+        WHERE vehicle_id = v.vehicle_id ORDER BY reading_date DESC, reading_time DESC LIMIT 1
+      ) r ON true
+      LEFT JOIN LATERAL (
+        SELECT work_date, odometer_at_service, engine_hours_at_service,
+               next_service_miles, next_service_hours
+        FROM maintenance_vehicles WHERE vehicle_id = v.vehicle_id ORDER BY work_date DESC LIMIT 1
+      ) m ON true
+      WHERE LOWER(v.status) != 'inactive' OR v.status IS NULL
+      ORDER BY v.vehicle_number
+    `);
+    const ac = v => (v.assigned_user && v.assigned_user.trim().toLowerCase() !== 'ops & maint') ? v.assigned_user : '';
+    const num = v => (v != null ? Number(v) : '');
+    const dt  = d => (d ? dateString(d) : '');
+    const trucks = rows.filter(r => !r.reading_type || r.reading_type === 'odometer' || r.reading_type === 'both');
+    const heavy  = rows.filter(r => r.reading_type === 'hours');
+
+    const data = [['Last Service'], [], ['Trucks'],
+      ['Unit #', 'Operator', 'Current Odo', 'Current Reading Date', 'Service Odo',
+       'Last Service Date', 'Difference', 'Next Service Miles'],
+      ...trucks.map(v => [
+        v.vehicle_number || '', ac(v), num(v.current_odometer), dt(v.current_reading_date),
+        num(v.odometer_at_service), dt(v.last_service_date),
+        (v.current_odometer != null && v.odometer_at_service != null)
+          ? Number(v.current_odometer) - Number(v.odometer_at_service) : '',
+        num(v.next_service_miles),
+      ]),
+      [], ['Heavy Equipment'],
+      ['Unit #', 'Operator', 'Current Hrs', 'Current Reading Date', 'Service Hrs',
+       'Last Service Date', 'Difference', 'Next Service Hours'],
+      ...heavy.map(v => [
+        v.vehicle_number || '', ac(v), num(v.current_engine_hours), dt(v.current_reading_date),
+        num(v.engine_hours_at_service), dt(v.last_service_date),
+        (v.current_engine_hours != null && v.engine_hours_at_service != null)
+          ? Number(v.current_engine_hours) - Number(v.engine_hours_at_service) : '',
+        num(v.next_service_hours),
+      ]),
+    ];
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    ws['!cols'] = [{ wch: 12 }, { wch: 20 }, { wch: 13 }, { wch: 19 },
+                   { wch: 13 }, { wch: 17 }, { wch: 12 }, { wch: 18 }];
+    XLSX.utils.book_append_sheet(wb, ws, 'Last Service');
+    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="LastService.xlsx"');
+    return res.send(buf);
+  } catch (err) { handleErr(res, err); }
+});
+
 // Canal readings as a spreadsheet. Accepts a one-time download token so the
 // export can be fetched without relying on the session cookie.
 app.get('/api/reports/canal/export', async (req, res) => {
