@@ -3,8 +3,12 @@
 ## Project Context
 
 ### WaterMark (`watermark/`)
-A mobile-friendly form app used by field operators to take readings and report
-issues found in the field. Readings are saved into a PostgreSQL database.
+A mobile-friendly PWA used by field operators to take readings, log maintenance
+and report issues from the field. Readings are saved into a PostgreSQL
+database; it also has a live SCADA dashboard (InfluxDB), reference charts,
+reports with CSV/Excel/PDF export, safety records (meetings + JHA), pesticide
+tracking and HR tools. Works offline and queues entries for later sync.
+See `README.md` for a fuller tour.
 
 ### FieldView (`water-ops-viewer/`)
 A database viewer used to access, organize, sort, and analyze the data entered
@@ -51,7 +55,7 @@ both `watermark/public/index.html` (two places: login footer and settings row)
 and `watermark/public/sw.js` (cache name) before committing.
 
 Use simple incrementing minor versions — bump for any change:
-- Any fix or feature → `v 1.26` → `v 1.27`
+- Any fix or feature → `v 3.17` → `v 3.18`
 
 Both files must match. The cache name in `sw.js` controls service worker
 invalidation, so it must always be updated alongside `index.html`.
@@ -221,60 +225,130 @@ Example: `<div class="placeholder-msg">Loading…</div>`
 
 ---
 
+### Permissions
+
+- Roles come from `SUPERVISOR_ROLES` on the server (`supervisor`, `admin`,
+  `water-planner`) and `isSupervisorLevel()` on the client.
+- Several records use a **creator-or-supervisor** rule for editing: the record's
+  `entered_by` matches the signed-in user, or the user is supervisor level.
+  Used by vehicle maintenance records and purge readings.
+- Hiding a button is never the control. Any UI gate must be mirrored with
+  `requireRole(...)` or an explicit check in the endpoint.
+
+---
+
+### Reports & Exports
+
+- The export modal always shows **CSV / Excel / PDF**. Each `exportContext`
+  needs a branch in **all three** handlers — a missing branch falls through to
+  the vehicles default and silently exports the wrong report.
+- CSV and PDF are built client-side; Excel is generated server-side with the
+  `xlsx` package behind a one-time download token (`/api/reports/download-token`).
+- Wide tables get wrapped in `.report-scroll` so they scroll sideways rather
+  than compressing columns off-screen.
+- Destructive buttons use `.btn-danger`.
+
+---
+
+### Files & Sharing
+
+- `shareFile()` uses the Web Share sheet **only on touch devices**
+  (`(hover: none) and (pointer: coarse)`). Desktop Chrome reports
+  `canShare({files})` as true but its flyout self-dismisses with an
+  `AbortError`, which used to swallow the export. Desktop always downloads.
+- Use `downloadBlob()` for downloads — it appends the anchor to the DOM before
+  clicking (a detached anchor is ignored by some browsers) and revokes the URL.
+- Uploads reuse `maintenance_attachments` keyed by `table_name` + `record_id`,
+  served from `/uploads` behind session auth.
+
+---
+
+### Schema Changes
+
+New tables and columns are created at server boot with
+`CREATE TABLE IF NOT EXISTS` / `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` near
+the top of `server.js`. There is no migration runner — adding one of these is
+all that's needed, and it applies on the next restart.
+
+Table and column names must never come from a request. Where an endpoint is
+generic (history, notes, calibration logs, pesticide docs) the identifiers are
+looked up from a server-side map and the request only supplies a key.
+
+---
+
 ## Database Schema
 
-Column notation: `col(PK)` = primary key, `col(→table)` = foreign key
+Generated from the live `waterops` dump (PostgreSQL 17.5). Column notation:
+`col(PK)` = primary key, `col(→table)` = foreign key, and a type is noted only
+where it matters (`jsonb`, `text[]`, `NUMERIC`, `DOUBLE`, geometry).
 
 ```
-_waterops_saved_queries   id(PK), name, sql, created_by, created_at
-
-air_compressors           compressor_id(PK), building_id(→buildings), serial_number, manufacturer, model_number, install_date, certification_expiry_date, status, notes
-app_settings              key(PK), value, updated_at
-bug_reports               report_id(PK), submitted_by, submitted_at, screen_area, severity, is_repeatable, description, app_version, resolved, resolved_by, resolved_at
-building_issues           issue_id(PK), building_id(→buildings), site_id(→sites), building_name, site_name, status, description, reported_date, resolved_date, resolution_notes, entered_by, assigned_to, notes, created_at, updated_at, action_taken, po_number, cost
-buildings                 building_id(PK), site_id(→sites), building_letter, building_name, notes
-canal_structures          structure_id(PK), structure_name, structure_type, flow_direction, in_service, constructed_date, gate_capacity, design_capacity, operational_capacity, owner, who_maintains, gps_latitude, gps_longitude, has_flow_meter, meter_type, meter_model, meter_status, formula_or_chart_ref, notes
-dirt_work_issues          issue_id(PK), pool, work_type, description, location_notes, reported_date, resolved_date, status, action_taken, resolution_notes, po_number, cost(NUMERIC), assigned_to, entered_by, notes, gps_lat(DOUBLE), gps_lon(DOUBLE), created_at, updated_at
-equipment_issues          issue_id(PK), equipment_type, equipment_id, equipment_name, status, description, reported_date, resolved_date, resolution_notes, entered_by, assigned_to, notes, created_at, updated_at, action_taken, po_number, cost
-equipment_swaps           swap_id(PK), category, swap_date, location, item_removed_id, item_installed_id, removed_description, installed_description, performed_by, notes, entered_by, created_at
-maintenance_buildings     record_id(PK), building_id(→buildings), work_date, work_type, record_type, description, performed_by, is_contractor, entered_by, severity, status, cost, po_number, resolution_notes, next_service_date, notes
-maintenance_equipment     maintenance_id(PK), equipment_type, equipment_id, work_date, work_type, performed_by, is_contractor, entered_by, location_at_time, description, parts_used, cost, po_number, hours_at_service, next_service_date, notes
-maintenance_vehicles      maintenance_id(PK), vehicle_id(→vehicles), work_date, work_type, performed_by, is_contractor, entered_by, description, odometer_at_service, engine_hours_at_service, parts_used, cost, po_number, next_service_date, next_service_miles, notes, next_service_hours, status
-motors                    motor_id(PK), serial_number, manufacturer, model_number, rated_hp, frame_type, oil_capacity_upper_qt, oil_capacity_lower_qt, install_date_current, current_location, status, notes
-pesticide_usage           usage_id(PK), pesticide_id(→pesticides), used_date, used_time, applied_by(→users), quantity, location_description, notes, created_at
-pesticides                pesticide_id(PK), name, epa_reg_number, unit_of_measure, active, created_at
-piezometers               piezometer_id(PK), piezometer_name, pool, sort_order, max_depth, status, gps_latitude, gps_longitude, notes, original_name
-pge_meters                pge_meter_id(PK), building_id(→buildings), meter_name, meter_number, account_number, utility_provider, notes
-pm_records                pm_id(PK), pm_type, building, completed_date, completed_time, completed_by(→users), checklist(jsonb), notes, created_at
-pond_connections          connection_id(PK), pond_id(→ponds), name, source_type, source_canal_id(→canal_structures), sort_order, active, notes
-pond_gates                gate_id(PK), connection_id(→pond_connections), label, gate_type, width_in, sort_order, active, notes
-pond_locations            location_id(PK), name, sort_order
-pond_points               point_id(PK), pond_id(→ponds), name, point_order, geom(GEOMETRY Point 4326)
-ponds                     pond_id(PK), location_id(→pond_locations), name, sort_order, notes
-power_monitors            monitor_id(PK), building_id(→buildings), monitor_number, manufacturer, ip_address, notes
-pump_positions            position_id(PK,text), site_id(→sites), building_id(→buildings), pump_letter, rated_hp, current_motor_id, current_pump_unit_id, status, notes
-pump_units                pump_unit_id(PK), serial_number, manufacturer, model_number, rated_hp, frame_type, forward_flow_rating, reverse_flow_rating, install_date_current, current_location, status, notes
-readings_canal            reading_id(PK), structure_id(→canal_structures), reading_date, reading_time, entered_by, instantaneous_flow_cfs, totalizer_reading_af, gate_setting, head_reading_ft, derived_flow_cfs, notes
-readings_compressor_hours reading_id(PK), compressor_id(→air_compressors), reading_date, reading_time, hour_reading, entered_by, notes
-readings_kf_monthly       kf_reading_id(PK), well_id(→wells), reading_date, reading_time, dtw_reading, operator, plopper_sounder, well_on_off, notes, common_name
-readings_pge_meters       reading_id(PK), pge_meter_id(→pge_meters), reading_date, reading_time, kwh_reading, entered_by, notes
-readings_piezometers      piezometer_reading_id(PK), piezometer_id(→piezometers), reading_date, reading_time, dtw_reading, operator, plopper_sounder, wet_dry_moist, notes
-readings_pond_gates       reading_id(PK), gate_id(→pond_gates), reading_date, reading_time, head_ft, opening_in, overpour_in, flow_cfs, entered_by, notes, created_at
-readings_power_monitors   reading_id(PK), monitor_id(→power_monitors), reading_date, reading_time, kwh_reading, entered_by, notes
-readings_pump_hours       reading_id(PK), position_id(→pump_positions), reading_date, reading_time, hour_reading, entered_by, notes
-readings_run_dwr          reading_id(PK), well_id(→wells), reading_date, reading_time, depth_to_water, method, operator, no_measurement(text[]), questionable_measurement(text[]), notes, entered_by, created_at
-readings_staff_gauge      reading_id(PK), pond_id(→ponds), reading_date, reading_time, level_ft, entered_by, notes, created_at
-readings_vehicle_monthly  reading_id(PK), vehicle_id(→vehicles), vehicle_number, reading_date, reading_time, entered_by, odometer_miles, engine_hours, notes
-readings_well             reading_id(PK), well_id(→wells), common_name, reading_date, reading_time, on_off, hour_reading, flow_cfs, totalizer, motor_oil, dripper_oil, pge_kwh, entered_by, notes
-scada_equipment           scada_id(PK), building_id(→buildings), equipment_number, equipment_name, manufacturer, ip_address, notes
-siphon_breaker_swaps      swap_id(PK), swap_date, location, unit_removed_id(→siphon_breakers), unit_installed_id(→siphon_breakers), performed_by, notes, entered_by, created_at
-siphon_breakers           pump_unit_id(PK), serial_number, manufacturer, model_number, operating_psi, max_psi, install_date_current, current_location, status, notes
-sites                     site_id(PK), site_name, site_type, gps_latitude, gps_longitude, notes
-users                     user_id(PK), username(unique), full_name, role, password, initials, email, is_active
-vehicles                  vehicle_id(PK), vehicle_number, vehicle_type, year, make, model, vin, license_plate, fuel_type, assigned_user, reading_type, status, notes
-well_issues               issue_id(PK), well_id(→wells), well_name, well_area, status, description, reported_date, resolved_date, resolution_notes, entered_by, assigned_to, notes, created_at, updated_at, action_taken, po_number, cost
-well_meters               well_meter_id(PK), manufacturer, model_number, serial_number, meter_type, status, well_id(→wells), notes, created_at
-well_motors               well_motor_id(PK), manufacturer, model_number, serial_number, hp, status, well_id(→wells), notes, created_at
-well_sets                 set_id(PK), set_name, description
-wells                     well_id(PK), common_name, state_well_number, area, discharge_pool, participant, agency, kf_set_id(→well_sets), well_type, total_depth_ft, pump_hp, pump_frame_size, pump_unit_id, status, gps_latitude, gps_longitude, notes, is_important, well_run, rp_elev, gs_elev
+_waterops_saved_queries    id(PK), name, sql, created_by, created_at
+air_compressors            compressor_id(PK), building_id(→buildings), serial_number, manufacturer, model_number, install_date, certification_expiry_date, status, notes
+app_settings               key(PK), value, updated_at
+bug_reports                report_id(PK), submitted_by, submitted_at, screen_area, severity, is_repeatable, description, app_version, resolved, resolved_by, resolved_at
+building_issues            issue_id(PK), building_id(→buildings), site_id(→sites), building_name, site_name, status, description, reported_date, resolved_date, resolution_notes, entered_by, assigned_to, notes, created_at, updated_at, action_taken, po_number, cost(NUMERIC)
+buildings                  building_id(PK), site_id(→sites), building_letter, building_name, notes
+cal_log_ec                 cal_id(PK), cal_date, cal_time, cal_std_lot, cal_pass, check_std_lot, check_value(NUMERIC), tech, notes, entered_by, created_at
+cal_log_ph                 cal_id(PK), cal_date, cal_time, buffer_401_lot, buffer_700_lot, buffer_1001_lot, errors, cv_lot, cv_value(NUMERIC), tech, notes, entered_by, created_at
+canal_issues               issue_id(PK), pool, status, description, reported_date, entered_by, action_taken, resolution_notes, po_number, cost(NUMERIC), notes, gps_lat(DOUBLE), gps_lon(DOUBLE), created_at, updated_at
+canal_structures           structure_id(PK), structure_name, structure_type, flow_direction, in_service, constructed_date, gate_capacity(NUMERIC), design_capacity(NUMERIC), operational_capacity(NUMERIC), owner, who_maintains, gps_latitude(NUMERIC), gps_longitude(NUMERIC), has_flow_meter, meter_type, meter_model, meter_status, formula_or_chart_ref, notes
+charge_code_splits         split_id(PK), name, components(jsonb), status, created_by, created_at, updated_at
+charge_codes               code_id(PK), code, description, status, created_by, created_at, updated_at
+dirt_work_issues           issue_id(PK), pool, work_type, description, location_notes, reported_date, resolved_date, status, action_taken, resolution_notes, po_number, cost(NUMERIC), assigned_to, entered_by, notes, gps_lat(DOUBLE), gps_lon(DOUBLE), created_at, updated_at
+equipment_issues           issue_id(PK), equipment_type, equipment_id, equipment_name, status, description, reported_date, resolved_date, resolution_notes, entered_by, assigned_to, notes, created_at, updated_at, action_taken, po_number, cost(NUMERIC)
+equipment_swaps            swap_id(PK), category, swap_date, location, item_removed_id, item_installed_id, removed_description, installed_description, performed_by, notes, entered_by, created_at
+jha                        jha_id(PK), title, work_location, jha_date, template_key, data(jsonb), completed_by, completed_by_date, status, created_by(→users), created_at, updated_at
+jha_signatures             sig_id(PK), jha_id(→jha), full_name, signature_data, signed_date, created_at
+maintenance_attachments    attachment_id(PK), table_name, record_id, rel_path, original_name, file_type, mime_type, uploaded_by, uploaded_at
+maintenance_buildings      record_id(PK), building_id(→buildings), work_date, work_type, record_type, description, performed_by, is_contractor, entered_by, severity, status, cost(NUMERIC), po_number, resolution_notes, next_service_date, notes
+maintenance_equipment      maintenance_id(PK), equipment_type, equipment_id, work_date, work_type, performed_by, is_contractor, entered_by, location_at_time, description, parts_used, cost(NUMERIC), po_number, hours_at_service(NUMERIC), next_service_date, notes
+maintenance_vehicles       maintenance_id(PK), vehicle_id(→vehicles), work_date, work_type, performed_by, is_contractor, entered_by, description, odometer_at_service(NUMERIC), engine_hours_at_service(NUMERIC), parts_used, cost(NUMERIC), po_number, next_service_date, next_service_miles(NUMERIC), notes, next_service_hours(NUMERIC), status
+motors                     motor_id(PK), serial_number, manufacturer, model_number, rated_hp(NUMERIC), frame_type, oil_capacity_upper_qt(NUMERIC), oil_capacity_lower_qt(NUMERIC), install_date_current, current_location, status, notes
+pest_tasks                 task_id(PK), description, created_by, created_at, done, done_by, done_at
+pesticide_usage            usage_id(PK), pesticide_id(→pesticides), used_date, used_time, applied_by(→users), quantity(NUMERIC), location_description, notes, created_at
+pesticides                 pesticide_id(PK), name, epa_reg_number, unit_of_measure, active, created_at
+pge_meters                 pge_meter_id(PK), building_id(→buildings), meter_name, meter_number, account_number, utility_provider, notes
+piezometers                piezometer_id(PK), piezometer_name, pool, sort_order(NUMERIC), max_depth(NUMERIC), status, gps_latitude(NUMERIC), gps_longitude(NUMERIC), notes, original_name
+pm_records                 pm_id(PK), pm_type, building, completed_date, completed_time, completed_by(→users), checklist(jsonb), notes, created_at
+pond_connections           connection_id(PK), destination_pond_id(→ponds), name, source_type, source_canal_id(→canal_structures), sort_order, active, notes, source_river_id(→river_outlets), source_pond_id(→ponds), gate_lat(NUMERIC), gate_lon(NUMERIC)
+pond_gates                 gate_id(PK), connection_id(→pond_connections), label, gate_type, width_in(NUMERIC), sort_order, active, notes
+pond_locations             location_id(PK), name, sort_order
+pond_points                point_id(PK), pond_id(→ponds), name, point_order, geom(GEOMETRY Point 4326), outlet_id(→river_outlets)
+ponds                      pond_id(PK), location_id(→pond_locations), name, sort_order, notes, gauge_lat(NUMERIC), gauge_lon(NUMERIC)
+power_monitors             monitor_id(PK), building_id(→buildings), monitor_number, manufacturer, ip_address, notes
+pump_positions             position_id(PK), site_id(→sites), building_id(→buildings), pump_letter, rated_hp(NUMERIC), current_motor_id, current_pump_unit_id, status, notes
+pump_units                 pump_unit_id(PK), serial_number, manufacturer, model_number, rated_hp(NUMERIC), frame_type, forward_flow_rating(NUMERIC), reverse_flow_rating(NUMERIC), install_date_current, current_location, status, notes
+purge_readings             purge_id(PK), well_id(→wells), state_well_number, well_name, well_depth(NUMERIC), reading_date, casing_diameter, rp_to_water(NUMERIC), gallons_to_pump(NUMERIC), total_gallons_pumped(NUMERIC), start_time, start_meter(NUMERIC), rp_to_water_5min(NUMERIC), pumping_rate(NUMERIC), end_meter(NUMERIC), end_time, total_pump_min, ending_rp_to_water(NUMERIC), notes, entered_by, created_at, updated_at
+readings_canal             reading_id(PK), structure_id(→canal_structures), reading_date, reading_time, entered_by, instantaneous_flow_cfs(NUMERIC), totalizer_reading_af(NUMERIC), gate_setting, head_reading_ft(NUMERIC), derived_flow_cfs(NUMERIC), notes
+readings_compressor_hours  reading_id(PK), compressor_id(→air_compressors), reading_date, reading_time, hour_reading(NUMERIC), entered_by, notes
+readings_kf_monthly        kf_reading_id(PK), well_id(→wells), reading_date, reading_time, dtw_reading(NUMERIC), operator, plopper_sounder, well_on_off, notes, common_name, wet_dry_moist, sounder_number
+readings_pge_meters        reading_id(PK), pge_meter_id(→pge_meters), reading_date, reading_time, kwh_reading(NUMERIC), entered_by, notes
+readings_piezometers       piezometer_reading_id(PK), piezometer_id(→piezometers), reading_date, reading_time, dtw_reading(NUMERIC), operator, plopper_sounder, wet_dry_moist, notes, sounder_number
+readings_pond_gates        reading_id(PK), gate_id(→pond_gates), reading_date, reading_time, head_ft(NUMERIC), opening_in(NUMERIC), overpour_in(NUMERIC), flow_cfs(NUMERIC), entered_by, notes, created_at
+readings_power_monitors    reading_id(PK), monitor_id(→power_monitors), reading_date, reading_time, kwh_reading(NUMERIC), entered_by, notes
+readings_pump_hours        reading_id(PK), position_id(→pump_positions), reading_date, reading_time, hour_reading(NUMERIC), entered_by, notes
+readings_run_dwr           reading_id(PK), well_id(→wells), reading_date, reading_time, depth_to_water(NUMERIC), method, operator, no_measurement(text[]), questionable_measurement(text[]), notes, entered_by, created_at, sounder_number
+readings_staff_gauge       reading_id(PK), pond_id(→ponds), reading_date, reading_time, level_ft(NUMERIC), entered_by, notes, created_at, outlet_id(→river_outlets)
+readings_vehicle_monthly   reading_id(PK), vehicle_id(→vehicles), vehicle_number, reading_date, reading_time, entered_by, odometer_miles(NUMERIC), engine_hours(NUMERIC), notes
+readings_well              reading_id(PK), well_id(→wells), common_name, reading_date, reading_time, on_off, hour_reading(NUMERIC), flow_cfs(NUMERIC), totalizer(NUMERIC), motor_oil, dripper_oil(NUMERIC), pge_kwh(NUMERIC), entered_by, notes
+river_outlets              outlet_id(PK), name, sort_order, active, notes, location_id(→pond_locations), gauge_lat(NUMERIC), gauge_lon(NUMERIC)
+safety_meeting_attendees   attendee_id(PK), meeting_id(→safety_meetings), full_name, signature_data, signed_date, created_at
+safety_meetings            meeting_id(PK), meeting_date, meeting_time, presented_by, topic, link, notes, created_by(→users), created_at, duration_min
+scada_equipment            scada_id(PK), building_id(→buildings), equipment_number, equipment_name, manufacturer, ip_address, notes
+siphon_breaker_swaps       swap_id(PK), swap_date, location, unit_removed_id(→siphon_breakers), unit_installed_id(→siphon_breakers), performed_by, notes, entered_by, created_at
+siphon_breakers            pump_unit_id(PK), serial_number, manufacturer, model_number, operating_psi(NUMERIC), max_psi(NUMERIC), install_date_current, current_location, status, notes
+sites                      site_id(PK), site_name, site_type, gps_latitude(NUMERIC), gps_longitude(NUMERIC), notes
+spatial_ref_sys            srid(PK), auth_name, auth_srid, srtext, proj4text
+users                      user_id(PK), username, full_name, role, password, initials, email, is_active
+vehicles                   vehicle_id(PK), vehicle_number, vehicle_type, year, make, model, vin, license_plate, fuel_type, assigned_user, reading_type, status, notes
+well_issues                issue_id(PK), well_id(→wells), well_name, well_area, status, description, reported_date, resolved_date, resolution_notes, entered_by, assigned_to, notes, created_at, updated_at, action_taken, po_number, cost(NUMERIC)
+well_meters                well_meter_id(PK), manufacturer, model_number, serial_number, meter_type, status, well_id(→wells), notes, created_at
+well_motors                well_motor_id(PK), manufacturer, model_number, serial_number, hp(NUMERIC), status, well_id(→wells), notes, created_at, frame_size, runtime_hours(NUMERIC)
+well_sets                  set_id(PK), set_name, description
+wells                      well_id(PK), common_name, state_well_number, area, discharge_pool, participant, agency, kf_set_id(→well_sets), well_type, total_depth_ft(NUMERIC), pump_hp(NUMERIC), pump_frame_size, pump_unit_id, status, gps_latitude(NUMERIC), gps_longitude(NUMERIC), notes, is_important, well_run, rp_elev(NUMERIC), gs_elev(NUMERIC), access, purge
 ```
+
+Views (not tables): `pond_polygons` (pond points assembled into GeoJSON
+polygons), plus the PostGIS `geometry_columns` / `geography_columns` system
+views.

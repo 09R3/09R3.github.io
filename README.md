@@ -1,5 +1,135 @@
 # 09R3.github.io
-Website
+
+Field operations software for the Kern County Water Agency / Cross Valley Canal.
+This repo holds two apps; this README covers **WaterMark**.
+
+---
+
+# WaterMark
+
+A mobile-first PWA (`watermark/`) that field operators use on phones and tablets
+to record readings, log maintenance, and monitor plants in real time. It is the
+data-entry side of the system — everything it captures lands in a shared
+PostgreSQL database (`waterops`).
+
+## How it fits together
+
+```
+ phone / tablet / desktop browser
+        │  (installable PWA, works offline)
+        ▼
+ watermark/public/         static front end — no build step, no framework
+   index.html              every screen, as hidden divs
+   app.js                  screens, forms, offline queue, reports
+   scada.js                SCADA dashboard (charts, live stream)
+   style.css               theming (dark default, light option)
+   sw.js                   service worker: app-shell + API cache
+        │  fetch / SSE
+        ▼
+ watermark/server.js       single-file Express API (~199 routes)
+        ├── PostgreSQL      all operational records
+        ├── InfluxDB        SCADA tag history + live values
+        └── /uploads        photos, invoices, label/SDS PDFs
+```
+
+There is **no build step**. The front end is plain HTML/CSS/JS served straight
+from `watermark/public/`, so a change is live on reload. `server.js` is a single
+Express file holding every endpoint, the schema bootstrap, and auth.
+
+## Architecture notes
+
+**No framework.** Screens are `<div>`s in one `index.html`, shown and hidden by
+`showScreen()`. Lists and forms are built as HTML strings and injected with
+`innerHTML` — always escaped through `escHtml()`.
+
+**Schema bootstrap.** There is no migration runner. Tables and columns are
+created at boot with `CREATE TABLE IF NOT EXISTS` and
+`ALTER TABLE ... ADD COLUMN IF NOT EXISTS` at the top of `server.js`, so a
+deploy self-applies on restart.
+
+**Offline first.** Operators frequently work with no signal. Saves that fail are
+written to IndexedDB (`watermark-offline`) and replayed when the connection
+returns; the dashboard shows a pending-sync card with the queued count. The
+service worker caches the app shell plus successful API `GET`s.
+
+**Auth.** Session cookie (`fo_session`), bcrypt passwords, per-role gating.
+Roles: `admin`, `supervisor`, `water-planner` (all supervisor-level), plus
+`operator`, `systems-operator`, `heavy-equipment-operator`, `pump-tech`,
+`elec-tech`. UI gating is always mirrored by a server-side check.
+
+## What's in it
+
+**Readings** — the core daily work. Pumping plants (hours, kWh, air
+compressors), wells, canal structures, vehicles/heavy equipment (odometer and
+engine hours), KF monthly depth-to-water, ponds (staff gauges and gate flows),
+and well runs (DWR, KCWA piezometers, and the Kern Fan purge program with its
+EC/pH meter calibration logs). Each item expands to a form, saves individually,
+and shows status at a glance plus history and notes.
+
+**Maintenance** — vehicle, equipment and building maintenance records, well /
+building / equipment / canal / dirt-work issue tracking, PM records and
+checklists, and equipment swaps. Records carry status (open → in progress →
+resolved), cost, PO number, and photo/invoice attachments.
+
+**SCADA dashboard** — live plant data from InfluxDB over SSE. Plant overview
+cards with pump counts, sensor levels and computed flow; per-plant detail with
+sensor tiles, pump cards and trend charts; multi-tag trends; pump run-hour and
+reverse-flow totals; and power monitoring. Charts support drag-select statistics
+(high, low, difference, standard deviation).
+
+**Reports** — vehicle mileage and last service, KF completion, maintenance
+issues, PM grids, piezometers, canal readings, pond levels and well readings.
+Every report exports to CSV, Excel or PDF.
+
+**Charts** — lookup tables and calculators used in the field: overpour weirs,
+gate discharge, pressure, open air, P-11, and the RRB T.O. and Pioneer Inlet
+sharp-crested weir charts.
+
+**Safety** — safety meetings with drawn-signature sign-in sheets, and JHAs
+(Job Hazard Analysis) built from templates, signed on-device and exported to PDF.
+
+**Pesticides** — product list with label and SDS PDFs, usage logging,
+application locations, a treatment checklist, and monthly reporting.
+
+**HR** — time-off requests and a charge-code reference with a split calculator
+that breaks hours across codes to the nearest quarter hour.
+
+**Tools & admin** — user management, SCADA access control, GPS location and pond
+GPS pickers, an EXIF reader, a SCADA scaling tester, bug reporting, and a global
+search across wells, vehicles, piezometers and structures.
+
+## Running it
+
+```bash
+cd watermark
+npm install
+node server.js          # serves the API and public/ on PORT (default 4000)
+```
+
+Configuration is via environment variables (`.env`):
+
+| Variable | Purpose |
+|----------|---------|
+| `DB_HOST` `DB_PORT` `DB_NAME` `DB_USER` `DB_PASSWORD` | PostgreSQL connection |
+| `INFLUX_URL` `INFLUX_TOKEN` `INFLUX_ORG` `INFLUX_BUCKET` | SCADA history + live tags |
+| `PORT` | HTTP port (defaults to 4000; deployed on 3067, beta on 3066) |
+
+SCADA plant/tag layout lives in `watermark/scada-config.json`, so sites, pumps
+and sensors can change without touching code.
+
+Timestamps are stored as naive local (Pacific) date + time columns; the pool
+sets `timezone = 'America/Los_Angeles'` on every connection so interval maths
+against `NOW()` behaves.
+
+## Conventions
+
+Contributor rules — UI/UX standards, version bumping, branch policy and the
+full database schema — live in [`CLAUDE.md`](CLAUDE.md). The short version:
+
+- **Branches:** WaterMark work goes to `Watermark-beta`; never push to `main`.
+- **Version bump:** every change to `watermark/` bumps the version in
+  `public/index.html` (two places) **and** the cache name in `public/sw.js`.
+  They must match — the cache name is what invalidates the service worker.
 
 ---
 
