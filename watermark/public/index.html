@@ -129,7 +129,7 @@
         Sign in with Microsoft 365
       </a>
       <div id="ms-login-error" class="error-msg hidden"></div>
-      <div class="login-version">v 3.16</div>
+      <div class="login-version">v 3.17</div>
     </div>
   </div>
 </div>
@@ -1394,7 +1394,7 @@
         </div>
         <div class="dash-label">IWV</div>
       </div>
-      <div class="dash-tile wr-soon" data-wr-panel="purge">
+      <div class="dash-tile" data-wr-panel="purge">
         <div class="dash-icon-wrap">
           <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-well-runs.svg);mask-image:url(/marv-site/icons/icon-well-runs.svg)"></span>
         </div>
@@ -1443,6 +1443,45 @@
         </div>
       </div>
       <div id="piez-list-body"><div class="placeholder-msg">Loading piezometers…</div></div>
+    </div>
+
+    <!-- Purge panel: sub-dashboard -> Purge Readings | Calibration -->
+    <div id="wr-panel-purge" class="maint-panel hidden">
+      <div id="purge-main" class="dashboard-grid">
+        <div class="dash-tile" data-purge-panel="readings">
+          <div class="dash-icon-wrap">
+            <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-well-runs.svg);mask-image:url(/marv-site/icons/icon-well-runs.svg)"></span>
+          </div>
+          <div class="dash-label">Purge Readings</div>
+        </div>
+        <div class="dash-tile" data-purge-panel="calibration">
+          <div class="dash-icon-wrap">
+            <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-gauge.svg);mask-image:url(/marv-site/icons/icon-gauge.svg)"></span>
+          </div>
+          <div class="dash-label">Calibration</div>
+        </div>
+      </div>
+
+      <!-- Purge Readings (Kern Fan Water Quality Sampling — Pumping Notes) -->
+      <div id="purge-panel-readings" class="maint-panel hidden">
+        <div class="issue-toolbar" style="gap:8px">
+          <button class="btn btn-primary btn-sm" id="purge-new-btn">+ New Purge</button>
+          <input type="search" id="purge-search" class="ctrl-input" placeholder="Search well…" style="flex:1;min-width:0">
+        </div>
+        <div id="purge-form-wrap" class="settings-card hidden" style="margin:0 0 14px">
+          <div class="settings-pad" id="purge-form-body"></div>
+        </div>
+        <div id="purge-list"><div class="placeholder-msg">Loading…</div></div>
+      </div>
+
+      <!-- Calibration: EC + pH daily logs -->
+      <div id="purge-panel-calibration" class="maint-panel hidden">
+        <div class="charts-tabs">
+          <button class="charts-tab-btn active" id="cal-tab-ec">EC Meter</button>
+          <button class="charts-tab-btn" id="cal-tab-ph">pH Meter</button>
+        </div>
+        <div id="cal-body" style="margin-top:12px"></div>
+      </div>
     </div>
 
   </div><!-- /screen-well-runs -->
@@ -1732,6 +1771,9 @@
         <button class="settings-menu-row" data-panel="running-wells">
           <span>Running Wells</span><span class="settings-chevron">›</span>
         </button>
+        <button class="settings-menu-row" data-panel="purge-wells">
+          <span>Purge Wells</span><span class="settings-chevron">›</span>
+        </button>
       </div>
       <div class="settings-menu-card hidden" id="settings-admin-section">
         <div class="settings-menu-label">Tools</div>
@@ -1854,12 +1896,25 @@
         <button class="btn btn-save" id="rw-settings-save-btn" style="margin-top:12px;width:100%">Save</button>
       </div>
     </div>
+    <div id="settings-panel-purge-wells" class="settings-panel hidden">
+      <div class="settings-section">
+        <div class="settings-card">
+          <div class="settings-pad">
+            <p style="font-size:0.85rem;color:var(--text-dim);margin:0 0 10px">
+              Select the wells on the Kern Fan purge program. These appear in Well Runs → Purge → Purge Readings.
+            </p>
+            <div id="pw-settings-list"></div>
+            <button class="btn btn-save" id="pw-save-btn" style="margin-top:12px">Save</button>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <!-- App Info panel -->
     <div id="settings-panel-appinfo" class="settings-panel hidden">
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 3.16</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 3.17</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>

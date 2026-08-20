@@ -744,6 +744,73 @@ pool.query(`
   )
 `)).catch(err => console.error('Migration error (jha tables):', err.message));
 
+// ── Purge program (Kern Fan Water Quality Sampling) ───────────────────────────
+// Wells on the purge program are flagged in the wells table. well_run is single
+// valued text, so a well can't be both a DWR run and a purge well — hence a
+// separate flag rather than reusing it.
+pool.query(`ALTER TABLE wells ADD COLUMN IF NOT EXISTS purge BOOLEAN DEFAULT FALSE`)
+  .catch(err => console.error('Migration error (wells.purge):', err.message));
+
+// One row per well per purge event — the Pumping Notes sheet. state_well_number
+// and well_name are copied in alongside well_id so the record still reads
+// correctly if a well is later renamed.
+pool.query(`
+  CREATE TABLE IF NOT EXISTS purge_readings (
+    purge_id            SERIAL PRIMARY KEY,
+    well_id             INTEGER REFERENCES wells(well_id),
+    state_well_number   TEXT,
+    well_name           TEXT,
+    well_depth          NUMERIC(10,2),
+    reading_date        DATE,
+    casing_diameter     TEXT,
+    rp_to_water         NUMERIC(10,2),
+    gallons_to_pump     NUMERIC(12,2),
+    total_gallons_pumped NUMERIC(12,2),
+    start_time          TIME,
+    start_meter         NUMERIC(14,2),
+    rp_to_water_5min    NUMERIC(10,2),
+    pumping_rate        NUMERIC(10,2),
+    end_meter           NUMERIC(14,2),
+    end_time            TIME,
+    total_pump_min      INTEGER,
+    ending_rp_to_water  NUMERIC(10,2),
+    notes               TEXT,
+    entered_by          TEXT,
+    created_at          TIMESTAMPTZ DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ DEFAULT NOW()
+  )
+`).then(() => pool.query(`
+  CREATE TABLE IF NOT EXISTS cal_log_ec (
+    cal_id        SERIAL PRIMARY KEY,
+    cal_date      DATE NOT NULL,
+    cal_time      TIME,
+    cal_std_lot   TEXT,
+    cal_pass      BOOLEAN,
+    check_std_lot TEXT,
+    check_value   NUMERIC(10,2),
+    tech          TEXT,
+    notes         TEXT,
+    entered_by    TEXT,
+    created_at    TIMESTAMPTZ DEFAULT NOW()
+  )
+`)).then(() => pool.query(`
+  CREATE TABLE IF NOT EXISTS cal_log_ph (
+    cal_id          SERIAL PRIMARY KEY,
+    cal_date        DATE NOT NULL,
+    cal_time        TIME,
+    buffer_401_lot  TEXT,
+    buffer_700_lot  TEXT,
+    buffer_1001_lot TEXT,
+    errors          TEXT,
+    cv_lot          TEXT,
+    cv_value        NUMERIC(6,2),
+    tech            TEXT,
+    notes           TEXT,
+    entered_by      TEXT,
+    created_at      TIMESTAMPTZ DEFAULT NOW()
+  )
+`)).catch(err => console.error('Migration error (purge tables):', err.message));
+
 // ─────────────────────────────────────────────────────────────────────────────
 const SESSION_TTL = 8 * 60 * 60 * 1000; // 8 hours
 const sessions = new Map();
@@ -1612,6 +1679,197 @@ app.post('/api/readings/piezometer', requireAuth, async (req, res) => {
   } catch (err) {
     handleErr(res, err);
   }
+});
+
+// ── Purge program: wells, readings, calibration logs ──────────────────────────
+// Which wells are on the purge program. Stored as a flag on the well itself
+// (see wells.purge) rather than an app_settings list, so reports can join on it.
+// All selectable wells for the purge picker. Deliberately not /wells/operational
+// — purge wells are monitoring wells, which that endpoint filters out.
+app.get('/api/purge/well-options', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT well_id, common_name, state_well_number, area, well_type, total_depth_ft
+       FROM wells
+       WHERE LOWER(COALESCE(status,'')) NOT IN ('inactive','removed')
+       ORDER BY state_well_number NULLS LAST, common_name`);
+    res.json(rows);
+  } catch (err) { handleErr(res, err); }
+});
+
+app.get('/api/settings/purge-wells', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT well_id FROM wells WHERE purge = TRUE');
+    res.json({ well_ids: rows.map(r => r.well_id) });
+  } catch (err) { handleErr(res, err); }
+});
+
+app.put('/api/settings/purge-wells', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
+  const ids = Array.isArray(req.body.well_ids)
+    ? req.body.well_ids.map(n => parseInt(n, 10)).filter(Number.isFinite) : [];
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('UPDATE wells SET purge = FALSE WHERE purge = TRUE');
+    if (ids.length) await client.query('UPDATE wells SET purge = TRUE WHERE well_id = ANY($1::int[])', [ids]);
+    await client.query('COMMIT');
+    res.json({ ok: true, count: ids.length });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    handleErr(res, err);
+  } finally { client.release(); }
+});
+
+app.get('/api/purge/wells', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT well_id, common_name, state_well_number, total_depth_ft,
+              gps_latitude, gps_longitude
+       FROM wells
+       WHERE purge = TRUE AND (LOWER(status) != 'inactive' OR status IS NULL)
+       ORDER BY state_well_number NULLS LAST, common_name`);
+    res.json(rows);
+  } catch (err) { handleErr(res, err); }
+});
+
+const PURGE_NUM = ['well_depth', 'rp_to_water', 'gallons_to_pump', 'total_gallons_pumped',
+  'start_meter', 'rp_to_water_5min', 'pumping_rate', 'end_meter', 'total_pump_min',
+  'ending_rp_to_water'];
+
+function purgeBody(b) {
+  const num = v => (v === '' || v == null ? null : Number(v));
+  const out = {
+    well_id: Number.isFinite(parseInt(b.well_id, 10)) ? parseInt(b.well_id, 10) : null,
+    state_well_number: b.state_well_number ?? null,
+    well_name: b.well_name ?? null,
+    reading_date: b.reading_date || null,
+    casing_diameter: b.casing_diameter ?? null,
+    start_time: b.start_time || null,
+    end_time: b.end_time || null,
+    notes: b.notes ?? null,
+  };
+  PURGE_NUM.forEach(k => { out[k] = num(b[k]); });
+  return out;
+}
+
+app.get('/api/purge/readings', requireAuth, async (req, res) => {
+  const { start_date, end_date } = req.query;
+  try {
+    const { rows } = await pool.query(
+      `SELECT * FROM purge_readings
+       WHERE ($1::date IS NULL OR reading_date >= $1::date)
+         AND ($2::date IS NULL OR reading_date <= $2::date)
+       ORDER BY reading_date DESC NULLS LAST, purge_id DESC
+       LIMIT 500`, [start_date || null, end_date || null]);
+    res.json(rows);
+  } catch (err) { handleErr(res, err); }
+});
+
+app.post('/api/purge/readings', requireAuth, async (req, res) => {
+  const b = purgeBody(req.body);
+  if (!b.state_well_number && !b.well_id) {
+    return res.status(400).json({ error: 'a well is required' });
+  }
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO purge_readings
+        (well_id, state_well_number, well_name, well_depth, reading_date, casing_diameter,
+         rp_to_water, gallons_to_pump, total_gallons_pumped, start_time, start_meter,
+         rp_to_water_5min, pumping_rate, end_meter, end_time, total_pump_min,
+         ending_rp_to_water, notes, entered_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+       RETURNING purge_id`,
+      [b.well_id, b.state_well_number, b.well_name, b.well_depth, b.reading_date,
+       b.casing_diameter, b.rp_to_water, b.gallons_to_pump, b.total_gallons_pumped,
+       b.start_time, b.start_meter, b.rp_to_water_5min, b.pumping_rate, b.end_meter,
+       b.end_time, b.total_pump_min, b.ending_rp_to_water, b.notes, req.user.username]);
+    res.json({ ok: true, purge_id: rows[0].purge_id });
+  } catch (err) { handleErr(res, err); }
+});
+
+// Edit is limited to whoever entered it, plus supervisors.
+app.patch('/api/purge/readings/:id', requireAuth, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const b = purgeBody(req.body);
+  try {
+    const { rows } = await pool.query('SELECT entered_by FROM purge_readings WHERE purge_id = $1', [id]);
+    if (!rows.length) return res.status(404).json({ error: 'Not found' });
+    const mine = rows[0].entered_by && rows[0].entered_by === req.user.username;
+    if (!mine && !SUPERVISOR_ROLES.includes(req.user.role)) {
+      return res.status(403).json({ error: 'Only the creator or a supervisor can edit this record' });
+    }
+    await pool.query(
+      `UPDATE purge_readings SET
+         well_id=$1, state_well_number=$2, well_name=$3, well_depth=$4, reading_date=$5,
+         casing_diameter=$6, rp_to_water=$7, gallons_to_pump=$8, total_gallons_pumped=$9,
+         start_time=$10, start_meter=$11, rp_to_water_5min=$12, pumping_rate=$13,
+         end_meter=$14, end_time=$15, total_pump_min=$16, ending_rp_to_water=$17,
+         notes=$18, updated_at=NOW()
+       WHERE purge_id=$19`,
+      [b.well_id, b.state_well_number, b.well_name, b.well_depth, b.reading_date,
+       b.casing_diameter, b.rp_to_water, b.gallons_to_pump, b.total_gallons_pumped,
+       b.start_time, b.start_meter, b.rp_to_water_5min, b.pumping_rate, b.end_meter,
+       b.end_time, b.total_pump_min, b.ending_rp_to_water, b.notes, id]);
+    res.json({ ok: true });
+  } catch (err) { handleErr(res, err); }
+});
+
+app.delete('/api/purge/readings/:id', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
+  try {
+    await pool.query('DELETE FROM purge_readings WHERE purge_id = $1', [parseInt(req.params.id, 10)]);
+    res.json({ ok: true });
+  } catch (err) { handleErr(res, err); }
+});
+
+// Calibration logs. kind is validated against this map, never interpolated raw.
+const CAL_LOGS = {
+  ec: { table: 'cal_log_ec',
+        cols: ['cal_date','cal_time','cal_std_lot','cal_pass','check_std_lot','check_value','tech','notes'],
+        nums: ['check_value'], bools: ['cal_pass'] },
+  ph: { table: 'cal_log_ph',
+        cols: ['cal_date','cal_time','buffer_401_lot','buffer_700_lot','buffer_1001_lot','errors','cv_lot','cv_value','tech','notes'],
+        nums: ['cv_value'], bools: [] },
+};
+
+app.get('/api/cal-log/:kind', requireAuth, async (req, res) => {
+  const cfg = CAL_LOGS[req.params.kind];
+  if (!cfg) return res.status(400).json({ error: 'unknown log' });
+  try {
+    const { rows } = await pool.query(
+      `SELECT * FROM ${cfg.table} ORDER BY cal_date DESC, cal_time DESC NULLS LAST, cal_id DESC LIMIT 500`);
+    res.json(rows);
+  } catch (err) { handleErr(res, err); }
+});
+
+app.post('/api/cal-log/:kind', requireAuth, async (req, res) => {
+  const cfg = CAL_LOGS[req.params.kind];
+  if (!cfg) return res.status(400).json({ error: 'unknown log' });
+  const b = req.body || {};
+  if (!b.cal_date) return res.status(400).json({ error: 'cal_date required' });
+  const vals = cfg.cols.map(c => {
+    const v = b[c];
+    if (cfg.nums.includes(c)) return (v === '' || v == null) ? null : Number(v);
+    if (cfg.bools.includes(c)) return v === undefined ? null : !!v;
+    if (c === 'cal_time') return v || null;
+    return v ?? null;
+  });
+  const ph = cfg.cols.map((_, i) => `$${i + 1}`).join(',');
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO ${cfg.table} (${cfg.cols.join(',')}, entered_by)
+       VALUES (${ph}, $${cfg.cols.length + 1}) RETURNING cal_id`,
+      [...vals, req.user.username]);
+    res.json({ ok: true, cal_id: rows[0].cal_id });
+  } catch (err) { handleErr(res, err); }
+});
+
+app.delete('/api/cal-log/:kind/:id', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
+  const cfg = CAL_LOGS[req.params.kind];
+  if (!cfg) return res.status(400).json({ error: 'unknown log' });
+  try {
+    await pool.query(`DELETE FROM ${cfg.table} WHERE cal_id = $1`, [parseInt(req.params.id, 10)]);
+    res.json({ ok: true });
+  } catch (err) { handleErr(res, err); }
 });
 
 // ── DWR Well Run ──────────────────────────────────────────────────────────────

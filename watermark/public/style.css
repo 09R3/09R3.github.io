@@ -1398,6 +1398,16 @@ input[type="date"].ctrl-input { min-height: 44px; }
 .report-table .report-num { text-align: right; font-variant-numeric: tabular-nums; }
 .report-empty { font-size: 0.88rem; color: var(--text-dim); font-style: italic; padding: 8px 0; }
 /* Wide report tables scroll sideways instead of squeezing columns off-screen */
+/* ── Purge program ────────────────────────────────────────────────────────── */
+.purge-calc-hint {
+  font-size: 0.78rem; color: var(--text-dim); font-variant-numeric: tabular-nums;
+  background: var(--surface2); border-radius: 6px; padding: 6px 9px;
+  margin: 0 0 10px; min-height: 1px;
+}
+.cal-table { font-size: 0.82rem; }
+.cal-table th { font-size: 0.66rem; white-space: nowrap; }
+.cal-table td { white-space: nowrap; padding: 5px 8px; }
+
 /* Vehicle maintenance record: read-only summary */
 .veh-view-grid {
   display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px;

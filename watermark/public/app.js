@@ -6283,6 +6283,507 @@ function createPiezItem(p, dateInput, timeInput) {
   return div;
 }
 
+// Supervisor picker for which wells sit on the purge program. Writes the
+// wells.purge flag rather than an app_settings list.
+async function initPurgeWellsPanel() {
+  const list = el('pw-settings-list');
+  list.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const [{ well_ids }, wells] = await Promise.all([
+      api('GET', '/api/settings/purge-wells'),
+      api('GET', '/api/purge/well-options'),
+    ]);
+    const picked = new Set(well_ids.map(Number));
+    const byArea = {};
+    wells.forEach(w => {
+      const a = w.area || 'Other';
+      (byArea[a] = byArea[a] || []).push(w);
+    });
+    list.innerHTML = Object.keys(byArea).sort().map(area => `
+      <div class="rw-area-row"><span class="rw-area-label">${escHtml(area)}</span></div>
+      ${byArea[area].map(w => `<div class="rw-well-row">
+        <label class="rw-well-label">
+          <input type="checkbox" class="pw-cb" data-id="${w.well_id}" ${picked.has(Number(w.well_id)) ? 'checked' : ''}>
+          <span>${escHtml([w.state_well_number, w.common_name].filter(Boolean).join(' — '))}</span>
+        </label>
+      </div>`).join('')}`).join('');
+  } catch (err) {
+    list.innerHTML = `<div class="placeholder-msg">Failed to load: ${escHtml(err.message)}</div>`;
+    return;
+  }
+  const btn = el('pw-save-btn');
+  btn.onclick = async () => {
+    const ids = [...list.querySelectorAll('.pw-cb:checked')].map(c => parseInt(c.dataset.id, 10));
+    const _save = beginSave(btn);
+    try {
+      await api('PUT', '/api/settings/purge-wells', { well_ids: ids });
+      showToast(`${ids.length} purge well${ids.length === 1 ? '' : 's'} saved`, 'success');
+    } catch (err) {
+      showToast(err.message, 'error');
+    } finally { _save(); }
+  };
+}
+
+/* ── Purge program (Kern Fan Water Quality Sampling) ──────────────────────────
+   Purge Readings mirrors the paper Pumping Notes sheet; Calibration holds the
+   daily EC and pH meter logs. */
+const PURGE_GAL_PER_FT = 1.47;   // 6-inch monitoring well
+const PURGE_CASING_VOLS = 5;
+
+let _purgeWells = [], _purgeRows = [], _purgeEditId = null;
+
+function initPurgeScreen() {
+  showPurgeSub(null);
+  el('purge-main').querySelectorAll('[data-purge-panel]').forEach(tile => {
+    if (tile.dataset.wired) return;
+    tile.dataset.wired = '1';
+    tile.addEventListener('click', () => showPurgeSub(tile.dataset.purgePanel));
+  });
+}
+
+// Nest one level deeper than the Well Runs panel: Back returns here first.
+function showPurgeSub(which) {
+  ['readings', 'calibration'].forEach(k =>
+    el(`purge-panel-${k}`).classList.toggle('hidden', k !== which));
+  el('purge-main').classList.toggle('hidden', !!which);
+  const back = () => showPurgeSub(null);
+  if (!which) {
+    setPanelNav(el('screen-well-runs'), () => {
+      document.querySelectorAll('#screen-well-runs .maint-panel').forEach(p => p.classList.add('hidden'));
+      el('well-runs-main').classList.remove('hidden');
+      setPanelNav(el('screen-well-runs'), () => showScreen('dashboard'), 'Well Runs');
+    }, 'Well Runs - Purge');
+    return;
+  }
+  setPanelNav(el('screen-well-runs'), back,
+    'Purge - ' + (which === 'readings' ? 'Purge Readings' : 'Calibration'));
+  if (which === 'readings') initPurgeReadings();
+  else initCalibration();
+}
+
+// ── Purge Readings ──
+async function initPurgeReadings() {
+  if (!el('purge-new-btn').dataset.wired) {
+    el('purge-new-btn').dataset.wired = '1';
+    el('purge-new-btn').addEventListener('click', () => openPurgeForm(null));
+    let t;
+    el('purge-search').addEventListener('input', () => {
+      clearTimeout(t); t = setTimeout(renderPurgeList, 250);
+    });
+  }
+  try {
+    [_purgeWells, _purgeRows] = await Promise.all([
+      api('GET', '/api/purge/wells'),
+      api('GET', '/api/purge/readings'),
+    ]);
+  } catch (err) {
+    el('purge-list').innerHTML = `<div class="placeholder-msg">Failed to load: ${escHtml(err.message)}</div>`;
+    return;
+  }
+  renderPurgeList();
+}
+
+function purgeWellLabel(r) {
+  return [r.state_well_number, r.well_name].filter(Boolean).join(' — ') || 'Well';
+}
+
+function renderPurgeList() {
+  const q = (el('purge-search').value || '').trim().toLowerCase();
+  const rows = _purgeRows.filter(r => !q || purgeWellLabel(r).toLowerCase().includes(q));
+  const list = el('purge-list');
+  if (!rows.length) {
+    list.innerHTML = `<div class="placeholder-msg">${_purgeRows.length ? 'No matches.' : 'No purge readings yet.'}</div>`;
+    return;
+  }
+  const n = (v, d = 1) => v != null ? Number(v).toFixed(d) : '—';
+  list.innerHTML = rows.map(r => `
+    <div class="safety-meeting-item" data-purge-id="${r.purge_id}">
+      <div class="safety-meeting-header">
+        <div class="safety-meeting-info">
+          <div class="safety-meeting-topic">${escHtml(purgeWellLabel(r))}</div>
+          <div class="safety-meeting-date">
+            ${r.reading_date ? localDateStr(r.reading_date, { month:'short', day:'numeric', year:'numeric' }) : 'No date'}
+            ${r.total_gallons_pumped != null ? ' · ' + Number(r.total_gallons_pumped).toLocaleString() + ' gal' : ''}
+            ${r.total_pump_min != null ? ' · ' + r.total_pump_min + ' min' : ''}
+          </div>
+        </div>
+        <span class="safety-meeting-chevron">›</span>
+      </div>
+      <div class="safety-meeting-body hidden">
+        <dl class="veh-view-grid">
+          <dt>Well Depth</dt><dd>${n(r.well_depth)} ft</dd>
+          <dt>Casing</dt><dd>${escHtml(r.casing_diameter || '—')}</dd>
+          <dt>R.P. to Water</dt><dd>${n(r.rp_to_water, 2)}</dd>
+          <dt>Gallons to Pump</dt><dd>${r.gallons_to_pump != null ? Number(r.gallons_to_pump).toLocaleString() : '—'}</dd>
+          <dt>Total Pumped</dt><dd>${r.total_gallons_pumped != null ? Number(r.total_gallons_pumped).toLocaleString() : '—'}</dd>
+          <dt>Start / End</dt><dd>${(r.start_time||'—').toString().slice(0,5)} – ${(r.end_time||'—').toString().slice(0,5)}</dd>
+          <dt>Meter Start / End</dt><dd>${r.start_meter ?? '—'} → ${r.end_meter ?? '—'}</dd>
+          <dt>R.P. @ 5 min</dt><dd>${n(r.rp_to_water_5min, 2)}</dd>
+          <dt>Pumping Rate</dt><dd>${n(r.pumping_rate)}</dd>
+          <dt>Total Min</dt><dd>${r.total_pump_min ?? '—'}</dd>
+          <dt>Ending R.P.</dt><dd>${n(r.ending_rp_to_water, 2)}</dd>
+          ${r.notes ? `<dt>Notes</dt><dd>${escHtml(r.notes)}</dd>` : ''}
+          <dt>Entered By</dt><dd>${escHtml(r.entered_by || '—')}</dd>
+        </dl>
+        <div class="form-row">
+          ${canEditPurge(r) ? '<button class="btn btn-secondary btn-sm purge-edit-btn">Edit</button>' : ''}
+          ${isSupervisorLevel(currentUser?.role) ? '<button class="btn btn-danger btn-sm purge-del-btn" style="margin-left:auto">Delete</button>' : ''}
+        </div>
+      </div>
+    </div>`).join('');
+
+  list.querySelectorAll('.safety-meeting-item').forEach(item => {
+    const body = item.querySelector('.safety-meeting-body');
+    const chev = item.querySelector('.safety-meeting-chevron');
+    item.querySelector('.safety-meeting-header').addEventListener('click', () => {
+      const open = body.classList.toggle('hidden');
+      chev.style.transform = open ? '' : 'rotate(90deg)';
+    });
+    const row = _purgeRows.find(r => String(r.purge_id) === item.dataset.purgeId);
+    item.querySelector('.purge-edit-btn')?.addEventListener('click', () => openPurgeForm(row));
+    item.querySelector('.purge-del-btn')?.addEventListener('click', async () => {
+      if (!confirm('Delete this purge reading?')) return;
+      try {
+        await api('DELETE', `/api/purge/readings/${row.purge_id}`);
+        showToast('Purge reading deleted');
+        await initPurgeReadings();
+      } catch (err) { showToast(err.message, 'error'); }
+    });
+  });
+}
+
+function canEditPurge(r) {
+  return isSupervisorLevel(currentUser?.role)
+    || (!!r.entered_by && r.entered_by === currentUser?.username);
+}
+
+function openPurgeForm(existing) {
+  _purgeEditId = existing ? existing.purge_id : null;
+  el('purge-new-btn').style.display = 'none';
+  const wrap = el('purge-form-wrap');
+  wrap.classList.remove('hidden');
+  const v = x => x != null ? escHtml(String(x)) : '';
+  el('purge-form-body').innerHTML = `
+    <div class="form-group"><label>Well</label>
+      <select id="pf-well" class="ctrl-select">
+        <option value="">— select well —</option>
+        ${_purgeWells.map(w => `<option value="${w.well_id}"
+          data-depth="${w.total_depth_ft ?? ''}"
+          data-swn="${escHtml(w.state_well_number || '')}"
+          data-name="${escHtml(w.common_name || '')}"
+          ${existing && String(existing.well_id) === String(w.well_id) ? 'selected' : ''}>
+          ${escHtml([w.state_well_number, w.common_name].filter(Boolean).join(' — '))}</option>`).join('')}
+      </select>
+    </div>
+    <div class="two-col">
+      <div class="form-group"><label>State Well Number</label>
+        <input type="text" id="pf-swn" class="ctrl-input ctrl-input-sm" value="${v(existing?.state_well_number)}"></div>
+      <div class="form-group"><label>Well Name / Descriptor</label>
+        <input type="text" id="pf-name" class="ctrl-input ctrl-input-sm" value="${v(existing?.well_name)}" placeholder="Deep / Shallow"></div>
+    </div>
+    <div class="two-col">
+      <div class="form-group"><label>Date</label>
+        <input type="date" id="pf-date" class="ctrl-input ctrl-input-sm" value="${(existing?.reading_date || '').toString().slice(0,10)}"></div>
+      <div class="form-group"><label>Casing Diameter</label>
+        <input type="text" id="pf-casing" class="ctrl-input ctrl-input-sm" value="${v(existing?.casing_diameter ?? '6"')}"></div>
+    </div>
+    <div class="two-col">
+      <div class="form-group"><label>Well Depth (ft)</label>
+        <input type="number" step="0.01" id="pf-depth" class="ctrl-input ctrl-input-sm" value="${v(existing?.well_depth)}"></div>
+      <div class="form-group"><label>R.P. to Water</label>
+        <input type="number" step="0.01" id="pf-rp" class="ctrl-input ctrl-input-sm" value="${v(existing?.rp_to_water)}"></div>
+    </div>
+    <div class="purge-calc-hint" id="pf-calc-hint"></div>
+    <div class="two-col">
+      <div class="form-group"><label>Gallons to be Pumped</label>
+        <input type="number" step="1" id="pf-gal-target" class="ctrl-input ctrl-input-sm" value="${v(existing?.gallons_to_pump)}"></div>
+      <div class="form-group"><label>Total Gallons Pumped</label>
+        <input type="number" step="1" id="pf-gal-total" class="ctrl-input ctrl-input-sm" value="${v(existing?.total_gallons_pumped)}"></div>
+    </div>
+    <div class="two-col">
+      <div class="form-group"><label>Starting Time</label>
+        <input type="time" id="pf-start-time" class="ctrl-input ctrl-input-sm" value="${(existing?.start_time || '').toString().slice(0,5)}"></div>
+      <div class="form-group"><label>Start Meter Reading</label>
+        <input type="number" step="0.01" id="pf-start-meter" class="ctrl-input ctrl-input-sm" value="${v(existing?.start_meter)}"></div>
+    </div>
+    <div class="two-col">
+      <div class="form-group"><label>R.P. to Water @ 5 min</label>
+        <input type="number" step="0.01" id="pf-rp5" class="ctrl-input ctrl-input-sm" value="${v(existing?.rp_to_water_5min)}"></div>
+      <div class="form-group"><label>Pumping Rate (gpm)</label>
+        <input type="number" step="0.01" id="pf-rate" class="ctrl-input ctrl-input-sm" value="${v(existing?.pumping_rate)}"></div>
+    </div>
+    <div class="two-col">
+      <div class="form-group"><label>Ending Time</label>
+        <input type="time" id="pf-end-time" class="ctrl-input ctrl-input-sm" value="${(existing?.end_time || '').toString().slice(0,5)}"></div>
+      <div class="form-group"><label>End Meter Reading</label>
+        <input type="number" step="0.01" id="pf-end-meter" class="ctrl-input ctrl-input-sm" value="${v(existing?.end_meter)}"></div>
+    </div>
+    <div class="two-col">
+      <div class="form-group"><label>Total Pumping Time (min)</label>
+        <input type="number" step="1" id="pf-total-min" class="ctrl-input ctrl-input-sm" value="${v(existing?.total_pump_min)}"></div>
+      <div class="form-group"><label>Ending R.P. to Water</label>
+        <input type="number" step="0.01" id="pf-end-rp" class="ctrl-input ctrl-input-sm" value="${v(existing?.ending_rp_to_water)}"></div>
+    </div>
+    <div class="form-group"><label>Notes</label>
+      <textarea id="pf-notes" class="ctrl-textarea" rows="2" placeholder="e.g. ran out of water in 3 minutes">${escHtml(existing?.notes || '')}</textarea></div>
+    <div id="pf-error" class="error-msg hidden"></div>
+    <div class="form-row">
+      <button class="btn btn-save" id="pf-save">${existing ? 'Save Changes' : 'Save Purge'}</button>
+      <button class="btn btn-secondary" id="pf-cancel">Cancel</button>
+    </div>`;
+
+  if (!existing) el('pf-date').value = new Date().toLocaleDateString('en-CA');
+
+  // Selecting a well fills its identifiers and depth; typed values win after.
+  el('pf-well').addEventListener('change', () => {
+    const o = el('pf-well').selectedOptions[0];
+    if (!o || !o.value) return;
+    el('pf-swn').value = o.dataset.swn || '';
+    el('pf-name').value = o.dataset.name || '';
+    if (o.dataset.depth) el('pf-depth').value = o.dataset.depth;
+    recalcPurge();
+  });
+  ['pf-depth', 'pf-rp', 'pf-rate'].forEach(id =>
+    el(id).addEventListener('input', recalcPurge));
+  el('pf-cancel').addEventListener('click', () => {
+    wrap.classList.add('hidden');
+    el('purge-new-btn').style.display = '';
+    _purgeEditId = null;
+  });
+  el('pf-save').addEventListener('click', savePurgeForm);
+  recalcPurge();
+  wrap.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// (Well Depth − R.P. to Water) × 1.47 × 5 = gallons; gallons ÷ rate = minutes.
+// Fills blank fields and shows the maths, but never overwrites a typed value.
+function recalcPurge() {
+  const depth = parseFloat(el('pf-depth').value);
+  const rp    = parseFloat(el('pf-rp').value);
+  const rate  = parseFloat(el('pf-rate').value);
+  const hint  = el('pf-calc-hint');
+  if (!isFinite(depth) || !isFinite(rp) || depth <= rp) { hint.textContent = ''; return; }
+  const gal = (depth - rp) * PURGE_GAL_PER_FT * PURGE_CASING_VOLS;
+  const galRounded = Math.round(gal / 50) * 50;   // sheet rounds to the nearest 50
+  let txt = `(${depth} − ${rp}) × ${PURGE_GAL_PER_FT} × ${PURGE_CASING_VOLS} = ${gal.toFixed(0)} gal → ${galRounded}`;
+  const target = el('pf-gal-target');
+  if (!target.value) target.value = galRounded;
+  if (isFinite(rate) && rate > 0) {
+    const mins = Math.round((parseFloat(target.value) || galRounded) / rate);
+    txt += ` · ÷ ${rate} gpm = ${mins} min`;
+    const mn = el('pf-total-min');
+    if (!mn.value) mn.value = mins;
+  }
+  hint.textContent = txt;
+}
+
+async function savePurgeForm() {
+  const errEl = el('pf-error');
+  errEl.classList.add('hidden');
+  const payload = {
+    well_id:              el('pf-well').value || null,
+    state_well_number:    el('pf-swn').value.trim(),
+    well_name:            el('pf-name').value.trim(),
+    reading_date:         el('pf-date').value || null,
+    casing_diameter:      el('pf-casing').value.trim(),
+    well_depth:           el('pf-depth').value,
+    rp_to_water:          el('pf-rp').value,
+    gallons_to_pump:      el('pf-gal-target').value,
+    total_gallons_pumped: el('pf-gal-total').value,
+    start_time:           el('pf-start-time').value || null,
+    start_meter:          el('pf-start-meter').value,
+    rp_to_water_5min:     el('pf-rp5').value,
+    pumping_rate:         el('pf-rate').value,
+    end_meter:            el('pf-end-meter').value,
+    end_time:             el('pf-end-time').value || null,
+    total_pump_min:       el('pf-total-min').value,
+    ending_rp_to_water:   el('pf-end-rp').value,
+    notes:                el('pf-notes').value.trim(),
+  };
+  if (!payload.well_id && !payload.state_well_number) {
+    errEl.textContent = 'Pick a well or enter a state well number.';
+    errEl.classList.remove('hidden');
+    return;
+  }
+  const _save = beginSave(el('pf-save'));
+  try {
+    if (_purgeEditId) await api('PATCH', `/api/purge/readings/${_purgeEditId}`, payload);
+    else await api('POST', '/api/purge/readings', payload);
+    el('purge-form-wrap').classList.add('hidden');
+    el('purge-new-btn').style.display = '';
+    showToast(_purgeEditId ? 'Purge reading updated' : 'Purge reading saved');
+    _purgeEditId = null;
+    await initPurgeReadings();
+  } catch (err) {
+    errEl.textContent = err.message;
+    errEl.classList.remove('hidden');
+  } finally { _save(); }
+}
+
+// ── Calibration logs (EC + pH) ──
+const CAL_DEFS = {
+  ec: {
+    title: 'EC Meter Calibration',
+    fields: [
+      { k: 'cal_date',      label: 'Date',            type: 'date',   required: true },
+      { k: 'cal_time',      label: 'Time',            type: 'time' },
+      { k: 'cal_std_lot',   label: 'Cal Std. brand/lot #',   type: 'text' },
+      { k: 'cal_pass',      label: 'Cal passed?',     type: 'check' },
+      { k: 'check_std_lot', label: 'Check Std. brand/lot #', type: 'text' },
+      { k: 'check_value',   label: 'Check Std. reading (µS/cm)', type: 'number', step: '0.01' },
+      { k: 'tech',          label: 'Tech',            type: 'text' },
+      { k: 'notes',         label: 'Notes',           type: 'textarea' },
+    ],
+    cols: [
+      ['Date', r => localDateStr(r.cal_date, { month:'short', day:'numeric', year:'numeric' })],
+      ['Time', r => (r.cal_time || '').toString().slice(0,5) || '—'],
+      ['Cal Std.', r => r.cal_std_lot || '—'],
+      ['Pass', r => r.cal_pass == null ? '—' : (r.cal_pass ? '✓' : '✗')],
+      ['Check Std.', r => r.check_std_lot || '—'],
+      ['Reading', r => r.check_value != null ? Number(r.check_value).toFixed(0) : '—'],
+      ['Tech', r => r.tech || '—'],
+      ['Notes', r => r.notes || ''],
+    ],
+  },
+  ph: {
+    title: 'pH Meter Calibration',
+    fields: [
+      { k: 'cal_date',        label: 'Date', type: 'date', required: true },
+      { k: 'cal_time',        label: 'Time', type: 'time' },
+      { k: 'buffer_401_lot',  label: 'Buffer pH 4.01 brand/lot',  type: 'text' },
+      { k: 'buffer_700_lot',  label: 'Buffer pH 7.00 brand/lot',  type: 'text' },
+      { k: 'buffer_1001_lot', label: 'Buffer pH 10.01 brand/lot', type: 'text' },
+      { k: 'errors',          label: 'Errors?', type: 'text', placeholder: 'e.g. no' },
+      { k: 'cv_lot',          label: 'CV pH 7.00 brand/lot', type: 'text' },
+      { k: 'cv_value',        label: 'CV Value', type: 'number', step: '0.01' },
+      { k: 'tech',            label: 'Tech', type: 'text' },
+      { k: 'notes',           label: 'Notes', type: 'textarea' },
+    ],
+    cols: [
+      ['Date', r => localDateStr(r.cal_date, { month:'short', day:'numeric', year:'numeric' })],
+      ['Time', r => (r.cal_time || '').toString().slice(0,5) || '—'],
+      ['4.01', r => r.buffer_401_lot || '—'],
+      ['7.00', r => r.buffer_700_lot || '—'],
+      ['10.01', r => r.buffer_1001_lot || '—'],
+      ['Errors', r => r.errors || '—'],
+      ['CV Lot', r => r.cv_lot || '—'],
+      ['CV Value', r => r.cv_value != null ? Number(r.cv_value).toFixed(2) : '—'],
+      ['Tech', r => r.tech || '—'],
+      ['Notes', r => r.notes || ''],
+    ],
+  },
+};
+
+let _calKind = 'ec';
+
+function initCalibration() {
+  if (!el('cal-tab-ec').dataset.wired) {
+    el('cal-tab-ec').dataset.wired = '1';
+    el('cal-tab-ec').addEventListener('click', () => { _calKind = 'ec'; renderCalTabs(); loadCalLog(); });
+    el('cal-tab-ph').addEventListener('click', () => { _calKind = 'ph'; renderCalTabs(); loadCalLog(); });
+  }
+  renderCalTabs();
+  loadCalLog();
+}
+
+function renderCalTabs() {
+  el('cal-tab-ec').classList.toggle('active', _calKind === 'ec');
+  el('cal-tab-ph').classList.toggle('active', _calKind === 'ph');
+}
+
+async function loadCalLog() {
+  const def = CAL_DEFS[_calKind];
+  const body = el('cal-body');
+  body.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  let rows = [];
+  try {
+    rows = await api('GET', `/api/cal-log/${_calKind}`);
+  } catch (err) {
+    body.innerHTML = `<div class="placeholder-msg">Failed to load: ${escHtml(err.message)}</div>`;
+    return;
+  }
+  const canDel = isSupervisorLevel(currentUser?.role);
+  body.innerHTML = `
+    <div class="issue-toolbar"><button class="btn btn-primary btn-sm" id="cal-new-btn">+ New ${escHtml(def.title)} Entry</button></div>
+    <div id="cal-form" class="settings-card hidden" style="margin:0 0 14px"><div class="settings-pad">
+      ${def.fields.map(f => calFieldHtml(f)).join('')}
+      <div id="cal-error" class="error-msg hidden"></div>
+      <div class="form-row">
+        <button class="btn btn-save" id="cal-save">Save</button>
+        <button class="btn btn-secondary" id="cal-cancel">Cancel</button>
+      </div>
+    </div></div>
+    ${rows.length ? `<div class="report-scroll"><table class="report-table cal-table">
+      <thead><tr>${def.cols.map(c => `<th>${escHtml(c[0])}</th>`).join('')}${canDel ? '<th></th>' : ''}</tr></thead>
+      <tbody>${rows.map(r => `<tr>
+        ${def.cols.map(c => `<td>${escHtml(String(c[1](r) ?? ''))}</td>`).join('')}
+        ${canDel ? `<td><button class="hist-btn cal-del-btn" data-id="${r.cal_id}" title="Delete">✕</button></td>` : ''}
+      </tr>`).join('')}</tbody></table></div>`
+    : '<div class="placeholder-msg">No calibration entries yet.</div>'}`;
+
+  el('cal-new-btn').addEventListener('click', () => {
+    el('cal-form').classList.remove('hidden');
+    el('cal-new-btn').style.display = 'none';
+    const d = el('cal-f-cal_date'); if (d && !d.value) d.value = new Date().toLocaleDateString('en-CA');
+    const t = el('cal-f-cal_time'); if (t && !t.value) t.value = nowHHMM();
+    const tech = el('cal-f-tech');
+    if (tech && !tech.value) tech.value = currentUser?.initials || '';
+  });
+  el('cal-cancel').addEventListener('click', () => {
+    el('cal-form').classList.add('hidden');
+    el('cal-new-btn').style.display = '';
+  });
+  el('cal-save').addEventListener('click', saveCalLog);
+  body.querySelectorAll('.cal-del-btn').forEach(b => b.addEventListener('click', async () => {
+    if (!confirm('Delete this calibration entry?')) return;
+    try {
+      await api('DELETE', `/api/cal-log/${_calKind}/${b.dataset.id}`);
+      showToast('Entry deleted');
+      loadCalLog();
+    } catch (err) { showToast(err.message, 'error'); }
+  }));
+}
+
+function calFieldHtml(f) {
+  const id = `cal-f-${f.k}`;
+  if (f.type === 'check') {
+    return `<label class="jha-cb" style="margin-bottom:8px"><input type="checkbox" id="${id}"> ${escHtml(f.label)}</label>`;
+  }
+  if (f.type === 'textarea') {
+    return `<div class="form-group"><label>${escHtml(f.label)}</label>
+      <textarea id="${id}" class="ctrl-textarea" rows="2"></textarea></div>`;
+  }
+  return `<div class="form-group"><label>${escHtml(f.label)}</label>
+    <input type="${f.type}" id="${id}" class="ctrl-input ctrl-input-sm"
+      ${f.step ? `step="${f.step}"` : ''} ${f.placeholder ? `placeholder="${escHtml(f.placeholder)}"` : ''}></div>`;
+}
+
+async function saveCalLog() {
+  const def = CAL_DEFS[_calKind];
+  const errEl = el('cal-error');
+  errEl.classList.add('hidden');
+  const payload = {};
+  for (const f of def.fields) {
+    const node = el(`cal-f-${f.k}`);
+    if (!node) continue;
+    payload[f.k] = f.type === 'check' ? node.checked : node.value.trim();
+    if (f.required && !payload[f.k]) {
+      errEl.textContent = `${f.label} is required.`;
+      errEl.classList.remove('hidden');
+      return;
+    }
+  }
+  const _save = beginSave(el('cal-save'));
+  try {
+    await api('POST', `/api/cal-log/${_calKind}`, payload);
+    showToast('Calibration logged');
+    loadCalLog();
+  } catch (err) {
+    errEl.textContent = err.message;
+    errEl.classList.remove('hidden');
+  } finally { _save(); }
+}
+
 /* ── Settings Screen ─────────────────────────────────────────────────────── */
 
 // Text size preference — apply on load
@@ -6322,6 +6823,7 @@ const SETTINGS_PANEL_NAMES = {
   readings:         "Today's Readings",
   'kf-widget':      'KF Widget',
   'running-wells':  'Running Wells',
+  'purge-wells':    'Purge Wells',
   'gps-selector':   'GPS Location Selector',
   'scada-roles':    'SCADA Access',
   appinfo:          'App Info',
@@ -6340,6 +6842,7 @@ function openSettingsPanel(panelId) {
   if (panelId === 'bugreports')     loadBugReports();
   if (panelId === 'kf-widget')      initKFWidgetPanel();
   if (panelId === 'running-wells')  initRunningWellsPanel();
+  if (panelId === 'purge-wells')    initPurgeWellsPanel();
   if (panelId === 'gps-selector')   initGPSSelectorSettingsPanel();
   if (panelId === 'scada-roles')    initScadaRolesPanel();
   if (panelId === 'chargecodes')    initChargeCodesSettings();
@@ -11547,7 +12050,7 @@ el('gps-loc-well').addEventListener('change', onGPSLocWellChange);
 el('gps-loc-refresh-btn').addEventListener('click', refreshGPSLocPosition);
 el('gps-loc-save').addEventListener('click', saveGPSLocation);
 
-const WR_PANEL_NAMES = { dwr: 'DWR', kcwa: 'KCWA Piezometers' };
+const WR_PANEL_NAMES = { dwr: 'DWR', kcwa: 'KCWA Piezometers', purge: 'Purge' };
 let wellRunsInited = false;
 async function initWellRunsScreen() {
   if (wellRunsInited) return;
@@ -11580,6 +12083,9 @@ async function initWellRunsScreen() {
       } else if (panel === 'kcwa') {
         el('wr-panel-kcwa').classList.remove('hidden');
         initPiezScreen();
+      } else if (panel === 'purge') {
+        el('wr-panel-purge').classList.remove('hidden');
+        initPurgeScreen();
       } else {
         el('wr-panel-soon').classList.remove('hidden');
       }
