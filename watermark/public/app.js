@@ -10784,6 +10784,17 @@ async function openPMGridHistory(pmType, building, label) {
 // ── Canal Readings Report Panel ────────────────────────────────────────────────
 let lastCanalRows = [];
 
+// canal_<turnout>_<date range>, e.g. Canal_Pioneer-Inlet_2026-08-01_to_2026-08-31
+// Falls back to "All-Turnouts" when no single structure is selected.
+function canalExportName() {
+  const s = el('canal-report-start-date').value;
+  const e = el('canal-report-end-date').value;
+  const sel = el('canal-report-structure');
+  const who = sel.value ? (sel.selectedOptions[0]?.textContent || 'Structure') : 'All-Turnouts';
+  const clean = t => String(t).trim().replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '') || 'Structure';
+  return `Canal_${clean(who)}_${s === e ? s : `${s}_to_${e}`}`;
+}
+
 function initCanalReportPanel() {
   if (!el('canal-report-start-date').value) {
     el('canal-report-start-date').value = todayISO();
@@ -11288,7 +11299,7 @@ el('export-csv-btn').addEventListener('click', async () => {
       if (withNotes) row.push(r.notes || '');
       lines.push(row.map(csvEsc).join(','));
     });
-    await shareFile(new Blob([lines.join('\r\n')], { type: 'text/csv' }), `Canal_${s}_${e}.csv`, 'Canal Readings');
+    await shareFile(new Blob([lines.join('\r\n')], { type: 'text/csv' }), `${canalExportName()}.csv`, 'Canal Readings');
     return;
   }
 
@@ -11370,7 +11381,7 @@ el('export-xlsx-btn').addEventListener('click', async () => {
         + `${sid ? `&structure_id=${encodeURIComponent(sid)}` : ''}&token=${token}`;
       const res = await fetch(url);
       if (!res.ok) throw new Error('Export failed');
-      await shareFile(await res.blob(), `Canal_${s}_${e}.xlsx`, 'Canal Readings');
+      await shareFile(await res.blob(), `${canalExportName()}.xlsx`, 'Canal Readings');
       return;
     }
     if (exportContext === 'wells-daily') {
@@ -11650,7 +11661,7 @@ el('export-pdf-btn').addEventListener('click', async () => {
       const card = el('report-canal-output').querySelector('.report-card');
       if (!card) throw new Error('No report to export');
       const s = el('canal-report-start-date').value, e = el('canal-report-end-date').value;
-      await sharePdfFromHtml(card.outerHTML, REPORT_PDF_CSS, `Canal_${s}_${e}`, 'Canal Readings');
+      await sharePdfFromHtml(card.outerHTML, REPORT_PDF_CSS, canalExportName(), 'Canal Readings');
     } else if (exportContext === 'piezometers-status') {
       const card = el('report-piez-output').querySelector('.report-card');
       if (!card) throw new Error('No report to export');

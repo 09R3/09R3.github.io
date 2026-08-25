@@ -4243,7 +4243,11 @@ app.get('/api/reports/canal/export', async (req, res) => {
     XLSX.utils.book_append_sheet(wb, ws, 'Canal');
     const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename="Canal_${start_date}_${end_date}.xlsx"`);
+    // Mirrors the client's canalExportName(): canal_<turnout>_<date range>
+    const fnPart = String(structureId ? structName : 'All-Turnouts')
+      .trim().replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '') || 'Structure';
+    const fnRange = start_date === end_date ? start_date : `${start_date}_to_${end_date}`;
+    res.setHeader('Content-Disposition', `attachment; filename="Canal_${fnPart}_${fnRange}.xlsx"`);
     return res.send(buf);
   } catch (err) { handleErr(res, err); }
 });
