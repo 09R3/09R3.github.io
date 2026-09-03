@@ -6324,6 +6324,89 @@ async function initPurgeWellsPanel() {
   };
 }
 
+// Supervisor editor for ponds.max_gauge / river_outlets.max_gauge. Grouped by
+// location in the same order as the Ponds screen. Inactive ponds are listed and
+// tagged — a retired pond still needs a maximum set for when it comes back.
+let _sgRows = [];
+
+async function initStaffGaugesPanel() {
+  const list = el('sg-settings-list');
+  el('sg-error').classList.add('hidden');
+  list.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    _sgRows = await api('GET', '/api/settings/staff-gauges');
+  } catch (err) {
+    list.innerHTML = `<div class="placeholder-msg">Failed to load.</div>`;
+    return;
+  }
+  if (!_sgRows.length) {
+    list.innerHTML = '<div class="placeholder-msg">No ponds found.</div>';
+    return;
+  }
+
+  // Preserve server order (location_sort, entity_sort) while grouping.
+  const groups = [];
+  const byLoc = new Map();
+  for (const r of _sgRows) {
+    const key = r.location_name || 'Unassigned';
+    if (!byLoc.has(key)) { byLoc.set(key, []); groups.push({ name: key, rows: byLoc.get(key) }); }
+    byLoc.get(key).push(r);
+  }
+
+  list.innerHTML = groups.map(g => `
+    <div class="rw-area-row"><span class="rw-area-label">${escHtml(g.name)}</span></div>
+    ${g.rows.map(r => `
+      <div class="sg-row">
+        <span class="sg-name">
+          ${escHtml(r.name)}
+          ${r.entity_type === 'outlet' ? '<span class="sg-tag">Outlet</span>' : ''}
+          ${!r.active ? '<span class="sg-tag sg-tag-off">Inactive</span>' : ''}
+        </span>
+        <input type="number" class="rr-input sg-max" step="0.01" min="0" inputmode="decimal"
+               placeholder="—" value="${r.max_gauge != null ? escHtml(String(r.max_gauge)) : ''}"
+               data-type="${r.entity_type}" data-id="${r.entity_id}">
+        <span class="sg-unit">ft</span>
+      </div>`).join('')}`).join('');
+
+  const btn = el('sg-save-btn');
+  btn.onclick = async () => {
+    const errEl = el('sg-error');
+    errEl.classList.add('hidden');
+    const inputs = [...list.querySelectorAll('.sg-max')];
+
+    // Validate before sending so a bad row is pointed at rather than 400ing the
+    // whole save. Blank is valid — it clears the maximum.
+    const bad = inputs.find(i => {
+      const v = i.value.trim();
+      return v !== '' && (!Number.isFinite(Number(v)) || Number(v) < 0);
+    });
+    if (bad) {
+      errEl.textContent = `Enter a number of 0 or more (or leave blank) — check ${bad.closest('.sg-row').querySelector('.sg-name').textContent.trim()}.`;
+      errEl.classList.remove('hidden');
+      bad.focus();
+      return;
+    }
+
+    const gauges = inputs.map(i => ({
+      entity_type: i.dataset.type,
+      entity_id:   parseInt(i.dataset.id, 10),
+      max_gauge:   i.value.trim() === '' ? null : Number(i.value),
+    }));
+
+    const _save = beginSave(btn);
+    try {
+      await api('PUT', '/api/settings/staff-gauges', { gauges });
+      // Ponds screen caches its rows on first open; force a rebuild so the new
+      // maximums show up without a full app reload.
+      pondsLoaded = false;
+      showToast('Staff gauges saved', 'success');
+    } catch (err) {
+      errEl.textContent = err.message;
+      errEl.classList.remove('hidden');
+    } finally { _save(); }
+  };
+}
+
 /* ── Purge program (Kern Fan Water Quality Sampling) ──────────────────────────
    Purge Readings mirrors the paper Pumping Notes sheet; Calibration holds the
    daily EC and pH meter logs. */
@@ -6824,6 +6907,7 @@ const SETTINGS_PANEL_NAMES = {
   'kf-widget':      'KF Widget',
   'running-wells':  'Running Wells',
   'purge-wells':    'Purge Wells',
+  'staff-gauges':   'Staff Gauges',
   'gps-selector':   'GPS Location Selector',
   'scada-roles':    'SCADA Access',
   appinfo:          'App Info',
@@ -6843,6 +6927,7 @@ function openSettingsPanel(panelId) {
   if (panelId === 'kf-widget')      initKFWidgetPanel();
   if (panelId === 'running-wells')  initRunningWellsPanel();
   if (panelId === 'purge-wells')    initPurgeWellsPanel();
+  if (panelId === 'staff-gauges')   initStaffGaugesPanel();
   if (panelId === 'gps-selector')   initGPSSelectorSettingsPanel();
   if (panelId === 'scada-roles')    initScadaRolesPanel();
   if (panelId === 'chargecodes')    initChargeCodesSettings();

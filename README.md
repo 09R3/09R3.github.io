@@ -169,8 +169,9 @@ UPDATE pond_gates SET sort_order = 1 WHERE gate_id = 12;
 
 ### Staff gauge maximum and retiring a pond
 
-Two columns on `ponds` (and `max_gauge` on `river_outlets`) are set directly in
-SQL — there is no admin UI for them.
+`max_gauge` is editable in the app: **Settings → Staff Gauges** (supervisor and
+admin only) lists every pond and river outlet grouped by location and saves
+straight to the `max_gauge` column. `active` is still SQL-only.
 
 | Column | Table | Effect |
 |--------|-------|--------|
@@ -178,7 +179,7 @@ SQL — there is no admin UI for them.
 | `active` | `ponds` | `BOOLEAN DEFAULT TRUE`. Set `FALSE` to drop the pond off the Ponds reading screen without deleting it or its history. |
 
 ```sql
--- Staff gauge ceiling
+-- Staff gauge ceiling (or use Settings → Staff Gauges)
 UPDATE ponds         SET max_gauge = 12.50 WHERE name = 'East Pond';
 UPDATE river_outlets SET max_gauge = 15.75 WHERE name = 'Basin 9';
 

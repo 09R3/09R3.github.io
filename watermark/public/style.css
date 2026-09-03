@@ -2979,6 +2979,48 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
   width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; flex-shrink: 0;
 }
 
+/* Settings → Staff Gauges — max_gauge editor rows. Reuses the .rw-area-row
+   section headers above so it reads like the Purge Wells picker. */
+.sg-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px 6px 20px;
+}
+.sg-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.95rem;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.sg-tag {
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  white-space: nowrap;
+}
+.sg-tag-off { color: var(--yellow); border-color: var(--yellow); }
+.sg-row .sg-max {
+  width: 84px;
+  flex: 0 0 auto;
+  text-align: right;
+}
+.sg-unit {
+  flex: 0 0 auto;
+  width: 16px;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
 /* Running wells modal */
 .rw-modal-area {
   padding: 10px 16px 4px;

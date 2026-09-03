@@ -1728,6 +1728,79 @@ app.put('/api/settings/purge-wells', requireAuth, requireRole(...SUPERVISOR_ROLE
   } finally { client.release(); }
 });
 
+// ── Staff gauge maximums (Settings → Staff Gauges, supervisor-level) ─────────
+// Ponds and river outlets both carry max_gauge; the Ponds reading screen shows
+// it beside the Staff Gauge label. Listed here so it can be maintained from the
+// app instead of by hand in SQL. Inactive ponds are included and flagged — a
+// retired pond still needs to be configurable.
+app.get('/api/settings/staff-gauges', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT 'pond'::text AS entity_type, p.pond_id AS entity_id, p.name,
+             p.max_gauge, (p.active IS NOT FALSE) AS active,
+             pl.name AS location_name, pl.sort_order AS location_sort, p.sort_order AS entity_sort
+      FROM ponds p
+      LEFT JOIN pond_locations pl ON pl.location_id = p.location_id
+      UNION ALL
+      SELECT 'outlet'::text, ro.outlet_id, ro.name,
+             ro.max_gauge, (ro.active IS NOT FALSE),
+             pl.name, pl.sort_order, ro.sort_order
+      FROM river_outlets ro
+      LEFT JOIN pond_locations pl ON pl.location_id = ro.location_id
+      ORDER BY location_sort NULLS LAST, location_name NULLS LAST, entity_sort, name
+    `);
+    res.json(rows);
+  } catch (err) { handleErr(res, err); }
+});
+
+// Table/column names never come from the request — entity_type only selects a
+// row from this server-side map (see CLAUDE.md, Schema Changes). Null-prototype
+// so an entity_type of "constructor" / "toString" / "__proto__" misses instead
+// of resolving up the prototype chain to a truthy non-target.
+const STAFF_GAUGE_TARGETS = Object.assign(Object.create(null), {
+  pond:   { table: 'ponds',         idCol: 'pond_id'   },
+  outlet: { table: 'river_outlets', idCol: 'outlet_id' },
+});
+
+app.put('/api/settings/staff-gauges', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
+  const input = Array.isArray(req.body.gauges) ? req.body.gauges : [];
+  if (input.length > 1000) return res.status(400).json({ error: 'Too many rows' });
+
+  const updates = [];
+  for (const g of input) {
+    const target = typeof g?.entity_type === 'string' ? STAFF_GAUGE_TARGETS[g.entity_type] : null;
+    const id = parseInt(g?.entity_id, 10);
+    if (!target || !Number.isFinite(id)) {
+      return res.status(400).json({ error: 'Invalid entity' });
+    }
+    // Blank/null clears the maximum; anything else must be a real number >= 0.
+    let max = null;
+    if (g.max_gauge !== null && g.max_gauge !== undefined && String(g.max_gauge).trim() !== '') {
+      max = Number(g.max_gauge);
+      if (!Number.isFinite(max) || max < 0) {
+        return res.status(400).json({ error: `Invalid max for ${g.entity_type} ${id}` });
+      }
+    }
+    updates.push({ target, id, max });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    for (const u of updates) {
+      await client.query(
+        `UPDATE ${u.target.table} SET max_gauge = $1 WHERE ${u.target.idCol} = $2`,
+        [u.max, u.id]
+      );
+    }
+    await client.query('COMMIT');
+    res.json({ ok: true, count: updates.length });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    handleErr(res, err);
+  } finally { client.release(); }
+});
+
 app.get('/api/purge/wells', requireAuth, async (req, res) => {
   try {
     const { rows } = await pool.query(

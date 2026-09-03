@@ -129,7 +129,7 @@
         Sign in with Microsoft 365
       </a>
       <div id="ms-login-error" class="error-msg hidden"></div>
-      <div class="login-version">v 3.19</div>
+      <div class="login-version">v 3.20</div>
     </div>
   </div>
 </div>
@@ -1774,6 +1774,9 @@
         <button class="settings-menu-row" data-panel="purge-wells">
           <span>Purge Wells</span><span class="settings-chevron">›</span>
         </button>
+        <button class="settings-menu-row" data-panel="staff-gauges">
+          <span>Staff Gauges</span><span class="settings-chevron">›</span>
+        </button>
       </div>
       <div class="settings-menu-card hidden" id="settings-admin-section">
         <div class="settings-menu-label">Tools</div>
@@ -1910,11 +1913,28 @@
       </div>
     </div>
 
+    <!-- Staff Gauges panel -->
+    <div id="settings-panel-staff-gauges" class="settings-panel hidden">
+      <div class="settings-section">
+        <div class="settings-card">
+          <div class="settings-pad">
+            <p style="font-size:0.85rem;color:var(--text-dim);margin:0 0 10px">
+              Staff gauge maximum for each pond and river outlet. Shown beside the
+              Staff Gauge label on the Ponds screen. Leave blank for no maximum.
+            </p>
+            <div id="sg-settings-list"></div>
+            <div id="sg-error" class="error-msg hidden" style="margin-top:10px"></div>
+            <button class="btn btn-save" id="sg-save-btn" style="margin-top:12px">Save</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- App Info panel -->
     <div id="settings-panel-appinfo" class="settings-panel hidden">
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 3.19</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 3.20</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>
