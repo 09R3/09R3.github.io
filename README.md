@@ -167,6 +167,35 @@ UPDATE pond_connections SET sort_order = 1 WHERE connection_id = 5;
 UPDATE pond_gates SET sort_order = 1 WHERE gate_id = 12;
 ```
 
+### Staff gauge maximum and retiring a pond
+
+Two columns on `ponds` (and `max_gauge` on `river_outlets`) are set directly in
+SQL — there is no admin UI for them.
+
+| Column | Table | Effect |
+|--------|-------|--------|
+| `max_gauge` | `ponds`, `river_outlets` | `NUMERIC`. When set, the reading form shows `Max: 12.50 ft` under the **Staff Gauge** label. Leave `NULL` to show nothing. |
+| `active` | `ponds` | `BOOLEAN DEFAULT TRUE`. Set `FALSE` to drop the pond off the Ponds reading screen without deleting it or its history. |
+
+```sql
+-- Staff gauge ceiling
+UPDATE ponds         SET max_gauge = 12.50 WHERE name = 'East Pond';
+UPDATE river_outlets SET max_gauge = 15.75 WHERE name = 'Basin 9';
+
+-- Retire a pond from the reading list (history is kept)
+UPDATE ponds SET active = FALSE WHERE name = 'Retired Pond';
+UPDATE ponds SET active = TRUE  WHERE name = 'Retired Pond';   -- bring it back
+```
+
+`active` is filtered as `IS NOT FALSE`, so a pond whose `active` is `NULL`
+still appears — losing a pond off the reading screen is worse than showing a
+retired one. `river_outlets` already had its own `active` column and is
+unchanged (it filters on `= true`).
+
+Scope: `active` hides the pond from the **Ponds reading screen only**. It still
+appears in the ponds report, the polygon map and the GPS picker, so history
+stays reachable and the pond can still be configured.
+
 ---
 
 ## WaterMark — Pond Map Locations (`pond_points`)

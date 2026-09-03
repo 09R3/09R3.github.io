@@ -675,6 +675,20 @@ input[type="date"].ctrl-input { min-height: 44px; }
   color: var(--text-muted);
   font-weight: 400;
 }
+/* Staff-gauge ceiling, shown beside the "Staff Gauge" label on the Ponds
+   screen. inline-block so it sits next to the label where the row is wide
+   enough and drops to its own line on narrow phones rather than squashing
+   the label. Only rendered when ponds.max_gauge / river_outlets.max_gauge
+   is set. */
+.gauge-max {
+  display: inline-block;
+  margin-left: 5px;
+  font-size: 0.68rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
 .prev-note-hint {
   font-size: 0.75rem;
   color: var(--text-muted);

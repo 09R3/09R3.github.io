@@ -14582,6 +14582,7 @@ async function initPondsScreen() {
           loc.outlets.set(row.outlet_id, {
             outlet_id: row.outlet_id, name: row.pond_name, sort: row.pond_sort,
             isOutlet: true,
+            max_gauge: row.max_gauge,
             last_gauge_level: row.last_gauge_level,
             last_gauge_date:  row.last_gauge_date,
             last_gauge_notes: row.last_gauge_notes,
@@ -14595,6 +14596,7 @@ async function initPondsScreen() {
         if (!loc.ponds.has(row.pond_id)) {
           loc.ponds.set(row.pond_id, {
             pond_id: row.pond_id, name: row.pond_name, sort: row.pond_sort,
+            max_gauge: row.max_gauge,
             last_gauge_level: row.last_gauge_level,
             last_gauge_date:  row.last_gauge_date,
             last_gauge_notes: row.last_gauge_notes,
@@ -14891,8 +14893,14 @@ function buildGaugeForm(pond, dateInput, timeInput, cardEl) {
   const prevHint = pond.last_gauge_level != null && prevDate
     ? `${Number(pond.last_gauge_level).toFixed(2)} ft · ${fmtDate(prevDate)}` : null;
 
+  // Staff-gauge ceiling from ponds.max_gauge / river_outlets.max_gauge. Omitted
+  // entirely when the column is null so ponds without one look unchanged.
+  const maxGauge = pond.max_gauge != null && pond.max_gauge !== '' ? Number(pond.max_gauge) : null;
+  const maxHint  = maxGauge != null && !isNaN(maxGauge)
+    ? `<span class="gauge-max">Max: ${maxGauge.toFixed(2)} ft</span>` : '';
+
   row.innerHTML = `
-    <div class="rr-label">Staff Gauge${prevHint ? `<div class="prev-date">${prevHint}</div>` : ''}</div>
+    <div class="rr-label">Staff Gauge${maxHint}${prevHint ? `<div class="prev-date">${prevHint}</div>` : ''}</div>
     <div class="rr-field-group" style="width:72px">
       <span class="rr-col-hd">Level (ft)</span>
       <input type="number" class="rr-input pg-gauge-level" step="0.01" placeholder="—" inputmode="decimal">

@@ -315,7 +315,7 @@ pond_connections           connection_id(PK), destination_pond_id(→ponds), nam
 pond_gates                 gate_id(PK), connection_id(→pond_connections), label, gate_type, width_in(NUMERIC), sort_order, active, notes
 pond_locations             location_id(PK), name, sort_order
 pond_points                point_id(PK), pond_id(→ponds), name, point_order, geom(GEOMETRY Point 4326), outlet_id(→river_outlets)
-ponds                      pond_id(PK), location_id(→pond_locations), name, sort_order, notes, gauge_lat(NUMERIC), gauge_lon(NUMERIC)
+ponds                      pond_id(PK), location_id(→pond_locations), name, sort_order, notes, gauge_lat(NUMERIC), gauge_lon(NUMERIC), max_gauge(NUMERIC), active
 power_monitors             monitor_id(PK), building_id(→buildings), monitor_number, manufacturer, ip_address, notes
 pump_positions             position_id(PK), site_id(→sites), building_id(→buildings), pump_letter, rated_hp(NUMERIC), current_motor_id, current_pump_unit_id, status, notes
 pump_units                 pump_unit_id(PK), serial_number, manufacturer, model_number, rated_hp(NUMERIC), frame_type, forward_flow_rating(NUMERIC), reverse_flow_rating(NUMERIC), install_date_current, current_location, status, notes
@@ -332,7 +332,7 @@ readings_run_dwr           reading_id(PK), well_id(→wells), reading_date, read
 readings_staff_gauge       reading_id(PK), pond_id(→ponds), reading_date, reading_time, level_ft(NUMERIC), entered_by, notes, created_at, outlet_id(→river_outlets)
 readings_vehicle_monthly   reading_id(PK), vehicle_id(→vehicles), vehicle_number, reading_date, reading_time, entered_by, odometer_miles(NUMERIC), engine_hours(NUMERIC), notes
 readings_well              reading_id(PK), well_id(→wells), common_name, reading_date, reading_time, on_off, hour_reading(NUMERIC), flow_cfs(NUMERIC), totalizer(NUMERIC), motor_oil, dripper_oil(NUMERIC), pge_kwh(NUMERIC), entered_by, notes
-river_outlets              outlet_id(PK), name, sort_order, active, notes, location_id(→pond_locations), gauge_lat(NUMERIC), gauge_lon(NUMERIC)
+river_outlets              outlet_id(PK), name, sort_order, active, notes, location_id(→pond_locations), gauge_lat(NUMERIC), gauge_lon(NUMERIC), max_gauge(NUMERIC)
 safety_meeting_attendees   attendee_id(PK), meeting_id(→safety_meetings), full_name, signature_data, signed_date, created_at
 safety_meetings            meeting_id(PK), meeting_date, meeting_time, presented_by, topic, link, notes, created_by(→users), created_at, duration_min
 scada_equipment            scada_id(PK), building_id(→buildings), equipment_number, equipment_name, manufacturer, ip_address, notes

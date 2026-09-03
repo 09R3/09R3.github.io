@@ -619,6 +619,14 @@ pool.query(`
   )
 `).catch(err => console.error('Migration error (river_outlets):', err.message));
 
+// Staff-gauge maximum (shown beside the Staff Gauge label on the Ponds screen)
+// and an active flag so a pond can be retired from the reading list without
+// deleting it or its history. river_outlets already carries `active`.
+pool.query(`ALTER TABLE ponds         ADD COLUMN IF NOT EXISTS max_gauge NUMERIC`)
+  .then(() => pool.query(`ALTER TABLE ponds         ADD COLUMN IF NOT EXISTS active BOOLEAN DEFAULT TRUE`))
+  .then(() => pool.query(`ALTER TABLE river_outlets ADD COLUMN IF NOT EXISTS max_gauge NUMERIC`))
+  .catch(err => console.error('Migration error (pond max_gauge/active):', err.message));
+
 pool.query(`
   CREATE TABLE IF NOT EXISTS pond_connections (
     connection_id      SERIAL PRIMARY KEY,
@@ -2195,6 +2203,7 @@ app.get('/api/ponds', requireAuth, async (req, res) => {
         NULL::int          AS outlet_id,
         p.name             AS pond_name,
         p.sort_order       AS pond_sort,
+        p.max_gauge        AS max_gauge,
         sg.reading_id      AS last_gauge_id,
         sg.level_ft        AS last_gauge_level,
         sg.reading_date    AS last_gauge_date,
@@ -2258,6 +2267,9 @@ app.get('/api/ponds', requireAuth, async (req, res) => {
         ORDER BY reading_date DESC, reading_time DESC
         LIMIT 1
       ) gr ON pg.gate_id IS NOT NULL
+      -- IS NOT FALSE, not = true: a pond with a NULL active must stay visible.
+      -- Losing a pond off the reading screen is worse than showing a retired one.
+      WHERE p.active IS NOT FALSE
 
       UNION ALL
 
@@ -2271,6 +2283,7 @@ app.get('/api/ponds', requireAuth, async (req, res) => {
         ro.outlet_id,
         ro.name            AS pond_name,
         ro.sort_order      AS pond_sort,
+        ro.max_gauge       AS max_gauge,
         sg.reading_id      AS last_gauge_id,
         sg.level_ft        AS last_gauge_level,
         sg.reading_date    AS last_gauge_date,
