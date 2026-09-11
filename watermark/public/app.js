@@ -1926,6 +1926,12 @@ let vehiclesLoaded = false;
 
 const VTYPE_ORDER  = ['truck', 'heavy_equipment', 'other'];
 const VTYPE_LABELS = { truck: 'Trucks', heavy_equipment: 'Heavy Equipment', other: 'Other' };
+// VTYPE_LABELS is plural — it titles the collapsible sections. A single
+// vehicle's Type reads from the raw column instead ("truck" → "Truck"), which
+// also covers types that aren't in the map.
+function vehicleTypeLabel(t) {
+  return (t || '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) || null;
+}
 
 async function initVehiclesScreen() {
   if (vehiclesLoaded) return;
@@ -1957,7 +1963,7 @@ async function initVehiclesScreen() {
     body.innerHTML = '';
     [...new Set([...VTYPE_ORDER, ...Object.keys(byType)])].forEach(type => {
       if (!byType[type] || !byType[type].length) return;
-      const label = VTYPE_LABELS[type] || type.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+      const label = VTYPE_LABELS[type] || vehicleTypeLabel(type);
       const items = byType[type].map(v => createVehicleItem(v, dateInput, timeInput));
       body.appendChild(makeCollapsibleSection(label, items));
     });
@@ -1966,6 +1972,47 @@ async function initVehiclesScreen() {
     showToast('Failed to load vehicles: ' + err.message, 'error');
   }
 }
+
+// Inline rather than icon('info') — the icon set lives in the marv-site
+// submodule, so a name that isn't in it renders as a blank square.
+const INFO_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-2px;margin-right:5px"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>`;
+
+// Read-only details for one vehicle, straight off the row's already-loaded
+// record — no extra request, so it opens instantly and still works offline.
+function openVehicleInfoModal(v) {
+  const rows = [
+    ['Vehicle Number', v.vehicle_number],
+    ['Type',           vehicleTypeLabel(v.vehicle_type)],
+    ['Year',           v.year],
+    ['Make',           v.make],
+    ['Model',          v.model],
+    ['VIN',            v.vin],
+    ['License Plate',  v.license_plate],
+    ['Assigned User',  v.assigned_user],
+  ];
+  const notes = (v.vehicle_notes || '').trim();
+
+  el('vehicle-info-modal-title').textContent = v.vehicle_number || 'Vehicle Details';
+  el('vehicle-info-modal-body').innerHTML = `
+    ${rows.map(([k, val]) => `
+      <div class="vinfo-row">
+        <span class="vinfo-label">${k}</span>
+        <span class="vinfo-value${k === 'VIN' ? ' vinfo-mono' : ''}">${
+          val == null || String(val).trim() === '' ? '—' : escHtml(String(val))
+        }</span>
+      </div>`).join('')}
+    <div class="vinfo-row vinfo-notes">
+      <span class="vinfo-label">Notes</span>
+      <span class="vinfo-value">${notes ? escHtml(notes) : '—'}</span>
+    </div>`;
+  el('vehicle-info-modal').classList.remove('hidden');
+}
+
+el('vehicle-info-modal-close').addEventListener('click',
+  () => el('vehicle-info-modal').classList.add('hidden'));
+el('vehicle-info-modal').addEventListener('click', e => {
+  if (e.target === el('vehicle-info-modal')) el('vehicle-info-modal').classList.add('hidden');
+});
 
 function daysSinceDate(dateStr) {
   if (!dateStr) return null;
@@ -2033,6 +2080,7 @@ function createVehicleItem(v, dateInput, timeInput) {
       <div class="lif-footer">
         ${notesBtnHtml('vehicle', v.vehicle_id, label)}
         <button class="btn btn-secondary btn-sm v-hist-btn">${icon('history')} History</button>
+        <button type="button" class="btn btn-secondary btn-sm v-info-btn" title="Vehicle details">${INFO_SVG} Info</button>
         <button class="btn btn-save v-save-btn">Save Reading</button>
       </div>
     </div>`;
@@ -2091,6 +2139,11 @@ function createVehicleItem(v, dateInput, timeInput) {
   div.querySelector('.v-hist-btn').addEventListener('click', e => {
     e.stopPropagation();
     openHistoryModal('vehicle', v.vehicle_id, label);
+  });
+
+  div.querySelector('.v-info-btn').addEventListener('click', e => {
+    e.stopPropagation();
+    openVehicleInfoModal(v);
   });
 
   div.querySelector('.list-item-header').addEventListener('click', () => {

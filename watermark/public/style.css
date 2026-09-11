@@ -2979,6 +2979,46 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
   width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; flex-shrink: 0;
 }
 
+/* Vehicle Info modal — read-only detail rows (Vehicle Monthly → Info). */
+.vinfo-row {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.vinfo-row:last-child { border-bottom: none; }
+.vinfo-label {
+  /* Wide enough that "Vehicle Number" and "Assigned User" stay on one line */
+  flex: 0 0 132px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+.vinfo-value {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.95rem;
+  color: var(--text);
+  /* VINs and long notes must wrap rather than push the modal sideways */
+  overflow-wrap: anywhere;
+}
+/* VIN reads as an identifier, and monospace makes look-alike characters
+   (0/O, 1/I) distinguishable when checking it against a door jamb. */
+.vinfo-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.88rem;
+  letter-spacing: 0.02em;
+}
+.vinfo-notes { align-items: flex-start; }
+.vinfo-notes .vinfo-value { white-space: pre-wrap; line-height: 1.4; }
+
+/* Keep the row footer usable now that it carries four buttons on a phone. */
+.lif-footer { flex-wrap: wrap; }
+.lif-footer .btn-save { min-width: 120px; }
+
 /* Settings → Staff Gauges — max_gauge editor rows. Reuses the .rw-area-row
    section headers above so it reads like the Purge Wells picker. */
 .sg-row {

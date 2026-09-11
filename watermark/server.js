@@ -2827,6 +2827,7 @@ app.get('/api/vehicles', requireAuth, async (req, res) => {
       SELECT
         v.vehicle_id, v.vehicle_number, v.vehicle_type, v.year, v.make, v.model,
         v.vin, v.license_plate, v.fuel_type, v.assigned_user, v.reading_type, v.status,
+        v.notes           AS vehicle_notes,
         r.odometer_miles  AS last_odometer,
         r.engine_hours    AS last_engine_hours,
         r.reading_date    AS last_reading_date,
