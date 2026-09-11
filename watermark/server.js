@@ -819,6 +819,31 @@ pool.query(`
   )
 `)).catch(err => console.error('Migration error (purge tables):', err.message));
 
+// ── Water Orders ─────────────────────────────────────────────────────────────
+// One row per calendar date, with a line per inflow/outflow item. Mirrors page 1
+// of the CVC Water Order sheet. The Wells (Total Recovery) inflow line is NOT
+// stored — it is computed live from the Running Wells setting.
+pool.query(`
+  CREATE TABLE IF NOT EXISTS water_orders (
+    order_id   SERIAL PRIMARY KEY,
+    order_date DATE NOT NULL UNIQUE,
+    entered_by TEXT,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+  )
+`).then(() => pool.query(`
+  CREATE TABLE IF NOT EXISTS water_order_lines (
+    line_id        SERIAL PRIMARY KEY,
+    order_id       INT REFERENCES water_orders(order_id) ON DELETE CASCADE,
+    section        TEXT NOT NULL,
+    line_key       TEXT NOT NULL,
+    cfs            NUMERIC,
+    time_of_change TEXT,
+    comments       TEXT,
+    UNIQUE (order_id, section, line_key)
+  )
+`)).catch(err => console.error('Migration error (water_orders):', err.message));
+
 // ─────────────────────────────────────────────────────────────────────────────
 const SESSION_TTL = 8 * 60 * 60 * 1000; // 8 hours
 const sessions = new Map();
@@ -5736,6 +5761,254 @@ app.put('/api/settings/running-wells', requireAuth, requireRole(...SUPERVISOR_RO
   } catch (err) {
     handleErr(res, err);
   }
+});
+
+// ── Water Orders ─────────────────────────────────────────────────────────────
+// Line definitions live here, not in the database, so labels and ordering can
+// change without a data migration and a request can never introduce a line.
+// line_key is the stable identity; label is display only.
+const WATER_ORDER_INFLOW = [
+  { key: 'ca_aqueduct',            label: 'CA Aqueduct' },
+  { key: 'wells_total_recovery',   label: 'Wells (Total Recovery)', computed: 'running_wells' },
+  { key: 'kwb_river_pipeline',     label: 'KWB River Pipeline' },
+  { key: 'pioneer_inlet',          label: 'Pioneer Inlet' },
+  { key: 'arvin_edison_intertie',  label: 'Arvin-Edison Intertie' },
+  { key: 'cvc_friant_kern_intertie', label: 'CVC/Friant-Kern Intertie' },
+  { key: 'nkto_reverse_flow',      label: 'NKTO Reverse Flow' },
+];
+
+const WATER_ORDER_OUTFLOW = [
+  { key: 'ca_aqueduct_reverse',    label: 'CA Aqueduct - Reverse' },
+  { key: 'refill',                 label: 'Refill' },
+  { key: 'n2_siphon',              label: 'N-2 Siphon' },
+  { key: 'rrb_turnout_1',          label: 'Rosedale-Rio Bravo Turnout No. 1' },
+  { key: 'rrb_turnout_1b',         label: 'Rosedale-Rio Bravo Turnout No. 1B' },
+  { key: 'strand_siphons',         label: 'Strand Siphons' },
+  { key: 'north_strand_turnout',   label: 'North Strand Turnout' },
+  { key: 'south_strand_turnout',   label: 'South Strand Turnout' },
+  { key: 'kwb_turnout_p11',        label: 'KWB Turnout (P11)' },
+  { key: 'rrb_central_intake',     label: 'RRB Central Intake' },
+  { key: 'kwb_river_pipeline_out', label: 'KWB River Pipeline' },
+  { key: 'nord_turnout',           label: 'Nord Turnout' },
+  { key: 'grimmway_temp_pumps',    label: 'Grimmway Temporary Pumps' },
+  { key: 'section_4',              label: 'Section 4' },
+  { key: 'river_turnout_1',        label: 'River Turnout No. 1' },
+  { key: 'rrb_turnout_2',          label: 'Rosedale-Rio Bravo Turnout No. 2' },
+  { key: 'river_turnout_2',        label: 'River Turnout No. 2' },
+  { key: 'arvin_edison_turnouts',  label: 'Arvin-Edison Turnouts' },
+  { key: 'pp6b_arvin_edison',      label: 'Pumping Plant No. 6B - Arvin Edison' },
+  { key: 'pp6b_friant_kern',       label: 'Pumping Plant No. 6B - Friant-Kern' },
+  { key: 'north_kern_calloway',    label: 'North Kern Calloway Canal Turnout' },
+  { key: 'big_bertha_siphon',      label: 'Big Bertha Siphon' },
+  { key: 'river_turnout_3_truxtun', label: 'River Turnout No. 3 to Truxtun Lake' },
+  { key: 'river_turnout_3',        label: 'River Turnout No. 3' },
+  { key: 'river_turnout_3_pond',   label: 'River Turnout No. 3 to Pond' },
+  { key: 'river_turnout_4',        label: 'River Turnout No. 4' },
+  { key: 'calloway_canal_turnout', label: 'Calloway Canal Turnout' },
+  { key: 'id4_treatment_plant',    label: 'ID4 Treatment Plant' },
+  { key: 'cawelo_pump_station_a',  label: 'Cawelo Pump Station "A"' },
+  { key: 'cvc_losses',             label: 'CVC Losses' },
+];
+
+const WATER_ORDER_SECTIONS = {
+  inflow:  WATER_ORDER_INFLOW,
+  outflow: WATER_ORDER_OUTFLOW,
+};
+// Null-prototype lookups so a section/key of "constructor" misses instead of
+// resolving up the prototype chain.
+const WATER_ORDER_KEYS = Object.assign(Object.create(null), {
+  inflow:  new Set(WATER_ORDER_INFLOW.map(l => l.key)),
+  outflow: new Set(WATER_ORDER_OUTFLOW.map(l => l.key)),
+});
+
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+// Date.parse is not enough on its own: it rolls overflow days over rather than
+// failing, so "2026-02-30" parses fine and then Postgres rejects it with a 500.
+// Round-trip the components instead.
+function isValidIsoDate(str) {
+  if (!ISO_DATE_RE.test(str)) return false;
+  const [y, m, d] = str.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
+}
+
+// Wells (Total Recovery): the CVC well inflow already computed for the Running
+// Wells widget — running wells in Pools 1-6 that are on, plus the pool extras.
+// It is always "as of now", so a future-dated order shows the current recovery
+// rather than a forecast.
+async function waterOrderWellsCfs() {
+  try {
+    const st = await pool.query(`SELECT value FROM app_settings WHERE key = 'running_wells'`);
+    const raw = st.rows.length ? JSON.parse(st.rows[0].value) : {};
+    const ids = Array.isArray(raw) ? raw : (raw.well_ids || []);
+    const pool_extras = Array.isArray(raw) ? {} : (raw.pool_extras || {});
+    const extra = Object.entries(pool_extras)
+      .filter(([p]) => /^Pool\s*[1-6]$/i.test(p))
+      .reduce((sum, [, v]) => sum + (parseFloat(v) || 0), 0);
+    if (!ids.length) return extra;
+
+    const { rows } = await pool.query(
+      `WITH today_rdg AS (
+         SELECT DISTINCT ON (well_id) well_id, on_off, flow_cfs
+         FROM readings_well WHERE reading_date = CURRENT_DATE
+         ORDER BY well_id, reading_time DESC NULLS LAST
+       ),
+       latest_flow AS (
+         SELECT DISTINCT ON (well_id) well_id, flow_cfs
+         FROM readings_well WHERE flow_cfs IS NOT NULL AND flow_cfs > 0
+         ORDER BY well_id, reading_date DESC, reading_time DESC NULLS LAST
+       )
+       SELECT tr.on_off, tr.flow_cfs, lf.flow_cfs AS fallback_flow_cfs
+       FROM wells w
+       JOIN (SELECT unnest($1::int[]) AS wid) r ON r.wid = w.well_id
+       LEFT JOIN today_rdg tr ON tr.well_id = w.well_id
+       LEFT JOIN latest_flow lf ON lf.well_id = w.well_id
+       WHERE w.discharge_pool ~* '^Pool[[:space:]]*[1-6]$'`,
+      [ids]
+    );
+    const wells = rows
+      .filter(r => r.on_off)
+      .reduce((sum, r) => sum + (parseFloat(r.flow_cfs ?? r.fallback_flow_cfs) || 0), 0);
+    return wells + extra;
+  } catch {
+    return 0;   // widget must still render if Running Wells isn't configured
+  }
+}
+
+// Assemble one date's order: every defined line, with saved values where they
+// exist, plus computed totals. Any authenticated user may read it (the
+// dashboard widget needs it); only supervisors may write.
+async function buildWaterOrder(dateStr) {
+  const { rows: orderRows } = await pool.query(
+    'SELECT order_id, order_date, entered_by, updated_at FROM water_orders WHERE order_date = $1',
+    [dateStr]
+  );
+  const order = orderRows[0] || null;
+
+  let saved = new Map();
+  if (order) {
+    const { rows } = await pool.query(
+      'SELECT section, line_key, cfs, time_of_change, comments FROM water_order_lines WHERE order_id = $1',
+      [order.order_id]
+    );
+    saved = new Map(rows.map(r => [`${r.section}|${r.line_key}`, r]));
+  }
+
+  const wellsCfs = await waterOrderWellsCfs();
+
+  const build = (section, defs) => defs.map(def => {
+    const row = saved.get(`${section}|${def.key}`);
+    const computed = def.computed === 'running_wells';
+    return {
+      key:   def.key,
+      label: def.label,
+      computed: computed ? def.computed : null,
+      cfs: computed ? wellsCfs : (row && row.cfs != null ? Number(row.cfs) : null),
+      time_of_change: computed ? null : (row?.time_of_change ?? null),
+      comments:       computed ? null : (row?.comments ?? null),
+    };
+  });
+
+  const inflow  = build('inflow',  WATER_ORDER_INFLOW);
+  const outflow = build('outflow', WATER_ORDER_OUTFLOW);
+  const sum = lines => Number(lines.reduce((t, l) => t + (Number(l.cfs) || 0), 0).toFixed(2));
+  const total_inflow  = sum(inflow);
+  const total_outflow = sum(outflow);
+
+  // DWR Order is the CA Aqueduct inflow; when that is zero (or unset) and water
+  // is going back to the aqueduct instead, report the CA Aqueduct - Reverse
+  // figure and flag it so the widget can label the direction.
+  const aqueductIn  = Number(inflow.find(l => l.key === 'ca_aqueduct')?.cfs) || 0;
+  const aqueductOut = Number(outflow.find(l => l.key === 'ca_aqueduct_reverse')?.cfs) || 0;
+  const dwr_reverse = aqueductIn === 0 && aqueductOut > 0;
+
+  return {
+    order_date: dateStr,
+    exists: !!order,
+    entered_by: order?.entered_by || null,
+    updated_at: order?.updated_at || null,
+    inflow, outflow,
+    wells_cfs: wellsCfs,
+    total_inflow, total_outflow,
+    dwr_order: dwr_reverse ? aqueductOut : aqueductIn,
+    dwr_reverse,
+  };
+}
+
+app.get('/api/water-orders', requireAuth, async (req, res) => {
+  // Validate the whole value: slicing first would quietly turn "2026-09-11xyz"
+  // into a valid date instead of rejecting it.
+  const date = req.query.date == null || req.query.date === ''
+    ? todayString() : String(req.query.date);
+  if (!isValidIsoDate(date)) return res.status(400).json({ error: 'Invalid date' });
+  try {
+    res.json(await buildWaterOrder(date));
+  } catch (err) { handleErr(res, err); }
+});
+
+app.put('/api/water-orders', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
+  const date = String(req.body.order_date ?? '');
+  if (!isValidIsoDate(date)) return res.status(400).json({ error: 'Invalid date' });
+  const input = Array.isArray(req.body.lines) ? req.body.lines : [];
+  if (input.length > 200) return res.status(400).json({ error: 'Too many lines' });
+
+  // Validate everything before opening the transaction so a bad line cannot
+  // leave a half-written order behind.
+  const lines = [];
+  for (const l of input) {
+    const section = typeof l?.section === 'string' ? l.section : '';
+    const keys = WATER_ORDER_KEYS[section];
+    if (!keys || typeof l?.line_key !== 'string' || !keys.has(l.line_key)) {
+      return res.status(400).json({ error: 'Unknown line' });
+    }
+    const def = WATER_ORDER_SECTIONS[section].find(d => d.key === l.line_key);
+    if (def.computed) continue;            // Wells line is derived, never stored
+
+    let cfs = null;
+    if (l.cfs !== null && l.cfs !== undefined && String(l.cfs).trim() !== '') {
+      cfs = Number(l.cfs);
+      if (!Number.isFinite(cfs)) return res.status(400).json({ error: `Invalid CFS for ${def.label}` });
+    }
+    const trim = (v, max) => {
+      const t = (v == null ? '' : String(v)).trim();
+      return t === '' ? null : t.slice(0, max);
+    };
+    lines.push({
+      section, line_key: l.line_key, cfs,
+      time_of_change: trim(l.time_of_change, 40),
+      comments:       trim(l.comments, 500),
+    });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      `INSERT INTO water_orders (order_date, entered_by)
+       VALUES ($1, $2)
+       ON CONFLICT (order_date)
+         DO UPDATE SET entered_by = EXCLUDED.entered_by, updated_at = NOW()
+       RETURNING order_id`,
+      [date, req.user.username]
+    );
+    const orderId = rows[0].order_id;
+    // Replace the whole day rather than merging, so clearing a line clears it.
+    await client.query('DELETE FROM water_order_lines WHERE order_id = $1', [orderId]);
+    for (const l of lines) {
+      if (l.cfs == null && !l.time_of_change && !l.comments) continue;  // skip empty rows
+      await client.query(
+        `INSERT INTO water_order_lines (order_id, section, line_key, cfs, time_of_change, comments)
+         VALUES ($1,$2,$3,$4,$5,$6)`,
+        [orderId, l.section, l.line_key, l.cfs, l.time_of_change, l.comments]
+      );
+    }
+    await client.query('COMMIT');
+    res.json(await buildWaterOrder(date));
+  } catch (err) {
+    await client.query('ROLLBACK');
+    handleErr(res, err);
+  } finally { client.release(); }
 });
 
 app.get('/api/dashboard/running-wells', requireAuth, async (req, res) => {

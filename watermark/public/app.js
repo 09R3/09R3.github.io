@@ -730,9 +730,9 @@ el('export-pending-btn').addEventListener('click', async () => {
 /* ── Dashboard Stats ─────────────────────────────────────────────────────── */
 async function loadDashboardStats() {
   try {
-    const [s, rw] = await Promise.all([
+    const [s, wo] = await Promise.all([
       api('GET', '/api/dashboard/stats'),
-      api('GET', '/api/dashboard/running-wells').catch(() => null),
+      api('GET', '/api/water-orders').catch(() => null),
     ]);
     const fmtDate = str => {
       if (!str) return '';
@@ -745,12 +745,7 @@ async function loadDashboardStats() {
       ? `${fmtDate(s.kf_widget_start)} – ${fmtDate(s.kf_widget_end)}`
       : 'This Month';
     const pct = s.kf_total > 0 ? Math.round((s.kf_done / s.kf_total) * 100) : 0;
-    const rwCount = rw ? rw.read_today_count : 0;
-    const rwTotal = rw ? rw.total_count      : 0;
-    const rwCvc   = rw ? parseFloat(rw.cvc_total_cfs || 0).toFixed(2) : '0.00';
-    const rwVal   = rwTotal > 0
-      ? `${rwCount}<span style="font-size:1rem;color:var(--text-dim)">/${rwTotal}</span>`
-      : `<span style="font-size:1rem;color:var(--text-muted)">—</span>`;
+    const woCfs = n => (Number(n) || 0).toFixed(0);
     const grid = el('dashboard-stats');
     grid.innerHTML = `
       <div class="stat-card stat-accent" id="kf-complete-stat" style="cursor:pointer">
@@ -760,10 +755,23 @@ async function loadDashboardStats() {
         <div class="stat-sublabel" style="margin-top:2px">${s.kf_total - s.kf_done} Remaining</div>
         <div class="stat-bar"><div class="stat-bar-fill" style="width:${pct}%"></div></div>
       </div>
-      <div class="stat-card rw-stat-card" id="running-wells-stat" style="cursor:pointer">
-        <div class="stat-value">${rwVal}</div>
-        <div class="stat-label">Running Wells</div>
-        <div class="stat-sublabel">CVC Well Inflow: ${rwCvc} cfs</div>
+      <div class="stat-card wo-stat-card" id="water-order-stat" style="cursor:pointer">
+        <div class="wo-stat-rows">
+          <div class="wo-stat-row">
+            <span class="wo-stat-key">DWR Order${wo?.dwr_reverse ? ' <em>(rev)</em>' : ''}</span>
+            <span class="wo-stat-val">${wo ? woCfs(wo.dwr_order) : '—'}</span>
+          </div>
+          <div class="wo-stat-row">
+            <span class="wo-stat-key">Inflow</span>
+            <span class="wo-stat-val">${wo ? woCfs(wo.total_inflow) : '—'}</span>
+          </div>
+          <div class="wo-stat-row">
+            <span class="wo-stat-key">Outflow</span>
+            <span class="wo-stat-val">${wo ? woCfs(wo.total_outflow) : '—'}</span>
+          </div>
+        </div>
+        <div class="stat-label">Water Orders</div>
+        <div class="stat-sublabel">${wo && !wo.exists ? 'No order entered' : 'cfs · Today'}</div>
       </div>
       <div class="stat-card${isScadaAllowed(currentUser?.role) ? '' : ' hidden'}" id="scada-flow-stat" style="cursor:pointer">
         <div class="stat-value" id="scada-flow-value">—</div>
@@ -772,11 +780,194 @@ async function loadDashboardStats() {
         <svg id="scada-flow-spark" class="scada-flow-spark" viewBox="0 0 100 24" preserveAspectRatio="none"></svg>
       </div>
     `;
-    el('running-wells-stat').addEventListener('click', openRunningWellsModal);
+    el('water-order-stat').addEventListener('click', () => openWaterOrderModal(todayISO()));
     el('kf-complete-stat').addEventListener('click', openKFSetsModal);
     el('scada-flow-stat').addEventListener('click', () => showScreen('scada'));
     loadScadaFlowWidget();
   } catch { /* non-critical */ }
+}
+
+// ── Water Orders ─────────────────────────────────────────────────────────────
+// Read-only view of one date's order, laid out like page 1 of the CVC Water
+// Order sheet. Opened from the dashboard widget.
+function woFmt(n) {
+  return n == null || n === '' ? '' : Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
+function woSectionHtml(title, cfsHeading, lines, total, totalLabel) {
+  return `
+    <div class="wo-section-title">${title}</div>
+    <table class="wo-table">
+      <thead>
+        <tr>
+          <th class="wo-col-name"></th>
+          <th class="wo-col-cfs">${cfsHeading}</th>
+          <th class="wo-col-time">Time of<br>Change</th>
+          <th class="wo-col-comments">Comments</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${lines.map(l => `
+          <tr${l.computed ? ' class="wo-row-computed"' : ''}${
+            l.computed === 'running_wells' ? ' id="wo-wells-row" title="From Running Wells — tap to view"' : ''}>
+            <td class="wo-col-name">${escHtml(l.label)}${
+              l.computed === 'running_wells' ? '<span class="wo-from">from Running Wells</span>' : ''}</td>
+            <td class="wo-col-cfs">${woFmt(l.cfs)}</td>
+            <td class="wo-col-time">${escHtml(l.time_of_change || '')}</td>
+            <td class="wo-col-comments">${escHtml(l.comments || '')}</td>
+          </tr>`).join('')}
+        <tr class="wo-row-total">
+          <td class="wo-col-name">${totalLabel}</td>
+          <td class="wo-col-cfs">${woFmt(total)}</td>
+          <td colspan="2"></td>
+        </tr>
+      </tbody>
+    </table>`;
+}
+
+async function openWaterOrderModal(dateStr) {
+  const body = el('water-order-modal-body');
+  body.innerHTML = '<div class="placeholder-msg" style="padding:16px">Loading…</div>';
+  el('water-order-modal').classList.remove('hidden');
+  try {
+    const wo = await api('GET', `/api/water-orders?date=${encodeURIComponent(dateStr)}`);
+    const d = new Date(...String(wo.order_date).slice(0, 10).split('-').map((v, i) => i === 1 ? +v - 1 : +v));
+    el('water-order-modal-title').textContent = 'Water Order';
+    body.innerHTML = `
+      <div class="wo-doc">
+        <div class="wo-doc-title">Cross Valley Canal Water Order</div>
+        <div class="wo-doc-date">${d.toLocaleDateString('en-US',
+          { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</div>
+        ${!wo.exists ? '<div class="wo-doc-empty">No order entered for this date.</div>' : ''}
+        <div class="report-scroll">
+          ${woSectionHtml('INFLOW', 'CFS', wo.inflow, wo.total_inflow, 'Total Inflow')}
+          ${woSectionHtml('OUTFLOW', 'CFS<br>Ordered', wo.outflow, wo.total_outflow, 'Total Outflow')}
+        </div>
+      </div>`;
+    // The Wells line is produced by the Running Wells setting — let it open that
+    // list, which is otherwise no longer reachable from the dashboard.
+    el('wo-wells-row')?.addEventListener('click', () => {
+      el('water-order-modal').classList.add('hidden');
+      openRunningWellsModal();
+    });
+  } catch (err) {
+    body.innerHTML = `<div class="placeholder-msg" style="padding:16px">Failed to load.</div>`;
+  }
+}
+
+el('water-order-modal-close').addEventListener('click',
+  () => el('water-order-modal').classList.add('hidden'));
+el('water-order-modal').addEventListener('click', e => {
+  if (e.target === el('water-order-modal')) el('water-order-modal').classList.add('hidden');
+});
+
+// Supervisor entry form (Settings → Widgets → Water Orders). The date picker
+// drives which order is loaded, so a future order is just a future date.
+function woFieldsHtml(section, lines) {
+  return lines.map(l => l.computed ? `
+    <div class="wo-edit-row wo-edit-computed">
+      <div class="wo-edit-name">${escHtml(l.label)}<span class="wo-from">from Running Wells</span></div>
+      <input type="text" class="rr-input wo-in-cfs" value="${woFmt(l.cfs)}" disabled>
+      <input type="text" class="rr-input wo-in-time" placeholder="—" disabled>
+      <input type="text" class="rr-input wo-in-comments" placeholder="—" disabled>
+    </div>` : `
+    <div class="wo-edit-row">
+      <div class="wo-edit-name">${escHtml(l.label)}</div>
+      <input type="number" step="0.01" inputmode="decimal" class="rr-input wo-in-cfs"
+             placeholder="—" value="${l.cfs == null ? '' : escHtml(String(l.cfs))}"
+             data-section="${section}" data-key="${escHtml(l.key)}">
+      <input type="text" class="rr-input wo-in-time" placeholder="Time"
+             value="${escHtml(l.time_of_change || '')}">
+      <input type="text" class="rr-input wo-in-comments" placeholder="Comments"
+             value="${escHtml(l.comments || '')}">
+    </div>`).join('');
+}
+
+async function loadWaterOrderForm(dateStr) {
+  const body = el('wo-settings-body');
+  el('wo-error').classList.add('hidden');
+  body.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const wo = await api('GET', `/api/water-orders?date=${encodeURIComponent(dateStr)}`);
+    body.innerHTML = `
+      <div class="wo-edit-head">
+        <span class="wo-edit-name"></span><span>CFS</span><span>Time</span><span>Comments</span>
+      </div>
+      <div class="wo-edit-section">Inflow</div>
+      ${woFieldsHtml('inflow', wo.inflow)}
+      <div class="wo-edit-totals">Total Inflow <strong id="wo-sum-inflow">${woFmt(wo.total_inflow)}</strong> cfs</div>
+      <div class="wo-edit-section">Outflow</div>
+      ${woFieldsHtml('outflow', wo.outflow)}
+      <div class="wo-edit-totals">Total Outflow <strong id="wo-sum-outflow">${woFmt(wo.total_outflow)}</strong> cfs</div>
+      ${wo.exists && wo.entered_by
+        ? `<div class="wo-edit-meta">Last saved by ${escHtml(wo.entered_by)}</div>` : ''}`;
+    body.querySelectorAll('.wo-in-cfs').forEach(i => i.addEventListener('input', recalcWaterOrderTotals));
+    recalcWaterOrderTotals();
+  } catch (err) {
+    body.innerHTML = '<div class="placeholder-msg">Failed to load.</div>';
+  }
+}
+
+// Live totals as the operator types, so the sheet balances before it is saved.
+function recalcWaterOrderTotals() {
+  const sum = sel => [...document.querySelectorAll(sel)]
+    .reduce((t, i) => t + (parseFloat(i.value) || 0), 0);
+  const inflow  = sum('#wo-settings-body .wo-edit-row:not(.wo-edit-computed) .wo-in-cfs[data-section="inflow"]')
+                + sum('#wo-settings-body .wo-edit-computed .wo-in-cfs');
+  const outflow = sum('#wo-settings-body .wo-in-cfs[data-section="outflow"]');
+  const i = el('wo-sum-inflow'), o = el('wo-sum-outflow');
+  if (i) i.textContent = woFmt(Number(inflow.toFixed(2)));
+  if (o) o.textContent = woFmt(Number(outflow.toFixed(2)));
+}
+
+function initWaterOrdersPanel() {
+  const dateInput = el('wo-date');
+  if (!dateInput.value) dateInput.value = todayISO();
+  dateInput.onchange = () => loadWaterOrderForm(dateInput.value);
+  el('wo-today-btn').onclick = () => {
+    dateInput.value = todayISO();
+    loadWaterOrderForm(dateInput.value);
+  };
+  el('wo-save-btn').onclick = async () => {
+    const errEl = el('wo-error');
+    errEl.classList.add('hidden');
+    const date = dateInput.value;
+    if (!date) {
+      errEl.textContent = 'Pick a date first.';
+      errEl.classList.remove('hidden');
+      return;
+    }
+    const rows = [...document.querySelectorAll('#wo-settings-body .wo-edit-row:not(.wo-edit-computed)')];
+    const bad = rows.find(r => {
+      const v = r.querySelector('.wo-in-cfs').value.trim();
+      return v !== '' && !Number.isFinite(Number(v));
+    });
+    if (bad) {
+      errEl.textContent = `Enter a number or leave blank — check ${bad.querySelector('.wo-edit-name').textContent.trim()}.`;
+      errEl.classList.remove('hidden');
+      return;
+    }
+    const lines = rows.map(r => {
+      const cfsEl = r.querySelector('.wo-in-cfs');
+      return {
+        section:  cfsEl.dataset.section,
+        line_key: cfsEl.dataset.key,
+        cfs:      cfsEl.value.trim() === '' ? null : Number(cfsEl.value),
+        time_of_change: r.querySelector('.wo-in-time').value,
+        comments:       r.querySelector('.wo-in-comments').value,
+      };
+    });
+    const _save = beginSave(el('wo-save-btn'));
+    try {
+      await api('PUT', '/api/water-orders', { order_date: date, lines });
+      showToast('Water order saved', 'success');
+      if (date === todayISO()) loadDashboardStats();   // refresh the widget
+    } catch (err) {
+      errEl.textContent = err.message;
+      errEl.classList.remove('hidden');
+    } finally { _save(); }
+  };
+  loadWaterOrderForm(dateInput.value);
 }
 
 // ── SCADA DWR flow widget (dashboard stat card) ─────────────────────────────
@@ -6959,6 +7150,7 @@ const SETTINGS_PANEL_NAMES = {
   readings:         "Today's Readings",
   'kf-widget':      'KF Widget',
   'running-wells':  'Running Wells',
+  'water-orders':   'Water Orders',
   'purge-wells':    'Purge Wells',
   'staff-gauges':   'Staff Gauges',
   'gps-selector':   'GPS Location Selector',
@@ -6979,6 +7171,7 @@ function openSettingsPanel(panelId) {
   if (panelId === 'bugreports')     loadBugReports();
   if (panelId === 'kf-widget')      initKFWidgetPanel();
   if (panelId === 'running-wells')  initRunningWellsPanel();
+  if (panelId === 'water-orders')   initWaterOrdersPanel();
   if (panelId === 'purge-wells')    initPurgeWellsPanel();
   if (panelId === 'staff-gauges')   initStaffGaugesPanel();
   if (panelId === 'gps-selector')   initGPSSelectorSettingsPanel();

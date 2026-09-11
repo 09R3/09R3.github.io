@@ -91,6 +91,21 @@ sharp-crested weir charts.
 **Pesticides** — product list with label and SDS PDFs, usage logging,
 application locations, a treatment checklist, and monthly reporting.
 
+**Water orders** — the Cross Valley Canal water order sheet. Supervisors enter
+the CFS, time of change and comments for each inflow and outflow line for a
+given date (including future dates) under Settings → Widgets → Water Orders. The
+dashboard widget shows DWR Order, Inflow and Outflow totals for today and opens
+the full order laid out like the paper sheet.
+
+The Wells (Total Recovery) inflow line is not entered — it is computed from the
+Running Wells setting (running wells in Pools 1–6 that are on, plus the per-pool
+extras) and is always current, so a future-dated order shows present recovery
+rather than a forecast. Tapping that line opens the Running Wells list.
+
+DWR Order is the CA Aqueduct inflow; when that is zero or blank and water is
+going back to the aqueduct instead, the widget shows the CA Aqueduct - Reverse
+figure marked `(rev)`.
+
 **HR** — time-off requests and a charge-code reference with a split calculator
 that breaks hours across codes to the nearest quarter hour.
 

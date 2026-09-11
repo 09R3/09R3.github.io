@@ -2979,6 +2979,111 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
   width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; flex-shrink: 0;
 }
 
+/* ── Water Orders ─────────────────────────────────────────────────────────── */
+/* Dashboard widget: three labelled totals rather than one big number, so it
+   still reads at a glance in the middle stat-card slot. */
+/* The stats grid is three equal columns, so this card gets ~65-90px of content
+   width on a phone — not enough for "DWR Order" and its number side by side.
+   Stack each label over its value so neither is ever truncated. */
+.wo-stat-rows { display: flex; flex-direction: column; gap: 5px; }
+.wo-stat-row { display: flex; flex-direction: column; }
+.wo-stat-key {
+  font-size: 0.58rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+  line-height: 1.2;
+}
+.wo-stat-key em { font-style: normal; color: var(--yellow); }
+.wo-stat-val {
+  font-size: 1.15rem;
+  font-weight: 700;
+  line-height: 1.15;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Detail modal — laid out like page 1 of the paper order. */
+.wo-doc { padding: 16px 14px 20px; }
+.wo-doc-title { text-align: center; font-size: 1rem; font-weight: 700; color: var(--text); }
+.wo-doc-date  { text-align: center; font-size: 0.85rem; color: var(--text-dim); margin-top: 2px; }
+.wo-doc-empty {
+  margin-top: 10px; padding: 8px 10px;
+  border: 1px solid var(--yellow); border-radius: var(--radius-sm);
+  color: var(--yellow); font-size: 0.8rem; text-align: center;
+}
+.wo-section-title {
+  text-align: center;
+  font-size: 0.8rem; font-weight: 700; letter-spacing: 0.08em;
+  color: var(--text-dim);
+  margin: 18px 0 4px;
+}
+.wo-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+.wo-table th {
+  font-size: 0.66rem; font-weight: 700; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: 0.04em;
+  padding: 2px 6px 4px; text-align: center; vertical-align: bottom;
+}
+.wo-table td {
+  padding: 5px 6px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+}
+.wo-table .wo-col-name { text-align: left; width: 42%; }
+.wo-table .wo-col-cfs  { text-align: center; width: 68px; font-variant-numeric: tabular-nums; }
+.wo-table .wo-col-time { text-align: center; width: 78px; }
+.wo-table .wo-col-comments { text-align: left; color: var(--text-dim); }
+.wo-row-total td {
+  font-weight: 700; color: var(--text);
+  border-top: 2px solid var(--border); border-bottom: none;
+}
+.wo-row-computed { cursor: pointer; }
+.wo-row-computed:hover td { background: var(--surface2); }
+.wo-from {
+  display: block;
+  font-size: 0.62rem; font-style: italic; color: var(--text-muted);
+}
+/* The order table has four columns of real content — let it scroll sideways
+   on a phone rather than crushing the comments column away. */
+.report-scroll > .wo-table { min-width: 520px; }
+
+/* Settings entry form. */
+.wo-date-row { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.wo-date-row label { font-size: 0.8rem; font-weight: 600; color: var(--text-dim); }
+.wo-date-row #wo-date { flex: 1; min-width: 0; }
+.wo-edit-head, .wo-edit-row {
+  display: grid;
+  grid-template-columns: minmax(96px, 1.6fr) 62px 64px minmax(70px, 1.2fr);
+  gap: 5px;
+  align-items: center;
+}
+.wo-edit-head {
+  font-size: 0.62rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.04em; color: var(--text-muted);
+  padding: 0 0 3px; text-align: center;
+}
+.wo-edit-head .wo-edit-name { text-align: left; }
+.wo-edit-row { padding: 3px 0; }
+.wo-edit-name {
+  font-size: 0.78rem; color: var(--text);
+  line-height: 1.2; overflow-wrap: anywhere;
+}
+.wo-edit-row .rr-input { width: 100%; min-width: 0; font-size: 0.85rem; padding: 5px 6px; }
+.wo-edit-computed .rr-input { opacity: 0.55; }
+.wo-edit-section {
+  font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--text-dim);
+  margin: 14px 0 4px; padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.wo-edit-totals {
+  font-size: 0.8rem; color: var(--text-dim);
+  text-align: right; padding: 6px 0 2px;
+}
+.wo-edit-totals strong { color: var(--text); font-variant-numeric: tabular-nums; }
+.wo-edit-meta { font-size: 0.72rem; color: var(--text-muted); margin-top: 10px; }
+
 /* Vehicle Info modal — read-only detail rows (Vehicle Monthly → Info). */
 .vinfo-row {
   display: flex;

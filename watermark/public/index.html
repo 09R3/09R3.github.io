@@ -129,7 +129,7 @@
         Sign in with Microsoft 365
       </a>
       <div id="ms-login-error" class="error-msg hidden"></div>
-      <div class="login-version">v 3.21</div>
+      <div class="login-version">v 3.22</div>
     </div>
   </div>
 </div>
@@ -1771,6 +1771,9 @@
         <button class="settings-menu-row" data-panel="running-wells">
           <span>Running Wells</span><span class="settings-chevron">›</span>
         </button>
+        <button class="settings-menu-row" data-panel="water-orders">
+          <span>Water Orders</span><span class="settings-chevron">›</span>
+        </button>
         <button class="settings-menu-row" data-panel="purge-wells">
           <span>Purge Wells</span><span class="settings-chevron">›</span>
         </button>
@@ -1913,6 +1916,28 @@
       </div>
     </div>
 
+    <!-- Water Orders panel -->
+    <div id="settings-panel-water-orders" class="settings-panel hidden">
+      <div class="settings-section">
+        <div class="settings-card">
+          <div class="settings-pad">
+            <p style="font-size:0.85rem;color:var(--text-dim);margin:0 0 10px">
+              Cross Valley Canal water order. Pick a date — including a future
+              date — then enter the CFS, time of change and comments for each line.
+            </p>
+            <div class="wo-date-row">
+              <label for="wo-date">Date</label>
+              <input type="date" id="wo-date" class="ctrl-input ctrl-input-sm">
+              <button class="btn btn-secondary btn-sm" id="wo-today-btn">Today</button>
+            </div>
+            <div id="wo-settings-body"></div>
+            <div id="wo-error" class="error-msg hidden" style="margin-top:10px"></div>
+            <button class="btn btn-save" id="wo-save-btn" style="margin-top:12px">Save Water Order</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Staff Gauges panel -->
     <div id="settings-panel-staff-gauges" class="settings-panel hidden">
       <div class="settings-section">
@@ -1934,7 +1959,7 @@
     <div id="settings-panel-appinfo" class="settings-panel hidden">
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 3.21</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 3.22</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>
@@ -2838,6 +2863,17 @@
       <button class="modal-close" id="history-modal-close">&times;</button>
     </div>
     <div class="modal-body" id="history-modal-body"></div>
+  </div>
+</div>
+
+<!-- Water Order Modal (dashboard widget detail) -->
+<div id="water-order-modal" class="modal-overlay hidden">
+  <div class="modal-card" style="max-width:760px">
+    <div class="modal-header">
+      <h2 id="water-order-modal-title">Water Order</h2>
+      <button class="modal-close" id="water-order-modal-close">&times;</button>
+    </div>
+    <div class="modal-body" id="water-order-modal-body" style="padding:0"></div>
   </div>
 </div>
 

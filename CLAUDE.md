@@ -341,6 +341,8 @@ siphon_breakers            pump_unit_id(PK), serial_number, manufacturer, model_
 sites                      site_id(PK), site_name, site_type, gps_latitude(NUMERIC), gps_longitude(NUMERIC), notes
 spatial_ref_sys            srid(PK), auth_name, auth_srid, srtext, proj4text
 users                      user_id(PK), username, full_name, role, password, initials, email, is_active
+water_order_lines          line_id(PK), order_id(→water_orders), section, line_key, cfs(NUMERIC), time_of_change, comments
+water_orders               order_id(PK), order_date(UNIQUE), entered_by, created_at, updated_at
 vehicles                   vehicle_id(PK), vehicle_number, vehicle_type, year, make, model, vin, license_plate, fuel_type, assigned_user, reading_type, status, notes
 well_issues                issue_id(PK), well_id(→wells), well_name, well_area, status, description, reported_date, resolved_date, resolution_notes, entered_by, assigned_to, notes, created_at, updated_at, action_taken, po_number, cost(NUMERIC)
 well_meters                well_meter_id(PK), manufacturer, model_number, serial_number, meter_type, status, well_id(→wells), notes, created_at
