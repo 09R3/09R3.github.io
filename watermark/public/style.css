@@ -3048,6 +3048,41 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
    on a phone rather than crushing the comments column away. */
 .report-scroll > .wo-table { min-width: 520px; }
 
+/* Tappable rows in the detail view. A dotted underline on the name is the only
+   affordance available — there is no hover on a phone. */
+.wo-row-tap { cursor: pointer; }
+.wo-row-tap .wo-name {
+  border-bottom: 1px dotted var(--text-muted);
+}
+.wo-row-tap:hover td { background: var(--surface2); }
+
+/* Line history popup — sits above the Water Order modal, which stays open
+   underneath so closing this returns to the order. */
+.wo-history-overlay { z-index: 320; }
+.wo-hist-chart-wrap { height: 170px; padding: 14px 14px 0; }
+.wo-hist-chart-cap {
+  font-size: 0.66rem; color: var(--text-muted);
+  text-align: center; padding: 6px 0 10px;
+  border-bottom: 1px solid var(--border);
+}
+.wo-hist-list { max-height: 46vh; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.wo-hist-row {
+  display: flex; align-items: baseline; gap: 10px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.85rem;
+}
+.wo-hist-row:last-child { border-bottom: none; }
+.wo-hist-date { flex: 0 0 64px; color: var(--text-dim); }
+.wo-hist-cfs {
+  flex: 0 0 64px; text-align: right;
+  font-weight: 700; color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.wo-hist-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.wo-hist-time { font-size: 0.75rem; color: var(--text-dim); }
+.wo-hist-note { font-size: 0.75rem; color: var(--text-muted); overflow-wrap: anywhere; }
+
 /* Settings entry form. */
 .wo-date-row { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
 .wo-date-row label { font-size: 0.8rem; font-weight: 600; color: var(--text-dim); }

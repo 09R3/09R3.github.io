@@ -842,7 +842,16 @@ pool.query(`
     comments       TEXT,
     UNIQUE (order_id, section, line_key)
   )
-`)).catch(err => console.error('Migration error (water_orders):', err.message));
+`)).then(() => pool.query(
+  // Snapshot of the computed Wells (Total Recovery) figure at save time. The
+  // live value is what the current view shows; this is what makes a historical
+  // Total Inflow add up, since the wells line is otherwise never stored.
+  `ALTER TABLE water_orders ADD COLUMN IF NOT EXISTS wells_cfs NUMERIC`
+)).then(() => pool.query(
+  // Line history is queried by (section, line_key) across dates; the UNIQUE
+  // constraint leads with order_id so it can't serve that.
+  `CREATE INDEX IF NOT EXISTS idx_wol_section_key ON water_order_lines (section, line_key)`
+)).catch(err => console.error('Migration error (water_orders):', err.message));
 
 // ─────────────────────────────────────────────────────────────────────────────
 const SESSION_TTL = 8 * 60 * 60 * 1000; // 8 hours
@@ -5947,6 +5956,73 @@ app.get('/api/water-orders', requireAuth, async (req, res) => {
   } catch (err) { handleErr(res, err); }
 });
 
+// One line's values across dates, for the reference history popup. `key` is
+// either a known line key or the literal __total__ for that section's total.
+// Read-only and open to any authenticated user, like the order itself.
+const WATER_ORDER_TOTAL_KEY = '__total__';
+
+app.get('/api/water-orders/history', requireAuth, async (req, res) => {
+  const section = typeof req.query.section === 'string' ? req.query.section : '';
+  const key     = typeof req.query.key === 'string' ? req.query.key : '';
+  const keys = WATER_ORDER_KEYS[section];
+  if (!keys || (key !== WATER_ORDER_TOTAL_KEY && !keys.has(key))) {
+    return res.status(400).json({ error: 'Unknown line' });
+  }
+  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 30, 1), 100);
+
+  // The wells line is computed, never stored per-line, so it has no history of
+  // its own — only the snapshot that feeds the inflow total.
+  const def = keys.has(key) ? WATER_ORDER_SECTIONS[section].find(d => d.key === key) : null;
+  if (def?.computed) {
+    return res.json({ section, key, label: def.label, computed: def.computed, rows: [] });
+  }
+
+  try {
+    let rows;
+    if (key === WATER_ORDER_TOTAL_KEY) {
+      ({ rows } = await pool.query(
+        `SELECT to_char(o.order_date, 'YYYY-MM-DD') AS order_date,
+                COALESCE(SUM(l.cfs), 0)
+                  + CASE WHEN $1 = 'inflow' THEN COALESCE(o.wells_cfs, 0) ELSE 0 END AS cfs,
+                NULL::text AS time_of_change,
+                NULL::text AS comments
+         FROM water_orders o
+         LEFT JOIN water_order_lines l
+           ON l.order_id = o.order_id AND l.section = $1
+         GROUP BY o.order_id, o.order_date, o.wells_cfs
+         HAVING COUNT(l.line_id) > 0 OR o.wells_cfs IS NOT NULL
+         ORDER BY o.order_date DESC
+         LIMIT $2`,
+        [section, limit]
+      ));
+    } else {
+      ({ rows } = await pool.query(
+        `SELECT to_char(o.order_date, 'YYYY-MM-DD') AS order_date,
+                l.cfs, l.time_of_change, l.comments
+         FROM water_order_lines l
+         JOIN water_orders o USING (order_id)
+         WHERE l.section = $1 AND l.line_key = $2
+         ORDER BY o.order_date DESC
+         LIMIT $3`,
+        [section, key, limit]
+      ));
+    }
+    res.json({
+      section, key,
+      label: key === WATER_ORDER_TOTAL_KEY
+        ? (section === 'inflow' ? 'Total Inflow' : 'Total Outflow')
+        : def.label,
+      computed: null,
+      rows: rows.map(r => ({
+        order_date: r.order_date,
+        cfs: r.cfs == null ? null : Number(r.cfs),
+        time_of_change: r.time_of_change,
+        comments: r.comments,
+      })),
+    });
+  } catch (err) { handleErr(res, err); }
+});
+
 app.put('/api/water-orders', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
   const date = String(req.body.order_date ?? '');
   if (!isValidIsoDate(date)) return res.status(400).json({ error: 'Invalid date' });
@@ -5981,16 +6057,20 @@ app.put('/api/water-orders', requireAuth, requireRole(...SUPERVISOR_ROLES), asyn
     });
   }
 
+  const wellsSnapshot = await waterOrderWellsCfs();
+
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     const { rows } = await client.query(
-      `INSERT INTO water_orders (order_date, entered_by)
-       VALUES ($1, $2)
+      `INSERT INTO water_orders (order_date, entered_by, wells_cfs)
+       VALUES ($1, $2, $3)
        ON CONFLICT (order_date)
-         DO UPDATE SET entered_by = EXCLUDED.entered_by, updated_at = NOW()
+         DO UPDATE SET entered_by = EXCLUDED.entered_by,
+                       wells_cfs  = EXCLUDED.wells_cfs,
+                       updated_at = NOW()
        RETURNING order_id`,
-      [date, req.user.username]
+      [date, req.user.username, wellsSnapshot]
     );
     const orderId = rows[0].order_id;
     // Replace the whole day rather than merging, so clearing a line clears it.

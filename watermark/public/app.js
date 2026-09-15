@@ -794,7 +794,7 @@ function woFmt(n) {
   return n == null || n === '' ? '' : Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
-function woSectionHtml(title, cfsHeading, lines, total, totalLabel) {
+function woSectionHtml(section, title, cfsHeading, lines, total, totalLabel) {
   return `
     <div class="wo-section-title">${title}</div>
     <table class="wo-table">
@@ -808,16 +808,17 @@ function woSectionHtml(title, cfsHeading, lines, total, totalLabel) {
       </thead>
       <tbody>
         ${lines.map(l => `
-          <tr${l.computed ? ' class="wo-row-computed"' : ''}${
-            l.computed === 'running_wells' ? ' id="wo-wells-row" title="From Running Wells — tap to view"' : ''}>
-            <td class="wo-col-name">${escHtml(l.label)}${
+          <tr${l.computed ? ' class="wo-row-computed"' : ' class="wo-row-tap"'}${
+            l.computed === 'running_wells' ? ' id="wo-wells-row" title="From Running Wells — tap to view"' : ''}${
+            l.computed ? '' : ` data-hist-section="${escHtml(section)}" data-hist-key="${escHtml(l.key)}"`}>
+            <td class="wo-col-name"><span class="wo-name">${escHtml(l.label)}</span>${
               l.computed === 'running_wells' ? '<span class="wo-from">from Running Wells</span>' : ''}</td>
             <td class="wo-col-cfs">${woFmt(l.cfs)}</td>
             <td class="wo-col-time">${escHtml(l.time_of_change || '')}</td>
             <td class="wo-col-comments">${escHtml(l.comments || '')}</td>
           </tr>`).join('')}
-        <tr class="wo-row-total">
-          <td class="wo-col-name">${totalLabel}</td>
+        <tr class="wo-row-total wo-row-tap" data-hist-section="${escHtml(section)}" data-hist-key="__total__">
+          <td class="wo-col-name"><span class="wo-name">${totalLabel}</span></td>
           <td class="wo-col-cfs">${woFmt(total)}</td>
           <td colspan="2"></td>
         </tr>
@@ -840,8 +841,8 @@ async function openWaterOrderModal(dateStr) {
           { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</div>
         ${!wo.exists ? '<div class="wo-doc-empty">No order entered for this date.</div>' : ''}
         <div class="report-scroll">
-          ${woSectionHtml('INFLOW', 'CFS', wo.inflow, wo.total_inflow, 'Total Inflow')}
-          ${woSectionHtml('OUTFLOW', 'CFS<br>Ordered', wo.outflow, wo.total_outflow, 'Total Outflow')}
+          ${woSectionHtml('inflow', 'INFLOW', 'CFS', wo.inflow, wo.total_inflow, 'Total Inflow')}
+          ${woSectionHtml('outflow', 'OUTFLOW', 'CFS<br>Ordered', wo.outflow, wo.total_outflow, 'Total Outflow')}
         </div>
       </div>`;
     // The Wells line is produced by the Running Wells setting — let it open that
@@ -850,6 +851,9 @@ async function openWaterOrderModal(dateStr) {
       el('water-order-modal').classList.add('hidden');
       openRunningWellsModal();
     });
+    body.querySelectorAll('.wo-row-tap').forEach(tr => tr.addEventListener('click', () =>
+      openWaterOrderHistory(tr.dataset.histSection, tr.dataset.histKey,
+        tr.querySelector('.wo-name').textContent)));
   } catch (err) {
     body.innerHTML = `<div class="placeholder-msg" style="padding:16px">Failed to load.</div>`;
   }
@@ -859,6 +863,103 @@ el('water-order-modal-close').addEventListener('click',
   () => el('water-order-modal').classList.add('hidden'));
 el('water-order-modal').addEventListener('click', e => {
   if (e.target === el('water-order-modal')) el('water-order-modal').classList.add('hidden');
+});
+
+// One line's (or one total's) values across past orders: a 7-point bar chart of
+// the most recent values plus a scrollable list of everything returned.
+let _woHistChart = null;
+
+function woDestroyHistChart() {
+  if (_woHistChart) { try { _woHistChart.destroy(); } catch { /* */ } _woHistChart = null; }
+}
+
+async function openWaterOrderHistory(section, key, label) {
+  const body = el('wo-history-body');
+  woDestroyHistChart();
+  el('wo-history-title').textContent = label || 'History';
+  body.innerHTML = '<div class="placeholder-msg" style="padding:16px">Loading…</div>';
+  el('wo-history-modal').classList.remove('hidden');
+
+  let data;
+  try {
+    data = await api('GET',
+      `/api/water-orders/history?section=${encodeURIComponent(section)}&key=${encodeURIComponent(key)}&limit=30`);
+  } catch {
+    body.innerHTML = '<div class="placeholder-msg" style="padding:16px">Failed to load.</div>';
+    return;
+  }
+  if (!data.rows.length) {
+    body.innerHTML = `<div class="placeholder-msg" style="padding:16px">${
+      data.computed ? 'The wells line is calculated live and has no stored history.'
+                    : 'No history found.'}</div>`;
+    return;
+  }
+
+  // Rows arrive newest-first: the list keeps that, the chart is reversed so it
+  // reads left-to-right oldest-to-newest.
+  const recent = data.rows.slice(0, 7).reverse();
+  body.innerHTML = `
+    <div class="wo-hist-chart-wrap"><canvas id="wo-hist-canvas"></canvas></div>
+    <div class="wo-hist-chart-cap">Last ${recent.length} order${recent.length === 1 ? '' : 's'}</div>
+    <div class="wo-hist-list">
+      ${data.rows.map(r => `
+        <div class="wo-hist-row">
+          <span class="wo-hist-date">${fmtDate(r.order_date)}</span>
+          <span class="wo-hist-cfs">${r.cfs == null ? '—' : woFmt(r.cfs)}</span>
+          <span class="wo-hist-meta">
+            ${r.time_of_change ? `<span class="wo-hist-time">${escHtml(r.time_of_change)}</span>` : ''}
+            ${r.comments ? `<span class="wo-hist-note">${escHtml(r.comments)}</span>` : ''}
+          </span>
+        </div>`).join('')}
+    </div>`;
+
+  // Chart.js is vendored locally and loaded on demand, so this still works
+  // offline. A failure here must not take the list down with it.
+  try {
+    await loadScadaVendor();
+    const c = scadaThemeColors();
+    const canvas = el('wo-hist-canvas');
+    if (!canvas || el('wo-history-modal').classList.contains('hidden')) return;
+    _woHistChart = new window.Chart(canvas.getContext('2d'), {
+      type: 'bar',
+      data: {
+        labels: recent.map(r => fmtDate(r.order_date)),
+        datasets: [{
+          label: `${data.label} (cfs)`,
+          data: recent.map(r => r.cfs == null ? 0 : r.cfs),
+          backgroundColor: '#38b6ff',
+          borderRadius: 3,
+          maxBarThickness: 38,
+        }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: c.surface, titleColor: c.text, bodyColor: c.text,
+            borderColor: c.grid, borderWidth: 1,
+          },
+        },
+        scales: {
+          x: { ticks: { color: c.dim, maxRotation: 0, autoSkip: false }, grid: { display: false } },
+          y: { beginAtZero: true, ticks: { color: c.dim }, grid: { color: c.grid } },
+        },
+      },
+    });
+  } catch {
+    const wrap = document.querySelector('.wo-hist-chart-wrap');
+    if (wrap) wrap.innerHTML = '<div class="placeholder-msg">Chart unavailable.</div>';
+  }
+}
+
+function closeWaterOrderHistory() {
+  woDestroyHistChart();
+  el('wo-history-modal').classList.add('hidden');
+}
+el('wo-history-close').addEventListener('click', closeWaterOrderHistory);
+el('wo-history-modal').addEventListener('click', e => {
+  if (e.target === el('wo-history-modal')) closeWaterOrderHistory();
 });
 
 // Supervisor entry form (Settings → Widgets → Water Orders). The date picker

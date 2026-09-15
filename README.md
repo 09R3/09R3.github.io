@@ -106,6 +106,13 @@ DWR Order is the CA Aqueduct inflow; when that is zero or blank and water is
 going back to the aqueduct instead, the widget shows the CA Aqueduct - Reverse
 figure marked `(rev)`.
 
+Tapping any line name — or either total — in the order opens that line's history
+across past orders: a bar chart of the last 7 and a scrollable list of the last
+30, with the time of change and comments recorded each day. Historical inflow
+totals use `water_orders.wells_cfs`, a snapshot of the computed wells figure
+taken when the order is saved; orders saved before that column existed show
+their total without it.
+
 **HR** — time-off requests and a charge-code reference with a split calculator
 that breaks hours across codes to the nearest quarter hour.
 
