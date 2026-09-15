@@ -1031,9 +1031,10 @@ function woFieldsHtml(section, lines, wellsByPool) {
   return woWithPoolHeads(lines, { head, row });
 }
 
-async function loadWaterOrderForm(dateStr) {
+async function loadWaterOrderForm(dateStr, keepImportNote) {
   const body = el('wo-settings-body');
   el('wo-error').classList.add('hidden');
+  if (!keepImportNote) el('wo-import-result')?.classList.add('hidden');
   body.innerHTML = '<div class="placeholder-msg">Loading…</div>';
   try {
     const wo = await api('GET', `/api/water-orders?date=${encodeURIComponent(dateStr)}`);
@@ -1089,12 +1090,82 @@ function woStepDate(days) {
   loadWaterOrderForm(input.value);
 }
 
+// Import a printed order sheet into the form. The parse is server-side; this
+// only writes the values into the inputs. Nothing is saved — the supervisor
+// reviews and presses Save, exactly as if they had typed it.
+async function woImportPdf(file) {
+  const out = el('wo-import-result');
+  const btn = el('wo-pdf-btn');
+  el('wo-error').classList.add('hidden');
+  out.className = 'wo-import-result';
+  out.textContent = 'Reading PDF…';
+
+  const restore = beginSave(btn, 'Reading…');
+  let data;
+  try {
+    const res = await fetch('/api/water-orders/parse-pdf',
+      { method: 'POST', body: (() => { const f = new FormData(); f.append('file', file); return f; })() });
+    data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  } catch (err) {
+    out.className = 'wo-import-result wo-import-bad';
+    out.textContent = err.message || 'Could not read that PDF.';
+    restore();
+    return;
+  } finally { restore(); }
+
+  const selected = el('wo-date').value;
+  // A sheet imported onto the wrong date is the expensive mistake here, so the
+  // date is switched to match the PDF rather than quietly left alone.
+  let dateNote = '';
+  if (data.order_date && data.order_date !== selected) {
+    el('wo-date').value = data.order_date;
+    await loadWaterOrderForm(data.order_date);
+    dateNote = ` The PDF is dated ${fmtDate(data.order_date)}, so the date was switched from ${fmtDate(selected)}.`;
+  }
+
+  // Clear every entry row first: a line absent from the PDF means zero ordered,
+  // not "keep whatever was there before".
+  document.querySelectorAll('#wo-settings-body .wo-edit-row:not(.wo-edit-computed)').forEach(r => {
+    r.querySelector('.wo-in-cfs').value = '';
+    r.querySelector('.wo-in-time').value = '';
+    r.querySelector('.wo-in-comments').value = '';
+  });
+
+  let filled = 0;
+  for (const l of data.lines) {
+    const cfsEl = document.querySelector(
+      `#wo-settings-body .wo-in-cfs[data-section="${l.section}"][data-key="${l.line_key}"]`);
+    if (!cfsEl) continue;
+    const row = cfsEl.closest('.wo-edit-row');
+    cfsEl.value = l.cfs == null ? '' : String(l.cfs);
+    row.querySelector('.wo-in-time').value = l.time_of_change || '';
+    row.querySelector('.wo-in-comments').value = l.comments || '';
+    row.classList.add('wo-row-imported');
+    filled++;
+  }
+  recalcWaterOrderTotals();
+
+  const bits = [`Filled ${filled} line${filled === 1 ? '' : 's'} from the PDF.${dateNote}`];
+  if (data.unmatched?.length) {
+    bits.push(`Not recognised, enter by hand: ${data.unmatched.slice(0, 6).map(escHtml).join(', ')}` +
+              (data.unmatched.length > 6 ? ` and ${data.unmatched.length - 6} more` : ''));
+  }
+  bits.push('Check the values, then press Save Water Order.');
+  out.className = 'wo-import-result ' + (data.unmatched?.length ? 'wo-import-warn' : 'wo-import-ok');
+  out.innerHTML = bits.join('<br>');
+}
+
 function initWaterOrdersPanel() {
   const dateInput = el('wo-date');
   if (!dateInput.value) dateInput.value = todayISO();
   dateInput.onchange = () => loadWaterOrderForm(dateInput.value);
   el('wo-date-prev').onclick = () => woStepDate(-1);
   el('wo-date-next').onclick = () => woStepDate(1);
+
+  const pdfInput = el('wo-pdf-input');
+  el('wo-pdf-btn').onclick = () => { pdfInput.value = ''; pdfInput.click(); };
+  pdfInput.onchange = () => { if (pdfInput.files[0]) woImportPdf(pdfInput.files[0]); };
   el('wo-today-btn').onclick = () => {
     dateInput.value = todayISO();
     loadWaterOrderForm(dateInput.value);

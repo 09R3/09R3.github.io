@@ -3153,6 +3153,28 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
 .wo-hist-time { font-size: 0.75rem; color: var(--text-dim); }
 .wo-hist-note { font-size: 0.75rem; color: var(--text-muted); overflow-wrap: anywhere; }
 
+/* PDF import — sits above the entry form; the parse only fills the inputs. */
+.wo-import-row {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding-bottom: 10px; margin-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+.wo-import-hint {
+  flex: 1; min-width: 150px;
+  font-size: 0.7rem; color: var(--text-muted); line-height: 1.3;
+}
+.wo-import-result {
+  margin: 8px 0 4px; padding: 8px 10px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  font-size: 0.76rem; line-height: 1.45; color: var(--text-dim);
+}
+.wo-import-ok   { border-color: var(--green);  color: var(--text); }
+.wo-import-warn { border-color: var(--yellow); color: var(--text); }
+.wo-import-bad  { border-color: var(--red);    color: var(--red-light); }
+/* Mark what the import touched so an operator can see at a glance which rows
+   came from the sheet and which they still need to check. */
+.wo-row-imported .wo-in-cfs { border-color: var(--green); }
+
 /* Settings entry form. */
 .wo-date-row { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
 .wo-date-row label { font-size: 0.8rem; font-weight: 600; color: var(--text-dim); }

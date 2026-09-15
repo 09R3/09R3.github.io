@@ -116,6 +116,13 @@ set in `WATER_ORDER_INFLOW` / `WATER_ORDER_OUTFLOW` in `server.js`, and the
 wells recovery is split by each well's `discharge_pool` so it is credited to the
 plant filling that reach.
 
+A printed order sheet can be imported: **Settings → Water Orders → Import from
+PDF** reads page 1 and fills the form. It never saves — the supervisor checks the
+values and presses Save, and the banner reports how many lines were filled plus
+any label it could not place. If the PDF's date differs from the selected date,
+the date is switched to the PDF's. Lines absent from the sheet are cleared, and
+the Wells line is skipped since it is derived.
+
 Both the order view and the entry form group their lines under a **Pool** heading
 wherever the reach changes, mirroring the left margin of the order sheet, and the
 Wells line shows its per-pool split beneath the total.

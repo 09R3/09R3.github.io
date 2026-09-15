@@ -6034,6 +6034,134 @@ app.get('/api/water-orders', requireAuth, async (req, res) => {
   } catch (err) { handleErr(res, err); }
 });
 
+// ── Water order PDF import ───────────────────────────────────────────────────
+// Reads a printed CVC Water Order sheet and maps its rows back onto the line
+// definitions above. Never saves — it returns values for the entry form to
+// pre-fill so a supervisor reviews them before hitting Save.
+//
+// pdf.js gives text items with positions, so rows are rebuilt by y and columns
+// split by x, the way the printed sheet actually reads. Column boundaries come
+// from the sheet's own layout: label ~35, CFS ~220, time ~278, comments ~420.
+// Boundaries are taken from where the VALUES sit, not the headings: the sheet
+// centres "Comments" at x~420 but left-aligns the comment text at x~337.
+const WO_PDF_COL_CFS      = 180;    // labels land at ~35
+const WO_PDF_COL_TIME     = 265;    // CFS values at ~220
+const WO_PDF_COL_COMMENTS = 310;    // time at ~278, comments at ~337
+const WO_PDF_ROW_TOLERANCE = 2.5;   // points; rows on this sheet are ~12.5 apart
+
+// Labels are compared loosely: case, spacing, quote style and trailing
+// punctuation vary between exports, but the wording does not.
+function woNormalizeLabel(str) {
+  return String(str || '')
+    .replace(/[‘’‛]/g, "'")
+    .replace(/[“”‟]/g, '"')
+    .replace(/[‐-―]/g, '-')
+    .replace(/\s+/g, ' ')
+    .replace(/[.\s]+$/, '')
+    .trim()
+    .toLowerCase();
+}
+
+function woParseNumber(str) {
+  const cleaned = String(str || '').replace(/,/g, '').trim();
+  if (cleaned === '') return null;
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : null;
+}
+
+// "Tuesday - September 15, 2026" / "Friday  -  September 11, 2026"
+function woParsePdfDate(text) {
+  const m = /([A-Z][a-z]+)\s+(\d{1,2}),\s*(\d{4})/.exec(String(text || ''));
+  if (!m) return null;
+  const MONTHS = ['january','february','march','april','may','june','july',
+                  'august','september','october','november','december'];
+  const mi = MONTHS.indexOf(m[1].toLowerCase());
+  if (mi < 0) return null;
+  const day = parseInt(m[2], 10), year = parseInt(m[3], 10);
+  const dt = new Date(Date.UTC(year, mi, day));
+  if (dt.getUTCMonth() !== mi || dt.getUTCDate() !== day) return null;
+  return `${year}-${String(mi + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+// Text items -> rows of { label, cfs, time, comments }, top of page first.
+function woPdfRows(items) {
+  const rows = [];
+  for (const it of items) {
+    if (!it.str || !it.str.trim()) continue;
+    const x = it.transform[4], y = it.transform[5];
+    let row = rows.find(r => Math.abs(r.y - y) <= WO_PDF_ROW_TOLERANCE);
+    if (!row) { row = { y, cells: [] }; rows.push(row); }
+    row.cells.push({ x, str: it.str });
+  }
+  rows.sort((a, b) => b.y - a.y);
+  return rows.map(r => {
+    const cells = r.cells.sort((a, b) => a.x - b.x);
+    const join = cs => cs.map(c => c.str).join(' ').trim();
+    const label = join(cells.filter(c => c.x < WO_PDF_COL_CFS));
+    const cfs   = join(cells.filter(c => c.x >= WO_PDF_COL_CFS && c.x < WO_PDF_COL_TIME));
+
+    // Everything right of the CFS column is time and/or comments. Rather than
+    // trusting one boundary, use the cell count where it is unambiguous: two or
+    // more cells means the leftmost is the time and the rest is the comment.
+    // Only a lone cell has to be placed by position.
+    const rest = cells.filter(c => c.x >= WO_PDF_COL_TIME);
+    let time = '', comments = '';
+    if (rest.length >= 2) {
+      time = rest[0].str.trim();
+      comments = join(rest.slice(1));
+    } else if (rest.length === 1) {
+      if (rest[0].x < WO_PDF_COL_COMMENTS) time = rest[0].str.trim();
+      else comments = rest[0].str.trim();
+    }
+    return { label, cfs, time, comments, raw: join(cells) };
+  });
+}
+
+function woParseOrderRows(rows) {
+  // Section markers keep duplicate labels apart — "KWB River Pipeline" is both
+  // an inflow and an outflow — and skip the derived pumping plant block, whose
+  // labels also collide with two outflow lines.
+  const byLabel = {
+    inflow:  new Map(WATER_ORDER_INFLOW.map(d => [woNormalizeLabel(d.label), d])),
+    outflow: new Map(WATER_ORDER_OUTFLOW.map(d => [woNormalizeLabel(d.label), d])),
+  };
+  const lines = [];
+  const seen = new Set();
+  const unmatched = [];
+  let section = null;
+  let order_date = null;
+
+  for (const row of rows) {
+    if (!order_date) order_date = woParsePdfDate(row.raw);
+
+    const norm = woNormalizeLabel(row.label);
+    if (norm === 'inflow')  { section = 'inflow';  continue; }
+    if (norm === 'outflow') { section = 'outflow'; continue; }
+    if (norm === 'total inflow' || norm === 'total outflow') { section = null; continue; }
+    if (!section || !norm) continue;
+
+    const def = byLabel[section].get(norm);
+    if (!def) {
+      // Column headings and the blank spacer rows are expected; anything else
+      // is a line we could not place and the operator should know about.
+      if (!/^(cfs|cfs ordered|time of|change|comments|estimated pumping plant operations)$/.test(norm)
+          && !/^pumping plant no\. \d/.test(norm)) unmatched.push(row.label.trim());
+      continue;
+    }
+    if (def.computed) continue;                 // Wells is derived, never imported
+    const key = `${section}|${def.key}`;
+    if (seen.has(key)) continue;                // first occurrence wins
+    seen.add(key);
+
+    const cfs = woParseNumber(row.cfs);
+    const time_of_change = row.time.trim();
+    const comments = row.comments.trim();
+    if (cfs === null && !time_of_change && !comments) continue;   // blank row
+    lines.push({ section, line_key: def.key, label: def.label, cfs, time_of_change, comments });
+  }
+  return { order_date, lines, unmatched };
+}
+
 // One line's values across dates, for the reference history popup. `key` is
 // either a known line key or the literal __total__ for that section's total.
 // Read-only and open to any authenticated user, like the order itself.
@@ -6105,6 +6233,53 @@ app.get('/api/water-orders/history', requireAuth, async (req, res) => {
     });
   } catch (err) { handleErr(res, err); }
 });
+
+// Parse an uploaded order sheet and hand the values back. Deliberately does not
+// write anything: the entry form pre-fills from this and the supervisor saves.
+// The file is held in memory and discarded — there is no reason to keep it.
+const woPdfUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024, files: 1 },
+  fileFilter: (req, file, cb) => {
+    const extOk  = path.extname(file.originalname).toLowerCase() === '.pdf';
+    const mimeOk = file.mimetype === 'application/pdf';
+    cb(null, extOk && mimeOk);
+  },
+});
+
+app.post('/api/water-orders/parse-pdf',
+  requireAuth, requireRole(...SUPERVISOR_ROLES),
+  (req, res, next) => woPdfUpload.single('file')(req, res, err => {
+    if (err) return res.status(400).json({ error: err.code === 'LIMIT_FILE_SIZE'
+      ? 'PDF is too large (10 MB max).' : 'Upload failed.' });
+    next();
+  }),
+  async (req, res) => {
+    if (!req.file) return res.status(400).json({ error: 'Attach a PDF water order.' });
+    try {
+      const { getDocumentProxy } = require('unpdf');
+      const pdf = await getDocumentProxy(new Uint8Array(req.file.buffer));
+      if (!pdf.numPages) return res.status(400).json({ error: 'That PDF has no pages.' });
+
+      // Page 1 is the order; page 2, when present, is the running-wells sheet,
+      // which the app already derives from the Running Wells setting.
+      const page = await pdf.getPage(1);
+      const { items } = await page.getTextContent();
+      const parsed = woParseOrderRows(woPdfRows(items));
+
+      if (!parsed.lines.length) {
+        return res.status(422).json({
+          error: 'No water order lines found. Is this a Cross Valley Canal water order sheet?',
+          order_date: parsed.order_date, lines: [], unmatched: parsed.unmatched,
+        });
+      }
+      res.json(parsed);
+    } catch (err) {
+      console.error('Water order PDF parse failed:', err);
+      res.status(422).json({ error: 'Could not read that PDF.' });
+    }
+  }
+);
 
 app.put('/api/water-orders', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
   const date = String(req.body.order_date ?? '');
