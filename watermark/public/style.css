@@ -3153,6 +3153,51 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
 .wo-hist-time { font-size: 0.75rem; color: var(--text-dim); }
 .wo-hist-note { font-size: 0.75rem; color: var(--text-muted); overflow-wrap: anywhere; }
 
+/* PDF chooser modal — drop / paste / browse. */
+.wo-pdf-overlay { z-index: 320; }
+.wo-drop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 26px 16px;
+  border: 2px dashed var(--border);
+  border-radius: var(--radius);
+  background: var(--surface2);
+  color: var(--text-dim);
+  text-align: center;
+  cursor: pointer;
+  transition: border-color var(--transition), background var(--transition);
+}
+.wo-drop:hover, .wo-drop:focus-visible {
+  border-color: var(--accent);
+  background: var(--surface3);
+  outline: none;
+}
+/* Highlight while a file is over the zone. Children ignore pointer events so
+   moving across them cannot fire dragleave and flicker the highlight off. */
+.wo-drop-over {
+  border-color: var(--accent);
+  border-style: solid;
+  background: var(--surface3);
+}
+.wo-drop > * { pointer-events: none; }
+.wo-drop-icon { width: 30px; height: 30px; color: var(--accent); }
+.wo-drop-main { font-size: 0.95rem; font-weight: 600; color: var(--text); }
+.wo-drop-sub  { font-size: 0.78rem; color: var(--text-muted); }
+.wo-drop-link { color: var(--accent); text-decoration: underline; }
+.wo-drop kbd {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.72rem;
+  padding: 1px 4px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--surface);
+  color: var(--text-dim);
+}
+#wo-pdf-modal-msg { margin-top: 12px; }
+
 /* PDF import — sits above the entry form; the parse only fills the inputs. */
 .wo-import-row {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;

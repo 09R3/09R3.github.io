@@ -117,7 +117,8 @@ wells recovery is split by each well's `discharge_pool` so it is credited to the
 plant filling that reach.
 
 A printed order sheet can be imported: **Settings → Water Orders → Import from
-PDF** reads page 1 and fills the form. It never saves — the supervisor checks the
+PDF** opens a chooser that takes the file three ways — drop it on the zone, paste
+it with Ctrl+V, or click to browse — then reads page 1 and fills the form. It never saves — the supervisor checks the
 values and presses Save, and the banner reports how many lines were filled plus
 any label it could not place. If the PDF's date differs from the selected date,
 the date is switched to the PDF's. Lines absent from the sheet are cleared, and

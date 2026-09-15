@@ -129,7 +129,7 @@
         Sign in with Microsoft 365
       </a>
       <div id="ms-login-error" class="error-msg hidden"></div>
-      <div class="login-version">v 3.27</div>
+      <div class="login-version">v 3.28</div>
     </div>
   </div>
 </div>
@@ -1935,7 +1935,6 @@
               <button class="btn btn-secondary btn-sm" id="wo-today-btn">Today</button>
             </div>
             <div class="wo-import-row">
-              <input type="file" id="wo-pdf-input" accept="application/pdf,.pdf" hidden>
               <button type="button" class="btn btn-secondary btn-sm" id="wo-pdf-btn">Import from PDF</button>
               <span class="wo-import-hint">Fills the form below — nothing is saved until you press Save.</span>
             </div>
@@ -1969,7 +1968,7 @@
     <div id="settings-panel-appinfo" class="settings-panel hidden">
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 3.27</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 3.28</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>
@@ -2884,6 +2883,28 @@
       <button class="modal-close" id="water-order-modal-close">&times;</button>
     </div>
     <div class="modal-body" id="water-order-modal-body" style="padding:0"></div>
+  </div>
+</div>
+
+<!-- Water Order PDF chooser — drop, paste or browse -->
+<div id="wo-pdf-modal" class="modal-overlay wo-pdf-overlay hidden">
+  <div class="modal-card" style="max-width:460px">
+    <div class="modal-header">
+      <h2>Import Water Order</h2>
+      <button class="modal-close" id="wo-pdf-modal-close">&times;</button>
+    </div>
+    <div class="modal-body">
+      <input type="file" id="wo-pdf-input" accept="application/pdf,.pdf" hidden>
+      <div id="wo-drop" class="wo-drop" tabindex="0" role="button"
+           aria-label="Choose a PDF water order: drop a file here, paste, or browse">
+        <svg class="wo-drop-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M19 15v3a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-3h2v3h10v-3h2zM12 3l5 5h-3v6h-4V8H7l5-5z"/>
+        </svg>
+        <div class="wo-drop-main">Drop a PDF here</div>
+        <div class="wo-drop-sub">paste with <kbd>Ctrl</kbd>+<kbd>V</kbd>, or <span class="wo-drop-link">browse</span></div>
+      </div>
+      <div id="wo-pdf-modal-msg" class="wo-import-result hidden"></div>
+    </div>
   </div>
 </div>
 

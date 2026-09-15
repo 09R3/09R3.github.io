@@ -1090,17 +1090,104 @@ function woStepDate(days) {
   loadWaterOrderForm(input.value);
 }
 
+// ── Water order PDF chooser ──────────────────────────────────────────────────
+// Three ways in, because operators reach for different ones: drop a file, paste
+// from the clipboard, or browse. The paste listener lives on the document and is
+// only attached while the chooser is open, so it never swallows a paste meant
+// for a text field elsewhere.
+function woPdfMsg(text, cls) {
+  const m = el('wo-pdf-modal-msg');
+  if (!m) return;
+  m.textContent = text;
+  m.className = 'wo-import-result' + (cls ? ' ' + cls : '');
+}
+
+function woFileLooksPdf(file) {
+  return !!file && (file.type === 'application/pdf' || /\.pdf$/i.test(file.name || ''));
+}
+
+// Shared by all three paths so they cannot diverge.
+function woAcceptFile(file) {
+  if (!file) {
+    woPdfMsg('No file found — try dropping the PDF or using Browse.', 'wo-import-bad');
+    return;
+  }
+  if (!woFileLooksPdf(file)) {
+    woPdfMsg(`${file.name || 'That file'} is not a PDF.`, 'wo-import-bad');
+    return;
+  }
+  woImportPdf(file);
+}
+
+function woPdfPasteHandler(e) {
+  const items = [...(e.clipboardData?.files || [])];
+  const pdf = items.find(woFileLooksPdf) || items[0];
+  if (!pdf) {
+    woPdfMsg('No file on the clipboard. Copy the PDF in your file manager first.', 'wo-import-bad');
+    return;
+  }
+  e.preventDefault();
+  woAcceptFile(pdf);
+}
+
+function openWoPdfModal() {
+  woPdfMsg('', '');
+  el('wo-pdf-modal-msg').classList.add('hidden');
+  el('wo-drop').classList.remove('wo-drop-over');
+  el('wo-pdf-modal').classList.remove('hidden');
+  document.addEventListener('paste', woPdfPasteHandler);
+  el('wo-drop').focus();
+}
+
+function closeWoPdfModal() {
+  document.removeEventListener('paste', woPdfPasteHandler);
+  el('wo-pdf-modal').classList.add('hidden');
+}
+
+(function wireWoPdfChooser() {
+  const modal = el('wo-pdf-modal');
+  if (!modal) return;
+  const drop  = el('wo-drop');
+  const input = el('wo-pdf-input');
+
+  el('wo-pdf-modal-close').addEventListener('click', closeWoPdfModal);
+  modal.addEventListener('click', e => { if (e.target === modal) closeWoPdfModal(); });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && !modal.classList.contains('hidden')) closeWoPdfModal();
+  });
+
+  // Browse — also from the keyboard, since the zone is focusable.
+  const browse = () => { input.value = ''; input.click(); };
+  drop.addEventListener('click', browse);
+  drop.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); browse(); }
+  });
+  input.addEventListener('change', () => { if (input.files[0]) woAcceptFile(input.files[0]); });
+
+  // Drop. dragover must be cancelled for a drop to fire at all; cancelling it on
+  // the whole overlay as well means a near-miss doesn't make the browser open
+  // the PDF and throw away the half-filled form behind it.
+  const over = e => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; };
+  modal.addEventListener('dragover', over);
+  modal.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('wo-drop-over'); });
+  drop.addEventListener('dragover', e => { over(e); drop.classList.add('wo-drop-over'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('wo-drop-over'));
+  drop.addEventListener('drop', e => {
+    e.preventDefault();
+    e.stopPropagation();
+    drop.classList.remove('wo-drop-over');
+    woAcceptFile(e.dataTransfer?.files?.[0]);
+  });
+})();
+
 // Import a printed order sheet into the form. The parse is server-side; this
 // only writes the values into the inputs. Nothing is saved — the supervisor
 // reviews and presses Save, exactly as if they had typed it.
 async function woImportPdf(file) {
   const out = el('wo-import-result');
-  const btn = el('wo-pdf-btn');
   el('wo-error').classList.add('hidden');
-  out.className = 'wo-import-result';
-  out.textContent = 'Reading PDF…';
+  woPdfMsg(`Reading ${file.name}…`, '');
 
-  const restore = beginSave(btn, 'Reading…');
   let data;
   try {
     const res = await fetch('/api/water-orders/parse-pdf',
@@ -1108,11 +1195,11 @@ async function woImportPdf(file) {
     data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
   } catch (err) {
-    out.className = 'wo-import-result wo-import-bad';
-    out.textContent = err.message || 'Could not read that PDF.';
-    restore();
+    // Stay open on failure so another file can be dropped straight away.
+    woPdfMsg(err.message || 'Could not read that PDF.', 'wo-import-bad');
     return;
-  } finally { restore(); }
+  }
+  closeWoPdfModal();
 
   const selected = el('wo-date').value;
   // A sheet imported onto the wrong date is the expensive mistake here, so the
@@ -1163,9 +1250,7 @@ function initWaterOrdersPanel() {
   el('wo-date-prev').onclick = () => woStepDate(-1);
   el('wo-date-next').onclick = () => woStepDate(1);
 
-  const pdfInput = el('wo-pdf-input');
-  el('wo-pdf-btn').onclick = () => { pdfInput.value = ''; pdfInput.click(); };
-  pdfInput.onchange = () => { if (pdfInput.files[0]) woImportPdf(pdfInput.files[0]); };
+  el('wo-pdf-btn').onclick = openWoPdfModal;
   el('wo-today-btn').onclick = () => {
     dateInput.value = todayISO();
     loadWaterOrderForm(dateInput.value);
