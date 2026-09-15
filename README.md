@@ -116,6 +116,10 @@ set in `WATER_ORDER_INFLOW` / `WATER_ORDER_OUTFLOW` in `server.js`, and the
 wells recovery is split by each well's `discharge_pool` so it is credited to the
 plant filling that reach.
 
+Both the order view and the entry form group their lines under a **Pool** heading
+wherever the reach changes, mirroring the left margin of the order sheet, and the
+Wells line shows its per-pool split beneath the total.
+
 Refill is the one outflow line excluded from Total Outflow — it stays in the
 canal rather than being delivered — so a refill day shows inflow above outflow.
 

@@ -3085,6 +3085,39 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
   font-variant-numeric: tabular-nums;
 }
 
+/* Pool (reach) headings. The order sheet marks the reach in its left margin;
+   these break the 30-line outflow list into the groups that actually feed each
+   pumping plant. */
+.wo-pool-head td {
+  padding: 10px 6px 3px;
+  font-size: 0.66rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  border-bottom: 1px solid var(--accent);
+  border-top: none;
+}
+.wo-table tbody tr:first-child.wo-pool-head td { padding-top: 2px; }
+.wo-pool-head-edit {
+  margin: 12px 0 3px;
+  padding-bottom: 2px;
+  font-size: 0.64rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  border-bottom: 1px solid var(--border);
+}
+/* Wells recovery split by pool, under the Wells line. */
+.wo-wells-split {
+  display: block;
+  font-size: 0.62rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  margin-top: 1px;
+}
+
 /* Tappable rows in the detail view. A dotted underline on the name is the only
    affordance available — there is no hover on a phone. */
 .wo-row-tap { cursor: pointer; }

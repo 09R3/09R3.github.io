@@ -794,7 +794,46 @@ function woFmt(n) {
   return n == null || n === '' ? '' : Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
-function woSectionHtml(section, title, cfsHeading, lines, total, totalLabel) {
+// The order sheet marks a pool in column A wherever the reach changes. Walk the
+// lines in sheet order and emit a heading at each change; the wells line carries
+// no pool of its own (it spans 1-6) so it never breaks the run.
+function woWithPoolHeads(lines, render) {
+  let current = null;
+  return lines.map(l => {
+    let head = '';
+    if (l.pool != null && l.pool !== current) {
+      current = l.pool;
+      head = render.head(l.pool);
+    }
+    return head + render.row(l);
+  }).join('');
+}
+
+// Per-pool well recovery, shown under the Wells line so the split that feeds the
+// plant calculation is visible rather than buried in the total.
+function woWellsSplit(byPool) {
+  if (!byPool) return '';
+  const parts = Object.entries(byPool)
+    .filter(([, v]) => Number(v) > 0)
+    .map(([p, v]) => `P${p}&nbsp;${woFmt(v)}`);
+  return parts.length ? `<span class="wo-wells-split">${parts.join(' · ')}</span>` : '';
+}
+
+function woSectionHtml(section, title, cfsHeading, lines, total, totalLabel, wellsByPool) {
+  const row = l => `
+          <tr${l.computed ? ' class="wo-row-computed"' : ' class="wo-row-tap"'}${
+            l.computed === 'running_wells' ? ' id="wo-wells-row" title="From Running Wells — tap to view"' : ''}${
+            l.computed ? '' : ` data-hist-section="${escHtml(section)}" data-hist-key="${escHtml(l.key)}"`}>
+            <td class="wo-col-name"><span class="wo-name">${escHtml(l.label)}</span>${
+              l.computed === 'running_wells'
+                ? '<span class="wo-from">from Running Wells</span>' + woWellsSplit(wellsByPool) : ''}</td>
+            <td class="wo-col-cfs">${woFmt(l.cfs)}</td>
+            <td class="wo-col-time">${escHtml(l.time_of_change || '')}</td>
+            <td class="wo-col-comments">${escHtml(l.comments || '')}</td>
+          </tr>`;
+  const head = pool => `
+          <tr class="wo-pool-head"><td colspan="4">Pool ${pool}</td></tr>`;
+
   return `
     <div class="wo-section-title">${title}</div>
     <table class="wo-table">
@@ -807,16 +846,7 @@ function woSectionHtml(section, title, cfsHeading, lines, total, totalLabel) {
         </tr>
       </thead>
       <tbody>
-        ${lines.map(l => `
-          <tr${l.computed ? ' class="wo-row-computed"' : ' class="wo-row-tap"'}${
-            l.computed === 'running_wells' ? ' id="wo-wells-row" title="From Running Wells — tap to view"' : ''}${
-            l.computed ? '' : ` data-hist-section="${escHtml(section)}" data-hist-key="${escHtml(l.key)}"`}>
-            <td class="wo-col-name"><span class="wo-name">${escHtml(l.label)}</span>${
-              l.computed === 'running_wells' ? '<span class="wo-from">from Running Wells</span>' : ''}</td>
-            <td class="wo-col-cfs">${woFmt(l.cfs)}</td>
-            <td class="wo-col-time">${escHtml(l.time_of_change || '')}</td>
-            <td class="wo-col-comments">${escHtml(l.comments || '')}</td>
-          </tr>`).join('')}
+        ${woWithPoolHeads(lines, { head, row })}
         <tr class="wo-row-total wo-row-tap" data-hist-section="${escHtml(section)}" data-hist-key="__total__">
           <td class="wo-col-name"><span class="wo-name">${totalLabel}</span></td>
           <td class="wo-col-cfs">${woFmt(total)}</td>
@@ -855,7 +885,7 @@ async function openWaterOrderModal(dateStr) {
           <div class="wo-pp-note">Calculated from the turnouts in each reach and the well recovery per pool.</div>
         ` : ''}
         <div class="report-scroll">
-          ${woSectionHtml('inflow', 'INFLOW', 'CFS', wo.inflow, wo.total_inflow, 'Total Inflow')}
+          ${woSectionHtml('inflow', 'INFLOW', 'CFS', wo.inflow, wo.total_inflow, 'Total Inflow', wo.wells_by_pool)}
           ${woSectionHtml('outflow', 'OUTFLOW', 'CFS<br>Ordered', wo.outflow, wo.total_outflow, 'Total Outflow')}
         </div>
       </div>`;
@@ -978,10 +1008,11 @@ el('wo-history-modal').addEventListener('click', e => {
 
 // Supervisor entry form (Settings → Widgets → Water Orders). The date picker
 // drives which order is loaded, so a future order is just a future date.
-function woFieldsHtml(section, lines) {
-  return lines.map(l => l.computed ? `
+function woFieldsHtml(section, lines, wellsByPool) {
+  const row = l => l.computed ? `
     <div class="wo-edit-row wo-edit-computed">
-      <div class="wo-edit-name">${escHtml(l.label)}<span class="wo-from">from Running Wells</span></div>
+      <div class="wo-edit-name">${escHtml(l.label)}<span class="wo-from">from Running Wells</span>${
+        woWellsSplit(wellsByPool)}</div>
       <input type="text" class="rr-input wo-in-cfs" value="${woFmt(l.cfs)}" disabled>
       <input type="text" class="rr-input wo-in-time" placeholder="—" disabled>
       <input type="text" class="rr-input wo-in-comments" placeholder="—" disabled>
@@ -995,7 +1026,9 @@ function woFieldsHtml(section, lines) {
              value="${escHtml(l.time_of_change || '')}">
       <input type="text" class="rr-input wo-in-comments" placeholder="Comments"
              value="${escHtml(l.comments || '')}">
-    </div>`).join('');
+    </div>`;
+  const head = pool => `<div class="wo-pool-head-edit">Pool ${pool}</div>`;
+  return woWithPoolHeads(lines, { head, row });
 }
 
 async function loadWaterOrderForm(dateStr) {
@@ -1009,7 +1042,7 @@ async function loadWaterOrderForm(dateStr) {
         <span class="wo-edit-name"></span><span>CFS</span><span>Time</span><span>Comments</span>
       </div>
       <div class="wo-edit-section">Inflow</div>
-      ${woFieldsHtml('inflow', wo.inflow)}
+      ${woFieldsHtml('inflow', wo.inflow, wo.wells_by_pool)}
       <div class="wo-edit-totals">Total Inflow <strong id="wo-sum-inflow">${woFmt(wo.total_inflow)}</strong> cfs</div>
       <div class="wo-edit-section">Outflow</div>
       ${woFieldsHtml('outflow', wo.outflow)}
