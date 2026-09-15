@@ -840,6 +840,20 @@ async function openWaterOrderModal(dateStr) {
         <div class="wo-doc-date">${d.toLocaleDateString('en-US',
           { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</div>
         ${!wo.exists ? '<div class="wo-doc-empty">No order entered for this date.</div>' : ''}
+        ${wo.plants ? `
+          <div class="wo-section-title">ESTIMATED PUMPING PLANT OPERATIONS</div>
+          <table class="wo-table wo-pp-table">
+            <thead><tr><th class="wo-col-name"></th><th class="wo-col-cfs">CFS</th></tr></thead>
+            <tbody>
+              ${wo.plants.map(pl => `
+                <tr>
+                  <td class="wo-col-name">${escHtml(pl.label)}</td>
+                  <td class="wo-col-cfs">${woFmt(pl.cfs)}</td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+          <div class="wo-pp-note">Calculated from the turnouts in each reach and the well recovery per pool.</div>
+        ` : ''}
         <div class="report-scroll">
           ${woSectionHtml('inflow', 'INFLOW', 'CFS', wo.inflow, wo.total_inflow, 'Total Inflow')}
           ${woSectionHtml('outflow', 'OUTFLOW', 'CFS<br>Ordered', wo.outflow, wo.total_outflow, 'Total Outflow')}
@@ -1000,6 +1014,17 @@ async function loadWaterOrderForm(dateStr) {
       <div class="wo-edit-section">Outflow</div>
       ${woFieldsHtml('outflow', wo.outflow)}
       <div class="wo-edit-totals">Total Outflow <strong id="wo-sum-outflow">${woFmt(wo.total_outflow)}</strong> cfs</div>
+      ${wo.plants ? `
+        <div class="wo-edit-section">Estimated Pumping Plant Operations</div>
+        <div class="wo-pp-grid">
+          ${wo.plants.map(pl => `
+            <div class="wo-pp-cell">
+              <span class="wo-pp-label">${escHtml(pl.label.replace('Pumping Plant No. ', 'PP '))}</span>
+              <span class="wo-pp-val">${woFmt(pl.cfs)}</span>
+            </div>`).join('')}
+        </div>
+        <div class="wo-pp-note">Calculated, not entered. Updates when the order is saved.</div>
+      ` : ''}
       ${wo.exists && wo.entered_by
         ? `<div class="wo-edit-meta">Last saved by ${escHtml(wo.entered_by)}</div>` : ''}`;
     body.querySelectorAll('.wo-in-cfs').forEach(i => i.addEventListener('input', recalcWaterOrderTotals));
@@ -1074,6 +1099,8 @@ function initWaterOrdersPanel() {
     try {
       await api('PUT', '/api/water-orders', { order_date: date, lines });
       showToast('Water order saved', 'success');
+      // Plant figures are derived server-side; reload so they reflect the save.
+      await loadWaterOrderForm(date);
       if (date === todayISO()) loadDashboardStats();   // refresh the widget
     } catch (err) {
       errEl.textContent = err.message;

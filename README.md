@@ -106,6 +106,19 @@ DWR Order is the CA Aqueduct inflow; when that is zero or blank and water is
 going back to the aqueduct instead, the widget shows the CA Aqueduct - Reverse
 figure marked `(rev)`.
 
+The **Estimated Pumping Plant Operations** block (PP 1–6, 6B, 7) is calculated,
+not entered. The canal is a chain of pools and each plant lifts into the next
+one, so a plant carries everything taken out of the pools below it less
+everything added into them: `PP n = Σ(outflows from pools > n) − Σ(inflows into
+pools > n)`. Pool 7 is the exception — PP 6B carries only its own two lines and
+PP 6A carries the rest of pool 7 plus whatever PP 7 lifts. Each line's pool is
+set in `WATER_ORDER_INFLOW` / `WATER_ORDER_OUTFLOW` in `server.js`, and the
+wells recovery is split by each well's `discharge_pool` so it is credited to the
+plant filling that reach.
+
+Refill is the one outflow line excluded from Total Outflow — it stays in the
+canal rather than being delivered — so a refill day shows inflow above outflow.
+
 Tapping any line name — or either total — in the order opens that line's history
 across past orders: a bar chart of the last 7 and a scrollable list of the last
 30, with the time of change and comments recorded each day. Historical inflow

@@ -5776,47 +5776,57 @@ app.put('/api/settings/running-wells', requireAuth, requireRole(...SUPERVISOR_RO
 // Line definitions live here, not in the database, so labels and ordering can
 // change without a data migration and a request can never introduce a line.
 // line_key is the stable identity; label is display only.
+// `pool` is the canal reach the line enters or leaves. It drives the Estimated
+// Pumping Plant Operations block: a plant carries everything taken out of the
+// pools below it, less everything added into those pools. Transcribed from the
+// CVC Water Order formulas workbook.
 const WATER_ORDER_INFLOW = [
-  { key: 'ca_aqueduct',            label: 'CA Aqueduct' },
+  { key: 'ca_aqueduct',            label: 'CA Aqueduct',              pool: 1 },
+  // Split across pools 1-6 by the wells' discharge_pool — see waterOrderWells().
   { key: 'wells_total_recovery',   label: 'Wells (Total Recovery)', computed: 'running_wells' },
-  { key: 'kwb_river_pipeline',     label: 'KWB River Pipeline' },
-  { key: 'pioneer_inlet',          label: 'Pioneer Inlet' },
-  { key: 'arvin_edison_intertie',  label: 'Arvin-Edison Intertie' },
-  { key: 'cvc_friant_kern_intertie', label: 'CVC/Friant-Kern Intertie' },
-  { key: 'nkto_reverse_flow',      label: 'NKTO Reverse Flow' },
+  { key: 'kwb_river_pipeline',     label: 'KWB River Pipeline',       pool: 3 },
+  { key: 'pioneer_inlet',          label: 'Pioneer Inlet',            pool: 5 },
+  { key: 'arvin_edison_intertie',  label: 'Arvin-Edison Intertie',    pool: 6 },
+  { key: 'cvc_friant_kern_intertie', label: 'CVC/Friant-Kern Intertie', pool: 6 },
+  { key: 'nkto_reverse_flow',      label: 'NKTO Reverse Flow',        pool: 7 },
 ];
 
 const WATER_ORDER_OUTFLOW = [
-  { key: 'ca_aqueduct_reverse',    label: 'CA Aqueduct - Reverse' },
-  { key: 'refill',                 label: 'Refill' },
-  { key: 'n2_siphon',              label: 'N-2 Siphon' },
-  { key: 'rrb_turnout_1',          label: 'Rosedale-Rio Bravo Turnout No. 1' },
-  { key: 'rrb_turnout_1b',         label: 'Rosedale-Rio Bravo Turnout No. 1B' },
-  { key: 'strand_siphons',         label: 'Strand Siphons' },
-  { key: 'north_strand_turnout',   label: 'North Strand Turnout' },
-  { key: 'south_strand_turnout',   label: 'South Strand Turnout' },
-  { key: 'kwb_turnout_p11',        label: 'KWB Turnout (P11)' },
-  { key: 'rrb_central_intake',     label: 'RRB Central Intake' },
-  { key: 'kwb_river_pipeline_out', label: 'KWB River Pipeline' },
-  { key: 'nord_turnout',           label: 'Nord Turnout' },
-  { key: 'grimmway_temp_pumps',    label: 'Grimmway Temporary Pumps' },
-  { key: 'section_4',              label: 'Section 4' },
-  { key: 'river_turnout_1',        label: 'River Turnout No. 1' },
-  { key: 'rrb_turnout_2',          label: 'Rosedale-Rio Bravo Turnout No. 2' },
-  { key: 'river_turnout_2',        label: 'River Turnout No. 2' },
-  { key: 'arvin_edison_turnouts',  label: 'Arvin-Edison Turnouts' },
-  { key: 'pp6b_arvin_edison',      label: 'Pumping Plant No. 6B - Arvin Edison' },
-  { key: 'pp6b_friant_kern',       label: 'Pumping Plant No. 6B - Friant-Kern' },
-  { key: 'north_kern_calloway',    label: 'North Kern Calloway Canal Turnout' },
-  { key: 'big_bertha_siphon',      label: 'Big Bertha Siphon' },
-  { key: 'river_turnout_3_truxtun', label: 'River Turnout No. 3 to Truxtun Lake' },
-  { key: 'river_turnout_3',        label: 'River Turnout No. 3' },
-  { key: 'river_turnout_3_pond',   label: 'River Turnout No. 3 to Pond' },
-  { key: 'river_turnout_4',        label: 'River Turnout No. 4' },
-  { key: 'calloway_canal_turnout', label: 'Calloway Canal Turnout' },
-  { key: 'id4_treatment_plant',    label: 'ID4 Treatment Plant' },
-  { key: 'cawelo_pump_station_a',  label: 'Cawelo Pump Station "A"' },
-  { key: 'cvc_losses',             label: 'CVC Losses' },
+  // Pool 1 sits above PP 1, so nothing here is pumped.
+  { key: 'ca_aqueduct_reverse',    label: 'CA Aqueduct - Reverse',    pool: 1 },
+  // Refill stays in the canal rather than being delivered, so it is the one
+  // outflow line the workbook leaves out of Total Outflow.
+  { key: 'refill',                 label: 'Refill',                   pool: 1, excludeFromTotal: true },
+  { key: 'n2_siphon',              label: 'N-2 Siphon',               pool: 2 },
+  { key: 'rrb_turnout_1',          label: 'Rosedale-Rio Bravo Turnout No. 1',  pool: 3 },
+  { key: 'rrb_turnout_1b',         label: 'Rosedale-Rio Bravo Turnout No. 1B', pool: 3 },
+  { key: 'strand_siphons',         label: 'Strand Siphons',           pool: 3 },
+  { key: 'north_strand_turnout',   label: 'North Strand Turnout',     pool: 3 },
+  { key: 'south_strand_turnout',   label: 'South Strand Turnout',     pool: 3 },
+  { key: 'kwb_turnout_p11',        label: 'KWB Turnout (P11)',        pool: 3 },
+  { key: 'rrb_central_intake',     label: 'RRB Central Intake',       pool: 3 },
+  { key: 'kwb_river_pipeline_out', label: 'KWB River Pipeline',       pool: 3 },
+  { key: 'nord_turnout',           label: 'Nord Turnout',             pool: 4 },
+  { key: 'grimmway_temp_pumps',    label: 'Grimmway Temporary Pumps', pool: 4 },
+  { key: 'section_4',              label: 'Section 4',                pool: 4 },
+  { key: 'river_turnout_1',        label: 'River Turnout No. 1',      pool: 5 },
+  { key: 'rrb_turnout_2',          label: 'Rosedale-Rio Bravo Turnout No. 2',  pool: 6 },
+  { key: 'river_turnout_2',        label: 'River Turnout No. 2',      pool: 6 },
+  // Pool 7 is fed by two plants: the 6B branch carries its own two lines, PP 6A
+  // carries the rest plus everything PP 7 lifts.
+  { key: 'arvin_edison_turnouts',  label: 'Arvin-Edison Turnouts',    pool: 7, branch: '6A' },
+  { key: 'pp6b_arvin_edison',      label: 'Pumping Plant No. 6B - Arvin Edison', pool: 7, branch: '6B' },
+  { key: 'pp6b_friant_kern',       label: 'Pumping Plant No. 6B - Friant-Kern',  pool: 7, branch: '6B' },
+  { key: 'north_kern_calloway',    label: 'North Kern Calloway Canal Turnout', pool: 7, branch: '6A' },
+  { key: 'big_bertha_siphon',      label: 'Big Bertha Siphon',        pool: 7, branch: '6A' },
+  { key: 'river_turnout_3_truxtun', label: 'River Turnout No. 3 to Truxtun Lake', pool: 7, branch: '6A' },
+  { key: 'river_turnout_3',        label: 'River Turnout No. 3',      pool: 7, branch: '6A' },
+  { key: 'river_turnout_3_pond',   label: 'River Turnout No. 3 to Pond', pool: 7, branch: '6A' },
+  { key: 'river_turnout_4',        label: 'River Turnout No. 4',      pool: 8 },
+  { key: 'calloway_canal_turnout', label: 'Calloway Canal Turnout',   pool: 8 },
+  { key: 'id4_treatment_plant',    label: 'ID4 Treatment Plant',      pool: 8 },
+  { key: 'cawelo_pump_station_a',  label: 'Cawelo Pump Station "A"',  pool: 8 },
+  { key: 'cvc_losses',             label: 'CVC Losses',               pool: 8 },
 ];
 
 const WATER_ORDER_SECTIONS = {
@@ -5846,43 +5856,105 @@ function isValidIsoDate(str) {
 // Wells widget — running wells in Pools 1-6 that are on, plus the pool extras.
 // It is always "as of now", so a future-dated order shows the current recovery
 // rather than a forecast.
-async function waterOrderWellsCfs() {
+// Wells (Total Recovery), broken down by the pool each well discharges into.
+// Same rule the Running Wells widget uses — wells that are on, plus the per-pool
+// extras — but kept per pool so each plant can be credited with the recovery
+// that lands in the reach it fills. Returns { byPool: {1..6}, total }.
+async function waterOrderWells() {
+  const byPool = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 };
   try {
     const st = await pool.query(`SELECT value FROM app_settings WHERE key = 'running_wells'`);
     const raw = st.rows.length ? JSON.parse(st.rows[0].value) : {};
     const ids = Array.isArray(raw) ? raw : (raw.well_ids || []);
     const pool_extras = Array.isArray(raw) ? {} : (raw.pool_extras || {});
-    const extra = Object.entries(pool_extras)
-      .filter(([p]) => /^Pool\s*[1-6]$/i.test(p))
-      .reduce((sum, [, v]) => sum + (parseFloat(v) || 0), 0);
-    if (!ids.length) return extra;
 
-    const { rows } = await pool.query(
-      `WITH today_rdg AS (
-         SELECT DISTINCT ON (well_id) well_id, on_off, flow_cfs
-         FROM readings_well WHERE reading_date = CURRENT_DATE
-         ORDER BY well_id, reading_time DESC NULLS LAST
-       ),
-       latest_flow AS (
-         SELECT DISTINCT ON (well_id) well_id, flow_cfs
-         FROM readings_well WHERE flow_cfs IS NOT NULL AND flow_cfs > 0
-         ORDER BY well_id, reading_date DESC, reading_time DESC NULLS LAST
-       )
-       SELECT tr.on_off, tr.flow_cfs, lf.flow_cfs AS fallback_flow_cfs
-       FROM wells w
-       JOIN (SELECT unnest($1::int[]) AS wid) r ON r.wid = w.well_id
-       LEFT JOIN today_rdg tr ON tr.well_id = w.well_id
-       LEFT JOIN latest_flow lf ON lf.well_id = w.well_id
-       WHERE w.discharge_pool ~* '^Pool[[:space:]]*[1-6]$'`,
-      [ids]
-    );
-    const wells = rows
-      .filter(r => r.on_off)
-      .reduce((sum, r) => sum + (parseFloat(r.flow_cfs ?? r.fallback_flow_cfs) || 0), 0);
-    return wells + extra;
-  } catch {
-    return 0;   // widget must still render if Running Wells isn't configured
-  }
+    for (const [name, v] of Object.entries(pool_extras)) {
+      const m = /^Pool\s*([1-6])$/i.exec(name);
+      if (m) byPool[+m[1]] += parseFloat(v) || 0;
+    }
+
+    if (ids.length) {
+      const { rows } = await pool.query(
+        `WITH today_rdg AS (
+           SELECT DISTINCT ON (well_id) well_id, on_off, flow_cfs
+           FROM readings_well WHERE reading_date = CURRENT_DATE
+           ORDER BY well_id, reading_time DESC NULLS LAST
+         ),
+         latest_flow AS (
+           SELECT DISTINCT ON (well_id) well_id, flow_cfs
+           FROM readings_well WHERE flow_cfs IS NOT NULL AND flow_cfs > 0
+           ORDER BY well_id, reading_date DESC, reading_time DESC NULLS LAST
+         )
+         SELECT (regexp_match(w.discharge_pool, '^Pool[[:space:]]*([1-6])$', 'i'))[1] AS pool_no,
+                tr.on_off, tr.flow_cfs, lf.flow_cfs AS fallback_flow_cfs
+         FROM wells w
+         JOIN (SELECT unnest($1::int[]) AS wid) r ON r.wid = w.well_id
+         LEFT JOIN today_rdg tr ON tr.well_id = w.well_id
+         LEFT JOIN latest_flow lf ON lf.well_id = w.well_id
+         WHERE w.discharge_pool ~* '^Pool[[:space:]]*[1-6]$'`,
+        [ids]
+      );
+      for (const r of rows) {
+        if (!r.on_off) continue;
+        const n = parseInt(r.pool_no, 10);
+        if (byPool[n] === undefined) continue;
+        byPool[n] += parseFloat(r.flow_cfs ?? r.fallback_flow_cfs) || 0;
+      }
+    }
+  } catch { /* widget must still render if Running Wells isn't configured */ }
+
+  const round = v => Number(v.toFixed(2));
+  for (const k of Object.keys(byPool)) byPool[k] = round(byPool[k]);
+  return { byPool, total: round(Object.values(byPool).reduce((a, b) => a + b, 0)) };
+}
+
+// Estimated Pumping Plant Operations.
+//
+// A plant lifts from its own pool into the next one, so it must carry everything
+// taken out of every pool below it, less everything added into those pools:
+//
+//   PP n = Σ(outflows from pools > n) − Σ(inflows into pools > n)
+//
+// Pool 7 is the exception: two plants feed it. PP 6B carries only its own two
+// lines; PP 6A carries the rest of pool 7 plus whatever PP 7 lifts, less the
+// pool 7 inflow. Verified equivalent to the workbook formulas across 400
+// randomised trials.
+const WATER_ORDER_PLANTS = [
+  { key: 'pp1',  label: 'Pumping Plant No. 1',  below: 1 },
+  { key: 'pp2',  label: 'Pumping Plant No. 2',  below: 2 },
+  { key: 'pp3',  label: 'Pumping Plant No. 3',  below: 3 },
+  { key: 'pp4',  label: 'Pumping Plant No. 4',  below: 4 },
+  { key: 'pp5',  label: 'Pumping Plant No. 5',  below: 5 },
+  { key: 'pp6a', label: 'Pumping Plant No. 6',  branch: '6A' },
+  { key: 'pp6b', label: 'Pumping Plant No. 6B', branch: '6B' },
+  { key: 'pp7',  label: 'Pumping Plant No. 7',  below: 7 },
+];
+
+function waterOrderPlants(inflow, outflow, wellsByPool) {
+  const num = v => Number(v) || 0;
+  const inAt  = p => WATER_ORDER_INFLOW.reduce((t, def, i) =>
+    t + (def.pool === p ? num(inflow[i].cfs) : 0), 0) + num(wellsByPool[p]);
+  const outAt = p => WATER_ORDER_OUTFLOW.reduce((t, def, i) =>
+    t + (def.pool === p ? num(outflow[i].cfs) : 0), 0);
+  const branchAt = b => WATER_ORDER_OUTFLOW.reduce((t, def, i) =>
+    t + (def.pool === 7 && def.branch === b ? num(outflow[i].cfs) : 0), 0);
+
+  const POOLS = [1, 2, 3, 4, 5, 6, 7, 8];
+  const sumBelow = (fn, n) => POOLS.filter(p => p > n).reduce((t, p) => t + fn(p), 0);
+  const round = v => Number(v.toFixed(2));
+
+  const pp7  = round(sumBelow(outAt, 7) - sumBelow(inAt, 7));
+  const pp6b = round(branchAt('6B'));
+  const pp6a = round(pp7 + branchAt('6A') - inAt(7));
+
+  return WATER_ORDER_PLANTS.map(p => ({
+    key: p.key,
+    label: p.label,
+    cfs: p.key === 'pp7'  ? pp7
+       : p.key === 'pp6b' ? pp6b
+       : p.key === 'pp6a' ? pp6a
+       : round(sumBelow(outAt, p.below) - sumBelow(inAt, p.below)),
+  }));
 }
 
 // Assemble one date's order: every defined line, with saved values where they
@@ -5904,7 +5976,8 @@ async function buildWaterOrder(dateStr) {
     saved = new Map(rows.map(r => [`${r.section}|${r.line_key}`, r]));
   }
 
-  const wellsCfs = await waterOrderWellsCfs();
+  const wells = await waterOrderWells();
+  const wellsCfs = wells.total;
 
   const build = (section, defs) => defs.map(def => {
     const row = saved.get(`${section}|${def.key}`);
@@ -5912,6 +5985,7 @@ async function buildWaterOrder(dateStr) {
     return {
       key:   def.key,
       label: def.label,
+      pool:  def.pool ?? null,
       computed: computed ? def.computed : null,
       cfs: computed ? wellsCfs : (row && row.cfs != null ? Number(row.cfs) : null),
       time_of_change: computed ? null : (row?.time_of_change ?? null),
@@ -5923,7 +5997,10 @@ async function buildWaterOrder(dateStr) {
   const outflow = build('outflow', WATER_ORDER_OUTFLOW);
   const sum = lines => Number(lines.reduce((t, l) => t + (Number(l.cfs) || 0), 0).toFixed(2));
   const total_inflow  = sum(inflow);
-  const total_outflow = sum(outflow);
+  // Refill is carried on the sheet but stays in the canal, so it is excluded
+  // from Total Outflow — matching the formulas workbook.
+  const total_outflow = sum(outflow.filter((l, i) => !WATER_ORDER_OUTFLOW[i].excludeFromTotal));
+  const plants = waterOrderPlants(inflow, outflow, wells.byPool);
 
   // DWR Order is the CA Aqueduct inflow; when that is zero (or unset) and water
   // is going back to the aqueduct instead, report the CA Aqueduct - Reverse
@@ -5937,8 +6014,9 @@ async function buildWaterOrder(dateStr) {
     exists: !!order,
     entered_by: order?.entered_by || null,
     updated_at: order?.updated_at || null,
-    inflow, outflow,
+    inflow, outflow, plants,
     wells_cfs: wellsCfs,
+    wells_by_pool: wells.byPool,
     total_inflow, total_outflow,
     dwr_order: dwr_reverse ? aqueductOut : aqueductIn,
     dwr_reverse,
@@ -5960,6 +6038,9 @@ app.get('/api/water-orders', requireAuth, async (req, res) => {
 // either a known line key or the literal __total__ for that section's total.
 // Read-only and open to any authenticated user, like the order itself.
 const WATER_ORDER_TOTAL_KEY = '__total__';
+// Lines carried on the sheet but left out of the section total (Refill).
+const WATER_ORDER_TOTAL_EXCLUDED = [...WATER_ORDER_INFLOW, ...WATER_ORDER_OUTFLOW]
+  .filter(d => d.excludeFromTotal).map(d => d.key);
 
 app.get('/api/water-orders/history', requireAuth, async (req, res) => {
   const section = typeof req.query.section === 'string' ? req.query.section : '';
@@ -5980,9 +6061,11 @@ app.get('/api/water-orders/history', requireAuth, async (req, res) => {
   try {
     let rows;
     if (key === WATER_ORDER_TOTAL_KEY) {
+      // Same exclusion the live total applies, so the history of a total matches
+      // the total shown on the order.
       ({ rows } = await pool.query(
         `SELECT to_char(o.order_date, 'YYYY-MM-DD') AS order_date,
-                COALESCE(SUM(l.cfs), 0)
+                COALESCE(SUM(l.cfs) FILTER (WHERE NOT (l.line_key = ANY($3::text[]))), 0)
                   + CASE WHEN $1 = 'inflow' THEN COALESCE(o.wells_cfs, 0) ELSE 0 END AS cfs,
                 NULL::text AS time_of_change,
                 NULL::text AS comments
@@ -5993,7 +6076,7 @@ app.get('/api/water-orders/history', requireAuth, async (req, res) => {
          HAVING COUNT(l.line_id) > 0 OR o.wells_cfs IS NOT NULL
          ORDER BY o.order_date DESC
          LIMIT $2`,
-        [section, limit]
+        [section, limit, WATER_ORDER_TOTAL_EXCLUDED]
       ));
     } else {
       ({ rows } = await pool.query(
@@ -6057,7 +6140,7 @@ app.put('/api/water-orders', requireAuth, requireRole(...SUPERVISOR_ROLES), asyn
     });
   }
 
-  const wellsSnapshot = await waterOrderWellsCfs();
+  const wellsSnapshot = (await waterOrderWells()).total;
 
   const client = await pool.connect();
   try {
