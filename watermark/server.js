@@ -619,6 +619,14 @@ pool.query(`
   )
 `).catch(err => console.error('Migration error (river_outlets):', err.message));
 
+// Staff-gauge maximum (shown beside the Staff Gauge label on the Ponds screen)
+// and an active flag so a pond can be retired from the reading list without
+// deleting it or its history. river_outlets already carries `active`.
+pool.query(`ALTER TABLE ponds         ADD COLUMN IF NOT EXISTS max_gauge NUMERIC`)
+  .then(() => pool.query(`ALTER TABLE ponds         ADD COLUMN IF NOT EXISTS active BOOLEAN DEFAULT TRUE`))
+  .then(() => pool.query(`ALTER TABLE river_outlets ADD COLUMN IF NOT EXISTS max_gauge NUMERIC`))
+  .catch(err => console.error('Migration error (pond max_gauge/active):', err.message));
+
 pool.query(`
   CREATE TABLE IF NOT EXISTS pond_connections (
     connection_id      SERIAL PRIMARY KEY,
@@ -743,6 +751,107 @@ pool.query(`
     created_at     TIMESTAMPTZ DEFAULT NOW()
   )
 `)).catch(err => console.error('Migration error (jha tables):', err.message));
+
+// ── Purge program (Kern Fan Water Quality Sampling) ───────────────────────────
+// Wells on the purge program are flagged in the wells table. well_run is single
+// valued text, so a well can't be both a DWR run and a purge well — hence a
+// separate flag rather than reusing it.
+pool.query(`ALTER TABLE wells ADD COLUMN IF NOT EXISTS purge BOOLEAN DEFAULT FALSE`)
+  .catch(err => console.error('Migration error (wells.purge):', err.message));
+
+// One row per well per purge event — the Pumping Notes sheet. state_well_number
+// and well_name are copied in alongside well_id so the record still reads
+// correctly if a well is later renamed.
+pool.query(`
+  CREATE TABLE IF NOT EXISTS purge_readings (
+    purge_id            SERIAL PRIMARY KEY,
+    well_id             INTEGER REFERENCES wells(well_id),
+    state_well_number   TEXT,
+    well_name           TEXT,
+    well_depth          NUMERIC(10,2),
+    reading_date        DATE,
+    casing_diameter     TEXT,
+    rp_to_water         NUMERIC(10,2),
+    gallons_to_pump     NUMERIC(12,2),
+    total_gallons_pumped NUMERIC(12,2),
+    start_time          TIME,
+    start_meter         NUMERIC(14,2),
+    rp_to_water_5min    NUMERIC(10,2),
+    pumping_rate        NUMERIC(10,2),
+    end_meter           NUMERIC(14,2),
+    end_time            TIME,
+    total_pump_min      INTEGER,
+    ending_rp_to_water  NUMERIC(10,2),
+    notes               TEXT,
+    entered_by          TEXT,
+    created_at          TIMESTAMPTZ DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ DEFAULT NOW()
+  )
+`).then(() => pool.query(`
+  CREATE TABLE IF NOT EXISTS cal_log_ec (
+    cal_id        SERIAL PRIMARY KEY,
+    cal_date      DATE NOT NULL,
+    cal_time      TIME,
+    cal_std_lot   TEXT,
+    cal_pass      BOOLEAN,
+    check_std_lot TEXT,
+    check_value   NUMERIC(10,2),
+    tech          TEXT,
+    notes         TEXT,
+    entered_by    TEXT,
+    created_at    TIMESTAMPTZ DEFAULT NOW()
+  )
+`)).then(() => pool.query(`
+  CREATE TABLE IF NOT EXISTS cal_log_ph (
+    cal_id          SERIAL PRIMARY KEY,
+    cal_date        DATE NOT NULL,
+    cal_time        TIME,
+    buffer_401_lot  TEXT,
+    buffer_700_lot  TEXT,
+    buffer_1001_lot TEXT,
+    errors          TEXT,
+    cv_lot          TEXT,
+    cv_value        NUMERIC(6,2),
+    tech            TEXT,
+    notes           TEXT,
+    entered_by      TEXT,
+    created_at      TIMESTAMPTZ DEFAULT NOW()
+  )
+`)).catch(err => console.error('Migration error (purge tables):', err.message));
+
+// ── Water Orders ─────────────────────────────────────────────────────────────
+// One row per calendar date, with a line per inflow/outflow item. Mirrors page 1
+// of the CVC Water Order sheet. The Wells (Total Recovery) inflow line is NOT
+// stored — it is computed live from the Running Wells setting.
+pool.query(`
+  CREATE TABLE IF NOT EXISTS water_orders (
+    order_id   SERIAL PRIMARY KEY,
+    order_date DATE NOT NULL UNIQUE,
+    entered_by TEXT,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+  )
+`).then(() => pool.query(`
+  CREATE TABLE IF NOT EXISTS water_order_lines (
+    line_id        SERIAL PRIMARY KEY,
+    order_id       INT REFERENCES water_orders(order_id) ON DELETE CASCADE,
+    section        TEXT NOT NULL,
+    line_key       TEXT NOT NULL,
+    cfs            NUMERIC,
+    time_of_change TEXT,
+    comments       TEXT,
+    UNIQUE (order_id, section, line_key)
+  )
+`)).then(() => pool.query(
+  // Snapshot of the computed Wells (Total Recovery) figure at save time. The
+  // live value is what the current view shows; this is what makes a historical
+  // Total Inflow add up, since the wells line is otherwise never stored.
+  `ALTER TABLE water_orders ADD COLUMN IF NOT EXISTS wells_cfs NUMERIC`
+)).then(() => pool.query(
+  // Line history is queried by (section, line_key) across dates; the UNIQUE
+  // constraint leads with order_id so it can't serve that.
+  `CREATE INDEX IF NOT EXISTS idx_wol_section_key ON water_order_lines (section, line_key)`
+)).catch(err => console.error('Migration error (water_orders):', err.message));
 
 // ─────────────────────────────────────────────────────────────────────────────
 const SESSION_TTL = 8 * 60 * 60 * 1000; // 8 hours
@@ -1614,6 +1723,270 @@ app.post('/api/readings/piezometer', requireAuth, async (req, res) => {
   }
 });
 
+// ── Purge program: wells, readings, calibration logs ──────────────────────────
+// Which wells are on the purge program. Stored as a flag on the well itself
+// (see wells.purge) rather than an app_settings list, so reports can join on it.
+// All selectable wells for the purge picker. Deliberately not /wells/operational
+// — purge wells are monitoring wells, which that endpoint filters out.
+app.get('/api/purge/well-options', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT well_id, common_name, state_well_number, area, well_type, total_depth_ft
+       FROM wells
+       WHERE LOWER(COALESCE(status,'')) NOT IN ('inactive','removed')
+       ORDER BY state_well_number NULLS LAST, common_name`);
+    res.json(rows);
+  } catch (err) { handleErr(res, err); }
+});
+
+app.get('/api/settings/purge-wells', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT well_id FROM wells WHERE purge = TRUE');
+    res.json({ well_ids: rows.map(r => r.well_id) });
+  } catch (err) { handleErr(res, err); }
+});
+
+app.put('/api/settings/purge-wells', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
+  const ids = Array.isArray(req.body.well_ids)
+    ? req.body.well_ids.map(n => parseInt(n, 10)).filter(Number.isFinite) : [];
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('UPDATE wells SET purge = FALSE WHERE purge = TRUE');
+    if (ids.length) await client.query('UPDATE wells SET purge = TRUE WHERE well_id = ANY($1::int[])', [ids]);
+    await client.query('COMMIT');
+    res.json({ ok: true, count: ids.length });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    handleErr(res, err);
+  } finally { client.release(); }
+});
+
+// ── Staff gauge maximums (Settings → Staff Gauges, supervisor-level) ─────────
+// Ponds and river outlets both carry max_gauge; the Ponds reading screen shows
+// it beside the Staff Gauge label. Listed here so it can be maintained from the
+// app instead of by hand in SQL. Inactive ponds are included and flagged — a
+// retired pond still needs to be configurable.
+app.get('/api/settings/staff-gauges', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT 'pond'::text AS entity_type, p.pond_id AS entity_id, p.name,
+             p.max_gauge, (p.active IS NOT FALSE) AS active,
+             pl.name AS location_name, pl.sort_order AS location_sort, p.sort_order AS entity_sort
+      FROM ponds p
+      LEFT JOIN pond_locations pl ON pl.location_id = p.location_id
+      UNION ALL
+      SELECT 'outlet'::text, ro.outlet_id, ro.name,
+             ro.max_gauge, (ro.active IS NOT FALSE),
+             pl.name, pl.sort_order, ro.sort_order
+      FROM river_outlets ro
+      LEFT JOIN pond_locations pl ON pl.location_id = ro.location_id
+      ORDER BY location_sort NULLS LAST, location_name NULLS LAST, entity_sort, name
+    `);
+    res.json(rows);
+  } catch (err) { handleErr(res, err); }
+});
+
+// Table/column names never come from the request — entity_type only selects a
+// row from this server-side map (see CLAUDE.md, Schema Changes). Null-prototype
+// so an entity_type of "constructor" / "toString" / "__proto__" misses instead
+// of resolving up the prototype chain to a truthy non-target.
+const STAFF_GAUGE_TARGETS = Object.assign(Object.create(null), {
+  pond:   { table: 'ponds',         idCol: 'pond_id'   },
+  outlet: { table: 'river_outlets', idCol: 'outlet_id' },
+});
+
+app.put('/api/settings/staff-gauges', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
+  const input = Array.isArray(req.body.gauges) ? req.body.gauges : [];
+  if (input.length > 1000) return res.status(400).json({ error: 'Too many rows' });
+
+  const updates = [];
+  for (const g of input) {
+    const target = typeof g?.entity_type === 'string' ? STAFF_GAUGE_TARGETS[g.entity_type] : null;
+    const id = parseInt(g?.entity_id, 10);
+    if (!target || !Number.isFinite(id)) {
+      return res.status(400).json({ error: 'Invalid entity' });
+    }
+    // Blank/null clears the maximum; anything else must be a real number >= 0.
+    let max = null;
+    if (g.max_gauge !== null && g.max_gauge !== undefined && String(g.max_gauge).trim() !== '') {
+      max = Number(g.max_gauge);
+      if (!Number.isFinite(max) || max < 0) {
+        return res.status(400).json({ error: `Invalid max for ${g.entity_type} ${id}` });
+      }
+    }
+    updates.push({ target, id, max });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    for (const u of updates) {
+      await client.query(
+        `UPDATE ${u.target.table} SET max_gauge = $1 WHERE ${u.target.idCol} = $2`,
+        [u.max, u.id]
+      );
+    }
+    await client.query('COMMIT');
+    res.json({ ok: true, count: updates.length });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    handleErr(res, err);
+  } finally { client.release(); }
+});
+
+app.get('/api/purge/wells', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT well_id, common_name, state_well_number, total_depth_ft,
+              gps_latitude, gps_longitude
+       FROM wells
+       WHERE purge = TRUE AND (LOWER(status) != 'inactive' OR status IS NULL)
+       ORDER BY state_well_number NULLS LAST, common_name`);
+    res.json(rows);
+  } catch (err) { handleErr(res, err); }
+});
+
+const PURGE_NUM = ['well_depth', 'rp_to_water', 'gallons_to_pump', 'total_gallons_pumped',
+  'start_meter', 'rp_to_water_5min', 'pumping_rate', 'end_meter', 'total_pump_min',
+  'ending_rp_to_water'];
+
+function purgeBody(b) {
+  const num = v => (v === '' || v == null ? null : Number(v));
+  const out = {
+    well_id: Number.isFinite(parseInt(b.well_id, 10)) ? parseInt(b.well_id, 10) : null,
+    state_well_number: b.state_well_number ?? null,
+    well_name: b.well_name ?? null,
+    reading_date: b.reading_date || null,
+    casing_diameter: b.casing_diameter ?? null,
+    start_time: b.start_time || null,
+    end_time: b.end_time || null,
+    notes: b.notes ?? null,
+  };
+  PURGE_NUM.forEach(k => { out[k] = num(b[k]); });
+  return out;
+}
+
+app.get('/api/purge/readings', requireAuth, async (req, res) => {
+  const { start_date, end_date } = req.query;
+  try {
+    const { rows } = await pool.query(
+      `SELECT * FROM purge_readings
+       WHERE ($1::date IS NULL OR reading_date >= $1::date)
+         AND ($2::date IS NULL OR reading_date <= $2::date)
+       ORDER BY reading_date DESC NULLS LAST, purge_id DESC
+       LIMIT 500`, [start_date || null, end_date || null]);
+    res.json(rows);
+  } catch (err) { handleErr(res, err); }
+});
+
+app.post('/api/purge/readings', requireAuth, async (req, res) => {
+  const b = purgeBody(req.body);
+  if (!b.state_well_number && !b.well_id) {
+    return res.status(400).json({ error: 'a well is required' });
+  }
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO purge_readings
+        (well_id, state_well_number, well_name, well_depth, reading_date, casing_diameter,
+         rp_to_water, gallons_to_pump, total_gallons_pumped, start_time, start_meter,
+         rp_to_water_5min, pumping_rate, end_meter, end_time, total_pump_min,
+         ending_rp_to_water, notes, entered_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+       RETURNING purge_id`,
+      [b.well_id, b.state_well_number, b.well_name, b.well_depth, b.reading_date,
+       b.casing_diameter, b.rp_to_water, b.gallons_to_pump, b.total_gallons_pumped,
+       b.start_time, b.start_meter, b.rp_to_water_5min, b.pumping_rate, b.end_meter,
+       b.end_time, b.total_pump_min, b.ending_rp_to_water, b.notes, req.user.username]);
+    res.json({ ok: true, purge_id: rows[0].purge_id });
+  } catch (err) { handleErr(res, err); }
+});
+
+// Edit is limited to whoever entered it, plus supervisors.
+app.patch('/api/purge/readings/:id', requireAuth, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const b = purgeBody(req.body);
+  try {
+    const { rows } = await pool.query('SELECT entered_by FROM purge_readings WHERE purge_id = $1', [id]);
+    if (!rows.length) return res.status(404).json({ error: 'Not found' });
+    const mine = rows[0].entered_by && rows[0].entered_by === req.user.username;
+    if (!mine && !SUPERVISOR_ROLES.includes(req.user.role)) {
+      return res.status(403).json({ error: 'Only the creator or a supervisor can edit this record' });
+    }
+    await pool.query(
+      `UPDATE purge_readings SET
+         well_id=$1, state_well_number=$2, well_name=$3, well_depth=$4, reading_date=$5,
+         casing_diameter=$6, rp_to_water=$7, gallons_to_pump=$8, total_gallons_pumped=$9,
+         start_time=$10, start_meter=$11, rp_to_water_5min=$12, pumping_rate=$13,
+         end_meter=$14, end_time=$15, total_pump_min=$16, ending_rp_to_water=$17,
+         notes=$18, updated_at=NOW()
+       WHERE purge_id=$19`,
+      [b.well_id, b.state_well_number, b.well_name, b.well_depth, b.reading_date,
+       b.casing_diameter, b.rp_to_water, b.gallons_to_pump, b.total_gallons_pumped,
+       b.start_time, b.start_meter, b.rp_to_water_5min, b.pumping_rate, b.end_meter,
+       b.end_time, b.total_pump_min, b.ending_rp_to_water, b.notes, id]);
+    res.json({ ok: true });
+  } catch (err) { handleErr(res, err); }
+});
+
+app.delete('/api/purge/readings/:id', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
+  try {
+    await pool.query('DELETE FROM purge_readings WHERE purge_id = $1', [parseInt(req.params.id, 10)]);
+    res.json({ ok: true });
+  } catch (err) { handleErr(res, err); }
+});
+
+// Calibration logs. kind is validated against this map, never interpolated raw.
+const CAL_LOGS = {
+  ec: { table: 'cal_log_ec',
+        cols: ['cal_date','cal_time','cal_std_lot','cal_pass','check_std_lot','check_value','tech','notes'],
+        nums: ['check_value'], bools: ['cal_pass'] },
+  ph: { table: 'cal_log_ph',
+        cols: ['cal_date','cal_time','buffer_401_lot','buffer_700_lot','buffer_1001_lot','errors','cv_lot','cv_value','tech','notes'],
+        nums: ['cv_value'], bools: [] },
+};
+
+app.get('/api/cal-log/:kind', requireAuth, async (req, res) => {
+  const cfg = CAL_LOGS[req.params.kind];
+  if (!cfg) return res.status(400).json({ error: 'unknown log' });
+  try {
+    const { rows } = await pool.query(
+      `SELECT * FROM ${cfg.table} ORDER BY cal_date DESC, cal_time DESC NULLS LAST, cal_id DESC LIMIT 500`);
+    res.json(rows);
+  } catch (err) { handleErr(res, err); }
+});
+
+app.post('/api/cal-log/:kind', requireAuth, async (req, res) => {
+  const cfg = CAL_LOGS[req.params.kind];
+  if (!cfg) return res.status(400).json({ error: 'unknown log' });
+  const b = req.body || {};
+  if (!b.cal_date) return res.status(400).json({ error: 'cal_date required' });
+  const vals = cfg.cols.map(c => {
+    const v = b[c];
+    if (cfg.nums.includes(c)) return (v === '' || v == null) ? null : Number(v);
+    if (cfg.bools.includes(c)) return v === undefined ? null : !!v;
+    if (c === 'cal_time') return v || null;
+    return v ?? null;
+  });
+  const ph = cfg.cols.map((_, i) => `$${i + 1}`).join(',');
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO ${cfg.table} (${cfg.cols.join(',')}, entered_by)
+       VALUES (${ph}, $${cfg.cols.length + 1}) RETURNING cal_id`,
+      [...vals, req.user.username]);
+    res.json({ ok: true, cal_id: rows[0].cal_id });
+  } catch (err) { handleErr(res, err); }
+});
+
+app.delete('/api/cal-log/:kind/:id', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
+  const cfg = CAL_LOGS[req.params.kind];
+  if (!cfg) return res.status(400).json({ error: 'unknown log' });
+  try {
+    await pool.query(`DELETE FROM ${cfg.table} WHERE cal_id = $1`, [parseInt(req.params.id, 10)]);
+    res.json({ ok: true });
+  } catch (err) { handleErr(res, err); }
+});
+
 // ── DWR Well Run ──────────────────────────────────────────────────────────────
 // Generic wells-by-run lookup (DWR, Shallow, IWV) — used by GPS Location Selector
 app.get('/api/wells/by-run', requireAuth, async (req, res) => {
@@ -1937,6 +2310,7 @@ app.get('/api/ponds', requireAuth, async (req, res) => {
         NULL::int          AS outlet_id,
         p.name             AS pond_name,
         p.sort_order       AS pond_sort,
+        p.max_gauge        AS max_gauge,
         sg.reading_id      AS last_gauge_id,
         sg.level_ft        AS last_gauge_level,
         sg.reading_date    AS last_gauge_date,
@@ -2000,6 +2374,9 @@ app.get('/api/ponds', requireAuth, async (req, res) => {
         ORDER BY reading_date DESC, reading_time DESC
         LIMIT 1
       ) gr ON pg.gate_id IS NOT NULL
+      -- IS NOT FALSE, not = true: a pond with a NULL active must stay visible.
+      -- Losing a pond off the reading screen is worse than showing a retired one.
+      WHERE p.active IS NOT FALSE
 
       UNION ALL
 
@@ -2013,6 +2390,7 @@ app.get('/api/ponds', requireAuth, async (req, res) => {
         ro.outlet_id,
         ro.name            AS pond_name,
         ro.sort_order      AS pond_sort,
+        ro.max_gauge       AS max_gauge,
         sg.reading_id      AS last_gauge_id,
         sg.level_ft        AS last_gauge_level,
         sg.reading_date    AS last_gauge_date,
@@ -2483,6 +2861,7 @@ app.get('/api/vehicles', requireAuth, async (req, res) => {
       SELECT
         v.vehicle_id, v.vehicle_number, v.vehicle_type, v.year, v.make, v.model,
         v.vin, v.license_plate, v.fuel_type, v.assigned_user, v.reading_type, v.status,
+        v.notes           AS vehicle_notes,
         r.odometer_miles  AS last_odometer,
         r.engine_hours    AS last_engine_hours,
         r.reading_date    AS last_reading_date,
@@ -3225,9 +3604,11 @@ app.get('/api/maintenance/vehicles-list', requireAuth, async (req, res) => {
   const includeResolved = req.query.include_resolved === 'true';
   try {
     const { rows } = await pool.query(`
-      SELECT mv.maintenance_id, mv.work_date, mv.work_type, mv.description,
-             mv.status, mv.notes, mv.performed_by, mv.entered_by,
+      SELECT mv.maintenance_id, mv.vehicle_id, mv.work_date, mv.work_type, mv.description,
+             mv.status, mv.notes, mv.performed_by, mv.entered_by, mv.is_contractor,
              mv.parts_used, mv.cost, mv.po_number,
+             mv.odometer_at_service, mv.engine_hours_at_service,
+             mv.next_service_date, mv.next_service_miles, mv.next_service_hours,
              v.vehicle_number, v.make, v.model,
              (SELECT COUNT(*) FROM maintenance_attachments
               WHERE table_name = 'maintenance_vehicles' AND record_id = mv.maintenance_id
@@ -3244,16 +3625,54 @@ app.get('/api/maintenance/vehicles-list', requireAuth, async (req, res) => {
   }
 });
 
+// Quick status/notes updates stay open to everyone (the record card's inline
+// controls). A full edit — dates, readings, description, work type — is limited
+// to whoever entered the record, plus supervisors.
+const VEH_FULL_EDIT_FIELDS = ['work_date', 'work_type', 'description', 'parts_used',
+  'is_contractor', 'odometer_at_service', 'engine_hours_at_service',
+  'next_service_date', 'next_service_miles', 'next_service_hours'];
+
 app.patch('/api/maintenance/vehicle/:id', requireAuth, async (req, res) => {
-  const { status, notes, performed_by, po_number, cost } = req.body;
+  const id = parseInt(req.params.id);
+  const body = req.body || {};
+  const isFullEdit = VEH_FULL_EDIT_FIELDS.some(f => body[f] !== undefined);
+  const num = v => (v === '' || v == null ? null : Number(v));
   try {
+    if (isFullEdit) {
+      const { rows } = await pool.query(
+        'SELECT entered_by FROM maintenance_vehicles WHERE maintenance_id = $1', [id]);
+      if (!rows.length) return res.status(404).json({ error: 'Not found' });
+      const mine = rows[0].entered_by && rows[0].entered_by === req.user.username;
+      if (!mine && !SUPERVISOR_ROLES.includes(req.user.role)) {
+        return res.status(403).json({ error: 'Only the creator or a supervisor can edit this record' });
+      }
+    }
     await pool.query(
-      `UPDATE maintenance_vehicles
-       SET status=$1, notes=$2, performed_by=$3, po_number=$4, cost=$5
-       WHERE maintenance_id=$6`,
-      [status, notes || null, performed_by || null, po_number || null,
-       cost != null && cost !== '' ? parseFloat(cost) : null,
-       parseInt(req.params.id)]
+      `UPDATE maintenance_vehicles SET
+         status                  = COALESCE($1, status),
+         notes                   = COALESCE($2, notes),
+         performed_by            = COALESCE($3, performed_by),
+         po_number               = COALESCE($4, po_number),
+         cost                    = COALESCE($5, cost),
+         work_date               = COALESCE($6::date, work_date),
+         work_type               = COALESCE($7, work_type),
+         description             = COALESCE($8, description),
+         parts_used              = COALESCE($9, parts_used),
+         is_contractor           = COALESCE($10, is_contractor),
+         odometer_at_service     = COALESCE($11, odometer_at_service),
+         engine_hours_at_service = COALESCE($12, engine_hours_at_service),
+         next_service_date       = COALESCE($13::date, next_service_date),
+         next_service_miles      = COALESCE($14, next_service_miles),
+         next_service_hours      = COALESCE($15, next_service_hours)
+       WHERE maintenance_id = $16`,
+      [body.status ?? null, body.notes ?? null, body.performed_by ?? null,
+       body.po_number ?? null, num(body.cost),
+       body.work_date || null, body.work_type ?? null, body.description ?? null,
+       body.parts_used ?? null,
+       body.is_contractor === undefined ? null : !!body.is_contractor,
+       num(body.odometer_at_service), num(body.engine_hours_at_service),
+       body.next_service_date || null, num(body.next_service_miles), num(body.next_service_hours),
+       id]
     );
     res.json({ ok: true });
   } catch (err) {
@@ -3818,6 +4237,78 @@ app.get('/api/reports/canal', requireAuth, requireRole(...SUPERVISOR_ROLES), asy
   } catch (err) { handleErr(res, err); }
 });
 
+// Last Service as a spreadsheet (trucks and heavy equipment on one sheet).
+app.get('/api/reports/vehicle-service/export', async (req, res) => {
+  const { token } = req.query;
+  if (token) {
+    const t = downloadTokens.get(token);
+    if (!t || Date.now() > t.expires) return res.status(401).json({ error: 'Invalid or expired token' });
+    downloadTokens.delete(token);
+  } else {
+    const sessionUser = getSession(req.cookies?.fo_session);
+    if (!sessionUser) return res.status(401).json({ error: 'Unauthorized' });
+    if (!SUPERVISOR_ROLES.includes(sessionUser.role)) return res.status(403).json({ error: 'Forbidden' });
+  }
+  try {
+    const { rows } = await pool.query(`
+      SELECT v.vehicle_number, v.assigned_user, v.reading_type,
+             r.odometer_miles AS current_odometer, r.engine_hours AS current_engine_hours,
+             r.reading_date   AS current_reading_date,
+             m.work_date      AS last_service_date,
+             m.odometer_at_service, m.engine_hours_at_service,
+             m.next_service_miles, m.next_service_hours
+      FROM vehicles v
+      LEFT JOIN LATERAL (
+        SELECT odometer_miles, engine_hours, reading_date FROM readings_vehicle_monthly
+        WHERE vehicle_id = v.vehicle_id ORDER BY reading_date DESC, reading_time DESC LIMIT 1
+      ) r ON true
+      LEFT JOIN LATERAL (
+        SELECT work_date, odometer_at_service, engine_hours_at_service,
+               next_service_miles, next_service_hours
+        FROM maintenance_vehicles WHERE vehicle_id = v.vehicle_id ORDER BY work_date DESC LIMIT 1
+      ) m ON true
+      WHERE LOWER(v.status) != 'inactive' OR v.status IS NULL
+      ORDER BY v.vehicle_number
+    `);
+    const ac = v => (v.assigned_user && v.assigned_user.trim().toLowerCase() !== 'ops & maint') ? v.assigned_user : '';
+    const num = v => (v != null ? Number(v) : '');
+    const dt  = d => (d ? dateString(d) : '');
+    const trucks = rows.filter(r => !r.reading_type || r.reading_type === 'odometer' || r.reading_type === 'both');
+    const heavy  = rows.filter(r => r.reading_type === 'hours');
+
+    const data = [['Last Service'], [], ['Trucks'],
+      ['Unit #', 'Operator', 'Current Odo', 'Current Reading Date', 'Service Odo',
+       'Last Service Date', 'Difference', 'Next Service Miles'],
+      ...trucks.map(v => [
+        v.vehicle_number || '', ac(v), num(v.current_odometer), dt(v.current_reading_date),
+        num(v.odometer_at_service), dt(v.last_service_date),
+        (v.current_odometer != null && v.odometer_at_service != null)
+          ? Number(v.current_odometer) - Number(v.odometer_at_service) : '',
+        num(v.next_service_miles),
+      ]),
+      [], ['Heavy Equipment'],
+      ['Unit #', 'Operator', 'Current Hrs', 'Current Reading Date', 'Service Hrs',
+       'Last Service Date', 'Difference', 'Next Service Hours'],
+      ...heavy.map(v => [
+        v.vehicle_number || '', ac(v), num(v.current_engine_hours), dt(v.current_reading_date),
+        num(v.engine_hours_at_service), dt(v.last_service_date),
+        (v.current_engine_hours != null && v.engine_hours_at_service != null)
+          ? Number(v.current_engine_hours) - Number(v.engine_hours_at_service) : '',
+        num(v.next_service_hours),
+      ]),
+    ];
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    ws['!cols'] = [{ wch: 12 }, { wch: 20 }, { wch: 13 }, { wch: 19 },
+                   { wch: 13 }, { wch: 17 }, { wch: 12 }, { wch: 18 }];
+    XLSX.utils.book_append_sheet(wb, ws, 'Last Service');
+    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="LastService.xlsx"');
+    return res.send(buf);
+  } catch (err) { handleErr(res, err); }
+});
+
 // Canal readings as a spreadsheet. Accepts a one-time download token so the
 // export can be fetched without relying on the session cookie.
 app.get('/api/reports/canal/export', async (req, res) => {
@@ -3873,7 +4364,11 @@ app.get('/api/reports/canal/export', async (req, res) => {
     XLSX.utils.book_append_sheet(wb, ws, 'Canal');
     const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename="Canal_${start_date}_${end_date}.xlsx"`);
+    // Mirrors the client's canalExportName(): canal_<turnout>_<date range>
+    const fnPart = String(structureId ? structName : 'All-Turnouts')
+      .trim().replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '') || 'Structure';
+    const fnRange = start_date === end_date ? start_date : `${start_date}_to_${end_date}`;
+    res.setHeader('Content-Disposition', `attachment; filename="Canal_${fnPart}_${fnRange}.xlsx"`);
     return res.send(buf);
   } catch (err) { handleErr(res, err); }
 });
@@ -5275,6 +5770,583 @@ app.put('/api/settings/running-wells', requireAuth, requireRole(...SUPERVISOR_RO
   } catch (err) {
     handleErr(res, err);
   }
+});
+
+// ── Water Orders ─────────────────────────────────────────────────────────────
+// Line definitions live here, not in the database, so labels and ordering can
+// change without a data migration and a request can never introduce a line.
+// line_key is the stable identity; label is display only.
+// `pool` is the canal reach the line enters or leaves. It drives the Estimated
+// Pumping Plant Operations block: a plant carries everything taken out of the
+// pools below it, less everything added into those pools. Transcribed from the
+// CVC Water Order formulas workbook.
+const WATER_ORDER_INFLOW = [
+  { key: 'ca_aqueduct',            label: 'CA Aqueduct',              pool: 1 },
+  // Split across pools 1-6 by the wells' discharge_pool — see waterOrderWells().
+  { key: 'wells_total_recovery',   label: 'Wells (Total Recovery)', computed: 'running_wells' },
+  { key: 'kwb_river_pipeline',     label: 'KWB River Pipeline',       pool: 3 },
+  { key: 'pioneer_inlet',          label: 'Pioneer Inlet',            pool: 5 },
+  { key: 'arvin_edison_intertie',  label: 'Arvin-Edison Intertie',    pool: 6 },
+  { key: 'cvc_friant_kern_intertie', label: 'CVC/Friant-Kern Intertie', pool: 6 },
+  { key: 'nkto_reverse_flow',      label: 'NKTO Reverse Flow',        pool: 7 },
+];
+
+const WATER_ORDER_OUTFLOW = [
+  // Pool 1 sits above PP 1, so nothing here is pumped.
+  { key: 'ca_aqueduct_reverse',    label: 'CA Aqueduct - Reverse',    pool: 1 },
+  // Refill stays in the canal rather than being delivered, so it is the one
+  // outflow line the workbook leaves out of Total Outflow.
+  { key: 'refill',                 label: 'Refill',                   pool: 1, excludeFromTotal: true },
+  { key: 'n2_siphon',              label: 'N-2 Siphon',               pool: 2 },
+  { key: 'rrb_turnout_1',          label: 'Rosedale-Rio Bravo Turnout No. 1',  pool: 3 },
+  { key: 'rrb_turnout_1b',         label: 'Rosedale-Rio Bravo Turnout No. 1B', pool: 3 },
+  { key: 'strand_siphons',         label: 'Strand Siphons',           pool: 3 },
+  { key: 'north_strand_turnout',   label: 'North Strand Turnout',     pool: 3 },
+  { key: 'south_strand_turnout',   label: 'South Strand Turnout',     pool: 3 },
+  { key: 'kwb_turnout_p11',        label: 'KWB Turnout (P11)',        pool: 3 },
+  { key: 'rrb_central_intake',     label: 'RRB Central Intake',       pool: 3 },
+  { key: 'kwb_river_pipeline_out', label: 'KWB River Pipeline',       pool: 3 },
+  { key: 'nord_turnout',           label: 'Nord Turnout',             pool: 4 },
+  { key: 'grimmway_temp_pumps',    label: 'Grimmway Temporary Pumps', pool: 4 },
+  { key: 'section_4',              label: 'Section 4',                pool: 4 },
+  { key: 'river_turnout_1',        label: 'River Turnout No. 1',      pool: 5 },
+  { key: 'rrb_turnout_2',          label: 'Rosedale-Rio Bravo Turnout No. 2',  pool: 6 },
+  { key: 'river_turnout_2',        label: 'River Turnout No. 2',      pool: 6 },
+  // Pool 7 is fed by two plants: the 6B branch carries its own two lines, PP 6A
+  // carries the rest plus everything PP 7 lifts.
+  { key: 'arvin_edison_turnouts',  label: 'Arvin-Edison Turnouts',    pool: 7, branch: '6A' },
+  { key: 'pp6b_arvin_edison',      label: 'Pumping Plant No. 6B - Arvin Edison', pool: 7, branch: '6B' },
+  { key: 'pp6b_friant_kern',       label: 'Pumping Plant No. 6B - Friant-Kern',  pool: 7, branch: '6B' },
+  { key: 'north_kern_calloway',    label: 'North Kern Calloway Canal Turnout', pool: 7, branch: '6A' },
+  { key: 'big_bertha_siphon',      label: 'Big Bertha Siphon',        pool: 7, branch: '6A' },
+  { key: 'river_turnout_3_truxtun', label: 'River Turnout No. 3 to Truxtun Lake', pool: 7, branch: '6A' },
+  { key: 'river_turnout_3',        label: 'River Turnout No. 3',      pool: 7, branch: '6A' },
+  { key: 'river_turnout_3_pond',   label: 'River Turnout No. 3 to Pond', pool: 7, branch: '6A' },
+  { key: 'river_turnout_4',        label: 'River Turnout No. 4',      pool: 8 },
+  { key: 'calloway_canal_turnout', label: 'Calloway Canal Turnout',   pool: 8 },
+  { key: 'id4_treatment_plant',    label: 'ID4 Treatment Plant',      pool: 8 },
+  { key: 'cawelo_pump_station_a',  label: 'Cawelo Pump Station "A"',  pool: 8 },
+  { key: 'cvc_losses',             label: 'CVC Losses',               pool: 8 },
+];
+
+const WATER_ORDER_SECTIONS = {
+  inflow:  WATER_ORDER_INFLOW,
+  outflow: WATER_ORDER_OUTFLOW,
+};
+// Null-prototype lookups so a section/key of "constructor" misses instead of
+// resolving up the prototype chain.
+const WATER_ORDER_KEYS = Object.assign(Object.create(null), {
+  inflow:  new Set(WATER_ORDER_INFLOW.map(l => l.key)),
+  outflow: new Set(WATER_ORDER_OUTFLOW.map(l => l.key)),
+});
+
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+// Date.parse is not enough on its own: it rolls overflow days over rather than
+// failing, so "2026-02-30" parses fine and then Postgres rejects it with a 500.
+// Round-trip the components instead.
+function isValidIsoDate(str) {
+  if (!ISO_DATE_RE.test(str)) return false;
+  const [y, m, d] = str.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
+}
+
+// Wells (Total Recovery): the CVC well inflow already computed for the Running
+// Wells widget — running wells in Pools 1-6 that are on, plus the pool extras.
+// It is always "as of now", so a future-dated order shows the current recovery
+// rather than a forecast.
+// Wells (Total Recovery), broken down by the pool each well discharges into.
+// Same rule the Running Wells widget uses — wells that are on, plus the per-pool
+// extras — but kept per pool so each plant can be credited with the recovery
+// that lands in the reach it fills. Returns { byPool: {1..6}, total }.
+async function waterOrderWells() {
+  const byPool = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 };
+  try {
+    const st = await pool.query(`SELECT value FROM app_settings WHERE key = 'running_wells'`);
+    const raw = st.rows.length ? JSON.parse(st.rows[0].value) : {};
+    const ids = Array.isArray(raw) ? raw : (raw.well_ids || []);
+    const pool_extras = Array.isArray(raw) ? {} : (raw.pool_extras || {});
+
+    for (const [name, v] of Object.entries(pool_extras)) {
+      const m = /^Pool\s*([1-6])$/i.exec(name);
+      if (m) byPool[+m[1]] += parseFloat(v) || 0;
+    }
+
+    if (ids.length) {
+      const { rows } = await pool.query(
+        `WITH today_rdg AS (
+           SELECT DISTINCT ON (well_id) well_id, on_off, flow_cfs
+           FROM readings_well WHERE reading_date = CURRENT_DATE
+           ORDER BY well_id, reading_time DESC NULLS LAST
+         ),
+         latest_flow AS (
+           SELECT DISTINCT ON (well_id) well_id, flow_cfs
+           FROM readings_well WHERE flow_cfs IS NOT NULL AND flow_cfs > 0
+           ORDER BY well_id, reading_date DESC, reading_time DESC NULLS LAST
+         )
+         SELECT (regexp_match(w.discharge_pool, '^Pool[[:space:]]*([1-6])$', 'i'))[1] AS pool_no,
+                tr.on_off, tr.flow_cfs, lf.flow_cfs AS fallback_flow_cfs
+         FROM wells w
+         JOIN (SELECT unnest($1::int[]) AS wid) r ON r.wid = w.well_id
+         LEFT JOIN today_rdg tr ON tr.well_id = w.well_id
+         LEFT JOIN latest_flow lf ON lf.well_id = w.well_id
+         WHERE w.discharge_pool ~* '^Pool[[:space:]]*[1-6]$'`,
+        [ids]
+      );
+      for (const r of rows) {
+        if (!r.on_off) continue;
+        const n = parseInt(r.pool_no, 10);
+        if (byPool[n] === undefined) continue;
+        byPool[n] += parseFloat(r.flow_cfs ?? r.fallback_flow_cfs) || 0;
+      }
+    }
+  } catch { /* widget must still render if Running Wells isn't configured */ }
+
+  const round = v => Number(v.toFixed(2));
+  for (const k of Object.keys(byPool)) byPool[k] = round(byPool[k]);
+  return { byPool, total: round(Object.values(byPool).reduce((a, b) => a + b, 0)) };
+}
+
+// Estimated Pumping Plant Operations.
+//
+// A plant lifts from its own pool into the next one, so it must carry everything
+// taken out of every pool below it, less everything added into those pools:
+//
+//   PP n = Σ(outflows from pools > n) − Σ(inflows into pools > n)
+//
+// Pool 7 is the exception: two plants feed it. PP 6B carries only its own two
+// lines; PP 6A carries the rest of pool 7 plus whatever PP 7 lifts, less the
+// pool 7 inflow. Verified equivalent to the workbook formulas across 400
+// randomised trials.
+const WATER_ORDER_PLANTS = [
+  { key: 'pp1',  label: 'Pumping Plant No. 1',  below: 1 },
+  { key: 'pp2',  label: 'Pumping Plant No. 2',  below: 2 },
+  { key: 'pp3',  label: 'Pumping Plant No. 3',  below: 3 },
+  { key: 'pp4',  label: 'Pumping Plant No. 4',  below: 4 },
+  { key: 'pp5',  label: 'Pumping Plant No. 5',  below: 5 },
+  { key: 'pp6a', label: 'Pumping Plant No. 6',  branch: '6A' },
+  { key: 'pp6b', label: 'Pumping Plant No. 6B', branch: '6B' },
+  { key: 'pp7',  label: 'Pumping Plant No. 7',  below: 7 },
+];
+
+function waterOrderPlants(inflow, outflow, wellsByPool) {
+  const num = v => Number(v) || 0;
+  const inAt  = p => WATER_ORDER_INFLOW.reduce((t, def, i) =>
+    t + (def.pool === p ? num(inflow[i].cfs) : 0), 0) + num(wellsByPool[p]);
+  const outAt = p => WATER_ORDER_OUTFLOW.reduce((t, def, i) =>
+    t + (def.pool === p ? num(outflow[i].cfs) : 0), 0);
+  const branchAt = b => WATER_ORDER_OUTFLOW.reduce((t, def, i) =>
+    t + (def.pool === 7 && def.branch === b ? num(outflow[i].cfs) : 0), 0);
+
+  const POOLS = [1, 2, 3, 4, 5, 6, 7, 8];
+  const sumBelow = (fn, n) => POOLS.filter(p => p > n).reduce((t, p) => t + fn(p), 0);
+  const round = v => Number(v.toFixed(2));
+
+  const pp7  = round(sumBelow(outAt, 7) - sumBelow(inAt, 7));
+  const pp6b = round(branchAt('6B'));
+  const pp6a = round(pp7 + branchAt('6A') - inAt(7));
+
+  return WATER_ORDER_PLANTS.map(p => ({
+    key: p.key,
+    label: p.label,
+    cfs: p.key === 'pp7'  ? pp7
+       : p.key === 'pp6b' ? pp6b
+       : p.key === 'pp6a' ? pp6a
+       : round(sumBelow(outAt, p.below) - sumBelow(inAt, p.below)),
+  }));
+}
+
+// Assemble one date's order: every defined line, with saved values where they
+// exist, plus computed totals. Any authenticated user may read it (the
+// dashboard widget needs it); only supervisors may write.
+async function buildWaterOrder(dateStr) {
+  const { rows: orderRows } = await pool.query(
+    'SELECT order_id, order_date, entered_by, updated_at FROM water_orders WHERE order_date = $1',
+    [dateStr]
+  );
+  const order = orderRows[0] || null;
+
+  let saved = new Map();
+  if (order) {
+    const { rows } = await pool.query(
+      'SELECT section, line_key, cfs, time_of_change, comments FROM water_order_lines WHERE order_id = $1',
+      [order.order_id]
+    );
+    saved = new Map(rows.map(r => [`${r.section}|${r.line_key}`, r]));
+  }
+
+  const wells = await waterOrderWells();
+  const wellsCfs = wells.total;
+
+  const build = (section, defs) => defs.map(def => {
+    const row = saved.get(`${section}|${def.key}`);
+    const computed = def.computed === 'running_wells';
+    return {
+      key:   def.key,
+      label: def.label,
+      pool:  def.pool ?? null,
+      computed: computed ? def.computed : null,
+      cfs: computed ? wellsCfs : (row && row.cfs != null ? Number(row.cfs) : null),
+      time_of_change: computed ? null : (row?.time_of_change ?? null),
+      comments:       computed ? null : (row?.comments ?? null),
+    };
+  });
+
+  const inflow  = build('inflow',  WATER_ORDER_INFLOW);
+  const outflow = build('outflow', WATER_ORDER_OUTFLOW);
+  const sum = lines => Number(lines.reduce((t, l) => t + (Number(l.cfs) || 0), 0).toFixed(2));
+  const total_inflow  = sum(inflow);
+  // Refill is carried on the sheet but stays in the canal, so it is excluded
+  // from Total Outflow — matching the formulas workbook.
+  const total_outflow = sum(outflow.filter((l, i) => !WATER_ORDER_OUTFLOW[i].excludeFromTotal));
+  const plants = waterOrderPlants(inflow, outflow, wells.byPool);
+
+  // DWR Order is the CA Aqueduct inflow; when that is zero (or unset) and water
+  // is going back to the aqueduct instead, report the CA Aqueduct - Reverse
+  // figure and flag it so the widget can label the direction.
+  const aqueductIn  = Number(inflow.find(l => l.key === 'ca_aqueduct')?.cfs) || 0;
+  const aqueductOut = Number(outflow.find(l => l.key === 'ca_aqueduct_reverse')?.cfs) || 0;
+  const dwr_reverse = aqueductIn === 0 && aqueductOut > 0;
+
+  return {
+    order_date: dateStr,
+    exists: !!order,
+    entered_by: order?.entered_by || null,
+    updated_at: order?.updated_at || null,
+    inflow, outflow, plants,
+    wells_cfs: wellsCfs,
+    wells_by_pool: wells.byPool,
+    total_inflow, total_outflow,
+    dwr_order: dwr_reverse ? aqueductOut : aqueductIn,
+    dwr_reverse,
+  };
+}
+
+app.get('/api/water-orders', requireAuth, async (req, res) => {
+  // Validate the whole value: slicing first would quietly turn "2026-09-11xyz"
+  // into a valid date instead of rejecting it.
+  const date = req.query.date == null || req.query.date === ''
+    ? todayString() : String(req.query.date);
+  if (!isValidIsoDate(date)) return res.status(400).json({ error: 'Invalid date' });
+  try {
+    res.json(await buildWaterOrder(date));
+  } catch (err) { handleErr(res, err); }
+});
+
+// ── Water order PDF import ───────────────────────────────────────────────────
+// Reads a printed CVC Water Order sheet and maps its rows back onto the line
+// definitions above. Never saves — it returns values for the entry form to
+// pre-fill so a supervisor reviews them before hitting Save.
+//
+// pdf.js gives text items with positions, so rows are rebuilt by y and columns
+// split by x, the way the printed sheet actually reads. Column boundaries come
+// from the sheet's own layout: label ~35, CFS ~220, time ~278, comments ~420.
+// Boundaries are taken from where the VALUES sit, not the headings: the sheet
+// centres "Comments" at x~420 but left-aligns the comment text at x~337.
+const WO_PDF_COL_CFS      = 180;    // labels land at ~35
+const WO_PDF_COL_TIME     = 265;    // CFS values at ~220
+const WO_PDF_COL_COMMENTS = 310;    // time at ~278, comments at ~337
+const WO_PDF_ROW_TOLERANCE = 2.5;   // points; rows on this sheet are ~12.5 apart
+
+// Labels are compared loosely: case, spacing, quote style and trailing
+// punctuation vary between exports, but the wording does not.
+function woNormalizeLabel(str) {
+  return String(str || '')
+    .replace(/[‘’‛]/g, "'")
+    .replace(/[“”‟]/g, '"')
+    .replace(/[‐-―]/g, '-')
+    .replace(/\s+/g, ' ')
+    .replace(/[.\s]+$/, '')
+    .trim()
+    .toLowerCase();
+}
+
+function woParseNumber(str) {
+  const cleaned = String(str || '').replace(/,/g, '').trim();
+  if (cleaned === '') return null;
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : null;
+}
+
+// "Tuesday - September 15, 2026" / "Friday  -  September 11, 2026"
+function woParsePdfDate(text) {
+  const m = /([A-Z][a-z]+)\s+(\d{1,2}),\s*(\d{4})/.exec(String(text || ''));
+  if (!m) return null;
+  const MONTHS = ['january','february','march','april','may','june','july',
+                  'august','september','october','november','december'];
+  const mi = MONTHS.indexOf(m[1].toLowerCase());
+  if (mi < 0) return null;
+  const day = parseInt(m[2], 10), year = parseInt(m[3], 10);
+  const dt = new Date(Date.UTC(year, mi, day));
+  if (dt.getUTCMonth() !== mi || dt.getUTCDate() !== day) return null;
+  return `${year}-${String(mi + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+// Text items -> rows of { label, cfs, time, comments }, top of page first.
+function woPdfRows(items) {
+  const rows = [];
+  for (const it of items) {
+    if (!it.str || !it.str.trim()) continue;
+    const x = it.transform[4], y = it.transform[5];
+    let row = rows.find(r => Math.abs(r.y - y) <= WO_PDF_ROW_TOLERANCE);
+    if (!row) { row = { y, cells: [] }; rows.push(row); }
+    row.cells.push({ x, str: it.str });
+  }
+  rows.sort((a, b) => b.y - a.y);
+  return rows.map(r => {
+    const cells = r.cells.sort((a, b) => a.x - b.x);
+    const join = cs => cs.map(c => c.str).join(' ').trim();
+    const label = join(cells.filter(c => c.x < WO_PDF_COL_CFS));
+    const cfs   = join(cells.filter(c => c.x >= WO_PDF_COL_CFS && c.x < WO_PDF_COL_TIME));
+
+    // Everything right of the CFS column is time and/or comments. Rather than
+    // trusting one boundary, use the cell count where it is unambiguous: two or
+    // more cells means the leftmost is the time and the rest is the comment.
+    // Only a lone cell has to be placed by position.
+    const rest = cells.filter(c => c.x >= WO_PDF_COL_TIME);
+    let time = '', comments = '';
+    if (rest.length >= 2) {
+      time = rest[0].str.trim();
+      comments = join(rest.slice(1));
+    } else if (rest.length === 1) {
+      if (rest[0].x < WO_PDF_COL_COMMENTS) time = rest[0].str.trim();
+      else comments = rest[0].str.trim();
+    }
+    return { label, cfs, time, comments, raw: join(cells) };
+  });
+}
+
+function woParseOrderRows(rows) {
+  // Section markers keep duplicate labels apart — "KWB River Pipeline" is both
+  // an inflow and an outflow — and skip the derived pumping plant block, whose
+  // labels also collide with two outflow lines.
+  const byLabel = {
+    inflow:  new Map(WATER_ORDER_INFLOW.map(d => [woNormalizeLabel(d.label), d])),
+    outflow: new Map(WATER_ORDER_OUTFLOW.map(d => [woNormalizeLabel(d.label), d])),
+  };
+  const lines = [];
+  const seen = new Set();
+  const unmatched = [];
+  let section = null;
+  let order_date = null;
+
+  for (const row of rows) {
+    if (!order_date) order_date = woParsePdfDate(row.raw);
+
+    const norm = woNormalizeLabel(row.label);
+    if (norm === 'inflow')  { section = 'inflow';  continue; }
+    if (norm === 'outflow') { section = 'outflow'; continue; }
+    if (norm === 'total inflow' || norm === 'total outflow') { section = null; continue; }
+    if (!section || !norm) continue;
+
+    const def = byLabel[section].get(norm);
+    if (!def) {
+      // Column headings and the blank spacer rows are expected; anything else
+      // is a line we could not place and the operator should know about.
+      if (!/^(cfs|cfs ordered|time of|change|comments|estimated pumping plant operations)$/.test(norm)
+          && !/^pumping plant no\. \d/.test(norm)) unmatched.push(row.label.trim());
+      continue;
+    }
+    if (def.computed) continue;                 // Wells is derived, never imported
+    const key = `${section}|${def.key}`;
+    if (seen.has(key)) continue;                // first occurrence wins
+    seen.add(key);
+
+    const cfs = woParseNumber(row.cfs);
+    const time_of_change = row.time.trim();
+    const comments = row.comments.trim();
+    if (cfs === null && !time_of_change && !comments) continue;   // blank row
+    lines.push({ section, line_key: def.key, label: def.label, cfs, time_of_change, comments });
+  }
+  return { order_date, lines, unmatched };
+}
+
+// One line's values across dates, for the reference history popup. `key` is
+// either a known line key or the literal __total__ for that section's total.
+// Read-only and open to any authenticated user, like the order itself.
+const WATER_ORDER_TOTAL_KEY = '__total__';
+// Lines carried on the sheet but left out of the section total (Refill).
+const WATER_ORDER_TOTAL_EXCLUDED = [...WATER_ORDER_INFLOW, ...WATER_ORDER_OUTFLOW]
+  .filter(d => d.excludeFromTotal).map(d => d.key);
+
+app.get('/api/water-orders/history', requireAuth, async (req, res) => {
+  const section = typeof req.query.section === 'string' ? req.query.section : '';
+  const key     = typeof req.query.key === 'string' ? req.query.key : '';
+  const keys = WATER_ORDER_KEYS[section];
+  if (!keys || (key !== WATER_ORDER_TOTAL_KEY && !keys.has(key))) {
+    return res.status(400).json({ error: 'Unknown line' });
+  }
+  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 30, 1), 100);
+
+  // The wells line is computed, never stored per-line, so it has no history of
+  // its own — only the snapshot that feeds the inflow total.
+  const def = keys.has(key) ? WATER_ORDER_SECTIONS[section].find(d => d.key === key) : null;
+  if (def?.computed) {
+    return res.json({ section, key, label: def.label, computed: def.computed, rows: [] });
+  }
+
+  try {
+    let rows;
+    if (key === WATER_ORDER_TOTAL_KEY) {
+      // Same exclusion the live total applies, so the history of a total matches
+      // the total shown on the order.
+      ({ rows } = await pool.query(
+        `SELECT to_char(o.order_date, 'YYYY-MM-DD') AS order_date,
+                COALESCE(SUM(l.cfs) FILTER (WHERE NOT (l.line_key = ANY($3::text[]))), 0)
+                  + CASE WHEN $1 = 'inflow' THEN COALESCE(o.wells_cfs, 0) ELSE 0 END AS cfs,
+                NULL::text AS time_of_change,
+                NULL::text AS comments
+         FROM water_orders o
+         LEFT JOIN water_order_lines l
+           ON l.order_id = o.order_id AND l.section = $1
+         GROUP BY o.order_id, o.order_date, o.wells_cfs
+         HAVING COUNT(l.line_id) > 0 OR o.wells_cfs IS NOT NULL
+         ORDER BY o.order_date DESC
+         LIMIT $2`,
+        [section, limit, WATER_ORDER_TOTAL_EXCLUDED]
+      ));
+    } else {
+      ({ rows } = await pool.query(
+        `SELECT to_char(o.order_date, 'YYYY-MM-DD') AS order_date,
+                l.cfs, l.time_of_change, l.comments
+         FROM water_order_lines l
+         JOIN water_orders o USING (order_id)
+         WHERE l.section = $1 AND l.line_key = $2
+         ORDER BY o.order_date DESC
+         LIMIT $3`,
+        [section, key, limit]
+      ));
+    }
+    res.json({
+      section, key,
+      label: key === WATER_ORDER_TOTAL_KEY
+        ? (section === 'inflow' ? 'Total Inflow' : 'Total Outflow')
+        : def.label,
+      computed: null,
+      rows: rows.map(r => ({
+        order_date: r.order_date,
+        cfs: r.cfs == null ? null : Number(r.cfs),
+        time_of_change: r.time_of_change,
+        comments: r.comments,
+      })),
+    });
+  } catch (err) { handleErr(res, err); }
+});
+
+// Parse an uploaded order sheet and hand the values back. Deliberately does not
+// write anything: the entry form pre-fills from this and the supervisor saves.
+// The file is held in memory and discarded — there is no reason to keep it.
+const woPdfUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024, files: 1 },
+  fileFilter: (req, file, cb) => {
+    const extOk  = path.extname(file.originalname).toLowerCase() === '.pdf';
+    const mimeOk = file.mimetype === 'application/pdf';
+    cb(null, extOk && mimeOk);
+  },
+});
+
+app.post('/api/water-orders/parse-pdf',
+  requireAuth, requireRole(...SUPERVISOR_ROLES),
+  (req, res, next) => woPdfUpload.single('file')(req, res, err => {
+    if (err) return res.status(400).json({ error: err.code === 'LIMIT_FILE_SIZE'
+      ? 'PDF is too large (10 MB max).' : 'Upload failed.' });
+    next();
+  }),
+  async (req, res) => {
+    if (!req.file) return res.status(400).json({ error: 'Attach a PDF water order.' });
+    try {
+      const { getDocumentProxy } = require('unpdf');
+      const pdf = await getDocumentProxy(new Uint8Array(req.file.buffer));
+      if (!pdf.numPages) return res.status(400).json({ error: 'That PDF has no pages.' });
+
+      // Page 1 is the order; page 2, when present, is the running-wells sheet,
+      // which the app already derives from the Running Wells setting.
+      const page = await pdf.getPage(1);
+      const { items } = await page.getTextContent();
+      const parsed = woParseOrderRows(woPdfRows(items));
+
+      if (!parsed.lines.length) {
+        return res.status(422).json({
+          error: 'No water order lines found. Is this a Cross Valley Canal water order sheet?',
+          order_date: parsed.order_date, lines: [], unmatched: parsed.unmatched,
+        });
+      }
+      res.json(parsed);
+    } catch (err) {
+      console.error('Water order PDF parse failed:', err);
+      res.status(422).json({ error: 'Could not read that PDF.' });
+    }
+  }
+);
+
+app.put('/api/water-orders', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
+  const date = String(req.body.order_date ?? '');
+  if (!isValidIsoDate(date)) return res.status(400).json({ error: 'Invalid date' });
+  const input = Array.isArray(req.body.lines) ? req.body.lines : [];
+  if (input.length > 200) return res.status(400).json({ error: 'Too many lines' });
+
+  // Validate everything before opening the transaction so a bad line cannot
+  // leave a half-written order behind.
+  const lines = [];
+  for (const l of input) {
+    const section = typeof l?.section === 'string' ? l.section : '';
+    const keys = WATER_ORDER_KEYS[section];
+    if (!keys || typeof l?.line_key !== 'string' || !keys.has(l.line_key)) {
+      return res.status(400).json({ error: 'Unknown line' });
+    }
+    const def = WATER_ORDER_SECTIONS[section].find(d => d.key === l.line_key);
+    if (def.computed) continue;            // Wells line is derived, never stored
+
+    let cfs = null;
+    if (l.cfs !== null && l.cfs !== undefined && String(l.cfs).trim() !== '') {
+      cfs = Number(l.cfs);
+      if (!Number.isFinite(cfs)) return res.status(400).json({ error: `Invalid CFS for ${def.label}` });
+    }
+    const trim = (v, max) => {
+      const t = (v == null ? '' : String(v)).trim();
+      return t === '' ? null : t.slice(0, max);
+    };
+    lines.push({
+      section, line_key: l.line_key, cfs,
+      time_of_change: trim(l.time_of_change, 40),
+      comments:       trim(l.comments, 500),
+    });
+  }
+
+  const wellsSnapshot = (await waterOrderWells()).total;
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      `INSERT INTO water_orders (order_date, entered_by, wells_cfs)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (order_date)
+         DO UPDATE SET entered_by = EXCLUDED.entered_by,
+                       wells_cfs  = EXCLUDED.wells_cfs,
+                       updated_at = NOW()
+       RETURNING order_id`,
+      [date, req.user.username, wellsSnapshot]
+    );
+    const orderId = rows[0].order_id;
+    // Replace the whole day rather than merging, so clearing a line clears it.
+    await client.query('DELETE FROM water_order_lines WHERE order_id = $1', [orderId]);
+    for (const l of lines) {
+      if (l.cfs == null && !l.time_of_change && !l.comments) continue;  // skip empty rows
+      await client.query(
+        `INSERT INTO water_order_lines (order_id, section, line_key, cfs, time_of_change, comments)
+         VALUES ($1,$2,$3,$4,$5,$6)`,
+        [orderId, l.section, l.line_key, l.cfs, l.time_of_change, l.comments]
+      );
+    }
+    await client.query('COMMIT');
+    res.json(await buildWaterOrder(date));
+  } catch (err) {
+    await client.query('ROLLBACK');
+    handleErr(res, err);
+  } finally { client.release(); }
 });
 
 app.get('/api/dashboard/running-wells', requireAuth, async (req, res) => {

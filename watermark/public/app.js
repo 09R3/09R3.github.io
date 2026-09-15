@@ -730,9 +730,9 @@ el('export-pending-btn').addEventListener('click', async () => {
 /* ── Dashboard Stats ─────────────────────────────────────────────────────── */
 async function loadDashboardStats() {
   try {
-    const [s, rw] = await Promise.all([
+    const [s, wo] = await Promise.all([
       api('GET', '/api/dashboard/stats'),
-      api('GET', '/api/dashboard/running-wells').catch(() => null),
+      api('GET', '/api/water-orders').catch(() => null),
     ]);
     const fmtDate = str => {
       if (!str) return '';
@@ -745,12 +745,7 @@ async function loadDashboardStats() {
       ? `${fmtDate(s.kf_widget_start)} – ${fmtDate(s.kf_widget_end)}`
       : 'This Month';
     const pct = s.kf_total > 0 ? Math.round((s.kf_done / s.kf_total) * 100) : 0;
-    const rwCount = rw ? rw.read_today_count : 0;
-    const rwTotal = rw ? rw.total_count      : 0;
-    const rwCvc   = rw ? parseFloat(rw.cvc_total_cfs || 0).toFixed(2) : '0.00';
-    const rwVal   = rwTotal > 0
-      ? `${rwCount}<span style="font-size:1rem;color:var(--text-dim)">/${rwTotal}</span>`
-      : `<span style="font-size:1rem;color:var(--text-muted)">—</span>`;
+    const woCfs = n => (Number(n) || 0).toFixed(0);
     const grid = el('dashboard-stats');
     grid.innerHTML = `
       <div class="stat-card stat-accent" id="kf-complete-stat" style="cursor:pointer">
@@ -760,10 +755,23 @@ async function loadDashboardStats() {
         <div class="stat-sublabel" style="margin-top:2px">${s.kf_total - s.kf_done} Remaining</div>
         <div class="stat-bar"><div class="stat-bar-fill" style="width:${pct}%"></div></div>
       </div>
-      <div class="stat-card rw-stat-card" id="running-wells-stat" style="cursor:pointer">
-        <div class="stat-value">${rwVal}</div>
-        <div class="stat-label">Running Wells</div>
-        <div class="stat-sublabel">CVC Well Inflow: ${rwCvc} cfs</div>
+      <div class="stat-card wo-stat-card" id="water-order-stat" style="cursor:pointer">
+        <div class="wo-stat-rows">
+          <div class="wo-stat-row">
+            <span class="wo-stat-key">DWR Order${wo?.dwr_reverse ? ' <em>(rev)</em>' : ''}</span>
+            <span class="wo-stat-val">${wo ? woCfs(wo.dwr_order) : '—'}</span>
+          </div>
+          <div class="wo-stat-row">
+            <span class="wo-stat-key">Inflow</span>
+            <span class="wo-stat-val">${wo ? woCfs(wo.total_inflow) : '—'}</span>
+          </div>
+          <div class="wo-stat-row">
+            <span class="wo-stat-key">Outflow</span>
+            <span class="wo-stat-val">${wo ? woCfs(wo.total_outflow) : '—'}</span>
+          </div>
+        </div>
+        <div class="stat-label">Water Orders</div>
+        <div class="stat-sublabel">${wo && !wo.exists ? 'No order entered' : 'cfs · Today'}</div>
       </div>
       <div class="stat-card${isScadaAllowed(currentUser?.role) ? '' : ' hidden'}" id="scada-flow-stat" style="cursor:pointer">
         <div class="stat-value" id="scada-flow-value">—</div>
@@ -772,11 +780,523 @@ async function loadDashboardStats() {
         <svg id="scada-flow-spark" class="scada-flow-spark" viewBox="0 0 100 24" preserveAspectRatio="none"></svg>
       </div>
     `;
-    el('running-wells-stat').addEventListener('click', openRunningWellsModal);
+    el('water-order-stat').addEventListener('click', () => openWaterOrderModal(todayISO()));
     el('kf-complete-stat').addEventListener('click', openKFSetsModal);
     el('scada-flow-stat').addEventListener('click', () => showScreen('scada'));
     loadScadaFlowWidget();
   } catch { /* non-critical */ }
+}
+
+// ── Water Orders ─────────────────────────────────────────────────────────────
+// Read-only view of one date's order, laid out like page 1 of the CVC Water
+// Order sheet. Opened from the dashboard widget.
+function woFmt(n) {
+  return n == null || n === '' ? '' : Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
+// The order sheet marks a pool in column A wherever the reach changes. Walk the
+// lines in sheet order and emit a heading at each change; the wells line carries
+// no pool of its own (it spans 1-6) so it never breaks the run.
+function woWithPoolHeads(lines, render) {
+  let current = null;
+  return lines.map(l => {
+    let head = '';
+    if (l.pool != null && l.pool !== current) {
+      current = l.pool;
+      head = render.head(l.pool);
+    }
+    return head + render.row(l);
+  }).join('');
+}
+
+// Per-pool well recovery, shown under the Wells line so the split that feeds the
+// plant calculation is visible rather than buried in the total.
+function woWellsSplit(byPool) {
+  if (!byPool) return '';
+  const parts = Object.entries(byPool)
+    .filter(([, v]) => Number(v) > 0)
+    .map(([p, v]) => `P${p}&nbsp;${woFmt(v)}`);
+  return parts.length ? `<span class="wo-wells-split">${parts.join(' · ')}</span>` : '';
+}
+
+function woSectionHtml(section, title, cfsHeading, lines, total, totalLabel, wellsByPool) {
+  const row = l => `
+          <tr${l.computed ? ' class="wo-row-computed"' : ' class="wo-row-tap"'}${
+            l.computed === 'running_wells' ? ' id="wo-wells-row" title="From Running Wells — tap to view"' : ''}${
+            l.computed ? '' : ` data-hist-section="${escHtml(section)}" data-hist-key="${escHtml(l.key)}"`}>
+            <td class="wo-col-name"><span class="wo-name">${escHtml(l.label)}</span>${
+              l.computed === 'running_wells'
+                ? '<span class="wo-from">from Running Wells</span>' + woWellsSplit(wellsByPool) : ''}</td>
+            <td class="wo-col-cfs">${woFmt(l.cfs)}</td>
+            <td class="wo-col-time">${escHtml(l.time_of_change || '')}</td>
+            <td class="wo-col-comments">${escHtml(l.comments || '')}</td>
+          </tr>`;
+  const head = pool => `
+          <tr class="wo-pool-head"><td colspan="4">Pool ${pool}</td></tr>`;
+
+  return `
+    <div class="wo-section-title">${title}</div>
+    <table class="wo-table">
+      <thead>
+        <tr>
+          <th class="wo-col-name"></th>
+          <th class="wo-col-cfs">${cfsHeading}</th>
+          <th class="wo-col-time">Time of<br>Change</th>
+          <th class="wo-col-comments">Comments</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${woWithPoolHeads(lines, { head, row })}
+        <tr class="wo-row-total wo-row-tap" data-hist-section="${escHtml(section)}" data-hist-key="__total__">
+          <td class="wo-col-name"><span class="wo-name">${totalLabel}</span></td>
+          <td class="wo-col-cfs">${woFmt(total)}</td>
+          <td colspan="2"></td>
+        </tr>
+      </tbody>
+    </table>`;
+}
+
+async function openWaterOrderModal(dateStr) {
+  const body = el('water-order-modal-body');
+  body.innerHTML = '<div class="placeholder-msg" style="padding:16px">Loading…</div>';
+  el('water-order-modal').classList.remove('hidden');
+  try {
+    const wo = await api('GET', `/api/water-orders?date=${encodeURIComponent(dateStr)}`);
+    const d = new Date(...String(wo.order_date).slice(0, 10).split('-').map((v, i) => i === 1 ? +v - 1 : +v));
+    el('water-order-modal-title').textContent = 'Water Order';
+    body.innerHTML = `
+      <div class="wo-doc">
+        <div class="wo-doc-title">Cross Valley Canal Water Order</div>
+        <div class="wo-doc-date">${d.toLocaleDateString('en-US',
+          { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</div>
+        ${!wo.exists ? '<div class="wo-doc-empty">No order entered for this date.</div>' : ''}
+        ${wo.plants ? `
+          <div class="wo-section-title">ESTIMATED PUMPING PLANT OPERATIONS</div>
+          <table class="wo-table wo-pp-table">
+            <thead><tr><th class="wo-col-name"></th><th class="wo-col-cfs">CFS</th></tr></thead>
+            <tbody>
+              ${wo.plants.map(pl => `
+                <tr>
+                  <td class="wo-col-name">${escHtml(pl.label)}</td>
+                  <td class="wo-col-cfs">${woFmt(pl.cfs)}</td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+          <div class="wo-pp-note">Calculated from the turnouts in each reach and the well recovery per pool.</div>
+        ` : ''}
+        <div class="report-scroll">
+          ${woSectionHtml('inflow', 'INFLOW', 'CFS', wo.inflow, wo.total_inflow, 'Total Inflow', wo.wells_by_pool)}
+          ${woSectionHtml('outflow', 'OUTFLOW', 'CFS<br>Ordered', wo.outflow, wo.total_outflow, 'Total Outflow')}
+        </div>
+      </div>`;
+    // The Wells line is produced by the Running Wells setting — let it open that
+    // list, which is otherwise no longer reachable from the dashboard.
+    el('wo-wells-row')?.addEventListener('click', () => {
+      el('water-order-modal').classList.add('hidden');
+      openRunningWellsModal();
+    });
+    body.querySelectorAll('.wo-row-tap').forEach(tr => tr.addEventListener('click', () =>
+      openWaterOrderHistory(tr.dataset.histSection, tr.dataset.histKey,
+        tr.querySelector('.wo-name').textContent)));
+  } catch (err) {
+    body.innerHTML = `<div class="placeholder-msg" style="padding:16px">Failed to load.</div>`;
+  }
+}
+
+el('water-order-modal-close').addEventListener('click',
+  () => el('water-order-modal').classList.add('hidden'));
+el('water-order-modal').addEventListener('click', e => {
+  if (e.target === el('water-order-modal')) el('water-order-modal').classList.add('hidden');
+});
+
+// One line's (or one total's) values across past orders: a 7-point bar chart of
+// the most recent values plus a scrollable list of everything returned.
+let _woHistChart = null;
+
+function woDestroyHistChart() {
+  if (_woHistChart) { try { _woHistChart.destroy(); } catch { /* */ } _woHistChart = null; }
+}
+
+async function openWaterOrderHistory(section, key, label) {
+  const body = el('wo-history-body');
+  woDestroyHistChart();
+  el('wo-history-title').textContent = label || 'History';
+  body.innerHTML = '<div class="placeholder-msg" style="padding:16px">Loading…</div>';
+  el('wo-history-modal').classList.remove('hidden');
+
+  let data;
+  try {
+    data = await api('GET',
+      `/api/water-orders/history?section=${encodeURIComponent(section)}&key=${encodeURIComponent(key)}&limit=30`);
+  } catch {
+    body.innerHTML = '<div class="placeholder-msg" style="padding:16px">Failed to load.</div>';
+    return;
+  }
+  if (!data.rows.length) {
+    body.innerHTML = `<div class="placeholder-msg" style="padding:16px">${
+      data.computed ? 'The wells line is calculated live and has no stored history.'
+                    : 'No history found.'}</div>`;
+    return;
+  }
+
+  // Rows arrive newest-first: the list keeps that, the chart is reversed so it
+  // reads left-to-right oldest-to-newest.
+  const recent = data.rows.slice(0, 7).reverse();
+  body.innerHTML = `
+    <div class="wo-hist-chart-wrap"><canvas id="wo-hist-canvas"></canvas></div>
+    <div class="wo-hist-chart-cap">Last ${recent.length} order${recent.length === 1 ? '' : 's'}</div>
+    <div class="wo-hist-list">
+      ${data.rows.map(r => `
+        <div class="wo-hist-row">
+          <span class="wo-hist-date">${fmtDate(r.order_date)}</span>
+          <span class="wo-hist-cfs">${r.cfs == null ? '—' : woFmt(r.cfs)}</span>
+          <span class="wo-hist-meta">
+            ${r.time_of_change ? `<span class="wo-hist-time">${escHtml(r.time_of_change)}</span>` : ''}
+            ${r.comments ? `<span class="wo-hist-note">${escHtml(r.comments)}</span>` : ''}
+          </span>
+        </div>`).join('')}
+    </div>`;
+
+  // Chart.js is vendored locally and loaded on demand, so this still works
+  // offline. A failure here must not take the list down with it.
+  try {
+    await loadScadaVendor();
+    const c = scadaThemeColors();
+    const canvas = el('wo-hist-canvas');
+    if (!canvas || el('wo-history-modal').classList.contains('hidden')) return;
+    _woHistChart = new window.Chart(canvas.getContext('2d'), {
+      type: 'bar',
+      data: {
+        labels: recent.map(r => fmtDate(r.order_date)),
+        datasets: [{
+          label: `${data.label} (cfs)`,
+          data: recent.map(r => r.cfs == null ? 0 : r.cfs),
+          backgroundColor: '#38b6ff',
+          borderRadius: 3,
+          maxBarThickness: 38,
+        }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: c.surface, titleColor: c.text, bodyColor: c.text,
+            borderColor: c.grid, borderWidth: 1,
+          },
+        },
+        scales: {
+          x: { ticks: { color: c.dim, maxRotation: 0, autoSkip: false }, grid: { display: false } },
+          y: { beginAtZero: true, ticks: { color: c.dim }, grid: { color: c.grid } },
+        },
+      },
+    });
+  } catch {
+    const wrap = document.querySelector('.wo-hist-chart-wrap');
+    if (wrap) wrap.innerHTML = '<div class="placeholder-msg">Chart unavailable.</div>';
+  }
+}
+
+function closeWaterOrderHistory() {
+  woDestroyHistChart();
+  el('wo-history-modal').classList.add('hidden');
+}
+el('wo-history-close').addEventListener('click', closeWaterOrderHistory);
+el('wo-history-modal').addEventListener('click', e => {
+  if (e.target === el('wo-history-modal')) closeWaterOrderHistory();
+});
+
+// Supervisor entry form (Settings → Widgets → Water Orders). The date picker
+// drives which order is loaded, so a future order is just a future date.
+function woFieldsHtml(section, lines, wellsByPool) {
+  const row = l => l.computed ? `
+    <div class="wo-edit-row wo-edit-computed">
+      <div class="wo-edit-name">${escHtml(l.label)}<span class="wo-from">from Running Wells</span>${
+        woWellsSplit(wellsByPool)}</div>
+      <input type="text" class="rr-input wo-in-cfs" value="${woFmt(l.cfs)}" disabled>
+      <input type="text" class="rr-input wo-in-time" placeholder="—" disabled>
+      <input type="text" class="rr-input wo-in-comments" placeholder="—" disabled>
+    </div>` : `
+    <div class="wo-edit-row">
+      <div class="wo-edit-name">${escHtml(l.label)}</div>
+      <input type="number" step="0.01" inputmode="decimal" class="rr-input wo-in-cfs"
+             placeholder="—" value="${l.cfs == null ? '' : escHtml(String(l.cfs))}"
+             data-section="${section}" data-key="${escHtml(l.key)}">
+      <input type="text" class="rr-input wo-in-time" placeholder="Time"
+             value="${escHtml(l.time_of_change || '')}">
+      <input type="text" class="rr-input wo-in-comments" placeholder="Comments"
+             value="${escHtml(l.comments || '')}">
+    </div>`;
+  const head = pool => `<div class="wo-pool-head-edit">Pool ${pool}</div>`;
+  return woWithPoolHeads(lines, { head, row });
+}
+
+async function loadWaterOrderForm(dateStr, keepImportNote) {
+  const body = el('wo-settings-body');
+  el('wo-error').classList.add('hidden');
+  if (!keepImportNote) el('wo-import-result')?.classList.add('hidden');
+  body.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const wo = await api('GET', `/api/water-orders?date=${encodeURIComponent(dateStr)}`);
+    body.innerHTML = `
+      <div class="wo-edit-head">
+        <span class="wo-edit-name"></span><span>CFS</span><span>Time</span><span>Comments</span>
+      </div>
+      <div class="wo-edit-section">Inflow</div>
+      ${woFieldsHtml('inflow', wo.inflow, wo.wells_by_pool)}
+      <div class="wo-edit-totals">Total Inflow <strong id="wo-sum-inflow">${woFmt(wo.total_inflow)}</strong> cfs</div>
+      <div class="wo-edit-section">Outflow</div>
+      ${woFieldsHtml('outflow', wo.outflow)}
+      <div class="wo-edit-totals">Total Outflow <strong id="wo-sum-outflow">${woFmt(wo.total_outflow)}</strong> cfs</div>
+      ${wo.plants ? `
+        <div class="wo-edit-section">Estimated Pumping Plant Operations</div>
+        <div class="wo-pp-grid">
+          ${wo.plants.map(pl => `
+            <div class="wo-pp-cell">
+              <span class="wo-pp-label">${escHtml(pl.label.replace('Pumping Plant No. ', 'PP '))}</span>
+              <span class="wo-pp-val">${woFmt(pl.cfs)}</span>
+            </div>`).join('')}
+        </div>
+        <div class="wo-pp-note">Calculated, not entered. Updates when the order is saved.</div>
+      ` : ''}
+      ${wo.exists && wo.entered_by
+        ? `<div class="wo-edit-meta">Last saved by ${escHtml(wo.entered_by)}</div>` : ''}`;
+    body.querySelectorAll('.wo-in-cfs').forEach(i => i.addEventListener('input', recalcWaterOrderTotals));
+    recalcWaterOrderTotals();
+  } catch (err) {
+    body.innerHTML = '<div class="placeholder-msg">Failed to load.</div>';
+  }
+}
+
+// Live totals as the operator types, so the sheet balances before it is saved.
+function recalcWaterOrderTotals() {
+  const sum = sel => [...document.querySelectorAll(sel)]
+    .reduce((t, i) => t + (parseFloat(i.value) || 0), 0);
+  const inflow  = sum('#wo-settings-body .wo-edit-row:not(.wo-edit-computed) .wo-in-cfs[data-section="inflow"]')
+                + sum('#wo-settings-body .wo-edit-computed .wo-in-cfs');
+  const outflow = sum('#wo-settings-body .wo-in-cfs[data-section="outflow"]');
+  const i = el('wo-sum-inflow'), o = el('wo-sum-outflow');
+  if (i) i.textContent = woFmt(Number(inflow.toFixed(2)));
+  if (o) o.textContent = woFmt(Number(outflow.toFixed(2)));
+}
+
+// Step the order date by whole days. Built from local Y/M/D components rather
+// than epoch arithmetic so month, year and DST boundaries all roll correctly.
+function woStepDate(days) {
+  const input = el('wo-date');
+  const [y, m, d] = (input.value || todayISO()).split('-').map(Number);
+  const dt = new Date(y, m - 1, d + days);
+  input.value = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+  loadWaterOrderForm(input.value);
+}
+
+// ── Water order PDF chooser ──────────────────────────────────────────────────
+// Three ways in, because operators reach for different ones: drop a file, paste
+// from the clipboard, or browse. The paste listener lives on the document and is
+// only attached while the chooser is open, so it never swallows a paste meant
+// for a text field elsewhere.
+function woPdfMsg(text, cls) {
+  const m = el('wo-pdf-modal-msg');
+  if (!m) return;
+  m.textContent = text;
+  m.className = 'wo-import-result' + (cls ? ' ' + cls : '');
+}
+
+function woFileLooksPdf(file) {
+  return !!file && (file.type === 'application/pdf' || /\.pdf$/i.test(file.name || ''));
+}
+
+// Shared by all three paths so they cannot diverge.
+function woAcceptFile(file) {
+  if (!file) {
+    woPdfMsg('No file found — try dropping the PDF or using Browse.', 'wo-import-bad');
+    return;
+  }
+  if (!woFileLooksPdf(file)) {
+    woPdfMsg(`${file.name || 'That file'} is not a PDF.`, 'wo-import-bad');
+    return;
+  }
+  woImportPdf(file);
+}
+
+function woPdfPasteHandler(e) {
+  const items = [...(e.clipboardData?.files || [])];
+  const pdf = items.find(woFileLooksPdf) || items[0];
+  if (!pdf) {
+    woPdfMsg('No file on the clipboard. Copy the PDF in your file manager first.', 'wo-import-bad');
+    return;
+  }
+  e.preventDefault();
+  woAcceptFile(pdf);
+}
+
+function openWoPdfModal() {
+  woPdfMsg('', '');
+  el('wo-pdf-modal-msg').classList.add('hidden');
+  el('wo-drop').classList.remove('wo-drop-over');
+  el('wo-pdf-modal').classList.remove('hidden');
+  document.addEventListener('paste', woPdfPasteHandler);
+  el('wo-drop').focus();
+}
+
+function closeWoPdfModal() {
+  document.removeEventListener('paste', woPdfPasteHandler);
+  el('wo-pdf-modal').classList.add('hidden');
+}
+
+(function wireWoPdfChooser() {
+  const modal = el('wo-pdf-modal');
+  if (!modal) return;
+  const drop  = el('wo-drop');
+  const input = el('wo-pdf-input');
+
+  el('wo-pdf-modal-close').addEventListener('click', closeWoPdfModal);
+  modal.addEventListener('click', e => { if (e.target === modal) closeWoPdfModal(); });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && !modal.classList.contains('hidden')) closeWoPdfModal();
+  });
+
+  // Browse — also from the keyboard, since the zone is focusable.
+  const browse = () => { input.value = ''; input.click(); };
+  drop.addEventListener('click', browse);
+  drop.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); browse(); }
+  });
+  input.addEventListener('change', () => { if (input.files[0]) woAcceptFile(input.files[0]); });
+
+  // Drop. dragover must be cancelled for a drop to fire at all; cancelling it on
+  // the whole overlay as well means a near-miss doesn't make the browser open
+  // the PDF and throw away the half-filled form behind it.
+  const over = e => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; };
+  modal.addEventListener('dragover', over);
+  modal.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('wo-drop-over'); });
+  drop.addEventListener('dragover', e => { over(e); drop.classList.add('wo-drop-over'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('wo-drop-over'));
+  drop.addEventListener('drop', e => {
+    e.preventDefault();
+    e.stopPropagation();
+    drop.classList.remove('wo-drop-over');
+    woAcceptFile(e.dataTransfer?.files?.[0]);
+  });
+})();
+
+// Import a printed order sheet into the form. The parse is server-side; this
+// only writes the values into the inputs. Nothing is saved — the supervisor
+// reviews and presses Save, exactly as if they had typed it.
+async function woImportPdf(file) {
+  const out = el('wo-import-result');
+  el('wo-error').classList.add('hidden');
+  woPdfMsg(`Reading ${file.name}…`, '');
+
+  let data;
+  try {
+    const res = await fetch('/api/water-orders/parse-pdf',
+      { method: 'POST', body: (() => { const f = new FormData(); f.append('file', file); return f; })() });
+    data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  } catch (err) {
+    // Stay open on failure so another file can be dropped straight away.
+    woPdfMsg(err.message || 'Could not read that PDF.', 'wo-import-bad');
+    return;
+  }
+  closeWoPdfModal();
+
+  const selected = el('wo-date').value;
+  // A sheet imported onto the wrong date is the expensive mistake here, so the
+  // date is switched to match the PDF rather than quietly left alone.
+  let dateNote = '';
+  if (data.order_date && data.order_date !== selected) {
+    el('wo-date').value = data.order_date;
+    await loadWaterOrderForm(data.order_date);
+    dateNote = ` The PDF is dated ${fmtDate(data.order_date)}, so the date was switched from ${fmtDate(selected)}.`;
+  }
+
+  // Clear every entry row first: a line absent from the PDF means zero ordered,
+  // not "keep whatever was there before".
+  document.querySelectorAll('#wo-settings-body .wo-edit-row:not(.wo-edit-computed)').forEach(r => {
+    r.querySelector('.wo-in-cfs').value = '';
+    r.querySelector('.wo-in-time').value = '';
+    r.querySelector('.wo-in-comments').value = '';
+  });
+
+  let filled = 0;
+  for (const l of data.lines) {
+    const cfsEl = document.querySelector(
+      `#wo-settings-body .wo-in-cfs[data-section="${l.section}"][data-key="${l.line_key}"]`);
+    if (!cfsEl) continue;
+    const row = cfsEl.closest('.wo-edit-row');
+    cfsEl.value = l.cfs == null ? '' : String(l.cfs);
+    row.querySelector('.wo-in-time').value = l.time_of_change || '';
+    row.querySelector('.wo-in-comments').value = l.comments || '';
+    row.classList.add('wo-row-imported');
+    filled++;
+  }
+  recalcWaterOrderTotals();
+
+  const bits = [`Filled ${filled} line${filled === 1 ? '' : 's'} from the PDF.${dateNote}`];
+  if (data.unmatched?.length) {
+    bits.push(`Not recognised, enter by hand: ${data.unmatched.slice(0, 6).map(escHtml).join(', ')}` +
+              (data.unmatched.length > 6 ? ` and ${data.unmatched.length - 6} more` : ''));
+  }
+  bits.push('Check the values, then press Save Water Order.');
+  out.className = 'wo-import-result ' + (data.unmatched?.length ? 'wo-import-warn' : 'wo-import-ok');
+  out.innerHTML = bits.join('<br>');
+}
+
+function initWaterOrdersPanel() {
+  const dateInput = el('wo-date');
+  if (!dateInput.value) dateInput.value = todayISO();
+  dateInput.onchange = () => loadWaterOrderForm(dateInput.value);
+  el('wo-date-prev').onclick = () => woStepDate(-1);
+  el('wo-date-next').onclick = () => woStepDate(1);
+
+  el('wo-pdf-btn').onclick = openWoPdfModal;
+  el('wo-today-btn').onclick = () => {
+    dateInput.value = todayISO();
+    loadWaterOrderForm(dateInput.value);
+  };
+  el('wo-save-btn').onclick = async () => {
+    const errEl = el('wo-error');
+    errEl.classList.add('hidden');
+    const date = dateInput.value;
+    if (!date) {
+      errEl.textContent = 'Pick a date first.';
+      errEl.classList.remove('hidden');
+      return;
+    }
+    const rows = [...document.querySelectorAll('#wo-settings-body .wo-edit-row:not(.wo-edit-computed)')];
+    const bad = rows.find(r => {
+      const v = r.querySelector('.wo-in-cfs').value.trim();
+      return v !== '' && !Number.isFinite(Number(v));
+    });
+    if (bad) {
+      errEl.textContent = `Enter a number or leave blank — check ${bad.querySelector('.wo-edit-name').textContent.trim()}.`;
+      errEl.classList.remove('hidden');
+      return;
+    }
+    const lines = rows.map(r => {
+      const cfsEl = r.querySelector('.wo-in-cfs');
+      return {
+        section:  cfsEl.dataset.section,
+        line_key: cfsEl.dataset.key,
+        cfs:      cfsEl.value.trim() === '' ? null : Number(cfsEl.value),
+        time_of_change: r.querySelector('.wo-in-time').value,
+        comments:       r.querySelector('.wo-in-comments').value,
+      };
+    });
+    const _save = beginSave(el('wo-save-btn'));
+    try {
+      await api('PUT', '/api/water-orders', { order_date: date, lines });
+      showToast('Water order saved', 'success');
+      // Plant figures are derived server-side; reload so they reflect the save.
+      await loadWaterOrderForm(date);
+      if (date === todayISO()) loadDashboardStats();   // refresh the widget
+    } catch (err) {
+      errEl.textContent = err.message;
+      errEl.classList.remove('hidden');
+    } finally { _save(); }
+  };
+  loadWaterOrderForm(dateInput.value);
 }
 
 // ── SCADA DWR flow widget (dashboard stat card) ─────────────────────────────
@@ -1926,6 +2446,12 @@ let vehiclesLoaded = false;
 
 const VTYPE_ORDER  = ['truck', 'heavy_equipment', 'other'];
 const VTYPE_LABELS = { truck: 'Trucks', heavy_equipment: 'Heavy Equipment', other: 'Other' };
+// VTYPE_LABELS is plural — it titles the collapsible sections. A single
+// vehicle's Type reads from the raw column instead ("truck" → "Truck"), which
+// also covers types that aren't in the map.
+function vehicleTypeLabel(t) {
+  return (t || '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) || null;
+}
 
 async function initVehiclesScreen() {
   if (vehiclesLoaded) return;
@@ -1957,7 +2483,7 @@ async function initVehiclesScreen() {
     body.innerHTML = '';
     [...new Set([...VTYPE_ORDER, ...Object.keys(byType)])].forEach(type => {
       if (!byType[type] || !byType[type].length) return;
-      const label = VTYPE_LABELS[type] || type.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+      const label = VTYPE_LABELS[type] || vehicleTypeLabel(type);
       const items = byType[type].map(v => createVehicleItem(v, dateInput, timeInput));
       body.appendChild(makeCollapsibleSection(label, items));
     });
@@ -1966,6 +2492,47 @@ async function initVehiclesScreen() {
     showToast('Failed to load vehicles: ' + err.message, 'error');
   }
 }
+
+// Inline rather than icon('info') — the icon set lives in the marv-site
+// submodule, so a name that isn't in it renders as a blank square.
+const INFO_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-2px;margin-right:5px"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>`;
+
+// Read-only details for one vehicle, straight off the row's already-loaded
+// record — no extra request, so it opens instantly and still works offline.
+function openVehicleInfoModal(v) {
+  const rows = [
+    ['Vehicle Number', v.vehicle_number],
+    ['Type',           vehicleTypeLabel(v.vehicle_type)],
+    ['Year',           v.year],
+    ['Make',           v.make],
+    ['Model',          v.model],
+    ['VIN',            v.vin],
+    ['License Plate',  v.license_plate],
+    ['Assigned User',  v.assigned_user],
+  ];
+  const notes = (v.vehicle_notes || '').trim();
+
+  el('vehicle-info-modal-title').textContent = v.vehicle_number || 'Vehicle Details';
+  el('vehicle-info-modal-body').innerHTML = `
+    ${rows.map(([k, val]) => `
+      <div class="vinfo-row">
+        <span class="vinfo-label">${k}</span>
+        <span class="vinfo-value${k === 'VIN' ? ' vinfo-mono' : ''}">${
+          val == null || String(val).trim() === '' ? '—' : escHtml(String(val))
+        }</span>
+      </div>`).join('')}
+    <div class="vinfo-row vinfo-notes">
+      <span class="vinfo-label">Notes</span>
+      <span class="vinfo-value">${notes ? escHtml(notes) : '—'}</span>
+    </div>`;
+  el('vehicle-info-modal').classList.remove('hidden');
+}
+
+el('vehicle-info-modal-close').addEventListener('click',
+  () => el('vehicle-info-modal').classList.add('hidden'));
+el('vehicle-info-modal').addEventListener('click', e => {
+  if (e.target === el('vehicle-info-modal')) el('vehicle-info-modal').classList.add('hidden');
+});
 
 function daysSinceDate(dateStr) {
   if (!dateStr) return null;
@@ -2033,6 +2600,7 @@ function createVehicleItem(v, dateInput, timeInput) {
       <div class="lif-footer">
         ${notesBtnHtml('vehicle', v.vehicle_id, label)}
         <button class="btn btn-secondary btn-sm v-hist-btn">${icon('history')} History</button>
+        <button type="button" class="btn btn-secondary btn-sm v-info-btn" title="Vehicle details">${INFO_SVG} Info</button>
         <button class="btn btn-save v-save-btn">Save Reading</button>
       </div>
     </div>`;
@@ -2091,6 +2659,11 @@ function createVehicleItem(v, dateInput, timeInput) {
   div.querySelector('.v-hist-btn').addEventListener('click', e => {
     e.stopPropagation();
     openHistoryModal('vehicle', v.vehicle_id, label);
+  });
+
+  div.querySelector('.v-info-btn').addEventListener('click', e => {
+    e.stopPropagation();
+    openVehicleInfoModal(v);
   });
 
   div.querySelector('.list-item-header').addEventListener('click', () => {
@@ -4678,6 +5251,78 @@ function renderVehCardQueue(id) {
   });
 }
 
+/* ── Vehicle maintenance record card ──────────────────────────────────────────
+   The body opens on a read-only summary of everything captured. Edit swaps in a
+   full form — only for whoever entered the record, or a supervisor. The server
+   enforces the same rule. */
+function canEditVehRecord(r) {
+  return isSupervisorLevel(currentUser?.role)
+    || (!!r.entered_by && r.entered_by === currentUser?.username);
+}
+
+function vehRecordViewHtml(r) {
+  const dash = '—';
+  const date = d => d ? String(d).slice(0, 10) : dash;
+  const num  = (v, suffix = '') => v != null && v !== '' ? Number(v).toLocaleString() + suffix : dash;
+  const rows = [
+    ['Description',   escHtml(r.description || dash)],
+    ['Work Type',     escHtml(r.work_type || dash)],
+    ['Work Date',     date(r.work_date)],
+    ['Performed By',  escHtml(r.performed_by || dash) + (r.is_contractor ? ' <span class="veh-tag">Contractor</span>' : '')],
+    ['Odometer',      num(r.odometer_at_service, ' mi')],
+    ['Engine Hours',  num(r.engine_hours_at_service, ' hrs')],
+    ['Parts Used',    escHtml(r.parts_used || dash)],
+    ['PO Number',     escHtml(r.po_number || dash)],
+    ['Cost',          r.cost != null ? '$' + Number(r.cost).toFixed(2) : dash],
+    ['Next Service',  date(r.next_service_date)],
+    ['Next Miles',    num(r.next_service_miles)],
+    ['Next Hours',    num(r.next_service_hours)],
+  ];
+  return `<dl class="veh-view-grid">${rows.map(([k, v]) =>
+    `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>`;
+}
+
+function vehRecordEditHtml(r) {
+  const v = x => x != null ? escHtml(String(x)) : '';
+  return `
+    <div class="form-group"><label>Description</label>
+      <textarea class="ctrl-textarea vef-description" rows="2">${escHtml(r.description || '')}</textarea></div>
+    <div class="two-col">
+      <div class="form-group"><label>Work Type</label>
+        <input type="text" class="ctrl-input ctrl-input-sm vef-work-type" value="${v(r.work_type)}"></div>
+      <div class="form-group"><label>Work Date</label>
+        <input type="date" class="ctrl-input ctrl-input-sm vef-work-date" value="${(r.work_date || '').slice(0,10)}"></div>
+    </div>
+    <div class="two-col">
+      <div class="form-group"><label>Performed By</label>
+        <input type="text" class="ctrl-input ctrl-input-sm vef-performed-by" value="${v(r.performed_by)}"></div>
+      <div class="form-group"><label>&nbsp;</label>
+        <label class="jha-cb"><input type="checkbox" class="vef-contractor" ${r.is_contractor ? 'checked' : ''}> Contractor</label></div>
+    </div>
+    <div class="two-col">
+      <div class="form-group"><label>Odometer</label>
+        <input type="number" class="ctrl-input ctrl-input-sm vef-odometer" step="1" min="0" value="${v(r.odometer_at_service)}"></div>
+      <div class="form-group"><label>Engine Hours</label>
+        <input type="number" class="ctrl-input ctrl-input-sm vef-hours" step="0.1" min="0" value="${v(r.engine_hours_at_service)}"></div>
+    </div>
+    <div class="form-group"><label>Parts Used</label>
+      <textarea class="ctrl-textarea vef-parts" rows="2">${escHtml(r.parts_used || '')}</textarea></div>
+    <div class="two-col">
+      <div class="form-group"><label>PO Number</label>
+        <input type="text" class="ctrl-input ctrl-input-sm vef-po" value="${v(r.po_number)}"></div>
+      <div class="form-group"><label>Cost ($)</label>
+        <input type="number" class="ctrl-input ctrl-input-sm vef-cost" step="0.01" min="0" value="${r.cost != null ? r.cost : ''}"></div>
+    </div>
+    <div class="two-col">
+      <div class="form-group"><label>Next Service Date</label>
+        <input type="date" class="ctrl-input ctrl-input-sm vef-next-date" value="${(r.next_service_date || '').slice(0,10)}"></div>
+      <div class="form-group"><label>Next Service Miles</label>
+        <input type="number" class="ctrl-input ctrl-input-sm vef-next-miles" step="1" min="0" value="${v(r.next_service_miles)}"></div>
+    </div>
+    <div class="form-group"><label>Next Service Hours</label>
+      <input type="number" class="ctrl-input ctrl-input-sm vef-next-hours" step="0.1" min="0" value="${v(r.next_service_hours)}"></div>`;
+}
+
 function renderVehRecords(items) {
   items = items ?? vehRecords;
   const list = el('veh-record-list');
@@ -4710,10 +5355,8 @@ function renderVehRecords(items) {
           </div>
         </div>
         <div class="equip-issue-body hidden">
-          <div class="form-group">
-            <label>Description</label>
-            <div style="font-size:0.9rem;padding:6px 0">${escHtml(r.description || '—')}</div>
-          </div>
+          <div class="veh-view">${vehRecordViewHtml(r)}</div>
+          <div class="veh-edit hidden">${vehRecordEditHtml(r)}</div>
           <div class="form-group">
             <label>Status</label>
             <select class="ctrl-select veh-status-select">
@@ -4727,20 +5370,6 @@ function renderVehRecords(items) {
             <textarea class="ctrl-textarea veh-notes-input" rows="2">${escHtml(r.notes || '')}</textarea>
           </div>
           <div class="form-group">
-            <label>Performed By</label>
-            <input type="text" class="ctrl-input veh-perf-input" value="${escHtml(r.performed_by || '')}" placeholder="Name">
-          </div>
-          <div class="two-col">
-            <div class="form-group">
-              <label>PO Number</label>
-              <input type="text" class="ctrl-input veh-po-input" value="${escHtml(r.po_number || '')}" placeholder="PO #">
-            </div>
-            <div class="form-group">
-              <label>Cost ($)</label>
-              <input type="number" class="ctrl-input veh-cost-input" value="${r.cost != null ? r.cost : ''}" step="0.01" min="0" placeholder="0.00">
-            </div>
-          </div>
-          <div class="form-group">
             <label>Add Attachments</label>
             <div class="maint-attach-btns">
               <button type="button" class="btn btn-secondary btn-sm veh-card-inv-btn" data-id="${id}">${icon('invoice')} Invoice</button>
@@ -4751,7 +5380,8 @@ function renderVehRecords(items) {
           ${existingFiles}
           <div class="error-msg hidden veh-update-error"></div>
           <div class="maint-hist-footer">
-            <span class="maint-hist-by">${escHtml(r.work_type || '')} &middot; ${(r.work_date || '').slice(0,10)}</span>
+            <span class="maint-hist-by">${escHtml(r.entered_by ? 'Entered by ' + r.entered_by : '')}</span>
+            ${canEditVehRecord(r) ? '<button class="btn btn-secondary btn-sm veh-edit-btn">Edit</button>' : ''}
             <button class="btn btn-save btn-sm veh-record-save-btn">Save</button>
           </div>
         </div>
@@ -4832,26 +5462,60 @@ el('veh-record-list').addEventListener('click', async e => {
     return;
   }
 
+  // Toggle edit mode on a record card
+  if (e.target.classList.contains('veh-edit-btn')) {
+    // toggle() reports whether the class is now present, i.e. now hidden.
+    const editing = !item.querySelector('.veh-edit').classList.toggle('hidden');
+    item.querySelector('.veh-view').classList.toggle('hidden', editing);
+    e.target.textContent = editing ? 'Cancel Edit' : 'Edit';
+    return;
+  }
+
   // Save card changes
   if (e.target.classList.contains('veh-record-save-btn')) {
-    const recordId    = item.dataset.recordId;
-    const status      = item.querySelector('.veh-status-select').value;
-    const notes       = item.querySelector('.veh-notes-input').value.trim()  || null;
-    const performed_by= item.querySelector('.veh-perf-input').value.trim()   || null;
-    const po_number   = item.querySelector('.veh-po-input').value.trim()     || null;
-    const costVal     = item.querySelector('.veh-cost-input').value;
-    const cost        = costVal !== '' ? parseFloat(costVal) : null;
-    const errEl       = item.querySelector('.veh-update-error');
+    const recordId = item.dataset.recordId;
+    const errEl    = item.querySelector('.veh-update-error');
     errEl.classList.add('hidden');
     e.target.disabled = true;
     try {
+      // Read inside the try so a missing field surfaces as an error rather
+      // than throwing before the handler can report anything.
+      const status = item.querySelector('.veh-status-select').value;
+      // Empty string (not null) so a cleared field actually clears — the
+      // server COALESCEs nulls to the existing value.
+      const notes  = item.querySelector('.veh-notes-input').value.trim();
       // Find the record data for naming
       const rec = vehRecords.find(r => String(r.maintenance_id) === String(recordId)) || {};
       const vehicleNum = (rec.vehicle_number || 'vehicle').replace(/[^a-zA-Z0-9-]/g, '_').replace(/_+/g,'_').replace(/^_|_$/,'');
       const [ry, rm, rd] = (rec.work_date || todayISO()).slice(0,10).split('-');
       const dateStr = `${rm}${rd}${ry}`;
       const workType = rec.work_type || 'service';
-      await api('PATCH', `/api/maintenance/vehicle/${recordId}`, { status, notes, performed_by, po_number, cost });
+      // Performed by / PO / cost moved into the edit form, so they're only sent
+      // when it's open; omitted fields are left untouched server-side.
+      const payload = { status, notes };
+      // Only send the wider fields when the edit form is actually open, so a
+      // plain status change stays a status change (and stays open to everyone).
+      const edit = item.querySelector('.veh-edit');
+      if (edit && !edit.classList.contains('hidden')) {
+        const val = sel => edit.querySelector(sel)?.value.trim() ?? '';
+        const numOrNull = sel => { const x = val(sel); return x === '' ? null : Number(x); };
+        Object.assign(payload, {
+          description:             val('.vef-description'),
+          work_type:               val('.vef-work-type'),
+          work_date:               val('.vef-work-date') || null,
+          performed_by:            val('.vef-performed-by'),
+          is_contractor:           edit.querySelector('.vef-contractor')?.checked || false,
+          odometer_at_service:     numOrNull('.vef-odometer'),
+          engine_hours_at_service: numOrNull('.vef-hours'),
+          parts_used:              val('.vef-parts'),
+          po_number:               val('.vef-po'),
+          cost:                    numOrNull('.vef-cost'),
+          next_service_date:       val('.vef-next-date') || null,
+          next_service_miles:      numOrNull('.vef-next-miles'),
+          next_service_hours:      numOrNull('.vef-next-hours'),
+        });
+      }
+      await api('PATCH', `/api/maintenance/vehicle/${recordId}`, payload);
       const pending = vehCardFiles.get(recordId) || [];
       if (pending.length) {
         await doUploadAttachments(parseInt(recordId), vehicleNum, dateStr, workType, pending);
@@ -5550,6 +6214,7 @@ el('maint-save-btn').addEventListener('click', async () => {
     el('maint-vehicle-next-miles').value = '';
     el('maint-vehicle-next-hours').value = '';
     el('maint-next-service').value = '';
+    el('maint-vehicle-status').value = 'open';   // next record starts Open again
   } catch (err) {
     showError('maint-error', err.message);
   } finally {
@@ -6191,6 +6856,590 @@ function createPiezItem(p, dateInput, timeInput) {
   return div;
 }
 
+// Supervisor picker for which wells sit on the purge program. Writes the
+// wells.purge flag rather than an app_settings list.
+async function initPurgeWellsPanel() {
+  const list = el('pw-settings-list');
+  list.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const [{ well_ids }, wells] = await Promise.all([
+      api('GET', '/api/settings/purge-wells'),
+      api('GET', '/api/purge/well-options'),
+    ]);
+    const picked = new Set(well_ids.map(Number));
+    const byArea = {};
+    wells.forEach(w => {
+      const a = w.area || 'Other';
+      (byArea[a] = byArea[a] || []).push(w);
+    });
+    list.innerHTML = Object.keys(byArea).sort().map(area => `
+      <div class="rw-area-row"><span class="rw-area-label">${escHtml(area)}</span></div>
+      ${byArea[area].map(w => `<div class="rw-well-row">
+        <label class="rw-well-label">
+          <input type="checkbox" class="pw-cb" data-id="${w.well_id}" ${picked.has(Number(w.well_id)) ? 'checked' : ''}>
+          <span>${escHtml([w.state_well_number, w.common_name].filter(Boolean).join(' — '))}</span>
+        </label>
+      </div>`).join('')}`).join('');
+  } catch (err) {
+    list.innerHTML = `<div class="placeholder-msg">Failed to load: ${escHtml(err.message)}</div>`;
+    return;
+  }
+  const btn = el('pw-save-btn');
+  btn.onclick = async () => {
+    const ids = [...list.querySelectorAll('.pw-cb:checked')].map(c => parseInt(c.dataset.id, 10));
+    const _save = beginSave(btn);
+    try {
+      await api('PUT', '/api/settings/purge-wells', { well_ids: ids });
+      showToast(`${ids.length} purge well${ids.length === 1 ? '' : 's'} saved`, 'success');
+    } catch (err) {
+      showToast(err.message, 'error');
+    } finally { _save(); }
+  };
+}
+
+// Supervisor editor for ponds.max_gauge / river_outlets.max_gauge. Grouped by
+// location in the same order as the Ponds screen. Inactive ponds are listed and
+// tagged — a retired pond still needs a maximum set for when it comes back.
+let _sgRows = [];
+
+async function initStaffGaugesPanel() {
+  const list = el('sg-settings-list');
+  el('sg-error').classList.add('hidden');
+  list.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    _sgRows = await api('GET', '/api/settings/staff-gauges');
+  } catch (err) {
+    list.innerHTML = `<div class="placeholder-msg">Failed to load.</div>`;
+    return;
+  }
+  if (!_sgRows.length) {
+    list.innerHTML = '<div class="placeholder-msg">No ponds found.</div>';
+    return;
+  }
+
+  // Preserve server order (location_sort, entity_sort) while grouping.
+  const groups = [];
+  const byLoc = new Map();
+  for (const r of _sgRows) {
+    const key = r.location_name || 'Unassigned';
+    if (!byLoc.has(key)) { byLoc.set(key, []); groups.push({ name: key, rows: byLoc.get(key) }); }
+    byLoc.get(key).push(r);
+  }
+
+  list.innerHTML = groups.map(g => `
+    <div class="rw-area-row"><span class="rw-area-label">${escHtml(g.name)}</span></div>
+    ${g.rows.map(r => `
+      <div class="sg-row">
+        <span class="sg-name">
+          ${escHtml(r.name)}
+          ${r.entity_type === 'outlet' ? '<span class="sg-tag">Outlet</span>' : ''}
+          ${!r.active ? '<span class="sg-tag sg-tag-off">Inactive</span>' : ''}
+        </span>
+        <input type="number" class="rr-input sg-max" step="0.01" min="0" inputmode="decimal"
+               placeholder="—" value="${r.max_gauge != null ? escHtml(String(r.max_gauge)) : ''}"
+               data-type="${r.entity_type}" data-id="${r.entity_id}">
+        <span class="sg-unit">ft</span>
+      </div>`).join('')}`).join('');
+
+  const btn = el('sg-save-btn');
+  btn.onclick = async () => {
+    const errEl = el('sg-error');
+    errEl.classList.add('hidden');
+    const inputs = [...list.querySelectorAll('.sg-max')];
+
+    // Validate before sending so a bad row is pointed at rather than 400ing the
+    // whole save. Blank is valid — it clears the maximum.
+    const bad = inputs.find(i => {
+      const v = i.value.trim();
+      return v !== '' && (!Number.isFinite(Number(v)) || Number(v) < 0);
+    });
+    if (bad) {
+      errEl.textContent = `Enter a number of 0 or more (or leave blank) — check ${bad.closest('.sg-row').querySelector('.sg-name').textContent.trim()}.`;
+      errEl.classList.remove('hidden');
+      bad.focus();
+      return;
+    }
+
+    const gauges = inputs.map(i => ({
+      entity_type: i.dataset.type,
+      entity_id:   parseInt(i.dataset.id, 10),
+      max_gauge:   i.value.trim() === '' ? null : Number(i.value),
+    }));
+
+    const _save = beginSave(btn);
+    try {
+      await api('PUT', '/api/settings/staff-gauges', { gauges });
+      // Ponds screen caches its rows on first open; force a rebuild so the new
+      // maximums show up without a full app reload.
+      pondsLoaded = false;
+      showToast('Staff gauges saved', 'success');
+    } catch (err) {
+      errEl.textContent = err.message;
+      errEl.classList.remove('hidden');
+    } finally { _save(); }
+  };
+}
+
+/* ── Purge program (Kern Fan Water Quality Sampling) ──────────────────────────
+   Purge Readings mirrors the paper Pumping Notes sheet; Calibration holds the
+   daily EC and pH meter logs. */
+const PURGE_GAL_PER_FT = 1.47;   // 6-inch monitoring well
+const PURGE_CASING_VOLS = 5;
+
+let _purgeWells = [], _purgeRows = [], _purgeEditId = null;
+
+function initPurgeScreen() {
+  showPurgeSub(null);
+  el('purge-main').querySelectorAll('[data-purge-panel]').forEach(tile => {
+    if (tile.dataset.wired) return;
+    tile.dataset.wired = '1';
+    tile.addEventListener('click', () => showPurgeSub(tile.dataset.purgePanel));
+  });
+}
+
+// Nest one level deeper than the Well Runs panel: Back returns here first.
+function showPurgeSub(which) {
+  ['readings', 'calibration'].forEach(k =>
+    el(`purge-panel-${k}`).classList.toggle('hidden', k !== which));
+  el('purge-main').classList.toggle('hidden', !!which);
+  const back = () => showPurgeSub(null);
+  if (!which) {
+    setPanelNav(el('screen-well-runs'), () => {
+      document.querySelectorAll('#screen-well-runs .maint-panel').forEach(p => p.classList.add('hidden'));
+      el('well-runs-main').classList.remove('hidden');
+      setPanelNav(el('screen-well-runs'), () => showScreen('dashboard'), 'Well Runs');
+    }, 'Well Runs - Purge');
+    return;
+  }
+  setPanelNav(el('screen-well-runs'), back,
+    'Purge - ' + (which === 'readings' ? 'Purge Readings' : 'Calibration'));
+  if (which === 'readings') initPurgeReadings();
+  else initCalibration();
+}
+
+// ── Purge Readings ──
+async function initPurgeReadings() {
+  if (!el('purge-new-btn').dataset.wired) {
+    el('purge-new-btn').dataset.wired = '1';
+    el('purge-new-btn').addEventListener('click', () => openPurgeForm(null));
+    let t;
+    el('purge-search').addEventListener('input', () => {
+      clearTimeout(t); t = setTimeout(renderPurgeList, 250);
+    });
+  }
+  try {
+    [_purgeWells, _purgeRows] = await Promise.all([
+      api('GET', '/api/purge/wells'),
+      api('GET', '/api/purge/readings'),
+    ]);
+  } catch (err) {
+    el('purge-list').innerHTML = `<div class="placeholder-msg">Failed to load: ${escHtml(err.message)}</div>`;
+    return;
+  }
+  renderPurgeList();
+}
+
+function purgeWellLabel(r) {
+  return [r.state_well_number, r.well_name].filter(Boolean).join(' — ') || 'Well';
+}
+
+function renderPurgeList() {
+  const q = (el('purge-search').value || '').trim().toLowerCase();
+  const rows = _purgeRows.filter(r => !q || purgeWellLabel(r).toLowerCase().includes(q));
+  const list = el('purge-list');
+  if (!rows.length) {
+    list.innerHTML = `<div class="placeholder-msg">${_purgeRows.length ? 'No matches.' : 'No purge readings yet.'}</div>`;
+    return;
+  }
+  const n = (v, d = 1) => v != null ? Number(v).toFixed(d) : '—';
+  list.innerHTML = rows.map(r => `
+    <div class="safety-meeting-item" data-purge-id="${r.purge_id}">
+      <div class="safety-meeting-header">
+        <div class="safety-meeting-info">
+          <div class="safety-meeting-topic">${escHtml(purgeWellLabel(r))}</div>
+          <div class="safety-meeting-date">
+            ${r.reading_date ? localDateStr(r.reading_date, { month:'short', day:'numeric', year:'numeric' }) : 'No date'}
+            ${r.total_gallons_pumped != null ? ' · ' + Number(r.total_gallons_pumped).toLocaleString() + ' gal' : ''}
+            ${r.total_pump_min != null ? ' · ' + r.total_pump_min + ' min' : ''}
+          </div>
+        </div>
+        <span class="safety-meeting-chevron">›</span>
+      </div>
+      <div class="safety-meeting-body hidden">
+        <dl class="veh-view-grid">
+          <dt>Well Depth</dt><dd>${n(r.well_depth)} ft</dd>
+          <dt>Casing</dt><dd>${escHtml(r.casing_diameter || '—')}</dd>
+          <dt>R.P. to Water</dt><dd>${n(r.rp_to_water, 2)}</dd>
+          <dt>Gallons to Pump</dt><dd>${r.gallons_to_pump != null ? Number(r.gallons_to_pump).toLocaleString() : '—'}</dd>
+          <dt>Total Pumped</dt><dd>${r.total_gallons_pumped != null ? Number(r.total_gallons_pumped).toLocaleString() : '—'}</dd>
+          <dt>Start / End</dt><dd>${(r.start_time||'—').toString().slice(0,5)} – ${(r.end_time||'—').toString().slice(0,5)}</dd>
+          <dt>Meter Start / End</dt><dd>${r.start_meter ?? '—'} → ${r.end_meter ?? '—'}</dd>
+          <dt>R.P. @ 5 min</dt><dd>${n(r.rp_to_water_5min, 2)}</dd>
+          <dt>Pumping Rate</dt><dd>${n(r.pumping_rate)}</dd>
+          <dt>Total Min</dt><dd>${r.total_pump_min ?? '—'}</dd>
+          <dt>Ending R.P.</dt><dd>${n(r.ending_rp_to_water, 2)}</dd>
+          ${r.notes ? `<dt>Notes</dt><dd>${escHtml(r.notes)}</dd>` : ''}
+          <dt>Entered By</dt><dd>${escHtml(r.entered_by || '—')}</dd>
+        </dl>
+        <div class="form-row">
+          ${canEditPurge(r) ? '<button class="btn btn-secondary btn-sm purge-edit-btn">Edit</button>' : ''}
+          ${isSupervisorLevel(currentUser?.role) ? '<button class="btn btn-danger btn-sm purge-del-btn" style="margin-left:auto">Delete</button>' : ''}
+        </div>
+      </div>
+    </div>`).join('');
+
+  list.querySelectorAll('.safety-meeting-item').forEach(item => {
+    const body = item.querySelector('.safety-meeting-body');
+    const chev = item.querySelector('.safety-meeting-chevron');
+    item.querySelector('.safety-meeting-header').addEventListener('click', () => {
+      const open = body.classList.toggle('hidden');
+      chev.style.transform = open ? '' : 'rotate(90deg)';
+    });
+    const row = _purgeRows.find(r => String(r.purge_id) === item.dataset.purgeId);
+    item.querySelector('.purge-edit-btn')?.addEventListener('click', () => openPurgeForm(row));
+    item.querySelector('.purge-del-btn')?.addEventListener('click', async () => {
+      if (!confirm('Delete this purge reading?')) return;
+      try {
+        await api('DELETE', `/api/purge/readings/${row.purge_id}`);
+        showToast('Purge reading deleted');
+        await initPurgeReadings();
+      } catch (err) { showToast(err.message, 'error'); }
+    });
+  });
+}
+
+function canEditPurge(r) {
+  return isSupervisorLevel(currentUser?.role)
+    || (!!r.entered_by && r.entered_by === currentUser?.username);
+}
+
+function openPurgeForm(existing) {
+  _purgeEditId = existing ? existing.purge_id : null;
+  el('purge-new-btn').style.display = 'none';
+  const wrap = el('purge-form-wrap');
+  wrap.classList.remove('hidden');
+  const v = x => x != null ? escHtml(String(x)) : '';
+  el('purge-form-body').innerHTML = `
+    <div class="form-group"><label>Well</label>
+      <select id="pf-well" class="ctrl-select">
+        <option value="">— select well —</option>
+        ${_purgeWells.map(w => `<option value="${w.well_id}"
+          data-depth="${w.total_depth_ft ?? ''}"
+          data-swn="${escHtml(w.state_well_number || '')}"
+          data-name="${escHtml(w.common_name || '')}"
+          ${existing && String(existing.well_id) === String(w.well_id) ? 'selected' : ''}>
+          ${escHtml([w.state_well_number, w.common_name].filter(Boolean).join(' — '))}</option>`).join('')}
+      </select>
+    </div>
+    <div class="two-col">
+      <div class="form-group"><label>State Well Number</label>
+        <input type="text" id="pf-swn" class="ctrl-input ctrl-input-sm" value="${v(existing?.state_well_number)}"></div>
+      <div class="form-group"><label>Well Name / Descriptor</label>
+        <input type="text" id="pf-name" class="ctrl-input ctrl-input-sm" value="${v(existing?.well_name)}" placeholder="Deep / Shallow"></div>
+    </div>
+    <div class="two-col">
+      <div class="form-group"><label>Date</label>
+        <input type="date" id="pf-date" class="ctrl-input ctrl-input-sm" value="${(existing?.reading_date || '').toString().slice(0,10)}"></div>
+      <div class="form-group"><label>Casing Diameter</label>
+        <input type="text" id="pf-casing" class="ctrl-input ctrl-input-sm" value="${v(existing?.casing_diameter ?? '6"')}"></div>
+    </div>
+    <div class="two-col">
+      <div class="form-group"><label>Well Depth (ft)</label>
+        <input type="number" step="0.01" id="pf-depth" class="ctrl-input ctrl-input-sm" value="${v(existing?.well_depth)}"></div>
+      <div class="form-group"><label>R.P. to Water</label>
+        <input type="number" step="0.01" id="pf-rp" class="ctrl-input ctrl-input-sm" value="${v(existing?.rp_to_water)}"></div>
+    </div>
+    <div class="purge-calc-hint" id="pf-calc-hint"></div>
+    <div class="two-col">
+      <div class="form-group"><label>Gallons to be Pumped</label>
+        <input type="number" step="1" id="pf-gal-target" class="ctrl-input ctrl-input-sm" value="${v(existing?.gallons_to_pump)}"></div>
+      <div class="form-group"><label>Total Gallons Pumped</label>
+        <input type="number" step="1" id="pf-gal-total" class="ctrl-input ctrl-input-sm" value="${v(existing?.total_gallons_pumped)}"></div>
+    </div>
+    <div class="two-col">
+      <div class="form-group"><label>Starting Time</label>
+        <input type="time" id="pf-start-time" class="ctrl-input ctrl-input-sm" value="${(existing?.start_time || '').toString().slice(0,5)}"></div>
+      <div class="form-group"><label>Start Meter Reading</label>
+        <input type="number" step="0.01" id="pf-start-meter" class="ctrl-input ctrl-input-sm" value="${v(existing?.start_meter)}"></div>
+    </div>
+    <div class="two-col">
+      <div class="form-group"><label>R.P. to Water @ 5 min</label>
+        <input type="number" step="0.01" id="pf-rp5" class="ctrl-input ctrl-input-sm" value="${v(existing?.rp_to_water_5min)}"></div>
+      <div class="form-group"><label>Pumping Rate (gpm)</label>
+        <input type="number" step="0.01" id="pf-rate" class="ctrl-input ctrl-input-sm" value="${v(existing?.pumping_rate)}"></div>
+    </div>
+    <div class="two-col">
+      <div class="form-group"><label>Ending Time</label>
+        <input type="time" id="pf-end-time" class="ctrl-input ctrl-input-sm" value="${(existing?.end_time || '').toString().slice(0,5)}"></div>
+      <div class="form-group"><label>End Meter Reading</label>
+        <input type="number" step="0.01" id="pf-end-meter" class="ctrl-input ctrl-input-sm" value="${v(existing?.end_meter)}"></div>
+    </div>
+    <div class="two-col">
+      <div class="form-group"><label>Total Pumping Time (min)</label>
+        <input type="number" step="1" id="pf-total-min" class="ctrl-input ctrl-input-sm" value="${v(existing?.total_pump_min)}"></div>
+      <div class="form-group"><label>Ending R.P. to Water</label>
+        <input type="number" step="0.01" id="pf-end-rp" class="ctrl-input ctrl-input-sm" value="${v(existing?.ending_rp_to_water)}"></div>
+    </div>
+    <div class="form-group"><label>Notes</label>
+      <textarea id="pf-notes" class="ctrl-textarea" rows="2" placeholder="e.g. ran out of water in 3 minutes">${escHtml(existing?.notes || '')}</textarea></div>
+    <div id="pf-error" class="error-msg hidden"></div>
+    <div class="form-row">
+      <button class="btn btn-save" id="pf-save">${existing ? 'Save Changes' : 'Save Purge'}</button>
+      <button class="btn btn-secondary" id="pf-cancel">Cancel</button>
+    </div>`;
+
+  if (!existing) el('pf-date').value = new Date().toLocaleDateString('en-CA');
+
+  // Selecting a well fills its identifiers and depth; typed values win after.
+  el('pf-well').addEventListener('change', () => {
+    const o = el('pf-well').selectedOptions[0];
+    if (!o || !o.value) return;
+    el('pf-swn').value = o.dataset.swn || '';
+    el('pf-name').value = o.dataset.name || '';
+    if (o.dataset.depth) el('pf-depth').value = o.dataset.depth;
+    recalcPurge();
+  });
+  ['pf-depth', 'pf-rp', 'pf-rate'].forEach(id =>
+    el(id).addEventListener('input', recalcPurge));
+  el('pf-cancel').addEventListener('click', () => {
+    wrap.classList.add('hidden');
+    el('purge-new-btn').style.display = '';
+    _purgeEditId = null;
+  });
+  el('pf-save').addEventListener('click', savePurgeForm);
+  recalcPurge();
+  wrap.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// (Well Depth − R.P. to Water) × 1.47 × 5 = gallons; gallons ÷ rate = minutes.
+// Fills blank fields and shows the maths, but never overwrites a typed value.
+function recalcPurge() {
+  const depth = parseFloat(el('pf-depth').value);
+  const rp    = parseFloat(el('pf-rp').value);
+  const rate  = parseFloat(el('pf-rate').value);
+  const hint  = el('pf-calc-hint');
+  if (!isFinite(depth) || !isFinite(rp) || depth <= rp) { hint.textContent = ''; return; }
+  const gal = (depth - rp) * PURGE_GAL_PER_FT * PURGE_CASING_VOLS;
+  const galRounded = Math.round(gal / 50) * 50;   // sheet rounds to the nearest 50
+  let txt = `(${depth} − ${rp}) × ${PURGE_GAL_PER_FT} × ${PURGE_CASING_VOLS} = ${gal.toFixed(0)} gal → ${galRounded}`;
+  const target = el('pf-gal-target');
+  if (!target.value) target.value = galRounded;
+  if (isFinite(rate) && rate > 0) {
+    const mins = Math.round((parseFloat(target.value) || galRounded) / rate);
+    txt += ` · ÷ ${rate} gpm = ${mins} min`;
+    const mn = el('pf-total-min');
+    if (!mn.value) mn.value = mins;
+  }
+  hint.textContent = txt;
+}
+
+async function savePurgeForm() {
+  const errEl = el('pf-error');
+  errEl.classList.add('hidden');
+  const payload = {
+    well_id:              el('pf-well').value || null,
+    state_well_number:    el('pf-swn').value.trim(),
+    well_name:            el('pf-name').value.trim(),
+    reading_date:         el('pf-date').value || null,
+    casing_diameter:      el('pf-casing').value.trim(),
+    well_depth:           el('pf-depth').value,
+    rp_to_water:          el('pf-rp').value,
+    gallons_to_pump:      el('pf-gal-target').value,
+    total_gallons_pumped: el('pf-gal-total').value,
+    start_time:           el('pf-start-time').value || null,
+    start_meter:          el('pf-start-meter').value,
+    rp_to_water_5min:     el('pf-rp5').value,
+    pumping_rate:         el('pf-rate').value,
+    end_meter:            el('pf-end-meter').value,
+    end_time:             el('pf-end-time').value || null,
+    total_pump_min:       el('pf-total-min').value,
+    ending_rp_to_water:   el('pf-end-rp').value,
+    notes:                el('pf-notes').value.trim(),
+  };
+  if (!payload.well_id && !payload.state_well_number) {
+    errEl.textContent = 'Pick a well or enter a state well number.';
+    errEl.classList.remove('hidden');
+    return;
+  }
+  const _save = beginSave(el('pf-save'));
+  try {
+    if (_purgeEditId) await api('PATCH', `/api/purge/readings/${_purgeEditId}`, payload);
+    else await api('POST', '/api/purge/readings', payload);
+    el('purge-form-wrap').classList.add('hidden');
+    el('purge-new-btn').style.display = '';
+    showToast(_purgeEditId ? 'Purge reading updated' : 'Purge reading saved');
+    _purgeEditId = null;
+    await initPurgeReadings();
+  } catch (err) {
+    errEl.textContent = err.message;
+    errEl.classList.remove('hidden');
+  } finally { _save(); }
+}
+
+// ── Calibration logs (EC + pH) ──
+const CAL_DEFS = {
+  ec: {
+    title: 'EC Meter Calibration',
+    fields: [
+      { k: 'cal_date',      label: 'Date',            type: 'date',   required: true },
+      { k: 'cal_time',      label: 'Time',            type: 'time' },
+      { k: 'cal_std_lot',   label: 'Cal Std. brand/lot #',   type: 'text' },
+      { k: 'cal_pass',      label: 'Cal passed?',     type: 'check' },
+      { k: 'check_std_lot', label: 'Check Std. brand/lot #', type: 'text' },
+      { k: 'check_value',   label: 'Check Std. reading (µS/cm)', type: 'number', step: '0.01' },
+      { k: 'tech',          label: 'Tech',            type: 'text' },
+      { k: 'notes',         label: 'Notes',           type: 'textarea' },
+    ],
+    cols: [
+      ['Date', r => localDateStr(r.cal_date, { month:'short', day:'numeric', year:'numeric' })],
+      ['Time', r => (r.cal_time || '').toString().slice(0,5) || '—'],
+      ['Cal Std.', r => r.cal_std_lot || '—'],
+      ['Pass', r => r.cal_pass == null ? '—' : (r.cal_pass ? '✓' : '✗')],
+      ['Check Std.', r => r.check_std_lot || '—'],
+      ['Reading', r => r.check_value != null ? Number(r.check_value).toFixed(0) : '—'],
+      ['Tech', r => r.tech || '—'],
+      ['Notes', r => r.notes || ''],
+    ],
+  },
+  ph: {
+    title: 'pH Meter Calibration',
+    fields: [
+      { k: 'cal_date',        label: 'Date', type: 'date', required: true },
+      { k: 'cal_time',        label: 'Time', type: 'time' },
+      { k: 'buffer_401_lot',  label: 'Buffer pH 4.01 brand/lot',  type: 'text' },
+      { k: 'buffer_700_lot',  label: 'Buffer pH 7.00 brand/lot',  type: 'text' },
+      { k: 'buffer_1001_lot', label: 'Buffer pH 10.01 brand/lot', type: 'text' },
+      { k: 'errors',          label: 'Errors?', type: 'text', placeholder: 'e.g. no' },
+      { k: 'cv_lot',          label: 'CV pH 7.00 brand/lot', type: 'text' },
+      { k: 'cv_value',        label: 'CV Value', type: 'number', step: '0.01' },
+      { k: 'tech',            label: 'Tech', type: 'text' },
+      { k: 'notes',           label: 'Notes', type: 'textarea' },
+    ],
+    cols: [
+      ['Date', r => localDateStr(r.cal_date, { month:'short', day:'numeric', year:'numeric' })],
+      ['Time', r => (r.cal_time || '').toString().slice(0,5) || '—'],
+      ['4.01', r => r.buffer_401_lot || '—'],
+      ['7.00', r => r.buffer_700_lot || '—'],
+      ['10.01', r => r.buffer_1001_lot || '—'],
+      ['Errors', r => r.errors || '—'],
+      ['CV Lot', r => r.cv_lot || '—'],
+      ['CV Value', r => r.cv_value != null ? Number(r.cv_value).toFixed(2) : '—'],
+      ['Tech', r => r.tech || '—'],
+      ['Notes', r => r.notes || ''],
+    ],
+  },
+};
+
+let _calKind = 'ec';
+
+function initCalibration() {
+  if (!el('cal-tab-ec').dataset.wired) {
+    el('cal-tab-ec').dataset.wired = '1';
+    el('cal-tab-ec').addEventListener('click', () => { _calKind = 'ec'; renderCalTabs(); loadCalLog(); });
+    el('cal-tab-ph').addEventListener('click', () => { _calKind = 'ph'; renderCalTabs(); loadCalLog(); });
+  }
+  renderCalTabs();
+  loadCalLog();
+}
+
+function renderCalTabs() {
+  el('cal-tab-ec').classList.toggle('active', _calKind === 'ec');
+  el('cal-tab-ph').classList.toggle('active', _calKind === 'ph');
+}
+
+async function loadCalLog() {
+  const def = CAL_DEFS[_calKind];
+  const body = el('cal-body');
+  body.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  let rows = [];
+  try {
+    rows = await api('GET', `/api/cal-log/${_calKind}`);
+  } catch (err) {
+    body.innerHTML = `<div class="placeholder-msg">Failed to load: ${escHtml(err.message)}</div>`;
+    return;
+  }
+  const canDel = isSupervisorLevel(currentUser?.role);
+  body.innerHTML = `
+    <div class="issue-toolbar"><button class="btn btn-primary btn-sm" id="cal-new-btn">+ New ${escHtml(def.title)} Entry</button></div>
+    <div id="cal-form" class="settings-card hidden" style="margin:0 0 14px"><div class="settings-pad">
+      ${def.fields.map(f => calFieldHtml(f)).join('')}
+      <div id="cal-error" class="error-msg hidden"></div>
+      <div class="form-row">
+        <button class="btn btn-save" id="cal-save">Save</button>
+        <button class="btn btn-secondary" id="cal-cancel">Cancel</button>
+      </div>
+    </div></div>
+    ${rows.length ? `<div class="report-scroll"><table class="report-table cal-table">
+      <thead><tr>${def.cols.map(c => `<th>${escHtml(c[0])}</th>`).join('')}${canDel ? '<th></th>' : ''}</tr></thead>
+      <tbody>${rows.map(r => `<tr>
+        ${def.cols.map(c => `<td>${escHtml(String(c[1](r) ?? ''))}</td>`).join('')}
+        ${canDel ? `<td><button class="hist-btn cal-del-btn" data-id="${r.cal_id}" title="Delete">✕</button></td>` : ''}
+      </tr>`).join('')}</tbody></table></div>`
+    : '<div class="placeholder-msg">No calibration entries yet.</div>'}`;
+
+  el('cal-new-btn').addEventListener('click', () => {
+    el('cal-form').classList.remove('hidden');
+    el('cal-new-btn').style.display = 'none';
+    const d = el('cal-f-cal_date'); if (d && !d.value) d.value = new Date().toLocaleDateString('en-CA');
+    const t = el('cal-f-cal_time'); if (t && !t.value) t.value = nowHHMM();
+    const tech = el('cal-f-tech');
+    if (tech && !tech.value) tech.value = currentUser?.initials || '';
+  });
+  el('cal-cancel').addEventListener('click', () => {
+    el('cal-form').classList.add('hidden');
+    el('cal-new-btn').style.display = '';
+  });
+  el('cal-save').addEventListener('click', saveCalLog);
+  body.querySelectorAll('.cal-del-btn').forEach(b => b.addEventListener('click', async () => {
+    if (!confirm('Delete this calibration entry?')) return;
+    try {
+      await api('DELETE', `/api/cal-log/${_calKind}/${b.dataset.id}`);
+      showToast('Entry deleted');
+      loadCalLog();
+    } catch (err) { showToast(err.message, 'error'); }
+  }));
+}
+
+function calFieldHtml(f) {
+  const id = `cal-f-${f.k}`;
+  if (f.type === 'check') {
+    return `<label class="jha-cb" style="margin-bottom:8px"><input type="checkbox" id="${id}"> ${escHtml(f.label)}</label>`;
+  }
+  if (f.type === 'textarea') {
+    return `<div class="form-group"><label>${escHtml(f.label)}</label>
+      <textarea id="${id}" class="ctrl-textarea" rows="2"></textarea></div>`;
+  }
+  return `<div class="form-group"><label>${escHtml(f.label)}</label>
+    <input type="${f.type}" id="${id}" class="ctrl-input ctrl-input-sm"
+      ${f.step ? `step="${f.step}"` : ''} ${f.placeholder ? `placeholder="${escHtml(f.placeholder)}"` : ''}></div>`;
+}
+
+async function saveCalLog() {
+  const def = CAL_DEFS[_calKind];
+  const errEl = el('cal-error');
+  errEl.classList.add('hidden');
+  const payload = {};
+  for (const f of def.fields) {
+    const node = el(`cal-f-${f.k}`);
+    if (!node) continue;
+    payload[f.k] = f.type === 'check' ? node.checked : node.value.trim();
+    if (f.required && !payload[f.k]) {
+      errEl.textContent = `${f.label} is required.`;
+      errEl.classList.remove('hidden');
+      return;
+    }
+  }
+  const _save = beginSave(el('cal-save'));
+  try {
+    await api('POST', `/api/cal-log/${_calKind}`, payload);
+    showToast('Calibration logged');
+    loadCalLog();
+  } catch (err) {
+    errEl.textContent = err.message;
+    errEl.classList.remove('hidden');
+  } finally { _save(); }
+}
+
 /* ── Settings Screen ─────────────────────────────────────────────────────── */
 
 // Text size preference — apply on load
@@ -6230,6 +7479,9 @@ const SETTINGS_PANEL_NAMES = {
   readings:         "Today's Readings",
   'kf-widget':      'KF Widget',
   'running-wells':  'Running Wells',
+  'water-orders':   'Water Orders',
+  'purge-wells':    'Purge Wells',
+  'staff-gauges':   'Staff Gauges',
   'gps-selector':   'GPS Location Selector',
   'scada-roles':    'SCADA Access',
   appinfo:          'App Info',
@@ -6248,6 +7500,9 @@ function openSettingsPanel(panelId) {
   if (panelId === 'bugreports')     loadBugReports();
   if (panelId === 'kf-widget')      initKFWidgetPanel();
   if (panelId === 'running-wells')  initRunningWellsPanel();
+  if (panelId === 'water-orders')   initWaterOrdersPanel();
+  if (panelId === 'purge-wells')    initPurgeWellsPanel();
+  if (panelId === 'staff-gauges')   initStaffGaugesPanel();
   if (panelId === 'gps-selector')   initGPSSelectorSettingsPanel();
   if (panelId === 'scada-roles')    initScadaRolesPanel();
   if (panelId === 'chargecodes')    initChargeCodesSettings();
@@ -9388,7 +10643,7 @@ function initVehicleReportPanel() {
 
 async function runVehicleReport() {
   const isCompare = vehicleReportType === 'compare';
-  el('report-export-btn').style.display = vehicleReportType === 'mileage' ? '' : 'none';
+  el('report-export-btn').style.display = vehicleReportType === 'compare' ? 'none' : '';
   // The single-month nav is used by CVC Mileage / Last Service; Compare uses
   // its own two-month picker.
   document.querySelector('#report-panel-vehicles .report-month-nav:not(#vehicle-compare-nav)')
@@ -9569,13 +10824,18 @@ async function renderVehicleCompareReport() {
   }
 }
 
+let lastServiceRows = [];
+
 async function renderVehicleServiceReport() {
   const out = el('report-output');
   out.innerHTML = '<div class="placeholder-msg">Loading…</div>';
   try {
     const rows = await api('GET', '/api/reports/vehicle-service');
+    lastServiceRows = rows;
     const trucks = rows.filter(r => !r.reading_type || r.reading_type === 'odometer' || r.reading_type === 'both');
     const heavy  = rows.filter(r => r.reading_type === 'hours');
+    // Same convention as CVC Mileage: the shared pool isn't a named operator.
+    const ac = v => (v.assigned_user && v.assigned_user.trim().toLowerCase() !== 'ops & maint') ? v.assigned_user : '';
 
     const fmtOdo  = v => v != null ? Number(v).toLocaleString() + ' mi' : '—';
     const fmtHrs  = v => v != null ? Number(v).toFixed(1) + ' hrs' : '—';
@@ -9597,6 +10857,7 @@ async function renderVehicleServiceReport() {
 
     const truckRows = trucks.map(v => `<tr>
       <td>${v.vehicle_number||''}</td>
+      <td>${escHtml(ac(v))}</td>
       <td>${fmtOdo(v.current_odometer)}<br><small style="color:var(--text-dim)">${fmtDate(v.current_reading_date)}</small></td>
       <td>${fmtOdo(v.odometer_at_service)}<br><small style="color:var(--text-dim)">${fmtDate(v.last_service_date)}</small></td>
       ${diffCell(v.current_odometer, v.odometer_at_service)}
@@ -9605,6 +10866,7 @@ async function renderVehicleServiceReport() {
 
     const heavyRows = heavy.map(v => `<tr>
       <td>${v.vehicle_number||''}</td>
+      <td>${escHtml(ac(v))}</td>
       <td>${fmtHrs(v.current_engine_hours)}<br><small style="color:var(--text-dim)">${fmtDate(v.current_reading_date)}</small></td>
       <td>${fmtHrs(v.engine_hours_at_service)}<br><small style="color:var(--text-dim)">${fmtDate(v.last_service_date)}</small></td>
       ${diffCell(v.current_engine_hours, v.engine_hours_at_service)}
@@ -9614,14 +10876,14 @@ async function renderVehicleServiceReport() {
     out.innerHTML = `<div class="report-card">
       <div class="report-title">Last Service</div>
       <div class="report-section-title">Trucks</div>
-      ${trucks.length ? `<table class="report-table">
-        <thead><tr><th>Unit #</th><th class="report-num">Current Odo</th><th class="report-num">Service Odo</th><th class="report-num">Difference</th><th class="report-num">Next Service</th></tr></thead>
-        <tbody>${truckRows}</tbody></table>`
+      ${trucks.length ? `<div class="report-scroll"><table class="report-table">
+        <thead><tr><th>Unit #</th><th>Operator</th><th class="report-num">Current Odo</th><th class="report-num">Service Odo</th><th class="report-num">Difference</th><th class="report-num">Next Service</th></tr></thead>
+        <tbody>${truckRows}</tbody></table></div>`
       : '<div class="report-empty">No trucks.</div>'}
       <div class="report-section-title">Heavy Equipment</div>
-      ${heavy.length ? `<table class="report-table">
-        <thead><tr><th>Unit #</th><th class="report-num">Current Hrs</th><th class="report-num">Service Hrs</th><th class="report-num">Difference</th><th class="report-num">Next Service</th></tr></thead>
-        <tbody>${heavyRows}</tbody></table>`
+      ${heavy.length ? `<div class="report-scroll"><table class="report-table">
+        <thead><tr><th>Unit #</th><th>Operator</th><th class="report-num">Current Hrs</th><th class="report-num">Service Hrs</th><th class="report-num">Difference</th><th class="report-num">Next Service</th></tr></thead>
+        <tbody>${heavyRows}</tbody></table></div>`
       : '<div class="report-empty">No heavy equipment.</div>'}
     </div>`;
   } catch (err) {
@@ -10182,6 +11444,17 @@ async function openPMGridHistory(pmType, building, label) {
 // ── Canal Readings Report Panel ────────────────────────────────────────────────
 let lastCanalRows = [];
 
+// canal_<turnout>_<date range>, e.g. Canal_Pioneer-Inlet_2026-08-01_to_2026-08-31
+// Falls back to "All-Turnouts" when no single structure is selected.
+function canalExportName() {
+  const s = el('canal-report-start-date').value;
+  const e = el('canal-report-end-date').value;
+  const sel = el('canal-report-structure');
+  const who = sel.value ? (sel.selectedOptions[0]?.textContent || 'Structure') : 'All-Turnouts';
+  const clean = t => String(t).trim().replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '') || 'Structure';
+  return `Canal_${clean(who)}_${s === e ? s : `${s}_to_${e}`}`;
+}
+
 function initCanalReportPanel() {
   if (!el('canal-report-start-date').value) {
     el('canal-report-start-date').value = todayISO();
@@ -10560,10 +11833,16 @@ async function renderPondGateReport() {
 let exportContext = 'vehicles'; // 'vehicles' | 'piezometers-status' | 'piezometers-compare' | 'wells-daily'
 
 el('report-export-btn').addEventListener('click', () => {
-  if (!lastReportRows.length) return showToast('No report data to export', 'error');
-  exportContext = 'vehicles';
-  const d = new Date(reportsYear, reportsMonth - 1, 1);
-  el('export-modal-subtitle').textContent = `CVC Mileage — ${d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}`;
+  if (vehicleReportType === 'service') {
+    if (!lastServiceRows.length) return showToast('No report data to export', 'error');
+    exportContext = 'vehicle-service';
+    el('export-modal-subtitle').textContent = 'Last Service';
+  } else {
+    if (!lastReportRows.length) return showToast('No report data to export', 'error');
+    exportContext = 'vehicles';
+    const d = new Date(reportsYear, reportsMonth - 1, 1);
+    el('export-modal-subtitle').textContent = `CVC Mileage — ${d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}`;
+  }
   el('export-modal').classList.remove('hidden');
 });
 
@@ -10632,6 +11911,34 @@ el('export-csv-btn').addEventListener('click', async () => {
     return;
   }
 
+  if (exportContext === 'vehicle-service') {
+    const csvEsc = v => (v == null || v === '') ? '' : /[,"\n]/.test(String(v)) ? `"${String(v).replace(/"/g,'""')}"` : String(v);
+    const ac = v => (v.assigned_user && v.assigned_user.trim().toLowerCase() !== 'ops & maint') ? v.assigned_user : '';
+    const dt = d => d ? String(d).slice(0, 10) : '';
+    const trucks = lastServiceRows.filter(r => !r.reading_type || r.reading_type === 'odometer' || r.reading_type === 'both');
+    const heavy  = lastServiceRows.filter(r => r.reading_type === 'hours');
+    const lines = ['Last Service', '', 'Trucks',
+      'Unit #,Operator,Current Odo,Current Reading Date,Service Odo,Last Service Date,Difference,Next Service Miles'];
+    trucks.forEach(v => lines.push([
+      v.vehicle_number || '', ac(v),
+      v.current_odometer ?? '', dt(v.current_reading_date),
+      v.odometer_at_service ?? '', dt(v.last_service_date),
+      (v.current_odometer != null && v.odometer_at_service != null) ? Number(v.current_odometer) - Number(v.odometer_at_service) : '',
+      v.next_service_miles ?? '',
+    ].map(csvEsc).join(',')));
+    lines.push('', 'Heavy Equipment',
+      'Unit #,Operator,Current Hrs,Current Reading Date,Service Hrs,Last Service Date,Difference,Next Service Hours');
+    heavy.forEach(v => lines.push([
+      v.vehicle_number || '', ac(v),
+      v.current_engine_hours ?? '', dt(v.current_reading_date),
+      v.engine_hours_at_service ?? '', dt(v.last_service_date),
+      (v.current_engine_hours != null && v.engine_hours_at_service != null) ? Number(v.current_engine_hours) - Number(v.engine_hours_at_service) : '',
+      v.next_service_hours ?? '',
+    ].map(csvEsc).join(',')));
+    await shareFile(new Blob([lines.join('\r\n')], { type: 'text/csv' }), 'LastService.csv', 'Last Service');
+    return;
+  }
+
   if (exportContext === 'canal') {
     const csvEsc = v => (v == null || v === '') ? '' : /[,"\n]/.test(String(v)) ? `"${String(v).replace(/"/g,'""')}"` : String(v);
     const s = el('canal-report-start-date').value, e = el('canal-report-end-date').value;
@@ -10652,7 +11959,7 @@ el('export-csv-btn').addEventListener('click', async () => {
       if (withNotes) row.push(r.notes || '');
       lines.push(row.map(csvEsc).join(','));
     });
-    await shareFile(new Blob([lines.join('\r\n')], { type: 'text/csv' }), `Canal_${s}_${e}.csv`, 'Canal Readings');
+    await shareFile(new Blob([lines.join('\r\n')], { type: 'text/csv' }), `${canalExportName()}.csv`, 'Canal Readings');
     return;
   }
 
@@ -10718,6 +12025,13 @@ el('export-xlsx-btn').addEventListener('click', async () => {
       await shareFile(await res.blob(), `Piezometers_Compare_${s1}_${s2}.xlsx`, 'Piezometer Comparison');
       return;
     }
+    if (exportContext === 'vehicle-service') {
+      const { token } = await api('POST', '/api/reports/download-token', {});
+      const res = await fetch(`/api/reports/vehicle-service/export?token=${token}`);
+      if (!res.ok) throw new Error('Export failed');
+      await shareFile(await res.blob(), 'LastService.xlsx', 'Last Service');
+      return;
+    }
     if (exportContext === 'canal') {
       const s = el('canal-report-start-date').value, e = el('canal-report-end-date').value;
       const withNotes = el('canal-report-notes').checked;
@@ -10727,7 +12041,7 @@ el('export-xlsx-btn').addEventListener('click', async () => {
         + `${sid ? `&structure_id=${encodeURIComponent(sid)}` : ''}&token=${token}`;
       const res = await fetch(url);
       if (!res.ok) throw new Error('Export failed');
-      await shareFile(await res.blob(), `Canal_${s}_${e}.xlsx`, 'Canal Readings');
+      await shareFile(await res.blob(), `${canalExportName()}.xlsx`, 'Canal Readings');
       return;
     }
     if (exportContext === 'wells-daily') {
@@ -10999,11 +12313,15 @@ el('export-pdf-btn').addEventListener('click', async () => {
       if (!card) throw new Error('No report to export');
       const date = el('well-report-date').value;
       await sharePdfFromHtml(card.outerHTML, REPORT_PDF_CSS, `WellReadings_${date}`, 'Well Readings');
+    } else if (exportContext === 'vehicle-service') {
+      const card = el('report-output').querySelector('.report-card');
+      if (!card) throw new Error('No report to export');
+      await sharePdfFromHtml(card.outerHTML, REPORT_PDF_CSS, 'LastService', 'Last Service');
     } else if (exportContext === 'canal') {
       const card = el('report-canal-output').querySelector('.report-card');
       if (!card) throw new Error('No report to export');
       const s = el('canal-report-start-date').value, e = el('canal-report-end-date').value;
-      await sharePdfFromHtml(card.outerHTML, REPORT_PDF_CSS, `Canal_${s}_${e}`, 'Canal Readings');
+      await sharePdfFromHtml(card.outerHTML, REPORT_PDF_CSS, canalExportName(), 'Canal Readings');
     } else if (exportContext === 'piezometers-status') {
       const card = el('report-piez-output').querySelector('.report-card');
       if (!card) throw new Error('No report to export');
@@ -11403,7 +12721,7 @@ el('gps-loc-well').addEventListener('change', onGPSLocWellChange);
 el('gps-loc-refresh-btn').addEventListener('click', refreshGPSLocPosition);
 el('gps-loc-save').addEventListener('click', saveGPSLocation);
 
-const WR_PANEL_NAMES = { dwr: 'DWR', kcwa: 'KCWA Piezometers' };
+const WR_PANEL_NAMES = { dwr: 'DWR', kcwa: 'KCWA Piezometers', purge: 'Purge' };
 let wellRunsInited = false;
 async function initWellRunsScreen() {
   if (wellRunsInited) return;
@@ -11436,6 +12754,9 @@ async function initWellRunsScreen() {
       } else if (panel === 'kcwa') {
         el('wr-panel-kcwa').classList.remove('hidden');
         initPiezScreen();
+      } else if (panel === 'purge') {
+        el('wr-panel-purge').classList.remove('hidden');
+        initPurgeScreen();
       } else {
         el('wr-panel-soon').classList.remove('hidden');
       }
@@ -13921,6 +15242,7 @@ async function initPondsScreen() {
           loc.outlets.set(row.outlet_id, {
             outlet_id: row.outlet_id, name: row.pond_name, sort: row.pond_sort,
             isOutlet: true,
+            max_gauge: row.max_gauge,
             last_gauge_level: row.last_gauge_level,
             last_gauge_date:  row.last_gauge_date,
             last_gauge_notes: row.last_gauge_notes,
@@ -13934,6 +15256,7 @@ async function initPondsScreen() {
         if (!loc.ponds.has(row.pond_id)) {
           loc.ponds.set(row.pond_id, {
             pond_id: row.pond_id, name: row.pond_name, sort: row.pond_sort,
+            max_gauge: row.max_gauge,
             last_gauge_level: row.last_gauge_level,
             last_gauge_date:  row.last_gauge_date,
             last_gauge_notes: row.last_gauge_notes,
@@ -14230,8 +15553,14 @@ function buildGaugeForm(pond, dateInput, timeInput, cardEl) {
   const prevHint = pond.last_gauge_level != null && prevDate
     ? `${Number(pond.last_gauge_level).toFixed(2)} ft · ${fmtDate(prevDate)}` : null;
 
+  // Staff-gauge ceiling from ponds.max_gauge / river_outlets.max_gauge. Omitted
+  // entirely when the column is null so ponds without one look unchanged.
+  const maxGauge = pond.max_gauge != null && pond.max_gauge !== '' ? Number(pond.max_gauge) : null;
+  const maxHint  = maxGauge != null && !isNaN(maxGauge)
+    ? `<span class="gauge-max">Max: ${maxGauge.toFixed(2)} ft</span>` : '';
+
   row.innerHTML = `
-    <div class="rr-label">Staff Gauge${prevHint ? `<div class="prev-date">${prevHint}</div>` : ''}</div>
+    <div class="rr-label">Staff Gauge${maxHint}${prevHint ? `<div class="prev-date">${prevHint}</div>` : ''}</div>
     <div class="rr-field-group" style="width:72px">
       <span class="rr-col-hd">Level (ft)</span>
       <input type="number" class="rr-input pg-gauge-level" step="0.01" placeholder="—" inputmode="decimal">

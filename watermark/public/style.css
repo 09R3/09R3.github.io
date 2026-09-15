@@ -675,6 +675,20 @@ input[type="date"].ctrl-input { min-height: 44px; }
   color: var(--text-muted);
   font-weight: 400;
 }
+/* Staff-gauge ceiling, shown beside the "Staff Gauge" label on the Ponds
+   screen. inline-block so it sits next to the label where the row is wide
+   enough and drops to its own line on narrow phones rather than squashing
+   the label. Only rendered when ponds.max_gauge / river_outlets.max_gauge
+   is set. */
+.gauge-max {
+  display: inline-block;
+  margin-left: 5px;
+  font-size: 0.68rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
 .prev-note-hint {
   font-size: 0.75rem;
   color: var(--text-muted);
@@ -1397,6 +1411,35 @@ input[type="date"].ctrl-input { min-height: 44px; }
 .report-table tr:last-child td { border-bottom: none; }
 .report-table .report-num { text-align: right; font-variant-numeric: tabular-nums; }
 .report-empty { font-size: 0.88rem; color: var(--text-dim); font-style: italic; padding: 8px 0; }
+/* Wide report tables scroll sideways instead of squeezing columns off-screen */
+/* ── Purge program ────────────────────────────────────────────────────────── */
+.purge-calc-hint {
+  font-size: 0.78rem; color: var(--text-dim); font-variant-numeric: tabular-nums;
+  background: var(--surface2); border-radius: 6px; padding: 6px 9px;
+  margin: 0 0 10px; min-height: 1px;
+}
+.cal-table { font-size: 0.82rem; }
+.cal-table th { font-size: 0.66rem; white-space: nowrap; }
+.cal-table td { white-space: nowrap; padding: 5px 8px; }
+
+/* Vehicle maintenance record: read-only summary */
+.veh-view-grid {
+  display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px;
+  margin: 4px 0 12px; font-size: 0.88rem;
+}
+.veh-view-grid dt {
+  font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--text-dim); align-self: center;
+}
+.veh-view-grid dd { margin: 0; white-space: pre-wrap; word-break: break-word; }
+.veh-tag {
+  font-size: 0.66rem; font-weight: 700; text-transform: uppercase;
+  color: var(--text-dim); border: 1px solid var(--border);
+  border-radius: 10px; padding: 1px 6px; margin-left: 4px;
+}
+
+.report-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.report-scroll > .report-table { min-width: 640px; }
 
 /* Monthly well grid — wide table with a sticky day column + grouped area headers */
 .wm-table th, .wm-table td { white-space: nowrap; }
@@ -2934,6 +2977,375 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
 .rw-area-label input[type="checkbox"],
 .rw-well-label input[type="checkbox"] {
   width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; flex-shrink: 0;
+}
+
+/* ── Water Orders ─────────────────────────────────────────────────────────── */
+/* Dashboard widget: three labelled totals rather than one big number, so it
+   still reads at a glance in the middle stat-card slot. */
+/* The stats grid is three equal columns, so this card gets ~65-90px of content
+   width on a phone — not enough for "DWR Order" and its number side by side.
+   Stack each label over its value so neither is ever truncated. */
+.wo-stat-rows { display: flex; flex-direction: column; gap: 5px; }
+.wo-stat-row { display: flex; flex-direction: column; }
+.wo-stat-key {
+  font-size: 0.58rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+  line-height: 1.2;
+}
+.wo-stat-key em { font-style: normal; color: var(--yellow); }
+.wo-stat-val {
+  font-size: 1.15rem;
+  font-weight: 700;
+  line-height: 1.15;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Detail modal — laid out like page 1 of the paper order. */
+.wo-doc { padding: 16px 14px 20px; }
+.wo-doc-title { text-align: center; font-size: 1rem; font-weight: 700; color: var(--text); }
+.wo-doc-date  { text-align: center; font-size: 0.85rem; color: var(--text-dim); margin-top: 2px; }
+.wo-doc-empty {
+  margin-top: 10px; padding: 8px 10px;
+  border: 1px solid var(--yellow); border-radius: var(--radius-sm);
+  color: var(--yellow); font-size: 0.8rem; text-align: center;
+}
+.wo-section-title {
+  text-align: center;
+  font-size: 0.8rem; font-weight: 700; letter-spacing: 0.08em;
+  color: var(--text-dim);
+  margin: 18px 0 4px;
+}
+.wo-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+.wo-table th {
+  font-size: 0.66rem; font-weight: 700; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: 0.04em;
+  padding: 2px 6px 4px; text-align: center; vertical-align: bottom;
+}
+.wo-table td {
+  padding: 5px 6px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+}
+.wo-table .wo-col-name { text-align: left; width: 42%; }
+.wo-table .wo-col-cfs  { text-align: center; width: 68px; font-variant-numeric: tabular-nums; }
+.wo-table .wo-col-time { text-align: center; width: 78px; }
+.wo-table .wo-col-comments { text-align: left; color: var(--text-dim); }
+.wo-row-total td {
+  font-weight: 700; color: var(--text);
+  border-top: 2px solid var(--border); border-bottom: none;
+}
+.wo-row-computed { cursor: pointer; }
+.wo-row-computed:hover td { background: var(--surface2); }
+.wo-from {
+  display: block;
+  font-size: 0.62rem; font-style: italic; color: var(--text-muted);
+}
+/* The order table has four columns of real content — let it scroll sideways
+   on a phone rather than crushing the comments column away. */
+.report-scroll > .wo-table { min-width: 520px; }
+
+/* Estimated Pumping Plant Operations — derived, so it reads as a summary block
+   rather than an entry table. Two columns only, so it never needs to scroll. */
+.wo-pp-table { max-width: 340px; margin: 0 auto; }
+/* Override the shared 42% name column — "Pumping Plant No. 6B" needs a fixed
+   width to stay on one line, and with only two columns there is room for it. */
+.wo-pp-table .wo-col-name { width: auto; white-space: nowrap; }
+.wo-pp-table .wo-col-cfs  { width: 80px; }
+.wo-pp-note {
+  font-size: 0.66rem; font-style: italic; color: var(--text-muted);
+  text-align: center; padding: 6px 10px 0;
+}
+/* In the settings form it is a compact grid — the operator is entering turnouts,
+   not reading a report, so it only needs to be glanceable. */
+.wo-pp-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(84px, 1fr));
+  gap: 6px;
+  padding-top: 4px;
+}
+.wo-pp-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface2);
+}
+.wo-pp-label {
+  font-size: 0.6rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.04em; color: var(--text-dim);
+}
+.wo-pp-val {
+  font-size: 1rem; font-weight: 700; color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Pool (reach) headings. The order sheet marks the reach in its left margin;
+   these break the 30-line outflow list into the groups that actually feed each
+   pumping plant. */
+.wo-pool-head td {
+  padding: 10px 6px 3px;
+  font-size: 0.66rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  border-bottom: 1px solid var(--accent);
+  border-top: none;
+}
+.wo-table tbody tr:first-child.wo-pool-head td { padding-top: 2px; }
+.wo-pool-head-edit {
+  margin: 12px 0 3px;
+  padding-bottom: 2px;
+  font-size: 0.64rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  border-bottom: 1px solid var(--border);
+}
+/* Wells recovery split by pool, under the Wells line. */
+.wo-wells-split {
+  display: block;
+  font-size: 0.62rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  margin-top: 1px;
+}
+
+/* Tappable rows in the detail view. A dotted underline on the name is the only
+   affordance available — there is no hover on a phone. */
+.wo-row-tap { cursor: pointer; }
+.wo-row-tap .wo-name {
+  border-bottom: 1px dotted var(--text-muted);
+}
+.wo-row-tap:hover td { background: var(--surface2); }
+
+/* Line history popup — sits above the Water Order modal, which stays open
+   underneath so closing this returns to the order. */
+.wo-history-overlay { z-index: 320; }
+.wo-hist-chart-wrap { height: 170px; padding: 14px 14px 0; }
+.wo-hist-chart-cap {
+  font-size: 0.66rem; color: var(--text-muted);
+  text-align: center; padding: 6px 0 10px;
+  border-bottom: 1px solid var(--border);
+}
+.wo-hist-list { max-height: 46vh; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.wo-hist-row {
+  display: flex; align-items: baseline; gap: 10px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.85rem;
+}
+.wo-hist-row:last-child { border-bottom: none; }
+.wo-hist-date { flex: 0 0 64px; color: var(--text-dim); }
+.wo-hist-cfs {
+  flex: 0 0 64px; text-align: right;
+  font-weight: 700; color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.wo-hist-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.wo-hist-time { font-size: 0.75rem; color: var(--text-dim); }
+.wo-hist-note { font-size: 0.75rem; color: var(--text-muted); overflow-wrap: anywhere; }
+
+/* PDF chooser modal — drop / paste / browse. */
+.wo-pdf-overlay { z-index: 320; }
+.wo-drop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 26px 16px;
+  border: 2px dashed var(--border);
+  border-radius: var(--radius);
+  background: var(--surface2);
+  color: var(--text-dim);
+  text-align: center;
+  cursor: pointer;
+  transition: border-color var(--transition), background var(--transition);
+}
+.wo-drop:hover, .wo-drop:focus-visible {
+  border-color: var(--accent);
+  background: var(--surface3);
+  outline: none;
+}
+/* Highlight while a file is over the zone. Children ignore pointer events so
+   moving across them cannot fire dragleave and flicker the highlight off. */
+.wo-drop-over {
+  border-color: var(--accent);
+  border-style: solid;
+  background: var(--surface3);
+}
+.wo-drop > * { pointer-events: none; }
+.wo-drop-icon { width: 30px; height: 30px; color: var(--accent); }
+.wo-drop-main { font-size: 0.95rem; font-weight: 600; color: var(--text); }
+.wo-drop-sub  { font-size: 0.78rem; color: var(--text-muted); }
+.wo-drop-link { color: var(--accent); text-decoration: underline; }
+.wo-drop kbd {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.72rem;
+  padding: 1px 4px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--surface);
+  color: var(--text-dim);
+}
+#wo-pdf-modal-msg { margin-top: 12px; }
+
+/* PDF import — sits above the entry form; the parse only fills the inputs. */
+.wo-import-row {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding-bottom: 10px; margin-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+.wo-import-hint {
+  flex: 1; min-width: 150px;
+  font-size: 0.7rem; color: var(--text-muted); line-height: 1.3;
+}
+.wo-import-result {
+  margin: 8px 0 4px; padding: 8px 10px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  font-size: 0.76rem; line-height: 1.45; color: var(--text-dim);
+}
+.wo-import-ok   { border-color: var(--green);  color: var(--text); }
+.wo-import-warn { border-color: var(--yellow); color: var(--text); }
+.wo-import-bad  { border-color: var(--red);    color: var(--red-light); }
+/* Mark what the import touched so an operator can see at a glance which rows
+   came from the sheet and which they still need to check. */
+.wo-row-imported .wo-in-cfs { border-color: var(--green); }
+
+/* Settings entry form. */
+.wo-date-row { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.wo-date-row label { font-size: 0.8rem; font-weight: 600; color: var(--text-dim); }
+.wo-date-row #wo-date { flex: 1; min-width: 0; }
+/* Day-step arrows either side of the date. Fixed width and a 44px tap target so
+   they stay thumb-sized on a phone without stealing room from the input. */
+.wo-date-step {
+  flex: 0 0 auto;
+  min-width: 34px;
+  min-height: 34px;
+  padding: 4px 8px;
+  font-size: 1.1rem;
+  line-height: 1;
+}
+.wo-edit-head, .wo-edit-row {
+  display: grid;
+  grid-template-columns: minmax(96px, 1.6fr) 62px 64px minmax(70px, 1.2fr);
+  gap: 5px;
+  align-items: center;
+}
+.wo-edit-head {
+  font-size: 0.62rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.04em; color: var(--text-muted);
+  padding: 0 0 3px; text-align: center;
+}
+.wo-edit-head .wo-edit-name { text-align: left; }
+.wo-edit-row { padding: 3px 0; }
+.wo-edit-name {
+  font-size: 0.78rem; color: var(--text);
+  line-height: 1.2; overflow-wrap: anywhere;
+}
+.wo-edit-row .rr-input { width: 100%; min-width: 0; font-size: 0.85rem; padding: 5px 6px; }
+.wo-edit-computed .rr-input { opacity: 0.55; }
+.wo-edit-section {
+  font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--text-dim);
+  margin: 14px 0 4px; padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.wo-edit-totals {
+  font-size: 0.8rem; color: var(--text-dim);
+  text-align: right; padding: 6px 0 2px;
+}
+.wo-edit-totals strong { color: var(--text); font-variant-numeric: tabular-nums; }
+.wo-edit-meta { font-size: 0.72rem; color: var(--text-muted); margin-top: 10px; }
+
+/* Vehicle Info modal — read-only detail rows (Vehicle Monthly → Info). */
+.vinfo-row {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.vinfo-row:last-child { border-bottom: none; }
+.vinfo-label {
+  /* Wide enough that "Vehicle Number" and "Assigned User" stay on one line */
+  flex: 0 0 132px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+.vinfo-value {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.95rem;
+  color: var(--text);
+  /* VINs and long notes must wrap rather than push the modal sideways */
+  overflow-wrap: anywhere;
+}
+/* VIN reads as an identifier, and monospace makes look-alike characters
+   (0/O, 1/I) distinguishable when checking it against a door jamb. */
+.vinfo-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.88rem;
+  letter-spacing: 0.02em;
+}
+.vinfo-notes { align-items: flex-start; }
+.vinfo-notes .vinfo-value { white-space: pre-wrap; line-height: 1.4; }
+
+/* Keep the row footer usable now that it carries four buttons on a phone. */
+.lif-footer { flex-wrap: wrap; }
+.lif-footer .btn-save { min-width: 120px; }
+
+/* Settings → Staff Gauges — max_gauge editor rows. Reuses the .rw-area-row
+   section headers above so it reads like the Purge Wells picker. */
+.sg-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px 6px 20px;
+}
+.sg-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.95rem;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.sg-tag {
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  white-space: nowrap;
+}
+.sg-tag-off { color: var(--yellow); border-color: var(--yellow); }
+.sg-row .sg-max {
+  width: 84px;
+  flex: 0 0 auto;
+  text-align: right;
+}
+.sg-unit {
+  flex: 0 0 auto;
+  width: 16px;
+  font-size: 0.8rem;
+  color: var(--text-dim);
 }
 
 /* Running wells modal */

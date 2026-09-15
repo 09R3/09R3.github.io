@@ -129,7 +129,7 @@
         Sign in with Microsoft 365
       </a>
       <div id="ms-login-error" class="error-msg hidden"></div>
-      <div class="login-version">v 3.13</div>
+      <div class="login-version">v 3.28</div>
     </div>
   </div>
 </div>
@@ -723,9 +723,9 @@
         <div class="form-group">
           <label>Status</label>
           <select id="maint-vehicle-status" class="ctrl-select">
-            <option value="open">Open</option>
+            <option value="open" selected>Open</option>
             <option value="in-progress">In Progress</option>
-            <option value="resolved" selected>Resolved</option>
+            <option value="resolved">Resolved</option>
           </select>
         </div>
         <div class="form-group">
@@ -1394,7 +1394,7 @@
         </div>
         <div class="dash-label">IWV</div>
       </div>
-      <div class="dash-tile wr-soon" data-wr-panel="purge">
+      <div class="dash-tile" data-wr-panel="purge">
         <div class="dash-icon-wrap">
           <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-well-runs.svg);mask-image:url(/marv-site/icons/icon-well-runs.svg)"></span>
         </div>
@@ -1443,6 +1443,45 @@
         </div>
       </div>
       <div id="piez-list-body"><div class="placeholder-msg">Loading piezometers…</div></div>
+    </div>
+
+    <!-- Purge panel: sub-dashboard -> Purge Readings | Calibration -->
+    <div id="wr-panel-purge" class="maint-panel hidden">
+      <div id="purge-main" class="dashboard-grid">
+        <div class="dash-tile" data-purge-panel="readings">
+          <div class="dash-icon-wrap">
+            <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-well-runs.svg);mask-image:url(/marv-site/icons/icon-well-runs.svg)"></span>
+          </div>
+          <div class="dash-label">Purge Readings</div>
+        </div>
+        <div class="dash-tile" data-purge-panel="calibration">
+          <div class="dash-icon-wrap">
+            <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-gauge.svg);mask-image:url(/marv-site/icons/icon-gauge.svg)"></span>
+          </div>
+          <div class="dash-label">Calibration</div>
+        </div>
+      </div>
+
+      <!-- Purge Readings (Kern Fan Water Quality Sampling — Pumping Notes) -->
+      <div id="purge-panel-readings" class="maint-panel hidden">
+        <div class="issue-toolbar" style="gap:8px">
+          <button class="btn btn-primary btn-sm" id="purge-new-btn">+ New Purge</button>
+          <input type="search" id="purge-search" class="ctrl-input" placeholder="Search well…" style="flex:1;min-width:0">
+        </div>
+        <div id="purge-form-wrap" class="settings-card hidden" style="margin:0 0 14px">
+          <div class="settings-pad" id="purge-form-body"></div>
+        </div>
+        <div id="purge-list"><div class="placeholder-msg">Loading…</div></div>
+      </div>
+
+      <!-- Calibration: EC + pH daily logs -->
+      <div id="purge-panel-calibration" class="maint-panel hidden">
+        <div class="charts-tabs">
+          <button class="charts-tab-btn active" id="cal-tab-ec">EC Meter</button>
+          <button class="charts-tab-btn" id="cal-tab-ph">pH Meter</button>
+        </div>
+        <div id="cal-body" style="margin-top:12px"></div>
+      </div>
     </div>
 
   </div><!-- /screen-well-runs -->
@@ -1732,6 +1771,15 @@
         <button class="settings-menu-row" data-panel="running-wells">
           <span>Running Wells</span><span class="settings-chevron">›</span>
         </button>
+        <button class="settings-menu-row" data-panel="water-orders">
+          <span>Water Orders</span><span class="settings-chevron">›</span>
+        </button>
+        <button class="settings-menu-row" data-panel="purge-wells">
+          <span>Purge Wells</span><span class="settings-chevron">›</span>
+        </button>
+        <button class="settings-menu-row" data-panel="staff-gauges">
+          <span>Staff Gauges</span><span class="settings-chevron">›</span>
+        </button>
       </div>
       <div class="settings-menu-card hidden" id="settings-admin-section">
         <div class="settings-menu-label">Tools</div>
@@ -1854,12 +1902,73 @@
         <button class="btn btn-save" id="rw-settings-save-btn" style="margin-top:12px;width:100%">Save</button>
       </div>
     </div>
+    <div id="settings-panel-purge-wells" class="settings-panel hidden">
+      <div class="settings-section">
+        <div class="settings-card">
+          <div class="settings-pad">
+            <p style="font-size:0.85rem;color:var(--text-dim);margin:0 0 10px">
+              Select the wells on the Kern Fan purge program. These appear in Well Runs → Purge → Purge Readings.
+            </p>
+            <div id="pw-settings-list"></div>
+            <button class="btn btn-save" id="pw-save-btn" style="margin-top:12px">Save</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Water Orders panel -->
+    <div id="settings-panel-water-orders" class="settings-panel hidden">
+      <div class="settings-section">
+        <div class="settings-card">
+          <div class="settings-pad">
+            <p style="font-size:0.85rem;color:var(--text-dim);margin:0 0 10px">
+              Cross Valley Canal water order. Pick a date — including a future
+              date — then enter the CFS, time of change and comments for each line.
+            </p>
+            <div class="wo-date-row">
+              <label for="wo-date">Date</label>
+              <button type="button" class="btn btn-secondary btn-sm wo-date-step" id="wo-date-prev"
+                      title="Previous day" aria-label="Previous day">&lsaquo;</button>
+              <input type="date" id="wo-date" class="ctrl-input ctrl-input-sm">
+              <button type="button" class="btn btn-secondary btn-sm wo-date-step" id="wo-date-next"
+                      title="Next day" aria-label="Next day">&rsaquo;</button>
+              <button class="btn btn-secondary btn-sm" id="wo-today-btn">Today</button>
+            </div>
+            <div class="wo-import-row">
+              <button type="button" class="btn btn-secondary btn-sm" id="wo-pdf-btn">Import from PDF</button>
+              <span class="wo-import-hint">Fills the form below — nothing is saved until you press Save.</span>
+            </div>
+            <div id="wo-import-result" class="wo-import-result hidden"></div>
+            <div id="wo-settings-body"></div>
+            <div id="wo-error" class="error-msg hidden" style="margin-top:10px"></div>
+            <button class="btn btn-save" id="wo-save-btn" style="margin-top:12px">Save Water Order</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Staff Gauges panel -->
+    <div id="settings-panel-staff-gauges" class="settings-panel hidden">
+      <div class="settings-section">
+        <div class="settings-card">
+          <div class="settings-pad">
+            <p style="font-size:0.85rem;color:var(--text-dim);margin:0 0 10px">
+              Staff gauge maximum for each pond and river outlet. Shown beside the
+              Staff Gauge label on the Ponds screen. Leave blank for no maximum.
+            </p>
+            <div id="sg-settings-list"></div>
+            <div id="sg-error" class="error-msg hidden" style="margin-top:10px"></div>
+            <button class="btn btn-save" id="sg-save-btn" style="margin-top:12px">Save</button>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <!-- App Info panel -->
     <div id="settings-panel-appinfo" class="settings-panel hidden">
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 3.13</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 3.28</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>
@@ -2763,6 +2872,61 @@
       <button class="modal-close" id="history-modal-close">&times;</button>
     </div>
     <div class="modal-body" id="history-modal-body"></div>
+  </div>
+</div>
+
+<!-- Water Order Modal (dashboard widget detail) -->
+<div id="water-order-modal" class="modal-overlay hidden">
+  <div class="modal-card" style="max-width:760px">
+    <div class="modal-header">
+      <h2 id="water-order-modal-title">Water Order</h2>
+      <button class="modal-close" id="water-order-modal-close">&times;</button>
+    </div>
+    <div class="modal-body" id="water-order-modal-body" style="padding:0"></div>
+  </div>
+</div>
+
+<!-- Water Order PDF chooser — drop, paste or browse -->
+<div id="wo-pdf-modal" class="modal-overlay wo-pdf-overlay hidden">
+  <div class="modal-card" style="max-width:460px">
+    <div class="modal-header">
+      <h2>Import Water Order</h2>
+      <button class="modal-close" id="wo-pdf-modal-close">&times;</button>
+    </div>
+    <div class="modal-body">
+      <input type="file" id="wo-pdf-input" accept="application/pdf,.pdf" hidden>
+      <div id="wo-drop" class="wo-drop" tabindex="0" role="button"
+           aria-label="Choose a PDF water order: drop a file here, paste, or browse">
+        <svg class="wo-drop-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M19 15v3a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-3h2v3h10v-3h2zM12 3l5 5h-3v6h-4V8H7l5-5z"/>
+        </svg>
+        <div class="wo-drop-main">Drop a PDF here</div>
+        <div class="wo-drop-sub">paste with <kbd>Ctrl</kbd>+<kbd>V</kbd>, or <span class="wo-drop-link">browse</span></div>
+      </div>
+      <div id="wo-pdf-modal-msg" class="wo-import-result hidden"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Water Order line history (opens above the Water Order modal) -->
+<div id="wo-history-modal" class="modal-overlay wo-history-overlay hidden">
+  <div class="modal-card" style="max-width:560px">
+    <div class="modal-header">
+      <h2 id="wo-history-title">History</h2>
+      <button class="modal-close" id="wo-history-close">&times;</button>
+    </div>
+    <div class="modal-body" id="wo-history-body" style="padding:0"></div>
+  </div>
+</div>
+
+<!-- Vehicle Info Modal -->
+<div id="vehicle-info-modal" class="modal-overlay hidden">
+  <div class="modal-card" style="max-width:480px">
+    <div class="modal-header">
+      <h2 id="vehicle-info-modal-title">Vehicle Details</h2>
+      <button class="modal-close" id="vehicle-info-modal-close">&times;</button>
+    </div>
+    <div class="modal-body" id="vehicle-info-modal-body" style="padding:0"></div>
   </div>
 </div>
 
