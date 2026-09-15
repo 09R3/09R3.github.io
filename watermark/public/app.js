@@ -1021,10 +1021,22 @@ function recalcWaterOrderTotals() {
   if (o) o.textContent = woFmt(Number(outflow.toFixed(2)));
 }
 
+// Step the order date by whole days. Built from local Y/M/D components rather
+// than epoch arithmetic so month, year and DST boundaries all roll correctly.
+function woStepDate(days) {
+  const input = el('wo-date');
+  const [y, m, d] = (input.value || todayISO()).split('-').map(Number);
+  const dt = new Date(y, m - 1, d + days);
+  input.value = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+  loadWaterOrderForm(input.value);
+}
+
 function initWaterOrdersPanel() {
   const dateInput = el('wo-date');
   if (!dateInput.value) dateInput.value = todayISO();
   dateInput.onchange = () => loadWaterOrderForm(dateInput.value);
+  el('wo-date-prev').onclick = () => woStepDate(-1);
+  el('wo-date-next').onclick = () => woStepDate(1);
   el('wo-today-btn').onclick = () => {
     dateInput.value = todayISO();
     loadWaterOrderForm(dateInput.value);

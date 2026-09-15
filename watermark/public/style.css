@@ -3087,6 +3087,16 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
 .wo-date-row { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
 .wo-date-row label { font-size: 0.8rem; font-weight: 600; color: var(--text-dim); }
 .wo-date-row #wo-date { flex: 1; min-width: 0; }
+/* Day-step arrows either side of the date. Fixed width and a 44px tap target so
+   they stay thumb-sized on a phone without stealing room from the input. */
+.wo-date-step {
+  flex: 0 0 auto;
+  min-width: 34px;
+  min-height: 34px;
+  padding: 4px 8px;
+  font-size: 1.1rem;
+  line-height: 1;
+}
 .wo-edit-head, .wo-edit-row {
   display: grid;
   grid-template-columns: minmax(96px, 1.6fr) 62px 64px minmax(70px, 1.2fr);
