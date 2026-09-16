@@ -430,9 +430,15 @@ date formatting slices `YYYY-MM-DD` off the string **before** constructing a
 `Date`, to dodge the UTC-midnight day-behind bug on `DATE` columns returned as
 full ISO strings.
 
-Server-side `todayString()` still uses `new Date().toISOString()` (**UTC**). If
-the container's clock/TZ is not Pacific, the server's idea of "today" can differ from
-the client's near midnight. Keep the host on Pacific time.
+Server-side `todayString()` now formats in `America/Los_Angeles` via `Intl`, so
+the API's default date is a Pacific day regardless of the container's clock. This
+fixed a real mismatch: the Water Orders widget took the server's UTC default
+while the app's own `todayISO()` used browser-local, so between 5pm Pacific and
+midnight the card showed tomorrow's order and tapping it opened today's. The
+water order client paths use a matching `pacificToday()`.
+
+Five report endpoints still default to `new Date().toISOString().slice(0,10)`
+(UTC) — same latent bug, in date pickers that callers normally set explicitly.
 
 ---
 

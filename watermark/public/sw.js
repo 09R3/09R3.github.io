@@ -1,4 +1,4 @@
-const CACHE = 'watermark-v3.28';
+const CACHE = 'watermark-v3.29';
 const SHELL = ['/', '/app.js', '/scada.js', '/style.css', '/manifest.json',
   '/vendor/chart.umd.js', '/vendor/chartjs-adapter-date-fns.bundle.min.js'];
 
