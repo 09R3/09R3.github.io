@@ -57,6 +57,17 @@ function todayISO() {
   return new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD in local time
 }
 
+// The water order day belongs to the canal, not to the device: it rolls at
+// Pacific midnight however a tablet's clock happens to be set, and matches the
+// server's own default. Reading screens keep using todayISO() — those are
+// "what day is it where I am standing".
+const PACIFIC_DATE_FMT = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit',
+});
+function pacificToday() {
+  return PACIFIC_DATE_FMT.format(new Date());
+}
+
 const SUPERVISOR_ROLES = ['supervisor', 'admin', 'water-planner'];
 function isSupervisorLevel(role) { return SUPERVISOR_ROLES.includes(role ?? ''); }
 
@@ -728,6 +739,31 @@ el('export-pending-btn').addEventListener('click', async () => {
 });
 
 /* ── Dashboard Stats ─────────────────────────────────────────────────────── */
+// The Pacific day the Water Orders card was last rendered for. Tapping the card
+// opens this exact date rather than recomputing, so the card and the order it
+// opens can never disagree.
+let _woWidgetDate = null;
+
+// Roll the dashboard over at Pacific midnight so a screen left open overnight
+// is not still showing yesterday's order. Comparing the date string once a
+// minute avoids working out a DST-correct offset to the next midnight, and
+// costs nothing.
+//
+// The card's date comes from the server, so if this device's clock is ahead of
+// the server's the refetch comes back on the old day and the mismatch persists.
+// Retrying covers a few seconds of ordinary drift; the cap stops a badly-set
+// tablet polling all night. Either way, navigating back to the dashboard
+// reloads it.
+const WO_ROLLOVER_TRIES = 5;
+let _woRollAttempts = 0;
+setInterval(() => {
+  if (!currentUser || !_woWidgetDate) return;
+  if (pacificToday() === _woWidgetDate) { _woRollAttempts = 0; return; }
+  if (currentScreen !== 'dashboard' || _woRollAttempts >= WO_ROLLOVER_TRIES) return;
+  _woRollAttempts++;
+  loadDashboardStats();
+}, 60 * 1000);
+
 async function loadDashboardStats() {
   try {
     const [s, wo] = await Promise.all([
@@ -771,7 +807,8 @@ async function loadDashboardStats() {
           </div>
         </div>
         <div class="stat-label">Water Orders</div>
-        <div class="stat-sublabel">${wo && !wo.exists ? 'No order entered' : 'cfs · Today'}</div>
+        <div class="stat-sublabel">cfs · ${wo ? localDateStr(wo.order_date, { month: 'short', day: 'numeric' }) : '—'}</div>
+        ${wo && !wo.exists ? '<div class="stat-sublabel">No order entered</div>' : ''}
       </div>
       <div class="stat-card${isScadaAllowed(currentUser?.role) ? '' : ' hidden'}" id="scada-flow-stat" style="cursor:pointer">
         <div class="stat-value" id="scada-flow-value">—</div>
@@ -780,7 +817,8 @@ async function loadDashboardStats() {
         <svg id="scada-flow-spark" class="scada-flow-spark" viewBox="0 0 100 24" preserveAspectRatio="none"></svg>
       </div>
     `;
-    el('water-order-stat').addEventListener('click', () => openWaterOrderModal(todayISO()));
+    _woWidgetDate = wo?.order_date || pacificToday();
+    el('water-order-stat').addEventListener('click', () => openWaterOrderModal(_woWidgetDate));
     el('kf-complete-stat').addEventListener('click', openKFSetsModal);
     el('scada-flow-stat').addEventListener('click', () => showScreen('scada'));
     loadScadaFlowWidget();
@@ -1084,7 +1122,7 @@ function recalcWaterOrderTotals() {
 // than epoch arithmetic so month, year and DST boundaries all roll correctly.
 function woStepDate(days) {
   const input = el('wo-date');
-  const [y, m, d] = (input.value || todayISO()).split('-').map(Number);
+  const [y, m, d] = (input.value || pacificToday()).split('-').map(Number);
   const dt = new Date(y, m - 1, d + days);
   input.value = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
   loadWaterOrderForm(input.value);
@@ -1245,14 +1283,14 @@ async function woImportPdf(file) {
 
 function initWaterOrdersPanel() {
   const dateInput = el('wo-date');
-  if (!dateInput.value) dateInput.value = todayISO();
+  if (!dateInput.value) dateInput.value = pacificToday();
   dateInput.onchange = () => loadWaterOrderForm(dateInput.value);
   el('wo-date-prev').onclick = () => woStepDate(-1);
   el('wo-date-next').onclick = () => woStepDate(1);
 
   el('wo-pdf-btn').onclick = openWoPdfModal;
   el('wo-today-btn').onclick = () => {
-    dateInput.value = todayISO();
+    dateInput.value = pacificToday();
     loadWaterOrderForm(dateInput.value);
   };
   el('wo-save-btn').onclick = async () => {
@@ -1290,7 +1328,7 @@ function initWaterOrdersPanel() {
       showToast('Water order saved', 'success');
       // Plant figures are derived server-side; reload so they reflect the save.
       await loadWaterOrderForm(date);
-      if (date === todayISO()) loadDashboardStats();   // refresh the widget
+      if (date === pacificToday()) loadDashboardStats();   // refresh the widget
     } catch (err) {
       errEl.textContent = err.message;
       errEl.classList.remove('hidden');

@@ -904,8 +904,16 @@ function isSuperiorTo(requestingRole, targetRole) {
   return (rank[requestingRole] || 0) > (rank[targetRole] || 0);
 }
 
+// "Today" on this canal is a Pacific day, not a UTC one and not the container
+// clock's. toISOString() rolls over at 4pm/5pm local, which made the dashboard
+// widget default to tomorrow's order while the app's own todayISO() still said
+// today. The pool already runs in America/Los_Angeles; this keeps the API's
+// default date in the same zone.
+const PACIFIC_DATE_FMT = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit',
+});
 function todayString() {
-  return new Date().toISOString().split('T')[0];
+  return PACIFIC_DATE_FMT.format(new Date());
 }
 
 function dateString(d) {
