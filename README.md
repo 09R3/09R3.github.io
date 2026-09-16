@@ -79,6 +79,11 @@ reverse-flow totals; and power monitoring. Charts support drag-select statistics
 
 **Reports** — vehicle mileage and last service, KF completion, maintenance
 issues, PM grids, piezometers, canal readings, pond levels and well readings.
+Pond Reports opens on **Pioneer Daily Readings**: eleven head gates with the CFS
+read that day, the time and the operator. Each row totals one or more sources —
+pond gates or canal structures — defined in `PIONEER_ROWS` in `server.js`, which
+is also where to correct an id if a row reads blank or warns that a source was
+not found.
 Every report exports to CSV, Excel or PDF.
 
 **Charts** — lookup tables and calculators used in the field: overpour weirs,

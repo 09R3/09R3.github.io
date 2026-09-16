@@ -4410,6 +4410,99 @@ app.get('/api/reports/ponds', requireAuth, async (req, res) => {
   } catch (err) { handleErr(res, err); }
 });
 
+// ── Pioneer Daily Readings ───────────────────────────────────────────────────
+// A fixed list of head gates, each a total of one or more sources. Rows are
+// defined here rather than in the database because the labels and their order
+// are the report; only the ids are site data.
+//
+// EDIT THE IDS HERE if a row reads 0.00 or shows a "not found" warning. Pond
+// gates are pond_gates.gate_id, canal structures are canal_structures.structure_id.
+// To list what you actually have:
+//   SELECT g.gate_id, g.label, c.name AS connection, p.name AS pond
+//   FROM pond_gates g
+//   JOIN pond_connections c ON c.connection_id = g.connection_id
+//   LEFT JOIN ponds p ON p.pond_id = c.destination_pond_id
+//   ORDER BY g.gate_id;
+const PIONEER_ROWS = [
+  { label: 'Berrenda Mesa',  gates: [43, 44, 45] },   // BM Main: North, Middle, South
+  { label: 'Basin 1',        gates: [19] },           // Basin 1 to PC-2
+  { label: 'PC2 to James',   gates: [26] },           // JW-5 Inlet gate
+  { label: 'Basin 9',        gates: [8, 9, 10] },     // Basin 9 gates 1-3
+  { label: 'Basin 10',       gates: [14, 15] },       // Basin 10 gates 1-2
+  { label: 'Nord Turnout',   structures: [55, 56] },  // East + West
+  { label: 'Section 4 Pump', structures: [25] },
+  { label: 'Trestle',        gates: [5, 6, 7] },      // Trestle gates 1-3
+  { label: 'N2 Siphon',      structures: [7] },
+  { label: 'McAllister',     gates: [39, 40, 37] },   // BV so. A, BV so. B, BV McA
+  { label: 'JW8',            gates: [41, 42] },       // JW-8 A, JW-8 B
+];
+
+app.get('/api/reports/ponds/pioneer', requireAuth, async (req, res) => {
+  const date = req.query.date == null || req.query.date === '' ? todayString() : String(req.query.date);
+  if (!isValidIsoDate(date)) return res.status(400).json({ error: 'Invalid date' });
+
+  const gateIds = [...new Set(PIONEER_ROWS.flatMap(r => r.gates || []))];
+  const structIds = [...new Set(PIONEER_ROWS.flatMap(r => r.structures || []))];
+
+  try {
+    // Latest reading per source for the day. A gate read twice counts once.
+    const [gateRes, structRes, gateNames, structNames] = await Promise.all([
+      gateIds.length ? pool.query(
+        `SELECT DISTINCT ON (gate_id) gate_id, flow_cfs, reading_time, entered_by
+         FROM readings_pond_gates
+         WHERE reading_date = $1 AND gate_id = ANY($2::int[])
+         ORDER BY gate_id, reading_time DESC NULLS LAST, reading_id DESC`,
+        [date, gateIds]) : { rows: [] },
+      structIds.length ? pool.query(
+        `SELECT DISTINCT ON (structure_id) structure_id, instantaneous_flow_cfs AS flow_cfs,
+                reading_time, entered_by
+         FROM readings_canal
+         WHERE reading_date = $1 AND structure_id = ANY($2::int[])
+         ORDER BY structure_id, reading_time DESC NULLS LAST, reading_id DESC`,
+        [date, structIds]) : { rows: [] },
+      // Which ids actually exist, so a mistyped id is reported rather than silently zero.
+      gateIds.length ? pool.query(
+        `SELECT gate_id, label FROM pond_gates WHERE gate_id = ANY($1::int[])`, [gateIds]) : { rows: [] },
+      structIds.length ? pool.query(
+        `SELECT structure_id, structure_name FROM canal_structures WHERE structure_id = ANY($1::int[])`,
+        [structIds]) : { rows: [] },
+    ]);
+
+    const gateRead   = new Map(gateRes.rows.map(r => [r.gate_id, r]));
+    const structRead = new Map(structRes.rows.map(r => [r.structure_id, r]));
+    const gateExists   = new Map(gateNames.rows.map(r => [r.gate_id, r.label]));
+    const structExists = new Map(structNames.rows.map(r => [r.structure_id, r.structure_name]));
+
+    const rows = PIONEER_ROWS.map(def => {
+      const sources = [
+        ...(def.gates || []).map(id => ({ kind: 'gate', id, read: gateRead.get(id), exists: gateExists.has(id), name: gateExists.get(id) })),
+        ...(def.structures || []).map(id => ({ kind: 'structure', id, read: structRead.get(id), exists: structExists.has(id), name: structExists.get(id) })),
+      ];
+      const read = sources.filter(s => s.read);
+      // A row with no readings shows blank, not 0.00 — "not read" and "read zero"
+      // are different things on a daily sheet.
+      const cfs = read.length
+        ? Number(read.reduce((t, s) => t + (parseFloat(s.read.flow_cfs) || 0), 0).toFixed(2))
+        : null;
+      // Time and operator come from the latest of the sources that make up the row.
+      const latest = read.reduce((best, s) =>
+        !best || String(s.read.reading_time || '') > String(best.read.reading_time || '') ? s : best, null);
+      return {
+        label: def.label,
+        cfs,
+        reading_time: latest?.read.reading_time || null,
+        operator: latest?.read.entered_by || null,
+        read_count: read.length,
+        source_count: sources.length,
+        missing_ids: sources.filter(s => !s.exists).map(s => `${s.kind} ${s.id}`),
+        source_names: sources.filter(s => s.exists).map(s => s.name),
+      };
+    });
+
+    res.json({ date, rows });
+  } catch (err) { handleErr(res, err); }
+});
+
 app.get('/api/reports/ponds/gates', requireAuth, async (req, res) => {
   const date = req.query.date || new Date().toISOString().slice(0,10);
   try {

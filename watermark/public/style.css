@@ -2979,6 +2979,35 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
   width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; flex-shrink: 0;
 }
 
+/* ── Pioneer Daily Readings report ───────────────────────────────────────── */
+.pioneer-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.pioneer-title { font-size: 1rem; font-weight: 700; color: var(--text); }
+.pioneer-date  { font-size: 0.85rem; color: var(--text-dim); white-space: nowrap; }
+.pioneer-warn {
+  margin-bottom: 10px; padding: 7px 9px;
+  border: 1px solid var(--yellow); border-radius: var(--radius-sm);
+  font-size: 0.72rem; line-height: 1.4; color: var(--yellow);
+}
+.pioneer-table { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
+.pioneer-table th {
+  font-size: 0.66rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.04em; color: var(--text-muted);
+  padding: 3px 6px 5px; border-bottom: 1px solid var(--border);
+}
+.pioneer-table td { padding: 6px; border-bottom: 1px solid var(--border); color: var(--text); }
+.pioneer-table th.pio-name, .pioneer-table td.pio-name { text-align: left; }
+.pioneer-table th.pio-cfs,  .pioneer-table td.pio-cfs  { text-align: right;  width: 74px; font-variant-numeric: tabular-nums; }
+.pioneer-table th.pio-time, .pioneer-table td.pio-time { text-align: center; width: 62px; }
+.pioneer-table th.pio-op,   .pioneer-table td.pio-op   { text-align: left;   width: 90px; }
+/* A gate with no reading today reads as absent, not as zero. */
+.pio-unread td { color: var(--text-muted); }
+
 /* ── Water Orders ─────────────────────────────────────────────────────────── */
 /* Dashboard widget: three labelled totals rather than one big number, so it
    still reads at a glance in the middle stat-card slot. */

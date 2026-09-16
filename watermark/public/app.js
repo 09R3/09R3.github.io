@@ -10629,7 +10629,7 @@ const REPORT_PANEL_NAMES = {
   pms:          'PM Records',
   piezometers:  'Piezometers',
   canal:        'Canal Readings',
-  ponds:        'Pond Report',
+  ponds:        'Pond Reports',
   wells:        'Well Readings',
 };
 function openReportPanel(cat) {
@@ -11647,16 +11647,73 @@ async function renderCanalReport() {
   }
 }
 
+// ── Pioneer Daily Readings ───────────────────────────────────────────────────
+// Fixed list of head gates with the CFS read that day, the time and who read it.
+// Row definitions and the gate/structure ids behind them live in PIONEER_ROWS in
+// server.js — a row reading blank usually means an id needs correcting there.
+async function renderPioneerDailyReport() {
+  const out  = el('report-ponds-output');
+  const date = el('ponds-report-date').value || todayISO();
+  out.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+
+  let data;
+  try {
+    data = await api('GET', `/api/reports/ponds/pioneer?date=${encodeURIComponent(date)}`);
+  } catch {
+    out.innerHTML = '<div class="placeholder-msg">Failed to load.</div>';
+    return;
+  }
+
+  const anyRead = data.rows.some(r => r.read_count > 0);
+  // Surfaced rather than swallowed: an id that matches nothing would otherwise
+  // just read blank and look like a missed reading.
+  const broken = data.rows.filter(r => r.missing_ids.length);
+
+  out.innerHTML = `
+    <div class="report-card">
+      <div class="pioneer-head">
+        <div class="pioneer-title">Pioneer Daily Readings</div>
+        <div class="pioneer-date">${localDateStr(data.date, { month: 'short', day: 'numeric', year: 'numeric' })}</div>
+      </div>
+      ${broken.length ? `<div class="pioneer-warn">
+        Not found in the database — check the ids in PIONEER_ROWS:
+        ${broken.map(r => `${escHtml(r.label)} (${r.missing_ids.map(escHtml).join(', ')})`).join('; ')}
+      </div>` : ''}
+      <table class="report-table pioneer-table">
+        <thead>
+          <tr>
+            <th class="pio-name">Head Gate</th>
+            <th class="pio-cfs">CFS</th>
+            <th class="pio-time">Time</th>
+            <th class="pio-op">Operator</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${data.rows.map(r => `
+            <tr${r.read_count === 0 ? ' class="pio-unread"' : ''}>
+              <td class="pio-name">${escHtml(r.label)}</td>
+              <td class="pio-cfs">${r.cfs == null ? '—' : r.cfs.toFixed(2)}</td>
+              <td class="pio-time">${r.reading_time ? escHtml(String(r.reading_time).slice(0, 5)) : '—'}</td>
+              <td class="pio-op">${escHtml(r.operator || '—')}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+      ${anyRead ? '' : '<div class="placeholder-msg">No readings recorded for this date.</div>'}
+    </div>`;
+}
+
 // ── Pond Report Panel ─────────────────────────────────────────────────────────
 let pondsReportInitialized = false;
 
 function pondsReportActiveTab() {
-  return el('ponds-report-seg').querySelector('.seg-btn.active')?.dataset.val || 'gauges';
+  return el('ponds-report-seg').querySelector('.seg-btn.active')?.dataset.val || 'pioneer';
 }
 
 function renderPondsActiveTab() {
-  if (pondsReportActiveTab() === 'gauges') renderPondsReport();
-  else renderPondGateReport();
+  const tab = pondsReportActiveTab();
+  if (tab === 'pioneer')     renderPioneerDailyReport();
+  else if (tab === 'gauges') renderPondsReport();
+  else                       renderPondGateReport();
 }
 
 function initPondsReportPanel() {
@@ -11685,7 +11742,10 @@ function initPondsReportPanel() {
       btn.disabled = true;
       try {
         const date = el('ponds-report-date').value || todayISO();
-        await sharePdfFromHtml(card.outerHTML, REPORT_PDF_CSS, `Ponds_Report_${date}`, 'Ponds Report');
+        const tab  = pondsReportActiveTab();
+        const name = tab === 'pioneer' ? 'Pioneer_Daily_Readings'
+                   : tab === 'gauges'  ? 'Pond_Staff_Gauges' : 'Pond_Gate_Readings';
+        await sharePdfFromHtml(card.outerHTML, REPORT_PDF_CSS, `${name}_${date}`, 'Pond Reports');
       } catch (err) {
         if (err.name !== 'AbortError') showToast('Export failed: ' + err.message, 'error');
       } finally {
@@ -11697,7 +11757,7 @@ function initPondsReportPanel() {
     el('ponds-report-seg').querySelectorAll('.seg-btn').forEach((b,i) => b.classList.toggle('active', i===0));
   }
 
-  renderPondsReport();
+  renderPondsActiveTab();
 }
 
 async function renderPondsReport() {
