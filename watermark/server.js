@@ -496,6 +496,13 @@ pool.query(`ALTER TABLE readings_kf_monthly  ADD COLUMN IF NOT EXISTS sounder_nu
   .then(() => pool.query(`ALTER TABLE readings_run_dwr     ADD COLUMN IF NOT EXISTS sounder_number TEXT`))
   .catch(err => console.error('Migration error (sounder_number):', err.message));
 
+// Canal Readings was ordered by structure_id, i.e. whatever order rows happened
+// to be inserted in, and structure_id can't be renumbered — readings_canal and
+// pond_connections both reference it. This gives the screen an order of its own.
+// Retiring a structure is already handled by canal_structures.in_service.
+pool.query(`ALTER TABLE canal_structures ADD COLUMN IF NOT EXISTS sort_order INT DEFAULT 0`)
+  .catch(err => console.error('Migration error (canal sort_order):', err.message));
+
 pool.query(`ALTER TABLE maintenance_vehicles ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'open'`)
   .catch(err => console.error('Migration error (mv_status):', err.message));
 
@@ -2274,7 +2281,9 @@ app.get('/api/canal-structures', requireAuth, async (req, res) => {
         LIMIT 1
       ) r ON true
       WHERE cs.in_service = true
-      ORDER BY cs.structure_id
+      -- structure_id as the tiebreak keeps rows left at the default 0 in the
+      -- order they are in today, rather than scrambling them.
+      ORDER BY cs.sort_order, cs.structure_id
     `);
     res.json(rows);
   } catch (err) {

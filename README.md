@@ -246,6 +246,48 @@ stays reachable and the pond can still be configured.
 
 ---
 
+## WaterMark — Canal Readings Order and Retirement
+
+The Canal Readings screen is ordered by `canal_structures.sort_order`, then by
+`structure_id` as a tiebreak. Both columns are set in SQL; there is no admin UI.
+
+Structures left at the default `sort_order = 0` keep the order they have always
+had (insertion order), so you can number only the ones you care about and leave
+the rest alone.
+
+```sql
+-- Put the list in the order operators actually walk it
+UPDATE canal_structures SET sort_order = 1 WHERE structure_name = 'Pioneer Inlet';
+UPDATE canal_structures SET sort_order = 2 WHERE structure_name = 'RRB Turnout No. 1';
+UPDATE canal_structures SET sort_order = 3 WHERE structure_name = 'Strand Siphons';
+
+-- Retire a structure: it disappears from Canal Readings, history is untouched
+UPDATE canal_structures SET in_service = FALSE WHERE structure_name = 'Old Gate';
+UPDATE canal_structures SET in_service = TRUE  WHERE structure_name = 'Old Gate';
+```
+
+The screen splits the list into **Inflow** and **Outflow** sections by
+`flow_direction` (`inflow`, `outflow`, `both`, or null — `both` appears in each),
+and `sort_order` applies within each section.
+
+### Retiring a structure
+
+`in_service = FALSE` hides a structure from the Canal Readings screen. Its rows
+in `readings_canal` are untouched and still appear in the Canal report, so the
+history stays reachable.
+
+Two things to know:
+
+- The filter is `in_service = true`, so a row where `in_service` is **NULL** is
+  hidden too. If a structure is unexpectedly missing from the screen, check with
+  `SELECT structure_name, in_service FROM canal_structures WHERE in_service IS NOT TRUE;`
+- `/api/canal-structures` also fills the Canal report's turnout dropdown, so a
+  retired structure drops out of it. Its readings still show under "All turnouts
+  / turn-ins", and the API still accepts its `structure_id` directly, but you
+  cannot pick it by name in the UI.
+
+---
+
 ## WaterMark — Pond Map Locations (`pond_points`)
 
 The polygon map shown when tapping a card's map button is built from points stored in
