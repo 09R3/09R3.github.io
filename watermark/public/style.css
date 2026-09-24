@@ -1021,7 +1021,9 @@ input[type="date"].ctrl-input { min-height: 44px; }
 /* ── Dashboard Stats ─────────────────────────────────────────────────────── */
 .stats-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  /* Two columns: the Water Orders card spans both (it carries a list, not a
+     single number), the remaining cards sit side by side underneath. */
+  grid-template-columns: repeat(2, 1fr);
   gap: 10px;
   margin-bottom: 20px;
   max-width: 600px;
@@ -3009,13 +3011,16 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
 .pio-unread td { color: var(--text-muted); }
 
 /* ── Water Orders ─────────────────────────────────────────────────────────── */
-/* Dashboard widget: three labelled totals rather than one big number, so it
-   still reads at a glance in the middle stat-card slot. */
-/* The stats grid is three equal columns, so this card gets ~65-90px of content
-   width on a phone — not enough for "DWR Order" and its number side by side.
-   Stack each label over its value so neither is ever truncated. */
-.wo-stat-rows { display: flex; flex-direction: column; gap: 5px; }
-.wo-stat-row { display: flex; flex-direction: column; }
+/* Dashboard widget: the DWR order, then only the turnouts that moved since the
+   last order. That is a list, not a number, so the card takes a full-width row
+   of its own at the top of the stats grid. */
+.wo-stat-card { grid-column: 1 / -1; }
+.wo-stat-top {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 10px;
+}
+.wo-stat-dwr { display: flex; flex-direction: column; }
+.wo-stat-head { text-align: right; }
+.wo-stat-head .stat-label { margin-top: 0; }
 .wo-stat-key {
   font-size: 0.58rem;
   font-weight: 700;
@@ -3031,6 +3036,32 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
   line-height: 1.15;
   color: var(--accent);
   font-variant-numeric: tabular-nums;
+}
+
+/* Changed turnouts. One column: the names run long ("Rosedale-Rio Bravo Turnout
+   No. 1") and a second column only buys width back by truncating them. The list
+   is capped in JS, so it stays short either way. Up is green, down amber —
+   neither is an error, they just need telling apart. */
+.wo-chg-cap {
+  margin-top: 10px; padding-top: 8px;
+  border-top: 1px solid var(--border);
+  font-size: 0.6rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.05em; color: var(--text-muted);
+}
+.wo-chg-rows { margin-top: 5px; display: flex; flex-direction: column; gap: 3px; }
+.wo-chg-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.wo-chg-name {
+  font-size: 0.78rem; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.wo-chg-delta { font-size: 0.8rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.wo-chg-delta.up,  .wo-col-chg.up   { color: #4caf50; }
+.wo-chg-delta.down, .wo-col-chg.down { color: var(--yellow); }
+.wo-chg-more { font-size: 0.7rem; color: var(--text-muted); }
+.wo-chg-none {
+  margin-top: 10px; padding-top: 10px;
+  border-top: 1px solid var(--border);
+  font-size: 0.95rem; font-weight: 700; color: var(--text-dim);
 }
 
 /* Detail modal — laid out like page 1 of the paper order. */
@@ -3076,6 +3107,25 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
 /* The order table has four columns of real content — let it scroll sideways
    on a phone rather than crushing the comments column away. */
 .report-scroll > .wo-table { min-width: 520px; }
+
+/* Detail view: plant operations on the left, what changed on the right. They
+   drop to one column on a phone, where two would truncate both. */
+.wo-top-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 0 18px;
+  align-items: start;
+}
+.wo-top-col { min-width: 0; }
+.wo-chg-table .wo-col-name { width: auto; }
+.wo-table .wo-col-chg {
+  text-align: right; width: 72px;
+  font-variant-numeric: tabular-nums; font-weight: 700;
+}
+.wo-chg-none-lg {
+  margin-top: 0; border-top: none; padding: 16px 0;
+  text-align: center; font-size: 1.05rem;
+}
 
 /* Estimated Pumping Plant Operations — derived, so it reads as a summary block
    rather than an entry table. Two columns only, so it never needs to scroll. */

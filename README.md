@@ -98,9 +98,20 @@ application locations, a treatment checklist, and monthly reporting.
 
 **Water orders** — the Cross Valley Canal water order sheet. Supervisors enter
 the CFS, time of change and comments for each inflow and outflow line for a
-given date (including future dates) under Settings → Widgets → Water Orders. The
-dashboard widget shows DWR Order, Inflow and Outflow totals for today and opens
-the full order laid out like the paper sheet.
+given date (including future dates) under Settings → Widgets → Water Orders.
+
+The dashboard widget shows today's DWR Order and then only the outflow lines
+that moved since the last order — signed, so 50 → 25 reads as `-25`. The
+baseline is the most recent *earlier* order that has lines, not literally
+yesterday, since orders are not entered every day. A blank line counts as zero,
+so going from 50 to blank is a real `-50`; two blanks are not a change. The card
+reads `N/A` when no order has been entered for the date, `No Changes` when
+nothing moved, and `No Previous Order` when there is nothing to compare against;
+it lists the first six changes and counts the rest.
+
+Tapping the widget opens the full order: Estimated Pumping Plant Operations on
+the left, every changed turnout on the right, and the full inflow and outflow
+sheet below, laid out like the paper form. Any line taps through to its history.
 
 The Wells (Total Recovery) inflow line is not entered — it is computed from the
 Running Wells setting (running wells in Pools 1–6 that are on, plus the per-pool

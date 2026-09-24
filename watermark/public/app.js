@@ -764,6 +764,38 @@ setInterval(() => {
   loadDashboardStats();
 }, 60 * 1000);
 
+// A signed change, e.g. 50 -> 25 reads as "-25". Zero never reaches this: the
+// server only reports lines whose value actually moved.
+function woDeltaStr(n) {
+  return (n > 0 ? '+' : '-') + woFmt(Math.abs(n));
+}
+
+// The widget lists only what changed since the last order, so a glance says
+// what an operator has to act on. The full list lives in the detail view, so
+// the card caps itself rather than growing down the dashboard.
+const WO_WIDGET_CHANGES = 6;
+
+function woWidgetChangesHtml(wo, fmtDate) {
+  if (!wo)        return '<div class="wo-chg-none">—</div>';
+  if (!wo.exists) return '<div class="wo-chg-none">N/A</div>';
+  // Nothing earlier to compare against is not the same as nothing moving.
+  if (!wo.compare_date) return '<div class="wo-chg-none">No Previous Order</div>';
+  const changes = wo.changes || [];
+  if (!changes.length) return '<div class="wo-chg-none">No Changes</div>';
+  const shown = changes.slice(0, WO_WIDGET_CHANGES);
+  const more  = changes.length - shown.length;
+  return `
+        <div class="wo-chg-cap">Changed${wo.compare_date ? ` vs ${fmtDate(wo.compare_date)}` : ''}</div>
+        <div class="wo-chg-rows">
+          ${shown.map(c => `
+            <div class="wo-chg-row">
+              <span class="wo-chg-name" title="${escHtml(c.label)}">${escHtml(c.label)}</span>
+              <span class="wo-chg-delta ${c.delta > 0 ? 'up' : 'down'}">${woDeltaStr(c.delta)}</span>
+            </div>`).join('')}
+          ${more > 0 ? `<div class="wo-chg-more">+${more} more</div>` : ''}
+        </div>`;
+}
+
 async function loadDashboardStats() {
   try {
     const [s, wo] = await Promise.all([
@@ -784,31 +816,25 @@ async function loadDashboardStats() {
     const woCfs = n => (Number(n) || 0).toFixed(0);
     const grid = el('dashboard-stats');
     grid.innerHTML = `
+      <div class="stat-card wo-stat-card" id="water-order-stat" style="cursor:pointer">
+        <div class="wo-stat-top">
+          <div class="wo-stat-dwr">
+            <span class="wo-stat-key">DWR Order${wo?.dwr_reverse ? ' <em>(rev)</em>' : ''}</span>
+            <span class="wo-stat-val">${!wo ? '—' : !wo.exists ? 'N/A' : woCfs(wo.dwr_order)}</span>
+          </div>
+          <div class="wo-stat-head">
+            <div class="stat-label">Water Orders</div>
+            <div class="stat-sublabel">cfs · ${wo ? localDateStr(wo.order_date, { month: 'short', day: 'numeric' }) : '—'}</div>
+          </div>
+        </div>
+        ${woWidgetChangesHtml(wo, fmtDate)}
+      </div>
       <div class="stat-card stat-accent" id="kf-complete-stat" style="cursor:pointer">
         <div class="stat-value">${s.kf_done}<span style="font-size:1rem;color:var(--text-dim)">/${s.kf_total}</span></div>
         <div class="stat-label">KF Complete</div>
         <div class="stat-sublabel">${rangeLabel}</div>
         <div class="stat-sublabel" style="margin-top:2px">${s.kf_total - s.kf_done} Remaining</div>
         <div class="stat-bar"><div class="stat-bar-fill" style="width:${pct}%"></div></div>
-      </div>
-      <div class="stat-card wo-stat-card" id="water-order-stat" style="cursor:pointer">
-        <div class="wo-stat-rows">
-          <div class="wo-stat-row">
-            <span class="wo-stat-key">DWR Order${wo?.dwr_reverse ? ' <em>(rev)</em>' : ''}</span>
-            <span class="wo-stat-val">${wo ? woCfs(wo.dwr_order) : '—'}</span>
-          </div>
-          <div class="wo-stat-row">
-            <span class="wo-stat-key">Inflow</span>
-            <span class="wo-stat-val">${wo ? woCfs(wo.total_inflow) : '—'}</span>
-          </div>
-          <div class="wo-stat-row">
-            <span class="wo-stat-key">Outflow</span>
-            <span class="wo-stat-val">${wo ? woCfs(wo.total_outflow) : '—'}</span>
-          </div>
-        </div>
-        <div class="stat-label">Water Orders</div>
-        <div class="stat-sublabel">cfs · ${wo ? localDateStr(wo.order_date, { month: 'short', day: 'numeric' }) : '—'}</div>
-        ${wo && !wo.exists ? '<div class="stat-sublabel">No order entered</div>' : ''}
       </div>
       <div class="stat-card${isScadaAllowed(currentUser?.role) ? '' : ' hidden'}" id="scada-flow-stat" style="cursor:pointer">
         <div class="stat-value" id="scada-flow-value">—</div>
@@ -894,6 +920,38 @@ function woSectionHtml(section, title, cfsHeading, lines, total, totalLabel, wel
     </table>`;
 }
 
+// Everything that moved since the last order with lines. Same data as the
+// dashboard card, uncapped, and each row taps through to that line's history.
+function woChangesTableHtml(wo) {
+  const title = '<div class="wo-section-title">CHANGES' +
+    (wo.exists && wo.compare_date ? ` VS ${escHtml(fmtDate(wo.compare_date)).toUpperCase()}` : '') +
+    '</div>';
+  const msg = m => `${title}<div class="wo-chg-none wo-chg-none-lg">${m}</div>`;
+  if (!wo.exists) return msg('N/A');
+  if (!wo.compare_date) return msg('No Previous Order');
+  const changes = wo.changes || [];
+  if (!changes.length) return msg('No Changes');
+  return `
+    ${title}
+    <table class="wo-table wo-chg-table">
+      <thead>
+        <tr>
+          <th class="wo-col-name"></th>
+          <th class="wo-col-cfs">CFS</th>
+          <th class="wo-col-chg">Change</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${changes.map(c => `
+          <tr class="wo-row-tap" data-hist-section="outflow" data-hist-key="${escHtml(c.key)}">
+            <td class="wo-col-name"><span class="wo-name">${escHtml(c.label)}</span></td>
+            <td class="wo-col-cfs">${woFmt(c.cfs)}</td>
+            <td class="wo-col-chg ${c.delta > 0 ? 'up' : 'down'}">${woDeltaStr(c.delta)}</td>
+          </tr>`).join('')}
+      </tbody>
+    </table>`;
+}
+
 async function openWaterOrderModal(dateStr) {
   const body = el('water-order-modal-body');
   body.innerHTML = '<div class="placeholder-msg" style="padding:16px">Loading…</div>';
@@ -908,20 +966,27 @@ async function openWaterOrderModal(dateStr) {
         <div class="wo-doc-date">${d.toLocaleDateString('en-US',
           { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</div>
         ${!wo.exists ? '<div class="wo-doc-empty">No order entered for this date.</div>' : ''}
-        ${wo.plants ? `
-          <div class="wo-section-title">ESTIMATED PUMPING PLANT OPERATIONS</div>
-          <table class="wo-table wo-pp-table">
-            <thead><tr><th class="wo-col-name"></th><th class="wo-col-cfs">CFS</th></tr></thead>
-            <tbody>
-              ${wo.plants.map(pl => `
-                <tr>
-                  <td class="wo-col-name">${escHtml(pl.label)}</td>
-                  <td class="wo-col-cfs">${woFmt(pl.cfs)}</td>
-                </tr>`).join('')}
-            </tbody>
-          </table>
-          <div class="wo-pp-note">Calculated from the turnouts in each reach and the well recovery per pool.</div>
-        ` : ''}
+        <div class="wo-top-grid">
+          ${wo.plants ? `
+            <div class="wo-top-col">
+              <div class="wo-section-title">ESTIMATED PUMPING PLANT OPERATIONS</div>
+              <table class="wo-table wo-pp-table">
+                <thead><tr><th class="wo-col-name"></th><th class="wo-col-cfs">CFS</th></tr></thead>
+                <tbody>
+                  ${wo.plants.map(pl => `
+                    <tr>
+                      <td class="wo-col-name">${escHtml(pl.label)}</td>
+                      <td class="wo-col-cfs">${woFmt(pl.cfs)}</td>
+                    </tr>`).join('')}
+                </tbody>
+              </table>
+              <div class="wo-pp-note">Calculated from the turnouts in each reach and the well recovery per pool.</div>
+            </div>
+          ` : ''}
+          <div class="wo-top-col">
+            ${woChangesTableHtml(wo)}
+          </div>
+        </div>
         <div class="report-scroll">
           ${woSectionHtml('inflow', 'INFLOW', 'CFS', wo.inflow, wo.total_inflow, 'Total Inflow', wo.wells_by_pool)}
           ${woSectionHtml('outflow', 'OUTFLOW', 'CFS<br>Ordered', wo.outflow, wo.total_outflow, 'Total Outflow')}

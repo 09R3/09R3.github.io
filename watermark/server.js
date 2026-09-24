@@ -6105,6 +6105,41 @@ async function buildWaterOrder(dateStr) {
 
   const inflow  = build('inflow',  WATER_ORDER_INFLOW);
   const outflow = build('outflow', WATER_ORDER_OUTFLOW);
+
+  // What changed since the last order. The baseline is the most recent EARLIER
+  // order that actually has lines, not literally yesterday: orders aren't always
+  // entered daily, and comparing a Monday against a missing Sunday would flag
+  // every turnout as changed. Outflow only — DWR Order already carries the
+  // aqueduct figure on its own.
+  const { rows: prevRows } = await pool.query(
+    `SELECT o.order_id, to_char(o.order_date, 'YYYY-MM-DD') AS order_date
+     FROM water_orders o
+     WHERE o.order_date < $1
+       AND EXISTS (SELECT 1 FROM water_order_lines l WHERE l.order_id = o.order_id)
+     ORDER BY o.order_date DESC
+     LIMIT 1`,
+    [dateStr]
+  );
+  const prev = prevRows[0] || null;
+  let prevByKey = new Map();
+  if (prev) {
+    const { rows } = await pool.query(
+      `SELECT line_key, cfs FROM water_order_lines
+       WHERE order_id = $1 AND section = 'outflow'`,
+      [prev.order_id]
+    );
+    prevByKey = new Map(rows.map(r => [r.line_key, r.cfs == null ? null : Number(r.cfs)]));
+  }
+  // A blank line means nothing ordered, so it compares as zero — going 50 -> blank
+  // is a real -50. Two blanks are not a change.
+  const changes = !prev ? [] : outflow.reduce((acc, l) => {
+    const now  = l.cfs == null ? null : Number(l.cfs);
+    const was  = prevByKey.has(l.key) ? prevByKey.get(l.key) : null;
+    if (now == null && was == null) return acc;
+    const delta = Number(((now || 0) - (was || 0)).toFixed(2));
+    if (delta !== 0) acc.push({ key: l.key, label: l.label, cfs: now, prev_cfs: was, delta });
+    return acc;
+  }, []);
   const sum = lines => Number(lines.reduce((t, l) => t + (Number(l.cfs) || 0), 0).toFixed(2));
   const total_inflow  = sum(inflow);
   // Refill is carried on the sheet but stays in the canal, so it is excluded
@@ -6125,6 +6160,8 @@ async function buildWaterOrder(dateStr) {
     entered_by: order?.entered_by || null,
     updated_at: order?.updated_at || null,
     inflow, outflow, plants,
+    changes,
+    compare_date: prev?.order_date || null,
     wells_cfs: wellsCfs,
     wells_by_pool: wells.byPool,
     total_inflow, total_outflow,
