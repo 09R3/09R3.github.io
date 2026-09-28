@@ -79,6 +79,11 @@ reverse-flow totals; and power monitoring. Charts support drag-select statistics
 
 **Reports** — vehicle mileage and last service, KF completion, maintenance
 issues, PM grids, piezometers, canal readings, pond levels and well readings.
+Pond Reports opens on **Pioneer Daily Readings**: eleven head gates with the CFS
+read that day, the time and the operator. Each row totals one or more sources —
+pond gates or canal structures — defined in `PIONEER_ROWS` in `server.js`, which
+is also where to correct an id if a row reads blank or warns that a source was
+not found.
 Every report exports to CSV, Excel or PDF.
 
 **Charts** — lookup tables and calculators used in the field: overpour weirs,
@@ -93,9 +98,29 @@ application locations, a treatment checklist, and monthly reporting.
 
 **Water orders** — the Cross Valley Canal water order sheet. Supervisors enter
 the CFS, time of change and comments for each inflow and outflow line for a
-given date (including future dates) under Settings → Widgets → Water Orders. The
-dashboard widget shows DWR Order, Inflow and Outflow totals for today and opens
-the full order laid out like the paper sheet.
+given date (including future dates) under Settings → Widgets → Water Orders.
+
+The dashboard widget's day starts at 07:00 Pacific, not midnight, so an order
+entered the evening before appears when the work day starts. It shows that day's
+DWR Order and then only the outflow lines
+that moved since the last order — signed, so 50 → 25 reads as `-25`. The
+baseline is the most recent *earlier* order that has lines, not literally
+yesterday, since orders are not entered every day. A blank line counts as zero,
+so going from 50 to blank is a real `-50`; two blanks are not a change. The card
+reads `N/A` when no order has been entered for the date, `No Changes` when
+nothing moved, and `No Previous Order` when there is nothing to compare against;
+it lists the first six changes and counts the rest.
+
+Tapping the widget opens the full order: Estimated Pumping Plant Operations on
+the left, every changed turnout on the right, and the full inflow and outflow
+sheet below, laid out like the paper form. Any line taps through to its history.
+Arrows either side of the date step to the previous and next date that has an
+order — not the next calendar day — so the orders that exist can be walked
+without landing on empty days in between. They are disabled at either end.
+
+A save with nothing filled in leaves an order row with no lines. Those days
+count as nothing entered rather than as every turnout dropping to zero, and the
+day arrows step over them.
 
 The Wells (Total Recovery) inflow line is not entered — it is computed from the
 Running Wells setting (running wells in Pools 1–6 that are on, plus the per-pool
@@ -243,6 +268,48 @@ unchanged (it filters on `= true`).
 Scope: `active` hides the pond from the **Ponds reading screen only**. It still
 appears in the ponds report, the polygon map and the GPS picker, so history
 stays reachable and the pond can still be configured.
+
+---
+
+## WaterMark — Canal Readings Order and Retirement
+
+The Canal Readings screen is ordered by `canal_structures.sort_order`, then by
+`structure_id` as a tiebreak. Both columns are set in SQL; there is no admin UI.
+
+Structures left at the default `sort_order = 0` keep the order they have always
+had (insertion order), so you can number only the ones you care about and leave
+the rest alone.
+
+```sql
+-- Put the list in the order operators actually walk it
+UPDATE canal_structures SET sort_order = 1 WHERE structure_name = 'Pioneer Inlet';
+UPDATE canal_structures SET sort_order = 2 WHERE structure_name = 'RRB Turnout No. 1';
+UPDATE canal_structures SET sort_order = 3 WHERE structure_name = 'Strand Siphons';
+
+-- Retire a structure: it disappears from Canal Readings, history is untouched
+UPDATE canal_structures SET in_service = FALSE WHERE structure_name = 'Old Gate';
+UPDATE canal_structures SET in_service = TRUE  WHERE structure_name = 'Old Gate';
+```
+
+The screen splits the list into **Inflow** and **Outflow** sections by
+`flow_direction` (`inflow`, `outflow`, `both`, or null — `both` appears in each),
+and `sort_order` applies within each section.
+
+### Retiring a structure
+
+`in_service = FALSE` hides a structure from the Canal Readings screen. Its rows
+in `readings_canal` are untouched and still appear in the Canal report, so the
+history stays reachable.
+
+Two things to know:
+
+- The filter is `in_service = true`, so a row where `in_service` is **NULL** is
+  hidden too. If a structure is unexpectedly missing from the screen, check with
+  `SELECT structure_name, in_service FROM canal_structures WHERE in_service IS NOT TRUE;`
+- `/api/canal-structures` also fills the Canal report's turnout dropdown, so a
+  retired structure drops out of it. Its readings still show under "All turnouts
+  / turn-ins", and the API still accepts its `structure_id` directly, but you
+  cannot pick it by name in the UI.
 
 ---
 

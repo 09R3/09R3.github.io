@@ -57,15 +57,32 @@ function todayISO() {
   return new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD in local time
 }
 
-// The water order day belongs to the canal, not to the device: it rolls at
-// Pacific midnight however a tablet's clock happens to be set, and matches the
-// server's own default. Reading screens keep using todayISO() — those are
-// "what day is it where I am standing".
+// The water order day belongs to the canal, not to the device: it is a Pacific
+// day however a tablet's clock happens to be set. Reading screens keep using
+// todayISO() — those are "what day is it where I am standing".
 const PACIFIC_DATE_FMT = new Intl.DateTimeFormat('en-CA', {
   timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit',
 });
 function pacificToday() {
   return PACIFIC_DATE_FMT.format(new Date());
+}
+
+// The dashboard card's day starts with the work day at 07:00 Pacific, not at
+// midnight, so an order entered the evening before does not replace the one
+// crews are still working to. Before 07:00 this is yesterday. Mirrors
+// waterOrderDayString() in server.js, which picks the card's date; this copy
+// only decides when to ask the server again. Worked from wall-clock parts so
+// the DST changeover days still roll at 07:00.
+const WO_DAY_START_HOUR = 7;
+const PACIFIC_HOUR_FMT = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', hourCycle: 'h23',
+});
+function woWidgetDay(now = new Date()) {
+  const p = Object.fromEntries(PACIFIC_HOUR_FMT.formatToParts(now).map(x => [x.type, x.value]));
+  const back = Number(p.hour) < WO_DAY_START_HOUR ? 1 : 0;
+  return new Date(Date.UTC(Number(p.year), Number(p.month) - 1, Number(p.day) - back))
+    .toISOString().slice(0, 10);
 }
 
 const SUPERVISOR_ROLES = ['supervisor', 'admin', 'water-planner'];
@@ -739,15 +756,15 @@ el('export-pending-btn').addEventListener('click', async () => {
 });
 
 /* ── Dashboard Stats ─────────────────────────────────────────────────────── */
-// The Pacific day the Water Orders card was last rendered for. Tapping the card
+// The water order day the card was last rendered for (see woWidgetDay). Tapping the card
 // opens this exact date rather than recomputing, so the card and the order it
 // opens can never disagree.
 let _woWidgetDate = null;
 
-// Roll the dashboard over at Pacific midnight so a screen left open overnight
-// is not still showing yesterday's order. Comparing the date string once a
-// minute avoids working out a DST-correct offset to the next midnight, and
-// costs nothing.
+// Roll the dashboard over at 07:00 Pacific so a screen left open overnight
+// picks up the new day's order when the work day starts. Comparing the day
+// string once a minute avoids working out a DST-correct offset to the next
+// rollover, and costs nothing.
 //
 // The card's date comes from the server, so if this device's clock is ahead of
 // the server's the refetch comes back on the old day and the mismatch persists.
@@ -758,11 +775,43 @@ const WO_ROLLOVER_TRIES = 5;
 let _woRollAttempts = 0;
 setInterval(() => {
   if (!currentUser || !_woWidgetDate) return;
-  if (pacificToday() === _woWidgetDate) { _woRollAttempts = 0; return; }
+  if (woWidgetDay() === _woWidgetDate) { _woRollAttempts = 0; return; }
   if (currentScreen !== 'dashboard' || _woRollAttempts >= WO_ROLLOVER_TRIES) return;
   _woRollAttempts++;
   loadDashboardStats();
 }, 60 * 1000);
+
+// A signed change, e.g. 50 -> 25 reads as "-25". Zero never reaches this: the
+// server only reports lines whose value actually moved.
+function woDeltaStr(n) {
+  return (n > 0 ? '+' : '-') + woFmt(Math.abs(n));
+}
+
+// The widget lists only what changed since the last order, so a glance says
+// what an operator has to act on. The full list lives in the detail view, so
+// the card caps itself rather than growing down the dashboard.
+const WO_WIDGET_CHANGES = 6;
+
+function woWidgetChangesHtml(wo, fmtDate) {
+  if (!wo)        return '<div class="wo-chg-none">—</div>';
+  if (!wo.exists || !wo.has_lines) return '<div class="wo-chg-none">N/A</div>';
+  // Nothing earlier to compare against is not the same as nothing moving.
+  if (!wo.compare_date) return '<div class="wo-chg-none">No Previous Order</div>';
+  const changes = wo.changes || [];
+  if (!changes.length) return '<div class="wo-chg-none">No Changes</div>';
+  const shown = changes.slice(0, WO_WIDGET_CHANGES);
+  const more  = changes.length - shown.length;
+  return `
+        <div class="wo-chg-cap">Changed${wo.compare_date ? ` vs ${fmtDate(wo.compare_date)}` : ''}</div>
+        <div class="wo-chg-rows">
+          ${shown.map(c => `
+            <div class="wo-chg-row">
+              <span class="wo-chg-name" title="${escHtml(c.label)}">${escHtml(c.label)}</span>
+              <span class="wo-chg-delta ${c.delta > 0 ? 'up' : 'down'}">${woDeltaStr(c.delta)}</span>
+            </div>`).join('')}
+          ${more > 0 ? `<div class="wo-chg-more">+${more} more</div>` : ''}
+        </div>`;
+}
 
 async function loadDashboardStats() {
   try {
@@ -784,31 +833,25 @@ async function loadDashboardStats() {
     const woCfs = n => (Number(n) || 0).toFixed(0);
     const grid = el('dashboard-stats');
     grid.innerHTML = `
+      <div class="stat-card wo-stat-card" id="water-order-stat" style="cursor:pointer">
+        <div class="wo-stat-top">
+          <div class="wo-stat-dwr">
+            <span class="wo-stat-key">DWR Order${wo?.dwr_reverse ? ' <em>(rev)</em>' : ''}</span>
+            <span class="wo-stat-val">${!wo ? '—' : !wo.exists ? 'N/A' : woCfs(wo.dwr_order)}</span>
+          </div>
+          <div class="wo-stat-head">
+            <div class="stat-label">Water Orders</div>
+            <div class="stat-sublabel">cfs · ${wo ? localDateStr(wo.order_date, { month: 'short', day: 'numeric' }) : '—'}</div>
+          </div>
+        </div>
+        ${woWidgetChangesHtml(wo, fmtDate)}
+      </div>
       <div class="stat-card stat-accent" id="kf-complete-stat" style="cursor:pointer">
         <div class="stat-value">${s.kf_done}<span style="font-size:1rem;color:var(--text-dim)">/${s.kf_total}</span></div>
         <div class="stat-label">KF Complete</div>
         <div class="stat-sublabel">${rangeLabel}</div>
         <div class="stat-sublabel" style="margin-top:2px">${s.kf_total - s.kf_done} Remaining</div>
         <div class="stat-bar"><div class="stat-bar-fill" style="width:${pct}%"></div></div>
-      </div>
-      <div class="stat-card wo-stat-card" id="water-order-stat" style="cursor:pointer">
-        <div class="wo-stat-rows">
-          <div class="wo-stat-row">
-            <span class="wo-stat-key">DWR Order${wo?.dwr_reverse ? ' <em>(rev)</em>' : ''}</span>
-            <span class="wo-stat-val">${wo ? woCfs(wo.dwr_order) : '—'}</span>
-          </div>
-          <div class="wo-stat-row">
-            <span class="wo-stat-key">Inflow</span>
-            <span class="wo-stat-val">${wo ? woCfs(wo.total_inflow) : '—'}</span>
-          </div>
-          <div class="wo-stat-row">
-            <span class="wo-stat-key">Outflow</span>
-            <span class="wo-stat-val">${wo ? woCfs(wo.total_outflow) : '—'}</span>
-          </div>
-        </div>
-        <div class="stat-label">Water Orders</div>
-        <div class="stat-sublabel">cfs · ${wo ? localDateStr(wo.order_date, { month: 'short', day: 'numeric' }) : '—'}</div>
-        ${wo && !wo.exists ? '<div class="stat-sublabel">No order entered</div>' : ''}
       </div>
       <div class="stat-card${isScadaAllowed(currentUser?.role) ? '' : ' hidden'}" id="scada-flow-stat" style="cursor:pointer">
         <div class="stat-value" id="scada-flow-value">—</div>
@@ -817,7 +860,7 @@ async function loadDashboardStats() {
         <svg id="scada-flow-spark" class="scada-flow-spark" viewBox="0 0 100 24" preserveAspectRatio="none"></svg>
       </div>
     `;
-    _woWidgetDate = wo?.order_date || pacificToday();
+    _woWidgetDate = wo?.order_date || woWidgetDay();
     el('water-order-stat').addEventListener('click', () => openWaterOrderModal(_woWidgetDate));
     el('kf-complete-stat').addEventListener('click', openKFSetsModal);
     el('scada-flow-stat').addEventListener('click', () => showScreen('scada'));
@@ -894,6 +937,53 @@ function woSectionHtml(section, title, cfsHeading, lines, total, totalLabel, wel
     </table>`;
 }
 
+// Day arrows either side of the date. They step to the next date that has an
+// order rather than to the next calendar day, so a supervisor can walk the
+// orders that exist without landing on empty days in between. Disabled rather
+// than hidden at either end, so the heading never shifts sideways.
+function woNavBtn(dir, target) {
+  const prev = dir === 'prev';
+  const label = target
+    ? `${prev ? 'Previous' : 'Next'} order \u2014 ${fmtDate(target)}`
+    : `No ${prev ? 'earlier' : 'later'} order`;
+  return `<button type="button" class="btn btn-secondary btn-sm wo-date-step wo-doc-step"
+            id="wo-doc-${dir}"${target ? '' : ' disabled'}
+            title="${escHtml(label)}" aria-label="${escHtml(label)}">${prev ? '\u2039' : '\u203a'}</button>`;
+}
+
+// Everything that moved since the last order with lines. Same data as the
+// dashboard card, uncapped, and each row taps through to that line's history.
+function woChangesTableHtml(wo) {
+  const title = '<div class="wo-section-title">CHANGES' +
+    (wo.exists && wo.has_lines && wo.compare_date
+      ? ` VS ${escHtml(fmtDate(wo.compare_date)).toUpperCase()}` : '') +
+    '</div>';
+  const msg = m => `${title}<div class="wo-chg-none wo-chg-none-lg">${m}</div>`;
+  if (!wo.exists || !wo.has_lines) return msg('N/A');
+  if (!wo.compare_date) return msg('No Previous Order');
+  const changes = wo.changes || [];
+  if (!changes.length) return msg('No Changes');
+  return `
+    ${title}
+    <table class="wo-table wo-chg-table">
+      <thead>
+        <tr>
+          <th class="wo-col-name"></th>
+          <th class="wo-col-cfs">CFS</th>
+          <th class="wo-col-chg">Change</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${changes.map(c => `
+          <tr class="wo-row-tap" data-hist-section="outflow" data-hist-key="${escHtml(c.key)}">
+            <td class="wo-col-name"><span class="wo-name">${escHtml(c.label)}</span></td>
+            <td class="wo-col-cfs">${woFmt(c.cfs)}</td>
+            <td class="wo-col-chg ${c.delta > 0 ? 'up' : 'down'}">${woDeltaStr(c.delta)}</td>
+          </tr>`).join('')}
+      </tbody>
+    </table>`;
+}
+
 async function openWaterOrderModal(dateStr) {
   const body = el('water-order-modal-body');
   body.innerHTML = '<div class="placeholder-msg" style="padding:16px">Loading…</div>';
@@ -905,28 +995,43 @@ async function openWaterOrderModal(dateStr) {
     body.innerHTML = `
       <div class="wo-doc">
         <div class="wo-doc-title">Cross Valley Canal Water Order</div>
-        <div class="wo-doc-date">${d.toLocaleDateString('en-US',
-          { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</div>
+        <div class="wo-doc-nav">
+          ${woNavBtn('prev', wo.prev_date)}
+          <div class="wo-doc-date">${d.toLocaleDateString('en-US',
+            { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</div>
+          ${woNavBtn('next', wo.next_date)}
+        </div>
         ${!wo.exists ? '<div class="wo-doc-empty">No order entered for this date.</div>' : ''}
-        ${wo.plants ? `
-          <div class="wo-section-title">ESTIMATED PUMPING PLANT OPERATIONS</div>
-          <table class="wo-table wo-pp-table">
-            <thead><tr><th class="wo-col-name"></th><th class="wo-col-cfs">CFS</th></tr></thead>
-            <tbody>
-              ${wo.plants.map(pl => `
-                <tr>
-                  <td class="wo-col-name">${escHtml(pl.label)}</td>
-                  <td class="wo-col-cfs">${woFmt(pl.cfs)}</td>
-                </tr>`).join('')}
-            </tbody>
-          </table>
-          <div class="wo-pp-note">Calculated from the turnouts in each reach and the well recovery per pool.</div>
-        ` : ''}
+        <div class="wo-top-grid">
+          ${wo.plants ? `
+            <div class="wo-top-col">
+              <div class="wo-section-title">ESTIMATED PUMPING PLANT OPERATIONS</div>
+              <table class="wo-table wo-pp-table">
+                <thead><tr><th class="wo-col-name"></th><th class="wo-col-cfs">CFS</th></tr></thead>
+                <tbody>
+                  ${wo.plants.map(pl => `
+                    <tr>
+                      <td class="wo-col-name">${escHtml(pl.label)}</td>
+                      <td class="wo-col-cfs">${woFmt(pl.cfs)}</td>
+                    </tr>`).join('')}
+                </tbody>
+              </table>
+              <div class="wo-pp-note">Calculated from the turnouts in each reach and the well recovery per pool.</div>
+            </div>
+          ` : ''}
+          <div class="wo-top-col">
+            ${woChangesTableHtml(wo)}
+          </div>
+        </div>
         <div class="report-scroll">
           ${woSectionHtml('inflow', 'INFLOW', 'CFS', wo.inflow, wo.total_inflow, 'Total Inflow', wo.wells_by_pool)}
           ${woSectionHtml('outflow', 'OUTFLOW', 'CFS<br>Ordered', wo.outflow, wo.total_outflow, 'Total Outflow')}
         </div>
       </div>`;
+    for (const dir of ['prev', 'next']) {
+      const target = dir === 'prev' ? wo.prev_date : wo.next_date;
+      if (target) el(`wo-doc-${dir}`).addEventListener('click', () => openWaterOrderModal(target));
+    }
     // The Wells line is produced by the Running Wells setting — let it open that
     // list, which is otherwise no longer reachable from the dashboard.
     el('wo-wells-row')?.addEventListener('click', () => {
@@ -1328,7 +1433,7 @@ function initWaterOrdersPanel() {
       showToast('Water order saved', 'success');
       // Plant figures are derived server-side; reload so they reflect the save.
       await loadWaterOrderForm(date);
-      if (date === pacificToday()) loadDashboardStats();   // refresh the widget
+      if (date === _woWidgetDate) loadDashboardStats();   // refresh the widget if it shows this day
     } catch (err) {
       errEl.textContent = err.message;
       errEl.classList.remove('hidden');
@@ -10629,7 +10734,7 @@ const REPORT_PANEL_NAMES = {
   pms:          'PM Records',
   piezometers:  'Piezometers',
   canal:        'Canal Readings',
-  ponds:        'Pond Report',
+  ponds:        'Pond Reports',
   wells:        'Well Readings',
 };
 function openReportPanel(cat) {
@@ -11647,16 +11752,73 @@ async function renderCanalReport() {
   }
 }
 
+// ── Pioneer Daily Readings ───────────────────────────────────────────────────
+// Fixed list of head gates with the CFS read that day, the time and who read it.
+// Row definitions and the gate/structure ids behind them live in PIONEER_ROWS in
+// server.js — a row reading blank usually means an id needs correcting there.
+async function renderPioneerDailyReport() {
+  const out  = el('report-ponds-output');
+  const date = el('ponds-report-date').value || todayISO();
+  out.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+
+  let data;
+  try {
+    data = await api('GET', `/api/reports/ponds/pioneer?date=${encodeURIComponent(date)}`);
+  } catch {
+    out.innerHTML = '<div class="placeholder-msg">Failed to load.</div>';
+    return;
+  }
+
+  const anyRead = data.rows.some(r => r.read_count > 0);
+  // Surfaced rather than swallowed: an id that matches nothing would otherwise
+  // just read blank and look like a missed reading.
+  const broken = data.rows.filter(r => r.missing_ids.length);
+
+  out.innerHTML = `
+    <div class="report-card">
+      <div class="pioneer-head">
+        <div class="pioneer-title">Pioneer Daily Readings</div>
+        <div class="pioneer-date">${localDateStr(data.date, { month: 'short', day: 'numeric', year: 'numeric' })}</div>
+      </div>
+      ${broken.length ? `<div class="pioneer-warn">
+        Not found in the database — check the ids in PIONEER_ROWS:
+        ${broken.map(r => `${escHtml(r.label)} (${r.missing_ids.map(escHtml).join(', ')})`).join('; ')}
+      </div>` : ''}
+      <table class="report-table pioneer-table">
+        <thead>
+          <tr>
+            <th class="pio-name">Head Gate</th>
+            <th class="pio-cfs">CFS</th>
+            <th class="pio-time">Time</th>
+            <th class="pio-op">Operator</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${data.rows.map(r => `
+            <tr${r.read_count === 0 ? ' class="pio-unread"' : ''}>
+              <td class="pio-name">${escHtml(r.label)}</td>
+              <td class="pio-cfs">${r.cfs == null ? '—' : r.cfs.toFixed(2)}</td>
+              <td class="pio-time">${r.reading_time ? escHtml(String(r.reading_time).slice(0, 5)) : '—'}</td>
+              <td class="pio-op">${escHtml(r.operator || '—')}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+      ${anyRead ? '' : '<div class="placeholder-msg">No readings recorded for this date.</div>'}
+    </div>`;
+}
+
 // ── Pond Report Panel ─────────────────────────────────────────────────────────
 let pondsReportInitialized = false;
 
 function pondsReportActiveTab() {
-  return el('ponds-report-seg').querySelector('.seg-btn.active')?.dataset.val || 'gauges';
+  return el('ponds-report-seg').querySelector('.seg-btn.active')?.dataset.val || 'pioneer';
 }
 
 function renderPondsActiveTab() {
-  if (pondsReportActiveTab() === 'gauges') renderPondsReport();
-  else renderPondGateReport();
+  const tab = pondsReportActiveTab();
+  if (tab === 'pioneer')     renderPioneerDailyReport();
+  else if (tab === 'gauges') renderPondsReport();
+  else                       renderPondGateReport();
 }
 
 function initPondsReportPanel() {
@@ -11685,7 +11847,10 @@ function initPondsReportPanel() {
       btn.disabled = true;
       try {
         const date = el('ponds-report-date').value || todayISO();
-        await sharePdfFromHtml(card.outerHTML, REPORT_PDF_CSS, `Ponds_Report_${date}`, 'Ponds Report');
+        const tab  = pondsReportActiveTab();
+        const name = tab === 'pioneer' ? 'Pioneer_Daily_Readings'
+                   : tab === 'gauges'  ? 'Pond_Staff_Gauges' : 'Pond_Gate_Readings';
+        await sharePdfFromHtml(card.outerHTML, REPORT_PDF_CSS, `${name}_${date}`, 'Pond Reports');
       } catch (err) {
         if (err.name !== 'AbortError') showToast('Export failed: ' + err.message, 'error');
       } finally {
@@ -11697,7 +11862,7 @@ function initPondsReportPanel() {
     el('ponds-report-seg').querySelectorAll('.seg-btn').forEach((b,i) => b.classList.toggle('active', i===0));
   }
 
-  renderPondsReport();
+  renderPondsActiveTab();
 }
 
 async function renderPondsReport() {

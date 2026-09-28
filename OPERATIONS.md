@@ -437,6 +437,16 @@ while the app's own `todayISO()` used browser-local, so between 5pm Pacific and
 midnight the card showed tomorrow's order and tapping it opened today's. The
 water order client paths use a matching `pacificToday()`.
 
+The dashboard card's day is not the calendar day: it rolls at **07:00 Pacific**,
+when the work day starts, so an order entered the evening before does not
+replace the one crews are still working to. `/api/water-orders` with no `date`
+uses `waterOrderDayString()` (before 07:00 it returns yesterday), and the client's
+`woWidgetDay()` mirrors it to decide when the once-a-minute check should refetch.
+Both work from Pacific wall-clock parts, not "now minus seven hours", so the two
+DST changeover days still roll at 07:00. The hour is `WATER_ORDER_DAY_START_HOUR`
+in `server.js` and `WO_DAY_START_HOUR` in `app.js` — change both together. The
+settings form's date and its Today button stay on the calendar day.
+
 Five report endpoints still default to `new Date().toISOString().slice(0,10)`
 (UTC) — same latent bug, in date pickers that callers normally set explicitly.
 

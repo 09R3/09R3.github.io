@@ -496,6 +496,13 @@ pool.query(`ALTER TABLE readings_kf_monthly  ADD COLUMN IF NOT EXISTS sounder_nu
   .then(() => pool.query(`ALTER TABLE readings_run_dwr     ADD COLUMN IF NOT EXISTS sounder_number TEXT`))
   .catch(err => console.error('Migration error (sounder_number):', err.message));
 
+// Canal Readings was ordered by structure_id, i.e. whatever order rows happened
+// to be inserted in, and structure_id can't be renumbered — readings_canal and
+// pond_connections both reference it. This gives the screen an order of its own.
+// Retiring a structure is already handled by canal_structures.in_service.
+pool.query(`ALTER TABLE canal_structures ADD COLUMN IF NOT EXISTS sort_order INT DEFAULT 0`)
+  .catch(err => console.error('Migration error (canal sort_order):', err.message));
+
 pool.query(`ALTER TABLE maintenance_vehicles ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'open'`)
   .catch(err => console.error('Migration error (mv_status):', err.message));
 
@@ -914,6 +921,24 @@ const PACIFIC_DATE_FMT = new Intl.DateTimeFormat('en-CA', {
 });
 function todayString() {
   return PACIFIC_DATE_FMT.format(new Date());
+}
+
+// The dashboard's water order day starts when the work day does, not at
+// midnight: tomorrow's order is often entered the evening before, and the card
+// should keep showing the order crews are working to until they start the next
+// one. Before 07:00 Pacific this is still yesterday. Worked from Pacific wall-
+// clock parts rather than "now minus 7 hours", which drifts an hour on the two
+// DST changeover days. Mirrored by WO_DAY_START_HOUR / woWidgetDay() in app.js.
+const WATER_ORDER_DAY_START_HOUR = 7;
+const PACIFIC_HOUR_FMT = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', hourCycle: 'h23',
+});
+function waterOrderDayString(now = new Date()) {
+  const p = Object.fromEntries(PACIFIC_HOUR_FMT.formatToParts(now).map(x => [x.type, x.value]));
+  const back = Number(p.hour) < WATER_ORDER_DAY_START_HOUR ? 1 : 0;
+  const dt = new Date(Date.UTC(Number(p.year), Number(p.month) - 1, Number(p.day) - back));
+  return dt.toISOString().slice(0, 10);
 }
 
 function dateString(d) {
@@ -2274,7 +2299,9 @@ app.get('/api/canal-structures', requireAuth, async (req, res) => {
         LIMIT 1
       ) r ON true
       WHERE cs.in_service = true
-      ORDER BY cs.structure_id
+      -- structure_id as the tiebreak keeps rows left at the default 0 in the
+      -- order they are in today, rather than scrambling them.
+      ORDER BY cs.sort_order, cs.structure_id
     `);
     res.json(rows);
   } catch (err) {
@@ -4401,6 +4428,99 @@ app.get('/api/reports/ponds', requireAuth, async (req, res) => {
   } catch (err) { handleErr(res, err); }
 });
 
+// ── Pioneer Daily Readings ───────────────────────────────────────────────────
+// A fixed list of head gates, each a total of one or more sources. Rows are
+// defined here rather than in the database because the labels and their order
+// are the report; only the ids are site data.
+//
+// EDIT THE IDS HERE if a row reads 0.00 or shows a "not found" warning. Pond
+// gates are pond_gates.gate_id, canal structures are canal_structures.structure_id.
+// To list what you actually have:
+//   SELECT g.gate_id, g.label, c.name AS connection, p.name AS pond
+//   FROM pond_gates g
+//   JOIN pond_connections c ON c.connection_id = g.connection_id
+//   LEFT JOIN ponds p ON p.pond_id = c.destination_pond_id
+//   ORDER BY g.gate_id;
+const PIONEER_ROWS = [
+  { label: 'Berrenda Mesa',  gates: [43, 44, 45] },   // BM Main: North, Middle, South
+  { label: 'Basin 1',        gates: [19] },           // Basin 1 to PC-2
+  { label: 'PC2 to James',   gates: [26] },           // JW-5 Inlet gate
+  { label: 'Basin 9',        gates: [8, 9, 10] },     // Basin 9 gates 1-3
+  { label: 'Basin 10',       gates: [14, 15] },       // Basin 10 gates 1-2
+  { label: 'Nord Turnout',   structures: [55, 56] },  // East + West
+  { label: 'Section 4 Pump', structures: [25] },
+  { label: 'Trestle',        gates: [5, 6, 7] },      // Trestle gates 1-3
+  { label: 'N2 Siphon',      structures: [7] },
+  { label: 'McAllister',     gates: [39, 40, 37] },   // BV so. A, BV so. B, BV McA
+  { label: 'JW8',            gates: [41, 42] },       // JW-8 A, JW-8 B
+];
+
+app.get('/api/reports/ponds/pioneer', requireAuth, async (req, res) => {
+  const date = req.query.date == null || req.query.date === '' ? todayString() : String(req.query.date);
+  if (!isValidIsoDate(date)) return res.status(400).json({ error: 'Invalid date' });
+
+  const gateIds = [...new Set(PIONEER_ROWS.flatMap(r => r.gates || []))];
+  const structIds = [...new Set(PIONEER_ROWS.flatMap(r => r.structures || []))];
+
+  try {
+    // Latest reading per source for the day. A gate read twice counts once.
+    const [gateRes, structRes, gateNames, structNames] = await Promise.all([
+      gateIds.length ? pool.query(
+        `SELECT DISTINCT ON (gate_id) gate_id, flow_cfs, reading_time, entered_by
+         FROM readings_pond_gates
+         WHERE reading_date = $1 AND gate_id = ANY($2::int[])
+         ORDER BY gate_id, reading_time DESC NULLS LAST, reading_id DESC`,
+        [date, gateIds]) : { rows: [] },
+      structIds.length ? pool.query(
+        `SELECT DISTINCT ON (structure_id) structure_id, instantaneous_flow_cfs AS flow_cfs,
+                reading_time, entered_by
+         FROM readings_canal
+         WHERE reading_date = $1 AND structure_id = ANY($2::int[])
+         ORDER BY structure_id, reading_time DESC NULLS LAST, reading_id DESC`,
+        [date, structIds]) : { rows: [] },
+      // Which ids actually exist, so a mistyped id is reported rather than silently zero.
+      gateIds.length ? pool.query(
+        `SELECT gate_id, label FROM pond_gates WHERE gate_id = ANY($1::int[])`, [gateIds]) : { rows: [] },
+      structIds.length ? pool.query(
+        `SELECT structure_id, structure_name FROM canal_structures WHERE structure_id = ANY($1::int[])`,
+        [structIds]) : { rows: [] },
+    ]);
+
+    const gateRead   = new Map(gateRes.rows.map(r => [r.gate_id, r]));
+    const structRead = new Map(structRes.rows.map(r => [r.structure_id, r]));
+    const gateExists   = new Map(gateNames.rows.map(r => [r.gate_id, r.label]));
+    const structExists = new Map(structNames.rows.map(r => [r.structure_id, r.structure_name]));
+
+    const rows = PIONEER_ROWS.map(def => {
+      const sources = [
+        ...(def.gates || []).map(id => ({ kind: 'gate', id, read: gateRead.get(id), exists: gateExists.has(id), name: gateExists.get(id) })),
+        ...(def.structures || []).map(id => ({ kind: 'structure', id, read: structRead.get(id), exists: structExists.has(id), name: structExists.get(id) })),
+      ];
+      const read = sources.filter(s => s.read);
+      // A row with no readings shows blank, not 0.00 — "not read" and "read zero"
+      // are different things on a daily sheet.
+      const cfs = read.length
+        ? Number(read.reduce((t, s) => t + (parseFloat(s.read.flow_cfs) || 0), 0).toFixed(2))
+        : null;
+      // Time and operator come from the latest of the sources that make up the row.
+      const latest = read.reduce((best, s) =>
+        !best || String(s.read.reading_time || '') > String(best.read.reading_time || '') ? s : best, null);
+      return {
+        label: def.label,
+        cfs,
+        reading_time: latest?.read.reading_time || null,
+        operator: latest?.read.entered_by || null,
+        read_count: read.length,
+        source_count: sources.length,
+        missing_ids: sources.filter(s => !s.exists).map(s => `${s.kind} ${s.id}`),
+        source_names: sources.filter(s => s.exists).map(s => s.name),
+      };
+    });
+
+    res.json({ date, rows });
+  } catch (err) { handleErr(res, err); }
+});
+
 app.get('/api/reports/ponds/gates', requireAuth, async (req, res) => {
   const date = req.query.date || new Date().toISOString().slice(0,10);
   try {
@@ -6003,6 +6123,57 @@ async function buildWaterOrder(dateStr) {
 
   const inflow  = build('inflow',  WATER_ORDER_INFLOW);
   const outflow = build('outflow', WATER_ORDER_OUTFLOW);
+
+  // What changed since the last order. The baseline is the most recent EARLIER
+  // order that actually has lines, not literally yesterday: orders aren't always
+  // entered daily, and comparing a Monday against a missing Sunday would flag
+  // every turnout as changed. Outflow only — DWR Order already carries the
+  // aqueduct figure on its own.
+  const { rows: prevRows } = await pool.query(
+    `SELECT o.order_id, to_char(o.order_date, 'YYYY-MM-DD') AS order_date
+     FROM water_orders o
+     WHERE o.order_date < $1
+       AND EXISTS (SELECT 1 FROM water_order_lines l WHERE l.order_id = o.order_id)
+     ORDER BY o.order_date DESC
+     LIMIT 1`,
+    [dateStr]
+  );
+  const prev = prevRows[0] || null;
+  // The next order forward, for the detail view's day arrows. Both arrows step
+  // between days that actually have lines, so they never land on a blank sheet
+  // left behind by a save with nothing filled in.
+  const { rows: nextRows } = await pool.query(
+    `SELECT to_char(o.order_date, 'YYYY-MM-DD') AS order_date
+     FROM water_orders o
+     WHERE o.order_date > $1
+       AND EXISTS (SELECT 1 FROM water_order_lines l WHERE l.order_id = o.order_id)
+     ORDER BY o.order_date ASC
+     LIMIT 1`,
+    [dateStr]
+  );
+  let prevByKey = new Map();
+  if (prev) {
+    const { rows } = await pool.query(
+      `SELECT line_key, cfs FROM water_order_lines
+       WHERE order_id = $1 AND section = 'outflow'`,
+      [prev.order_id]
+    );
+    prevByKey = new Map(rows.map(r => [r.line_key, r.cfs == null ? null : Number(r.cfs)]));
+  }
+  // A blank line means nothing ordered, so it compares as zero — going 50 -> blank
+  // is a real -50. Two blanks are not a change.
+  // A save with nothing filled in leaves an order row with no lines. Reading
+  // that as every turnout dropping to zero would be noise, so it counts as
+  // nothing entered rather than as 30 changes.
+  const hasLines = saved.size > 0;
+  const changes = (!prev || !hasLines) ? [] : outflow.reduce((acc, l) => {
+    const now  = l.cfs == null ? null : Number(l.cfs);
+    const was  = prevByKey.has(l.key) ? prevByKey.get(l.key) : null;
+    if (now == null && was == null) return acc;
+    const delta = Number(((now || 0) - (was || 0)).toFixed(2));
+    if (delta !== 0) acc.push({ key: l.key, label: l.label, cfs: now, prev_cfs: was, delta });
+    return acc;
+  }, []);
   const sum = lines => Number(lines.reduce((t, l) => t + (Number(l.cfs) || 0), 0).toFixed(2));
   const total_inflow  = sum(inflow);
   // Refill is carried on the sheet but stays in the canal, so it is excluded
@@ -6020,9 +6191,16 @@ async function buildWaterOrder(dateStr) {
   return {
     order_date: dateStr,
     exists: !!order,
+    has_lines: hasLines,
     entered_by: order?.entered_by || null,
     updated_at: order?.updated_at || null,
     inflow, outflow, plants,
+    changes,
+    // Same lookup, two jobs: the baseline the changes are measured against, and
+    // where the back arrow goes.
+    compare_date: prev?.order_date || null,
+    prev_date: prev?.order_date || null,
+    next_date: nextRows[0]?.order_date || null,
     wells_cfs: wellsCfs,
     wells_by_pool: wells.byPool,
     total_inflow, total_outflow,
@@ -6032,10 +6210,11 @@ async function buildWaterOrder(dateStr) {
 }
 
 app.get('/api/water-orders', requireAuth, async (req, res) => {
+  // No date means the dashboard card, which rolls at 07:00 rather than midnight.
   // Validate the whole value: slicing first would quietly turn "2026-09-11xyz"
   // into a valid date instead of rejecting it.
   const date = req.query.date == null || req.query.date === ''
-    ? todayString() : String(req.query.date);
+    ? waterOrderDayString() : String(req.query.date);
   if (!isValidIsoDate(date)) return res.status(400).json({ error: 'Invalid date' });
   try {
     res.json(await buildWaterOrder(date));
