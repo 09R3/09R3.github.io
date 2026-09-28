@@ -6121,6 +6121,18 @@ async function buildWaterOrder(dateStr) {
     [dateStr]
   );
   const prev = prevRows[0] || null;
+  // The next order forward, for the detail view's day arrows. Both arrows step
+  // between days that actually have lines, so they never land on a blank sheet
+  // left behind by a save with nothing filled in.
+  const { rows: nextRows } = await pool.query(
+    `SELECT to_char(o.order_date, 'YYYY-MM-DD') AS order_date
+     FROM water_orders o
+     WHERE o.order_date > $1
+       AND EXISTS (SELECT 1 FROM water_order_lines l WHERE l.order_id = o.order_id)
+     ORDER BY o.order_date ASC
+     LIMIT 1`,
+    [dateStr]
+  );
   let prevByKey = new Map();
   if (prev) {
     const { rows } = await pool.query(
@@ -6132,7 +6144,11 @@ async function buildWaterOrder(dateStr) {
   }
   // A blank line means nothing ordered, so it compares as zero — going 50 -> blank
   // is a real -50. Two blanks are not a change.
-  const changes = !prev ? [] : outflow.reduce((acc, l) => {
+  // A save with nothing filled in leaves an order row with no lines. Reading
+  // that as every turnout dropping to zero would be noise, so it counts as
+  // nothing entered rather than as 30 changes.
+  const hasLines = saved.size > 0;
+  const changes = (!prev || !hasLines) ? [] : outflow.reduce((acc, l) => {
     const now  = l.cfs == null ? null : Number(l.cfs);
     const was  = prevByKey.has(l.key) ? prevByKey.get(l.key) : null;
     if (now == null && was == null) return acc;
@@ -6157,11 +6173,16 @@ async function buildWaterOrder(dateStr) {
   return {
     order_date: dateStr,
     exists: !!order,
+    has_lines: hasLines,
     entered_by: order?.entered_by || null,
     updated_at: order?.updated_at || null,
     inflow, outflow, plants,
     changes,
+    // Same lookup, two jobs: the baseline the changes are measured against, and
+    // where the back arrow goes.
     compare_date: prev?.order_date || null,
+    prev_date: prev?.order_date || null,
+    next_date: nextRows[0]?.order_date || null,
     wells_cfs: wellsCfs,
     wells_by_pool: wells.byPool,
     total_inflow, total_outflow,

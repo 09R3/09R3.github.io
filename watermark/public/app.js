@@ -777,7 +777,7 @@ const WO_WIDGET_CHANGES = 6;
 
 function woWidgetChangesHtml(wo, fmtDate) {
   if (!wo)        return '<div class="wo-chg-none">—</div>';
-  if (!wo.exists) return '<div class="wo-chg-none">N/A</div>';
+  if (!wo.exists || !wo.has_lines) return '<div class="wo-chg-none">N/A</div>';
   // Nothing earlier to compare against is not the same as nothing moving.
   if (!wo.compare_date) return '<div class="wo-chg-none">No Previous Order</div>';
   const changes = wo.changes || [];
@@ -920,14 +920,29 @@ function woSectionHtml(section, title, cfsHeading, lines, total, totalLabel, wel
     </table>`;
 }
 
+// Day arrows either side of the date. They step to the next date that has an
+// order rather than to the next calendar day, so a supervisor can walk the
+// orders that exist without landing on empty days in between. Disabled rather
+// than hidden at either end, so the heading never shifts sideways.
+function woNavBtn(dir, target) {
+  const prev = dir === 'prev';
+  const label = target
+    ? `${prev ? 'Previous' : 'Next'} order \u2014 ${fmtDate(target)}`
+    : `No ${prev ? 'earlier' : 'later'} order`;
+  return `<button type="button" class="btn btn-secondary btn-sm wo-date-step wo-doc-step"
+            id="wo-doc-${dir}"${target ? '' : ' disabled'}
+            title="${escHtml(label)}" aria-label="${escHtml(label)}">${prev ? '\u2039' : '\u203a'}</button>`;
+}
+
 // Everything that moved since the last order with lines. Same data as the
 // dashboard card, uncapped, and each row taps through to that line's history.
 function woChangesTableHtml(wo) {
   const title = '<div class="wo-section-title">CHANGES' +
-    (wo.exists && wo.compare_date ? ` VS ${escHtml(fmtDate(wo.compare_date)).toUpperCase()}` : '') +
+    (wo.exists && wo.has_lines && wo.compare_date
+      ? ` VS ${escHtml(fmtDate(wo.compare_date)).toUpperCase()}` : '') +
     '</div>';
   const msg = m => `${title}<div class="wo-chg-none wo-chg-none-lg">${m}</div>`;
-  if (!wo.exists) return msg('N/A');
+  if (!wo.exists || !wo.has_lines) return msg('N/A');
   if (!wo.compare_date) return msg('No Previous Order');
   const changes = wo.changes || [];
   if (!changes.length) return msg('No Changes');
@@ -963,8 +978,12 @@ async function openWaterOrderModal(dateStr) {
     body.innerHTML = `
       <div class="wo-doc">
         <div class="wo-doc-title">Cross Valley Canal Water Order</div>
-        <div class="wo-doc-date">${d.toLocaleDateString('en-US',
-          { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</div>
+        <div class="wo-doc-nav">
+          ${woNavBtn('prev', wo.prev_date)}
+          <div class="wo-doc-date">${d.toLocaleDateString('en-US',
+            { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</div>
+          ${woNavBtn('next', wo.next_date)}
+        </div>
         ${!wo.exists ? '<div class="wo-doc-empty">No order entered for this date.</div>' : ''}
         <div class="wo-top-grid">
           ${wo.plants ? `
@@ -992,6 +1011,10 @@ async function openWaterOrderModal(dateStr) {
           ${woSectionHtml('outflow', 'OUTFLOW', 'CFS<br>Ordered', wo.outflow, wo.total_outflow, 'Total Outflow')}
         </div>
       </div>`;
+    for (const dir of ['prev', 'next']) {
+      const target = dir === 'prev' ? wo.prev_date : wo.next_date;
+      if (target) el(`wo-doc-${dir}`).addEventListener('click', () => openWaterOrderModal(target));
+    }
     // The Wells line is produced by the Running Wells setting — let it open that
     // list, which is otherwise no longer reachable from the dashboard.
     el('wo-wells-row')?.addEventListener('click', () => {

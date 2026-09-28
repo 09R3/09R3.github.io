@@ -112,6 +112,13 @@ it lists the first six changes and counts the rest.
 Tapping the widget opens the full order: Estimated Pumping Plant Operations on
 the left, every changed turnout on the right, and the full inflow and outflow
 sheet below, laid out like the paper form. Any line taps through to its history.
+Arrows either side of the date step to the previous and next date that has an
+order — not the next calendar day — so the orders that exist can be walked
+without landing on empty days in between. They are disabled at either end.
+
+A save with nothing filled in leaves an order row with no lines. Those days
+count as nothing entered rather than as every turnout dropping to zero, and the
+day arrows step over them.
 
 The Wells (Total Recovery) inflow line is not entered — it is computed from the
 Running Wells setting (running wells in Pools 1–6 that are on, plus the per-pool

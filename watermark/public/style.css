@@ -3067,7 +3067,18 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
 /* Detail modal — laid out like page 1 of the paper order. */
 .wo-doc { padding: 16px 14px 20px; }
 .wo-doc-title { text-align: center; font-size: 1rem; font-weight: 700; color: var(--text); }
-.wo-doc-date  { text-align: center; font-size: 0.85rem; color: var(--text-dim); margin-top: 2px; }
+/* Day arrows flank the date, not the title — the title needs the full width to
+   stay on one line on a phone. The date takes the middle and the buttons keep
+   their width at either end, so stepping days never shifts anything sideways. */
+.wo-doc-nav { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
+.wo-doc-step:disabled { opacity: 0.3; cursor: default; }
+.wo-doc-date  { flex: 1; min-width: 0; text-align: center; font-size: 0.85rem; color: var(--text-dim); }
+/* On a 320px phone the arrows leave the full date about 8px short of one line.
+   Trimming the gap and the type buys enough back; wider screens are untouched. */
+@media (max-width: 360px) {
+  .wo-doc-nav { gap: 5px; }
+  .wo-doc-date { font-size: 0.79rem; }
+}
 .wo-doc-empty {
   margin-top: 10px; padding: 8px 10px;
   border: 1px solid var(--yellow); border-radius: var(--radius-sm);
