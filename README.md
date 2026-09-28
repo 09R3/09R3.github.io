@@ -100,7 +100,9 @@ application locations, a treatment checklist, and monthly reporting.
 the CFS, time of change and comments for each inflow and outflow line for a
 given date (including future dates) under Settings → Widgets → Water Orders.
 
-The dashboard widget shows today's DWR Order and then only the outflow lines
+The dashboard widget's day starts at 07:00 Pacific, not midnight, so an order
+entered the evening before appears when the work day starts. It shows that day's
+DWR Order and then only the outflow lines
 that moved since the last order — signed, so 50 → 25 reads as `-25`. The
 baseline is the most recent *earlier* order that has lines, not literally
 yesterday, since orders are not entered every day. A blank line counts as zero,

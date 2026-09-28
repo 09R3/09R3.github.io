@@ -57,15 +57,32 @@ function todayISO() {
   return new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD in local time
 }
 
-// The water order day belongs to the canal, not to the device: it rolls at
-// Pacific midnight however a tablet's clock happens to be set, and matches the
-// server's own default. Reading screens keep using todayISO() — those are
-// "what day is it where I am standing".
+// The water order day belongs to the canal, not to the device: it is a Pacific
+// day however a tablet's clock happens to be set. Reading screens keep using
+// todayISO() — those are "what day is it where I am standing".
 const PACIFIC_DATE_FMT = new Intl.DateTimeFormat('en-CA', {
   timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit',
 });
 function pacificToday() {
   return PACIFIC_DATE_FMT.format(new Date());
+}
+
+// The dashboard card's day starts with the work day at 07:00 Pacific, not at
+// midnight, so an order entered the evening before does not replace the one
+// crews are still working to. Before 07:00 this is yesterday. Mirrors
+// waterOrderDayString() in server.js, which picks the card's date; this copy
+// only decides when to ask the server again. Worked from wall-clock parts so
+// the DST changeover days still roll at 07:00.
+const WO_DAY_START_HOUR = 7;
+const PACIFIC_HOUR_FMT = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', hourCycle: 'h23',
+});
+function woWidgetDay(now = new Date()) {
+  const p = Object.fromEntries(PACIFIC_HOUR_FMT.formatToParts(now).map(x => [x.type, x.value]));
+  const back = Number(p.hour) < WO_DAY_START_HOUR ? 1 : 0;
+  return new Date(Date.UTC(Number(p.year), Number(p.month) - 1, Number(p.day) - back))
+    .toISOString().slice(0, 10);
 }
 
 const SUPERVISOR_ROLES = ['supervisor', 'admin', 'water-planner'];
@@ -739,15 +756,15 @@ el('export-pending-btn').addEventListener('click', async () => {
 });
 
 /* ── Dashboard Stats ─────────────────────────────────────────────────────── */
-// The Pacific day the Water Orders card was last rendered for. Tapping the card
+// The water order day the card was last rendered for (see woWidgetDay). Tapping the card
 // opens this exact date rather than recomputing, so the card and the order it
 // opens can never disagree.
 let _woWidgetDate = null;
 
-// Roll the dashboard over at Pacific midnight so a screen left open overnight
-// is not still showing yesterday's order. Comparing the date string once a
-// minute avoids working out a DST-correct offset to the next midnight, and
-// costs nothing.
+// Roll the dashboard over at 07:00 Pacific so a screen left open overnight
+// picks up the new day's order when the work day starts. Comparing the day
+// string once a minute avoids working out a DST-correct offset to the next
+// rollover, and costs nothing.
 //
 // The card's date comes from the server, so if this device's clock is ahead of
 // the server's the refetch comes back on the old day and the mismatch persists.
@@ -758,7 +775,7 @@ const WO_ROLLOVER_TRIES = 5;
 let _woRollAttempts = 0;
 setInterval(() => {
   if (!currentUser || !_woWidgetDate) return;
-  if (pacificToday() === _woWidgetDate) { _woRollAttempts = 0; return; }
+  if (woWidgetDay() === _woWidgetDate) { _woRollAttempts = 0; return; }
   if (currentScreen !== 'dashboard' || _woRollAttempts >= WO_ROLLOVER_TRIES) return;
   _woRollAttempts++;
   loadDashboardStats();
@@ -843,7 +860,7 @@ async function loadDashboardStats() {
         <svg id="scada-flow-spark" class="scada-flow-spark" viewBox="0 0 100 24" preserveAspectRatio="none"></svg>
       </div>
     `;
-    _woWidgetDate = wo?.order_date || pacificToday();
+    _woWidgetDate = wo?.order_date || woWidgetDay();
     el('water-order-stat').addEventListener('click', () => openWaterOrderModal(_woWidgetDate));
     el('kf-complete-stat').addEventListener('click', openKFSetsModal);
     el('scada-flow-stat').addEventListener('click', () => showScreen('scada'));
@@ -1416,7 +1433,7 @@ function initWaterOrdersPanel() {
       showToast('Water order saved', 'success');
       // Plant figures are derived server-side; reload so they reflect the save.
       await loadWaterOrderForm(date);
-      if (date === pacificToday()) loadDashboardStats();   // refresh the widget
+      if (date === _woWidgetDate) loadDashboardStats();   // refresh the widget if it shows this day
     } catch (err) {
       errEl.textContent = err.message;
       errEl.classList.remove('hidden');

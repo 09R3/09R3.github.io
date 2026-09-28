@@ -923,6 +923,24 @@ function todayString() {
   return PACIFIC_DATE_FMT.format(new Date());
 }
 
+// The dashboard's water order day starts when the work day does, not at
+// midnight: tomorrow's order is often entered the evening before, and the card
+// should keep showing the order crews are working to until they start the next
+// one. Before 07:00 Pacific this is still yesterday. Worked from Pacific wall-
+// clock parts rather than "now minus 7 hours", which drifts an hour on the two
+// DST changeover days. Mirrored by WO_DAY_START_HOUR / woWidgetDay() in app.js.
+const WATER_ORDER_DAY_START_HOUR = 7;
+const PACIFIC_HOUR_FMT = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', hourCycle: 'h23',
+});
+function waterOrderDayString(now = new Date()) {
+  const p = Object.fromEntries(PACIFIC_HOUR_FMT.formatToParts(now).map(x => [x.type, x.value]));
+  const back = Number(p.hour) < WATER_ORDER_DAY_START_HOUR ? 1 : 0;
+  const dt = new Date(Date.UTC(Number(p.year), Number(p.month) - 1, Number(p.day) - back));
+  return dt.toISOString().slice(0, 10);
+}
+
 function dateString(d) {
   return new Date(d).toISOString().split('T')[0];
 }
@@ -6192,10 +6210,11 @@ async function buildWaterOrder(dateStr) {
 }
 
 app.get('/api/water-orders', requireAuth, async (req, res) => {
+  // No date means the dashboard card, which rolls at 07:00 rather than midnight.
   // Validate the whole value: slicing first would quietly turn "2026-09-11xyz"
   // into a valid date instead of rejecting it.
   const date = req.query.date == null || req.query.date === ''
-    ? todayString() : String(req.query.date);
+    ? waterOrderDayString() : String(req.query.date);
   if (!isValidIsoDate(date)) return res.status(400).json({ error: 'Invalid date' });
   try {
     res.json(await buildWaterOrder(date));
