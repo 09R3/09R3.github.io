@@ -6127,8 +6127,9 @@ async function buildWaterOrder(dateStr) {
   // What changed since the last order. The baseline is the most recent EARLIER
   // order that actually has lines, not literally yesterday: orders aren't always
   // entered daily, and comparing a Monday against a missing Sunday would flag
-  // every turnout as changed. Outflow only — DWR Order already carries the
-  // aqueduct figure on its own.
+  // every turnout as changed. Both sections, inflow first as on the sheet; the
+  // Wells line is left out because it is live from Running Wells, not ordered,
+  // and today's live figure can't be fairly compared with a past order's.
   const { rows: prevRows } = await pool.query(
     `SELECT o.order_id, to_char(o.order_date, 'YYYY-MM-DD') AS order_date
      FROM water_orders o
@@ -6154,11 +6155,10 @@ async function buildWaterOrder(dateStr) {
   let prevByKey = new Map();
   if (prev) {
     const { rows } = await pool.query(
-      `SELECT line_key, cfs FROM water_order_lines
-       WHERE order_id = $1 AND section = 'outflow'`,
+      'SELECT section, line_key, cfs FROM water_order_lines WHERE order_id = $1',
       [prev.order_id]
     );
-    prevByKey = new Map(rows.map(r => [r.line_key, r.cfs == null ? null : Number(r.cfs)]));
+    prevByKey = new Map(rows.map(r => [`${r.section}|${r.line_key}`, r.cfs == null ? null : Number(r.cfs)]));
   }
   // A blank line means nothing ordered, so it compares as zero — going 50 -> blank
   // is a real -50. Two blanks are not a change.
@@ -6166,14 +6166,18 @@ async function buildWaterOrder(dateStr) {
   // that as every turnout dropping to zero would be noise, so it counts as
   // nothing entered rather than as 30 changes.
   const hasLines = saved.size > 0;
-  const changes = (!prev || !hasLines) ? [] : outflow.reduce((acc, l) => {
+  const changesIn = (section, lines) => lines.reduce((acc, l) => {
+    if (l.computed) return acc;
     const now  = l.cfs == null ? null : Number(l.cfs);
-    const was  = prevByKey.has(l.key) ? prevByKey.get(l.key) : null;
+    const k    = `${section}|${l.key}`;
+    const was  = prevByKey.has(k) ? prevByKey.get(k) : null;
     if (now == null && was == null) return acc;
     const delta = Number(((now || 0) - (was || 0)).toFixed(2));
-    if (delta !== 0) acc.push({ key: l.key, label: l.label, cfs: now, prev_cfs: was, delta });
+    if (delta !== 0) acc.push({ section, key: l.key, label: l.label, cfs: now, prev_cfs: was, delta });
     return acc;
   }, []);
+  const changes = (!prev || !hasLines) ? []
+    : [...changesIn('inflow', inflow), ...changesIn('outflow', outflow)];
   const sum = lines => Number(lines.reduce((t, l) => t + (Number(l.cfs) || 0), 0).toFixed(2));
   const total_inflow  = sum(inflow);
   // Refill is carried on the sheet but stays in the canal, so it is excluded

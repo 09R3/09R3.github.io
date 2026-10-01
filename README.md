@@ -102,8 +102,10 @@ given date (including future dates) under Settings → Widgets → Water Orders.
 
 The dashboard widget's day starts at 07:00 Pacific, not midnight, so an order
 entered the evening before appears when the work day starts. It shows that day's
-DWR Order and then only the outflow lines
-that moved since the last order — signed, so 50 → 25 reads as `-25`. The
+DWR Order and then only the lines that moved since
+the last order, grouped under Inflow and Outflow — signed, so 50 → 25 reads
+as `-25`. The Wells line is left out: it is calculated live from Running Wells,
+not ordered, so it has no fair comparison with a past order. The
 baseline is the most recent *earlier* order that has lines, not literally
 yesterday, since orders are not entered every day. A blank line counts as zero,
 so going from 50 to blank is a real `-50`; two blanks are not a change. The card

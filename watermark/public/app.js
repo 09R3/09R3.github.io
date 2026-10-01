@@ -792,6 +792,16 @@ function woDeltaStr(n) {
 // the card caps itself rather than growing down the dashboard.
 const WO_WIDGET_CHANGES = 6;
 
+// Changes arrive inflow first, as on the sheet. Split them into labelled
+// groups so a +15 on a turn-in is never read as a turnout; empty groups drop
+// out rather than showing a heading over nothing.
+const WO_CHANGE_GROUPS = [['inflow', 'Inflow'], ['outflow', 'Outflow']];
+function woChangeGroups(changes) {
+  return WO_CHANGE_GROUPS
+    .map(([section, title]) => ({ section, title, items: changes.filter(c => c.section === section) }))
+    .filter(g => g.items.length);
+}
+
 function woWidgetChangesHtml(wo, fmtDate) {
   if (!wo)        return '<div class="wo-chg-none">—</div>';
   if (!wo.exists || !wo.has_lines) return '<div class="wo-chg-none">N/A</div>';
@@ -804,11 +814,13 @@ function woWidgetChangesHtml(wo, fmtDate) {
   return `
         <div class="wo-chg-cap">Changed${wo.compare_date ? ` vs ${fmtDate(wo.compare_date)}` : ''}</div>
         <div class="wo-chg-rows">
-          ${shown.map(c => `
-            <div class="wo-chg-row">
-              <span class="wo-chg-name" title="${escHtml(c.label)}">${escHtml(c.label)}</span>
-              <span class="wo-chg-delta ${c.delta > 0 ? 'up' : 'down'}">${woDeltaStr(c.delta)}</span>
-            </div>`).join('')}
+          ${woChangeGroups(shown).map(g => `
+            <div class="wo-chg-group">${g.title}</div>
+            ${g.items.map(c => `
+              <div class="wo-chg-row">
+                <span class="wo-chg-name" title="${escHtml(c.label)}">${escHtml(c.label)}</span>
+                <span class="wo-chg-delta ${c.delta > 0 ? 'up' : 'down'}">${woDeltaStr(c.delta)}</span>
+              </div>`).join('')}`).join('')}
           ${more > 0 ? `<div class="wo-chg-more">+${more} more</div>` : ''}
         </div>`;
 }
@@ -974,12 +986,14 @@ function woChangesTableHtml(wo) {
         </tr>
       </thead>
       <tbody>
-        ${changes.map(c => `
-          <tr class="wo-row-tap" data-hist-section="outflow" data-hist-key="${escHtml(c.key)}">
-            <td class="wo-col-name"><span class="wo-name">${escHtml(c.label)}</span></td>
-            <td class="wo-col-cfs">${woFmt(c.cfs)}</td>
-            <td class="wo-col-chg ${c.delta > 0 ? 'up' : 'down'}">${woDeltaStr(c.delta)}</td>
-          </tr>`).join('')}
+        ${woChangeGroups(changes).map(g => `
+          <tr class="wo-pool-head"><td colspan="3">${g.title}</td></tr>
+          ${g.items.map(c => `
+            <tr class="wo-row-tap" data-hist-section="${escHtml(c.section)}" data-hist-key="${escHtml(c.key)}">
+              <td class="wo-col-name"><span class="wo-name">${escHtml(c.label)}</span></td>
+              <td class="wo-col-cfs">${woFmt(c.cfs)}</td>
+              <td class="wo-col-chg ${c.delta > 0 ? 'up' : 'down'}">${woDeltaStr(c.delta)}</td>
+            </tr>`).join('')}`).join('')}
       </tbody>
     </table>`;
 }
