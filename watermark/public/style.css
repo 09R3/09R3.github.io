@@ -2904,6 +2904,13 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
   color: var(--accent);
 }
 .charts-result-unit { font-size: 0.9rem; color: var(--text-dim); margin-left: 4px; }
+/* River Turn-Out charts: what the axes are, and the source's own markings. */
+.charts-caption { font-size: 0.78rem; color: var(--text-dim); margin-bottom: 8px; line-height: 1.4; }
+.charts-caption strong { color: var(--text); }
+.charts-note { font-size: 0.75rem; color: var(--text-dim); margin-top: 8px; }
+.charts-table th.rto-est, .charts-table td.rto-est { font-style: italic; color: var(--text-dim); }
+.charts-table tr.rto-major td { font-weight: 700; }
+.charts-result-note { margin-top: 6px; min-height: 1.1em; font-size: 0.78rem; color: var(--yellow); }
 .charts-derived {
   font-size: 0.85rem; color: var(--text-dim); margin-bottom: 8px; min-height: 1.2em;
 }

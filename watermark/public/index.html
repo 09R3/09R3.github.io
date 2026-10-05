@@ -129,7 +129,7 @@
         Sign in with Microsoft 365
       </a>
       <div id="ms-login-error" class="error-msg hidden"></div>
-      <div class="login-version">v 3.35</div>
+      <div class="login-version">v 3.36</div>
     </div>
   </div>
 </div>
@@ -1969,7 +1969,7 @@
     <div id="settings-panel-appinfo" class="settings-panel hidden">
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 3.35</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 3.36</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>
@@ -2558,6 +2558,18 @@
           </div>
           <span class="dash-label">Pioneer Inlet</span>
         </button>
+        <button class="dash-tile" data-charts-panel="rto1">
+          <div class="dash-icon-wrap">
+            <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-gate.svg);mask-image:url(/marv-site/icons/icon-gate.svg)"></span>
+          </div>
+          <span class="dash-label">RTO 1</span>
+        </button>
+        <button class="dash-tile" data-charts-panel="rto2">
+          <div class="dash-icon-wrap">
+            <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-gate.svg);mask-image:url(/marv-site/icons/icon-gate.svg)"></span>
+          </div>
+          <span class="dash-label">RTO 2</span>
+        </button>
       </div>
     </div>
 
@@ -2816,6 +2828,77 @@
               <div class="charts-result-area">
                 <div class="charts-result-label">Flow Rate Q</div>
                 <div><span class="charts-result-value" id="pioneer-result">—</span><span class="charts-result-unit">cfs</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RTO 1 panel (gate rating chart: opening x head) -->
+    <div id="charts-panel-rto1" class="maint-panel hidden">
+      <div class="settings-section">
+        <div class="settings-card">
+          <div class="settings-pad">
+            <div class="charts-tabs">
+              <button class="charts-tab-btn active" id="rto1-tab-btn-table">Table</button>
+              <button class="charts-tab-btn" id="rto1-tab-btn-calc">Calculator</button>
+            </div>
+            <div id="rto1-tab-table" style="margin-top:12px">
+              <div class="charts-caption"><strong>River Turn-Out 1</strong> (Jaspar)<br>Flow in cfs · head differential (ft) across · gate opening (in) down</div>
+              <div class="charts-table-wrap" id="rto1-table-container"></div>
+              <div class="charts-note">Italic columns (7.0 ft and up) are estimated on the source chart. Blank cells are beyond the chart.</div>
+            </div>
+            <div id="rto1-tab-calc" class="charts-calc" style="display:none">
+              <div class="charts-field-row">
+                <label>Head</label>
+                <input type="number" id="rto1-head" class="ctrl-input" min="0.5" max="8" step="0.1" placeholder="ft">
+                <span class="charts-unit-label">ft</span>
+              </div>
+              <div class="charts-field-row">
+                <label>Opening</label>
+                <input type="number" id="rto1-opening" class="ctrl-input" min="2" max="48" step="1" placeholder="in">
+                <span class="charts-unit-label">in</span>
+              </div>
+              <div class="charts-result-area">
+                <div class="charts-result-label">Flow Rate Q</div>
+                <div><span class="charts-result-value" id="rto1-result">—</span><span class="charts-result-unit">cfs</span></div>
+                <div class="charts-result-note" id="rto1-note"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RTO 2 panel (gate rating chart: opening x head) -->
+    <div id="charts-panel-rto2" class="maint-panel hidden">
+      <div class="settings-section">
+        <div class="settings-card">
+          <div class="settings-pad">
+            <div class="charts-tabs">
+              <button class="charts-tab-btn active" id="rto2-tab-btn-table">Table</button>
+              <button class="charts-tab-btn" id="rto2-tab-btn-calc">Calculator</button>
+            </div>
+            <div id="rto2-tab-table" style="margin-top:12px">
+              <div class="charts-caption"><strong>River Turn-Out</strong> (Corps of Engineers, 3/12/81)<br>Flow in cfs · head differential (ft) across · gate opening (in) down</div>
+              <div class="charts-table-wrap" id="rto2-table-container"></div>
+            </div>
+            <div id="rto2-tab-calc" class="charts-calc" style="display:none">
+              <div class="charts-field-row">
+                <label>Head</label>
+                <input type="number" id="rto2-head" class="ctrl-input" min="0.5" max="10" step="0.1" placeholder="ft">
+                <span class="charts-unit-label">ft</span>
+              </div>
+              <div class="charts-field-row">
+                <label>Opening</label>
+                <input type="number" id="rto2-opening" class="ctrl-input" min="2" max="48" step="1" placeholder="in">
+                <span class="charts-unit-label">in</span>
+              </div>
+              <div class="charts-result-area">
+                <div class="charts-result-label">Flow Rate Q</div>
+                <div><span class="charts-result-value" id="rto2-result">—</span><span class="charts-result-unit">cfs</span></div>
+                <div class="charts-result-note" id="rto2-note"></div>
               </div>
             </div>
           </div>

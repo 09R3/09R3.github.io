@@ -87,8 +87,12 @@ not found.
 Every report exports to CSV, Excel or PDF.
 
 **Charts** — lookup tables and calculators used in the field: overpour weirs,
-gate discharge, pressure, open air, P-11, and the RRB T.O. and Pioneer Inlet
-sharp-crested weir charts.
+gate discharge, pressure, open air, P-11, the RRB T.O. and Pioneer Inlet
+sharp-crested weir charts, and the RTO 1 (Jaspar) and RTO 2 (Corps of Engineers,
+1981) river turn-out gate charts. The RTO calculators take head (ft) and gate
+opening (in) and interpolate between chart cells; RTO 1's heads from 7.0 ft up
+are flagged as estimated, as on the source chart, and its blank high-head cells
+for large openings read as beyond the chart rather than being extrapolated.
 
 **Safety** — safety meetings with drawn-signature sign-in sheets, and JHAs
 (Job Hazard Analysis) built from templates, signed on-device and exported to PDF.
