@@ -2904,6 +2904,13 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
   color: var(--accent);
 }
 .charts-result-unit { font-size: 0.9rem; color: var(--text-dim); margin-left: 4px; }
+/* River Turn-Out charts: what the axes are, and the source's own markings. */
+.charts-caption { font-size: 0.78rem; color: var(--text-dim); margin-bottom: 8px; line-height: 1.4; }
+.charts-caption strong { color: var(--text); }
+.charts-note { font-size: 0.75rem; color: var(--text-dim); margin-top: 8px; }
+.charts-table th.rto-est, .charts-table td.rto-est { font-style: italic; color: var(--text-dim); }
+.charts-table tr.rto-major td { font-weight: 700; }
+.charts-result-note { margin-top: 6px; min-height: 1.1em; font-size: 0.78rem; color: var(--yellow); }
 .charts-derived {
   font-size: 0.85rem; color: var(--text-dim); margin-bottom: 8px; min-height: 1.2em;
 }
@@ -3011,7 +3018,7 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
 .pio-unread td { color: var(--text-muted); }
 
 /* ── Water Orders ─────────────────────────────────────────────────────────── */
-/* Dashboard widget: the DWR order, then only the turnouts that moved since the
+/* Dashboard widget: the DWR order, then only the lines that moved since the
    last order. That is a list, not a number, so the card takes a full-width row
    of its own at the top of the stats grid. */
 .wo-stat-card { grid-column: 1 / -1; }
@@ -3058,6 +3065,12 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
 .wo-chg-delta.up,  .wo-col-chg.up   { color: #4caf50; }
 .wo-chg-delta.down, .wo-col-chg.down { color: var(--yellow); }
 .wo-chg-more { font-size: 0.7rem; color: var(--text-muted); }
+/* Inflow / Outflow subheads inside the change list. */
+.wo-chg-group {
+  font-size: 0.6rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.05em; color: var(--accent);
+}
+.wo-chg-row + .wo-chg-group { margin-top: 6px; }
 .wo-chg-none {
   margin-top: 10px; padding-top: 10px;
   border-top: 1px solid var(--border);

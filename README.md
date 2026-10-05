@@ -87,8 +87,12 @@ not found.
 Every report exports to CSV, Excel or PDF.
 
 **Charts** — lookup tables and calculators used in the field: overpour weirs,
-gate discharge, pressure, open air, P-11, and the RRB T.O. and Pioneer Inlet
-sharp-crested weir charts.
+gate discharge, pressure, open air, P-11, the RRB T.O. and Pioneer Inlet
+sharp-crested weir charts, and the RTO 1 (Jaspar) and RTO 2 (Corps of Engineers,
+1981) river turn-out gate charts. The RTO calculators take head (ft) and gate
+opening (in) and interpolate between chart cells; RTO 1's heads from 7.0 ft up
+are flagged as estimated, as on the source chart, and its blank high-head cells
+for large openings read as beyond the chart rather than being extrapolated.
 
 **Safety** — safety meetings with drawn-signature sign-in sheets, and JHAs
 (Job Hazard Analysis) built from templates, signed on-device and exported to PDF.
@@ -102,8 +106,10 @@ given date (including future dates) under Settings → Widgets → Water Orders.
 
 The dashboard widget's day starts at 07:00 Pacific, not midnight, so an order
 entered the evening before appears when the work day starts. It shows that day's
-DWR Order and then only the outflow lines
-that moved since the last order — signed, so 50 → 25 reads as `-25`. The
+DWR Order and then only the lines that moved since
+the last order, grouped under Inflow and Outflow — signed, so 50 → 25 reads
+as `-25`. The Wells line is left out: it is calculated live from Running Wells,
+not ordered, so it has no fair comparison with a past order. The
 baseline is the most recent *earlier* order that has lines, not literally
 yesterday, since orders are not entered every day. A blank line counts as zero,
 so going from 50 to blank is a real `-50`; two blanks are not a change. The card
