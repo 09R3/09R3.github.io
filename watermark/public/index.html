@@ -129,7 +129,7 @@
         Sign in with Microsoft 365
       </a>
       <div id="ms-login-error" class="error-msg hidden"></div>
-      <div class="login-version">v 3.36</div>
+      <div class="login-version">v 3.37</div>
     </div>
   </div>
 </div>
@@ -1651,6 +1651,13 @@
     <!-- Canal Readings panel -->
     <div id="report-panel-canal" class="maint-panel hidden">
       <div class="report-toolbar">
+        <div class="seg-group" id="canal-report-seg">
+          <button class="seg-btn active" data-val="daily">Daily</button>
+          <button class="seg-btn" data-val="monthly">Monthly</button>
+        </div>
+      </div>
+      <div id="canal-daily-view">
+      <div class="report-toolbar">
         <button class="btn btn-secondary btn-sm" id="canal-report-prev" title="Back one day">&#8592;</button>
         <input type="date" id="canal-report-start-date" class="ctrl-input ctrl-input-sm">
         <span class="report-date-sep">&#8211;</span>
@@ -1663,6 +1670,28 @@
         <button class="btn btn-secondary btn-sm" id="canal-export-btn" style="margin-left:auto"><span class="app-icon" style="width:14px;height:14px;-webkit-mask-image:url(/marv-site/icons/icon-download.svg);mask-image:url(/marv-site/icons/icon-download.svg)"></span> Export</button>
       </div>
       <div id="report-canal-output"></div>
+      </div><!-- /canal-daily-view -->
+
+      <!-- Monthly: one table per turnout / turn-in, like the monthly CVC sheets -->
+      <div id="canal-monthly-view" class="hidden">
+        <div class="report-toolbar">
+          <button class="btn btn-secondary btn-sm" id="canal-month-prev" title="Previous month">&#8592;</button>
+          <input type="month" id="canal-month" class="ctrl-input ctrl-input-sm">
+          <button class="btn btn-secondary btn-sm" id="canal-month-next" title="Next month">&#8594;</button>
+          <div class="dwr-ms-wrap canal-ms" id="canal-month-ms">
+            <button type="button" class="dwr-ms-btn" id="canal-month-ms-btn">Select turnouts / turn-ins</button>
+            <div class="dwr-ms-panel" id="canal-month-ms-panel">
+              <div class="canal-ms-actions">
+                <button type="button" class="btn btn-secondary btn-xs" id="canal-month-ms-all">All</button>
+                <button type="button" class="btn btn-secondary btn-xs" id="canal-month-ms-none">None</button>
+              </div>
+              <div id="canal-month-ms-options"></div>
+            </div>
+          </div>
+          <button class="btn btn-secondary btn-sm" id="canal-month-export-btn" style="margin-left:auto"><span class="app-icon" style="width:14px;height:14px;-webkit-mask-image:url(/marv-site/icons/icon-download.svg);mask-image:url(/marv-site/icons/icon-download.svg)"></span> Export</button>
+        </div>
+        <div id="report-canal-monthly-output"></div>
+      </div>
     </div>
 
     <!-- Pond Report panel -->
@@ -1969,7 +1998,7 @@
     <div id="settings-panel-appinfo" class="settings-panel hidden">
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 3.36</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 3.37</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>
@@ -3011,6 +3040,28 @@
       <button class="modal-close" id="vehicle-info-modal-close">&times;</button>
     </div>
     <div class="modal-body" id="vehicle-info-modal-body" style="padding:0"></div>
+  </div>
+</div>
+
+<!-- Canal Monthly: supervisor's adjusted reading for one day -->
+<div id="canal-adjust-modal" class="modal-overlay hidden">
+  <div class="modal-card" style="max-width:420px;width:calc(100vw - 32px)">
+    <div class="modal-header">
+      <h2 id="canal-adjust-title">Adjust Reading</h2>
+      <button class="modal-close" id="canal-adjust-close">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="canal-adjust-meta" id="canal-adjust-meta"></div>
+      <div class="form-group">
+        <label for="canal-adjust-input">Adjusted Reading (AF)</label>
+        <input type="number" step="any" inputmode="decimal" id="canal-adjust-input" class="ctrl-input">
+      </div>
+      <div id="canal-adjust-error" class="error-msg hidden"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" id="canal-adjust-clear">Use Observed</button>
+      <button class="btn btn-save" id="canal-adjust-save">Save</button>
+    </div>
   </div>
 </div>
 

@@ -78,7 +78,8 @@ reverse-flow totals; and power monitoring. Charts support drag-select statistics
 (high, low, difference, standard deviation).
 
 **Reports** — vehicle mileage and last service, KF completion, maintenance
-issues, PM grids, piezometers, canal readings, pond levels and well readings.
+issues, PM grids, piezometers, canal readings (daily, and monthly per turnout
+like the CVC turnout sheets), pond levels and well readings.
 Pond Reports opens on **Pioneer Daily Readings**: eleven head gates with the CFS
 read that day, the time and the operator. Each row totals one or more sources —
 pond gates or canal structures — defined in `PIONEER_ROWS` in `server.js`, which
@@ -312,10 +313,49 @@ Two things to know:
 - The filter is `in_service = true`, so a row where `in_service` is **NULL** is
   hidden too. If a structure is unexpectedly missing from the screen, check with
   `SELECT structure_name, in_service FROM canal_structures WHERE in_service IS NOT TRUE;`
-- `/api/canal-structures` also fills the Canal report's turnout dropdown, so a
-  retired structure drops out of it. Its readings still show under "All turnouts
-  / turn-ins", and the API still accepts its `structure_id` directly, but you
-  cannot pick it by name in the UI.
+- `/api/canal-structures` also fills the Canal report's Daily turnout dropdown,
+  so a retired structure drops out of it. Its readings still show under "All
+  turnouts / turn-ins", and the API still accepts its `structure_id` directly,
+  but you cannot pick it by name there. The **Monthly** tab's picker does offer
+  a retired structure for any month in which it has readings.
+
+### Canal report — Monthly tab
+
+Reports → Canal Readings has two tabs. **Daily** is the original date-range
+report. **Monthly** lays out one table per turnout / turn-in like the monthly
+CVC turnout sheets: pick a month and tick any number of turnouts (All / None
+buttons; the selection is remembered on that device).
+
+One row per day, from the last day of the previous month (the starting point)
+to the end of the month — or to today for the current month:
+
+| Column | Source |
+|--------|--------|
+| Date / Time Value | The day, and the time of the reading used for it (24-hour, e.g. `0948`) |
+| Observed Reading | `totalizer_reading_af` |
+| Adjusted Reading | `adjusted_af` if a supervisor set one, otherwise the observed reading |
+| AF / Day | Adjusted reading minus the previous day's |
+| CFS / Day | AF / Day ÷ 1.9835 (the same volume in cfs-days) |
+| Flow Rate | `instantaneous_flow_cfs` |
+| Note | Every note entered that day |
+
+- **No reading that day:** the previous reading, adjusted reading and flow are
+  repeated and the change is zero. These rows are greyed.
+- **Several readings that day:** the last one with a totalizer is used; flow is
+  the last flow entered; all of the day's notes are shown.
+- **Totals** sum CFS / Day and AF / Day **without the starting row**, whose
+  change belongs to the previous month. AF total = last adjusted reading minus
+  the starting one.
+- **Adjusting:** supervisors, admins and water planners tap an Adjusted Reading
+  to correct it (e.g. a mis-keyed or reset totalizer). Only days with a reading
+  can be adjusted. The value is stored in `readings_canal.adjusted_af` — the
+  operator's observed reading is never changed — and "Use Observed" clears it.
+  `PUT /api/canal-readings/:id/adjusted` enforces the role.
+- **Export:** CSV (one section per turnout), Excel (one sheet per turnout) and
+  PDF (one page per turnout).
+
+The calculation is `buildCanalMonthly()` in `server.js`; the JSON endpoint and
+the Excel export share it, so the screen and the spreadsheet cannot disagree.
 
 ---
 

@@ -11626,7 +11626,7 @@ function initCanalReportPanel() {
       rows.map(r => `<option value="${r.structure_id}">${escHtml(r.structure_name)}</option>`).join('');
     if (prev && sel.querySelector(`option[value="${prev}"]`)) sel.value = prev;
   }).catch(() => {});
-  renderCanalReport();
+  showCanalReportTab();
 }
 
 el('canal-report-start-date').addEventListener('change', renderCanalReport);
@@ -11764,6 +11764,389 @@ async function renderCanalReport() {
     lastCanalRows = [];
     out.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${escHtml(err.message)}</div>`;
   }
+}
+
+// ── Canal Readings — Daily / Monthly tabs ─────────────────────────────────────
+function canalReportTab() {
+  return el('canal-report-seg').querySelector('.seg-btn.active')?.dataset.val || 'daily';
+}
+
+function showCanalReportTab() {
+  const monthly = canalReportTab() === 'monthly';
+  el('canal-daily-view').classList.toggle('hidden', monthly);
+  el('canal-monthly-view').classList.toggle('hidden', !monthly);
+  if (monthly) initCanalMonthly();
+  else renderCanalReport();
+}
+
+el('canal-report-seg').addEventListener('click', e => {
+  const btn = e.target.closest('.seg-btn');
+  if (!btn) return;
+  el('canal-report-seg').querySelectorAll('.seg-btn').forEach(b => b.classList.toggle('active', b === btn));
+  showCanalReportTab();
+});
+
+// ── Canal Readings — Monthly ──────────────────────────────────────────────────
+// One table per selected turnout / turn-in, laid out like the monthly CVC
+// sheets. The day-by-day figures are worked out server-side (see
+// buildCanalMonthly in server.js); this renders them, lets supervisors correct
+// a day's Adjusted Reading, and exports CSV / Excel / PDF.
+const CANAL_MONTHLY_KEY = 'wm.canalMonthly.ids';
+let canalMonthlyStructs  = [];     // turnouts / turn-ins offered for the month
+let canalMonthlySelected = null;   // Set of structure_id strings, remembered per device
+let lastCanalMonthly     = null;   // the report currently on screen
+let _canalMonthlyTimer   = null;
+let _canalMonthlySeq     = 0;
+
+function canalMonthlyLoadSaved() {
+  try {
+    const v = JSON.parse(localStorage.getItem(CANAL_MONTHLY_KEY));
+    return new Set(Array.isArray(v) ? v.map(String) : []);
+  } catch { return new Set(); }
+}
+function canalMonthlySave() {
+  try { localStorage.setItem(CANAL_MONTHLY_KEY, JSON.stringify([...canalMonthlySelected])); } catch { /* */ }
+}
+
+// The selection is remembered across months, but only structures offered for
+// the month on screen are asked for.
+function canalMonthlyIds() {
+  return canalMonthlyStructs.map(s => String(s.structure_id)).filter(id => canalMonthlySelected.has(id));
+}
+
+async function initCanalMonthly() {
+  if (!el('canal-month').value) el('canal-month').value = pacificToday().slice(0, 7);
+  if (!canalMonthlySelected) canalMonthlySelected = canalMonthlyLoadSaved();
+  await loadCanalMonthlyStructs();
+  renderCanalMonthly();
+}
+
+async function loadCanalMonthlyStructs() {
+  const box = el('canal-month-ms-options');
+  try {
+    canalMonthlyStructs = await api('GET',
+      `/api/reports/canal/monthly/structures?month=${encodeURIComponent(el('canal-month').value)}`);
+  } catch {
+    canalMonthlyStructs = [];
+    box.innerHTML = '<div class="placeholder-msg">Failed to load.</div>';
+    updateCanalMonthlyBtn();
+    return;
+  }
+  box.innerHTML = canalMonthlyStructs.map(s => {
+    const on = canalMonthlySelected.has(String(s.structure_id));
+    return `<label class="dwr-ms-option${on ? ' selected' : ''}">
+      <input type="checkbox" value="${s.structure_id}"${on ? ' checked' : ''}>
+      <span>${escHtml(s.structure_name)}${s.in_service ? '' : ' <span class="canal-ms-retired">(out of service)</span>'}</span>
+    </label>`;
+  }).join('') || '<div class="placeholder-msg">No turnouts found.</div>';
+  updateCanalMonthlyBtn();
+}
+
+function updateCanalMonthlyBtn() {
+  const ids = canalMonthlyIds(), total = canalMonthlyStructs.length;
+  const one = ids.length === 1 && canalMonthlyStructs.find(s => String(s.structure_id) === ids[0]);
+  el('canal-month-ms-btn').textContent =
+    !ids.length         ? 'Select turnouts / turn-ins'
+    : ids.length === total ? `All turnouts / turn-ins (${total})`
+    : one                  ? one.structure_name
+    : `${ids.length} turnouts / turn-ins`;
+  el('canal-month-ms-options').querySelectorAll('input[type=checkbox]').forEach(cb => {
+    cb.checked = canalMonthlySelected.has(cb.value);
+    cb.closest('.dwr-ms-option').classList.toggle('selected', cb.checked);
+  });
+}
+
+// Ticking boxes one after another shouldn't fire a request per tick.
+function scheduleCanalMonthly() {
+  clearTimeout(_canalMonthlyTimer);
+  _canalMonthlyTimer = setTimeout(renderCanalMonthly, 450);
+}
+
+function canalMonthlySetAll(on) {
+  canalMonthlyStructs.forEach(s => {
+    const id = String(s.structure_id);
+    if (on) canalMonthlySelected.add(id); else canalMonthlySelected.delete(id);
+  });
+  canalMonthlySave();
+  updateCanalMonthlyBtn();
+  scheduleCanalMonthly();
+}
+
+el('canal-month-ms-btn').addEventListener('click', e => {
+  e.stopPropagation();
+  el('canal-month-ms-panel').classList.toggle('open');
+});
+document.addEventListener('click', e => {
+  if (!el('canal-month-ms').contains(e.target)) el('canal-month-ms-panel').classList.remove('open');
+});
+el('canal-month-ms-all').addEventListener('click',  () => canalMonthlySetAll(true));
+el('canal-month-ms-none').addEventListener('click', () => canalMonthlySetAll(false));
+el('canal-month-ms-options').addEventListener('change', e => {
+  const cb = e.target.closest('input[type=checkbox]');
+  if (!cb) return;
+  if (cb.checked) canalMonthlySelected.add(cb.value); else canalMonthlySelected.delete(cb.value);
+  canalMonthlySave();
+  updateCanalMonthlyBtn();
+  scheduleCanalMonthly();
+});
+
+async function canalMonthlyChanged() {
+  await loadCanalMonthlyStructs();
+  renderCanalMonthly();
+}
+el('canal-month').addEventListener('change', canalMonthlyChanged);
+function canalStepMonth(delta) {
+  const [y, m] = (el('canal-month').value || pacificToday().slice(0, 7)).split('-').map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  el('canal-month').value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  canalMonthlyChanged();
+}
+el('canal-month-prev').addEventListener('click', () => canalStepMonth(-1));
+el('canal-month-next').addEventListener('click', () => canalStepMonth(1));
+
+// Totalizer readings as entered (no thousands separators, as on the sheets);
+// the computed columns always to two decimals.
+const cmReading = v => (v == null ? '' : String(Number(Number(v).toFixed(2))));
+const cmFixed   = v => (v == null ? '' : Number(v).toFixed(2));
+
+function canalMonthlyNoteHtml(data, canEdit) {
+  return `<div class="canal-month-foot">
+    The first row (${escHtml(fmtDate(data.start))}) is the starting point and is not in the totals.
+    Greyed rows had no reading, so the previous reading is repeated. CFS / Day is AF / Day &divide; 1.9835.
+    ${canEdit ? 'Tap an Adjusted Reading to correct it.' : ''}
+  </div>`;
+}
+
+function canalMonthlyCardHtml(s, data, canEdit) {
+  const monthLabel = localDateStr(`${data.month}-01`, { month: 'long', year: 'numeric' });
+  const partial = data.end < data.monthEnd;
+  const body = s.rows.map(r => {
+    const adj = r.reading_id && canEdit
+      ? `<button type="button" class="canal-adj-btn${r.adjusted_override ? ' is-override' : ''}"
+           data-rid="${r.reading_id}" data-sid="${s.structure_id}" data-date="${r.date}"
+           title="${r.adjusted_override ? 'Adjusted by a supervisor' : 'Tap to adjust'}">${cmReading(r.adjusted)}</button>`
+      : `<span${r.adjusted_override ? ' class="canal-adj-override" title="Adjusted by a supervisor"' : ''}>${cmReading(r.adjusted)}</span>`;
+    const cls = [r.carried ? 'cm-carried' : '', r.start ? 'cm-start' : ''].filter(Boolean).join(' ');
+    return `<tr${cls ? ` class="${cls}"` : ''}>
+      <td>${escHtml(fmtDate(r.date))}</td>
+      <td>${escHtml(r.time || '')}</td>
+      <td class="report-num">${cmReading(r.observed)}</td>
+      <td class="report-num">${adj}</td>
+      <td class="report-num">${cmFixed(r.cfs)}</td>
+      <td class="report-num">${cmFixed(r.af)}</td>
+      <td class="report-num">${cmReading(r.flow)}</td>
+      <td class="cm-note">${escHtml(r.notes || '')}</td>
+    </tr>`;
+  }).join('');
+  return `<div class="report-card canal-month-card">
+    <div class="report-title">${escHtml(s.structure_name)}</div>
+    <div class="report-subtitle">${escHtml(monthLabel)}${partial ? ` &middot; to ${escHtml(fmtDate(data.end))}` : ''}</div>
+    ${s.rows.length ? `<div class="report-scroll">
+      <table class="report-table canal-month-table">
+        <thead><tr>
+          <th>Date</th><th>Time Value</th>
+          <th class="report-num">Observed Reading</th><th class="report-num">Adjusted Reading</th>
+          <th class="report-num">CFS / Day</th><th class="report-num">AF / Day</th>
+          <th class="report-num">Flow Rate</th><th>Note</th>
+        </tr></thead>
+        <tbody>${body}</tbody>
+        <tfoot><tr class="canal-month-total">
+          <td colspan="4">Total</td>
+          <td class="report-num">${cmFixed(s.totals.cfs)}</td>
+          <td class="report-num">${cmFixed(s.totals.af)}</td>
+          <td colspan="2"></td>
+        </tr></tfoot>
+      </table>
+    </div>` : '<div class="placeholder-msg">No readings found.</div>'}
+  </div>`;
+}
+
+async function renderCanalMonthly() {
+  clearTimeout(_canalMonthlyTimer);
+  const out = el('report-canal-monthly-output');
+  const month = el('canal-month').value;
+  if (!month) return;
+  const ids = canalMonthlyIds();
+  const seq = ++_canalMonthlySeq;
+  if (!ids.length) {
+    lastCanalMonthly = null;
+    out.innerHTML = '<div class="placeholder-msg">Select one or more turnouts / turn-ins.</div>';
+    return;
+  }
+  out.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  let data;
+  try {
+    data = await api('GET', `/api/reports/canal/monthly?month=${encodeURIComponent(month)}&ids=${ids.join(',')}`);
+  } catch {
+    if (seq !== _canalMonthlySeq) return;
+    lastCanalMonthly = null;
+    out.innerHTML = '<div class="placeholder-msg">Failed to load.</div>';
+    return;
+  }
+  // A newer request (another tick, another month) has already been sent.
+  if (seq !== _canalMonthlySeq) return;
+  lastCanalMonthly = data;
+  if (data.end < data.start) {
+    out.innerHTML = '<div class="placeholder-msg">No readings found.</div>';
+    return;
+  }
+  const canEdit = isSupervisorLevel(currentUser?.role);
+  out.innerHTML = canalMonthlyNoteHtml(data, canEdit) +
+    data.structures.map(s => canalMonthlyCardHtml(s, data, canEdit)).join('');
+}
+
+// ── Adjusted reading (supervisor-level only; the endpoint enforces it too) ──
+let _canalAdjustTarget = null;
+
+el('report-canal-monthly-output').addEventListener('click', e => {
+  const btn = e.target.closest('.canal-adj-btn');
+  if (btn) openCanalAdjust(Number(btn.dataset.rid), Number(btn.dataset.sid), btn.dataset.date);
+});
+
+function openCanalAdjust(readingId, structureId, date) {
+  const s = lastCanalMonthly?.structures.find(x => x.structure_id === structureId);
+  const r = s?.rows.find(x => x.reading_id === readingId && x.date === date);
+  if (!r) return;
+  _canalAdjustTarget = { readingId };
+  el('canal-adjust-meta').innerHTML = `
+    <strong>${escHtml(s.structure_name)}</strong><br>
+    ${escHtml(localDateStr(date, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }))}${r.time ? ` &middot; ${escHtml(r.time)}` : ''}<br>
+    Observed reading: ${r.observed == null ? '&mdash;' : escHtml(cmReading(r.observed))}`;
+  const input = el('canal-adjust-input');
+  input.value = r.adjusted_override ? cmReading(r.adjusted) : '';
+  input.placeholder = r.observed == null ? '' : cmReading(r.observed);
+  el('canal-adjust-clear').disabled = !r.adjusted_override;
+  el('canal-adjust-error').classList.add('hidden');
+  el('canal-adjust-modal').classList.remove('hidden');
+  setTimeout(() => input.focus(), 50);
+}
+
+function closeCanalAdjust() {
+  el('canal-adjust-modal').classList.add('hidden');
+  _canalAdjustTarget = null;
+}
+
+async function saveCanalAdjust(value) {
+  if (!_canalAdjustTarget) return;
+  const btn = value == null ? el('canal-adjust-clear') : el('canal-adjust-save');
+  const done = beginSave(btn);
+  try {
+    await api('PUT', `/api/canal-readings/${_canalAdjustTarget.readingId}/adjusted`, { adjusted_af: value });
+    closeCanalAdjust();
+    showToast(value == null ? 'Adjustment cleared' : 'Adjusted reading saved', 'success');
+    // Every later day's change runs from this one, so redraw the whole month.
+    renderCanalMonthly();
+  } catch (err) {
+    showError('canal-adjust-error', err.message);
+  } finally { done(); }
+}
+
+el('canal-adjust-save').addEventListener('click', () => {
+  const raw = el('canal-adjust-input').value.trim();
+  const v = Number(raw);
+  if (raw === '' || !Number.isFinite(v)) {
+    return showError('canal-adjust-error', 'Enter a reading, or use Observed to remove the adjustment.');
+  }
+  saveCanalAdjust(v);
+});
+el('canal-adjust-clear').addEventListener('click', () => saveCanalAdjust(null));
+el('canal-adjust-close').addEventListener('click', closeCanalAdjust);
+el('canal-adjust-modal').addEventListener('click', e => {
+  if (e.target === el('canal-adjust-modal')) closeCanalAdjust();
+});
+
+// ── Export ──
+function canalMonthlyExportName(data) {
+  const clean = t => String(t).trim().replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '') || 'Structure';
+  const one = data.structures.length === 1 ? `_${clean(data.structures[0].structure_name)}` : '';
+  return `Canal_Monthly_${data.month}${one}`;
+}
+
+el('canal-month-export-btn').addEventListener('click', () => {
+  if (!lastCanalMonthly?.structures?.length || lastCanalMonthly.end < lastCanalMonthly.start) {
+    return showToast('No report data to export', 'error');
+  }
+  exportContext = 'canal-monthly';
+  const n = lastCanalMonthly.structures.length;
+  el('export-modal-subtitle').textContent =
+    `Canal Monthly — ${localDateStr(`${lastCanalMonthly.month}-01`, { month: 'long', year: 'numeric' })} — `
+    + (n === 1 ? lastCanalMonthly.structures[0].structure_name : `${n} turnouts / turn-ins`);
+  el('export-modal').classList.remove('hidden');
+});
+
+function canalMonthlyCsv(data) {
+  const csvEsc = v => (v == null || v === '') ? '' : /[,"\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v);
+  const lines = [];
+  data.structures.forEach((s, i) => {
+    if (i) lines.push('');
+    lines.push(csvEsc(s.structure_name));
+    lines.push('Date,Time Value,Observed Reading,Adjusted Reading,CFS / Day,AF / Day,Flow Rate,Note');
+    s.rows.forEach(r => lines.push([
+      r.date, r.time || '', cmReading(r.observed), cmReading(r.adjusted),
+      cmFixed(r.cfs), cmFixed(r.af), cmReading(r.flow),
+      [r.start ? 'Starting point (not in totals)' : '', r.notes].filter(Boolean).join(' - '),
+    ].map(csvEsc).join(',')));
+    lines.push(['', '', '', 'Total', cmFixed(s.totals.cfs), cmFixed(s.totals.af), '', ''].join(','));
+  });
+  return lines.join('\r\n');
+}
+
+// The PDF is built from its own markup rather than the on-screen cards, as the
+// JHA export is: html2pdf clones the content out of its holder, so app classes
+// like .report-table would carry the dark theme's padding and colours into the
+// print. One turnout per page, split with html2pdf's own page-break marker.
+const CANAL_MONTHLY_PDF_CSS = `
+  .pdf-root, .pdf-root * { color: #000 !important; }
+  .cmp-foot { font-size: 8pt; margin: 0 0 8px; }
+  .cmp-title { font-size: 14pt; font-weight: 700; text-align: center; margin: 0 0 2px; }
+  .cmp-sub { font-size: 9pt; text-align: center; margin: 0 0 8px; }
+  .cmp-table { width: 100%; border-collapse: collapse; font-size: 8.5pt; }
+  .cmp-table th { font-size: 7.5pt; font-weight: 700; text-transform: uppercase; text-align: left;
+                  padding: 2px 4px; border-bottom: 1.5px solid #000; white-space: nowrap; }
+  .cmp-table td { padding: 2px 4px; border-bottom: 0.5px solid #ccc; white-space: nowrap; }
+  .cmp-table .num { text-align: right; }
+  .cmp-table td.note { white-space: normal; font-size: 7.5pt; }
+  .cmp-table tr.carried td { color: #777 !important; }
+  .cmp-table tr.start td { font-style: italic; }
+  .cmp-table .override { font-weight: 700; text-decoration: underline; }
+  .cmp-table tfoot td { font-weight: 700; border-top: 1.5px solid #000; border-bottom: none; }
+  tr { page-break-inside: avoid; }`;
+
+function buildCanalMonthlyPdfHtml(data) {
+  const monthLabel = localDateStr(`${data.month}-01`, { month: 'long', year: 'numeric' });
+  const partial = data.end < data.monthEnd;
+  const foot = `<div class="cmp-foot">The first row (${escHtml(fmtDate(data.start))}) is the starting point and is
+    not in the totals. Grey rows had no reading, so the previous reading is repeated. Underlined adjusted
+    readings were corrected by a supervisor. CFS / Day is AF / Day &divide; 1.9835.</div>`;
+  return data.structures.map((s, i) => `
+    ${i ? '<div class="html2pdf__page-break"></div>' : ''}
+    ${foot}
+    <div class="cmp-title">${escHtml(s.structure_name)}</div>
+    <div class="cmp-sub">${escHtml(monthLabel)}${partial ? ` &middot; to ${escHtml(fmtDate(data.end))}` : ''}</div>
+    <table class="cmp-table">
+      <thead><tr>
+        <th>Date</th><th>Time Value</th><th class="num">Observed Reading</th><th class="num">Adjusted Reading</th>
+        <th class="num">CFS / Day</th><th class="num">AF / Day</th><th class="num">Flow Rate</th><th>Note</th>
+      </tr></thead>
+      <tbody>${s.rows.map(r => `
+        <tr class="${[r.carried ? 'carried' : '', r.start ? 'start' : ''].join(' ').trim()}">
+          <td>${escHtml(fmtDate(r.date))}</td>
+          <td>${escHtml(r.time || '')}</td>
+          <td class="num">${cmReading(r.observed)}</td>
+          <td class="num${r.adjusted_override ? ' override' : ''}">${cmReading(r.adjusted)}</td>
+          <td class="num">${cmFixed(r.cfs)}</td>
+          <td class="num">${cmFixed(r.af)}</td>
+          <td class="num">${cmReading(r.flow)}</td>
+          <td class="note">${escHtml(r.notes || '')}</td>
+        </tr>`).join('')}
+      </tbody>
+      <tfoot><tr>
+        <td colspan="4">Total</td>
+        <td class="num">${cmFixed(s.totals.cfs)}</td>
+        <td class="num">${cmFixed(s.totals.af)}</td>
+        <td colspan="2"></td>
+      </tr></tfoot>
+    </table>`).join('');
 }
 
 // ── Pioneer Daily Readings ───────────────────────────────────────────────────
@@ -12156,6 +12539,13 @@ el('export-csv-btn').addEventListener('click', async () => {
     return;
   }
 
+  if (exportContext === 'canal-monthly') {
+    if (!lastCanalMonthly) return;
+    await shareFile(new Blob([canalMonthlyCsv(lastCanalMonthly)], { type: 'text/csv' }),
+      `${canalMonthlyExportName(lastCanalMonthly)}.csv`, 'Canal Monthly');
+    return;
+  }
+
   if (exportContext === 'canal') {
     const csvEsc = v => (v == null || v === '') ? '' : /[,"\n]/.test(String(v)) ? `"${String(v).replace(/"/g,'""')}"` : String(v);
     const s = el('canal-report-start-date').value, e = el('canal-report-end-date').value;
@@ -12247,6 +12637,16 @@ el('export-xlsx-btn').addEventListener('click', async () => {
       const res = await fetch(`/api/reports/vehicle-service/export?token=${token}`);
       if (!res.ok) throw new Error('Export failed');
       await shareFile(await res.blob(), 'LastService.xlsx', 'Last Service');
+      return;
+    }
+    if (exportContext === 'canal-monthly') {
+      const data = lastCanalMonthly;
+      if (!data) throw new Error('No report data to export');
+      const ids = data.structures.map(st => st.structure_id).join(',');
+      const { token } = await api('POST', '/api/reports/download-token', {});
+      const res = await fetch(`/api/reports/canal/monthly/export?month=${encodeURIComponent(data.month)}&ids=${ids}&token=${token}`);
+      if (!res.ok) throw new Error('Export failed');
+      await shareFile(await res.blob(), `${canalMonthlyExportName(data)}.xlsx`, 'Canal Monthly');
       return;
     }
     if (exportContext === 'canal') {
@@ -12534,6 +12934,10 @@ el('export-pdf-btn').addEventListener('click', async () => {
       const card = el('report-output').querySelector('.report-card');
       if (!card) throw new Error('No report to export');
       await sharePdfFromHtml(card.outerHTML, REPORT_PDF_CSS, 'LastService', 'Last Service');
+    } else if (exportContext === 'canal-monthly') {
+      if (!lastCanalMonthly) throw new Error('No report to export');
+      await sharePdfFromHtml(buildCanalMonthlyPdfHtml(lastCanalMonthly), CANAL_MONTHLY_PDF_CSS,
+        canalMonthlyExportName(lastCanalMonthly), 'Canal Monthly');
     } else if (exportContext === 'canal') {
       const card = el('report-canal-output').querySelector('.report-card');
       if (!card) throw new Error('No report to export');

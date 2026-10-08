@@ -503,6 +503,13 @@ pool.query(`ALTER TABLE readings_kf_monthly  ADD COLUMN IF NOT EXISTS sounder_nu
 pool.query(`ALTER TABLE canal_structures ADD COLUMN IF NOT EXISTS sort_order INT DEFAULT 0`)
   .catch(err => console.error('Migration error (canal sort_order):', err.message));
 
+// A supervisor's correction to a canal totalizer reading, in AF. NULL means the
+// observed reading stands. The Monthly canal report uses it in place of the
+// observed value when working out each day's change, so a mis-keyed or reset
+// totalizer can be fixed without rewriting what the operator recorded.
+pool.query(`ALTER TABLE readings_canal ADD COLUMN IF NOT EXISTS adjusted_af NUMERIC`)
+  .catch(err => console.error('Migration error (canal adjusted_af):', err.message));
+
 pool.query(`ALTER TABLE maintenance_vehicles ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'open'`)
   .catch(err => console.error('Migration error (mv_status):', err.message));
 
@@ -4404,6 +4411,241 @@ app.get('/api/reports/canal/export', async (req, res) => {
       .trim().replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '') || 'Structure';
     const fnRange = start_date === end_date ? start_date : `${start_date}_to_${end_date}`;
     res.setHeader('Content-Disposition', `attachment; filename="Canal_${fnPart}_${fnRange}.xlsx"`);
+    return res.send(buf);
+  } catch (err) { handleErr(res, err); }
+});
+
+// ── Canal Readings — Monthly ────────────────────────────────────────────────
+// One row per day for each selected turnout / turn-in, from the last day of the
+// previous month (the starting point) to the end of the month, or to today for
+// the current month. Laid out like the monthly CVC turnout sheets.
+//
+//  - A day with no reading repeats the previous one: observed, adjusted and
+//    flow carry forward and the day's change is zero.
+//  - A day with readings uses its LAST reading that has a totalizer (or an
+//    adjustment); flow is the last flow entered that day; notes are all of the
+//    day's notes.
+//  - Adjusted Reading is readings_canal.adjusted_af when a supervisor has set
+//    one, otherwise the observed reading. AF / Day is the change in adjusted
+//    reading since the previous day's; CFS / Day is the same volume in
+//    cfs-days (AF / 1.9835), as on the sheets.
+//  - Totals leave out the starting row: its change belongs to the previous
+//    month, and counting it would put that day in two months' totals.
+const AF_PER_CFS_DAY = 86400 / 43560;   // 1 cfs flowing for a day = 1.9835 AF
+
+function canalMonthRange(month) {
+  const m = /^(\d{4})-(\d{2})$/.exec(String(month ?? ''));
+  if (!m || +m[2] < 1 || +m[2] > 12) return null;
+  const y = +m[1], mo = +m[2];
+  const iso = d => d.toISOString().slice(0, 10);
+  const start    = iso(new Date(Date.UTC(y, mo - 1, 0)));   // last day of previous month
+  const monthEnd = iso(new Date(Date.UTC(y, mo, 0)));
+  const today = todayString();
+  return { month: m[0], start, monthEnd, end: monthEnd < today ? monthEnd : today };
+}
+
+// "1,2,3" -> [1, 2, 3]; anything else is dropped. Capped so a request can't
+// ask for an unbounded IN list.
+function parseIdList(v) {
+  const ids = [...new Set(String(v ?? '').split(',').map(x => parseInt(x, 10))
+    .filter(n => Number.isInteger(n) && n > 0))];
+  return ids.slice(0, 500);
+}
+
+async function buildCanalMonthly(range, ids) {
+  const { rows: structs } = await pool.query(`
+    SELECT cs.structure_id, cs.structure_name,
+      (SELECT r.totalizer_reading_af FROM readings_canal r
+        WHERE r.structure_id = cs.structure_id AND r.reading_date < $2
+          AND r.totalizer_reading_af IS NOT NULL
+        ORDER BY r.reading_date DESC, r.reading_time DESC NULLS LAST, r.reading_id DESC
+        LIMIT 1) AS base_obs,
+      (SELECT COALESCE(r.adjusted_af, r.totalizer_reading_af) FROM readings_canal r
+        WHERE r.structure_id = cs.structure_id AND r.reading_date < $2
+          AND (r.adjusted_af IS NOT NULL OR r.totalizer_reading_af IS NOT NULL)
+        ORDER BY r.reading_date DESC, r.reading_time DESC NULLS LAST, r.reading_id DESC
+        LIMIT 1) AS base_adj,
+      (SELECT r.instantaneous_flow_cfs FROM readings_canal r
+        WHERE r.structure_id = cs.structure_id AND r.reading_date < $2
+          AND r.instantaneous_flow_cfs IS NOT NULL
+        ORDER BY r.reading_date DESC, r.reading_time DESC NULLS LAST, r.reading_id DESC
+        LIMIT 1) AS base_flow
+    FROM canal_structures cs
+    WHERE cs.structure_id = ANY($1::int[])
+    ORDER BY cs.sort_order, cs.structure_id
+  `, [ids, range.start]);
+
+  const { rows: readings } = range.end < range.start ? { rows: [] } : await pool.query(`
+    SELECT reading_id, structure_id,
+           to_char(reading_date, 'YYYY-MM-DD') AS d,
+           to_char(reading_time, 'HH24MI')     AS t,
+           totalizer_reading_af, adjusted_af, instantaneous_flow_cfs, notes
+    FROM readings_canal
+    WHERE structure_id = ANY($1::int[]) AND reading_date BETWEEN $2 AND $3
+    ORDER BY structure_id, reading_date, reading_time NULLS FIRST, reading_id
+  `, [ids, range.start, range.end]);
+
+  const days = [];
+  for (let d = new Date(range.start + 'T00:00:00Z'); d.toISOString().slice(0, 10) <= range.end;
+       d.setUTCDate(d.getUTCDate() + 1)) {
+    days.push(d.toISOString().slice(0, 10));
+  }
+
+  const num = v => (v == null ? null : Number(v));
+  const byStructDay = new Map();
+  for (const r of readings) {
+    const k = `${r.structure_id}|${r.d}`;
+    if (!byStructDay.has(k)) byStructDay.set(k, []);
+    byStructDay.get(k).push(r);
+  }
+
+  return structs.map(s => {
+    let obs = num(s.base_obs), adj = num(s.base_adj), flow = num(s.base_flow);
+    const rows = days.map((date, i) => {
+      const dayReadings = byStructDay.get(`${s.structure_id}|${date}`) || [];
+      const start = i === 0;
+      if (!dayReadings.length) {
+        return { date, start, carried: true, reading_id: null, time: null,
+                 observed: obs, adjusted: adj, adjusted_override: false,
+                 af: adj == null ? null : 0, cfs: adj == null ? null : 0, flow, notes: '' };
+      }
+      const withTotal = dayReadings.filter(r => r.totalizer_reading_af != null || r.adjusted_af != null);
+      const dayReading = withTotal[withTotal.length - 1] || dayReadings[dayReadings.length - 1];
+      let af = null, override = false;
+      if (withTotal.length) {
+        if (dayReading.totalizer_reading_af != null) obs = num(dayReading.totalizer_reading_af);
+        override = dayReading.adjusted_af != null;
+        const next = num(override ? dayReading.adjusted_af : dayReading.totalizer_reading_af);
+        af = adj == null ? null : Number((next - adj).toFixed(4));
+        adj = next;
+      } else if (adj != null) {
+        af = 0;
+      }
+      const flows = dayReadings.filter(r => r.instantaneous_flow_cfs != null);
+      if (flows.length) flow = num(flows[flows.length - 1].instantaneous_flow_cfs);
+      const notes = [...new Set(dayReadings.map(r => (r.notes || '').trim()).filter(Boolean))].join('; ');
+      return { date, start, carried: false, reading_id: dayReading.reading_id, time: dayReading.t,
+               observed: obs, adjusted: adj, adjusted_override: override,
+               af, cfs: af == null ? null : af / AF_PER_CFS_DAY, flow, notes };
+    });
+    const counted = rows.filter(r => !r.start && r.af != null);
+    const totals = {
+      af:  Number(counted.reduce((t, r) => t + r.af, 0).toFixed(2)),
+      cfs: Number(counted.reduce((t, r) => t + r.cfs, 0).toFixed(2)),
+    };
+    for (const r of rows) {
+      if (r.af  != null) r.af  = Number(r.af.toFixed(2));
+      if (r.cfs != null) r.cfs = Number(r.cfs.toFixed(2));
+    }
+    return { structure_id: s.structure_id, structure_name: s.structure_name, rows, totals };
+  });
+}
+
+// Turnouts / turn-ins to offer for a month: everything in service, plus any
+// retired structure that still has readings in that month, so a past month's
+// report can still be run for it.
+app.get('/api/reports/canal/monthly/structures', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
+  const range = canalMonthRange(req.query.month);
+  if (!range) return res.status(400).json({ error: 'month must be YYYY-MM' });
+  try {
+    const { rows } = await pool.query(`
+      SELECT cs.structure_id, cs.structure_name, cs.in_service
+      FROM canal_structures cs
+      WHERE cs.in_service = true
+         OR EXISTS (SELECT 1 FROM readings_canal r
+                    WHERE r.structure_id = cs.structure_id
+                      AND r.reading_date BETWEEN $1 AND $2)
+      ORDER BY cs.sort_order, cs.structure_id
+    `, [range.start, range.monthEnd]);
+    res.json(rows);
+  } catch (err) { handleErr(res, err); }
+});
+
+app.get('/api/reports/canal/monthly', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
+  const range = canalMonthRange(req.query.month);
+  if (!range) return res.status(400).json({ error: 'month must be YYYY-MM' });
+  const ids = parseIdList(req.query.ids);
+  if (!ids.length) return res.status(400).json({ error: 'Select at least one turnout / turn-in' });
+  try {
+    res.json({ ...range, structures: await buildCanalMonthly(range, ids) });
+  } catch (err) { handleErr(res, err); }
+});
+
+// Set or clear a supervisor's adjusted reading. Only a day that has a reading
+// can be adjusted, so this always targets an existing readings_canal row.
+app.put('/api/canal-readings/:id/adjusted', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Invalid reading' });
+  const raw = req.body?.adjusted_af;
+  let value = null;
+  if (raw !== null && raw !== undefined && String(raw).trim() !== '') {
+    value = Number(raw);
+    if (!Number.isFinite(value)) return res.status(400).json({ error: 'Adjusted reading must be a number' });
+  }
+  try {
+    const { rowCount } = await pool.query(
+      'UPDATE readings_canal SET adjusted_af = $1 WHERE reading_id = $2', [value, id]);
+    if (!rowCount) return res.status(404).json({ error: 'Reading not found' });
+    res.json({ reading_id: id, adjusted_af: value });
+  } catch (err) { handleErr(res, err); }
+});
+
+// Excel: one sheet per turnout / turn-in, laid out like the monthly sheets.
+app.get('/api/reports/canal/monthly/export', async (req, res) => {
+  const { token } = req.query;
+  if (token) {
+    const t = downloadTokens.get(token);
+    if (!t || Date.now() > t.expires) return res.status(401).json({ error: 'Invalid or expired token' });
+    downloadTokens.delete(token);
+  } else {
+    const sessionUser = getSession(req.cookies?.fo_session);
+    if (!sessionUser) return res.status(401).json({ error: 'Unauthorized' });
+    if (!SUPERVISOR_ROLES.includes(sessionUser.role)) return res.status(403).json({ error: 'Forbidden' });
+  }
+  const range = canalMonthRange(req.query.month);
+  if (!range) return res.status(400).json({ error: 'month must be YYYY-MM' });
+  const ids = parseIdList(req.query.ids);
+  if (!ids.length) return res.status(400).json({ error: 'Select at least one turnout / turn-in' });
+  try {
+    const structures = await buildCanalMonthly(range, ids);
+    const wb = XLSX.utils.book_new();
+    const used = new Set();
+    const sheetName = name => {
+      // Excel: 31 chars max, none of []:*?/\ and unique within the workbook.
+      const base = String(name || 'Sheet').replace(/[[\]:*?/\\]/g, '-').trim().slice(0, 31) || 'Sheet';
+      let n = base, i = 2;
+      while (used.has(n.toLowerCase())) { const sfx = ` (${i++})`; n = base.slice(0, 31 - sfx.length) + sfx; }
+      used.add(n.toLowerCase());
+      return n;
+    };
+    for (const s of structures) {
+      const data = [
+        [s.structure_name],
+        ['Date', 'Time Value', 'Observed Reading', 'Adjusted Reading', 'CFS / Day', 'AF / Day', 'Flow Rate', 'Note'],
+        ...s.rows.map(r => [
+          r.date, r.time || '', r.observed ?? '', r.adjusted ?? '',
+          r.cfs ?? '', r.af ?? '', r.flow ?? '',
+          [r.start ? 'Starting point (not in totals)' : '', r.notes].filter(Boolean).join(' - '),
+        ]),
+        ['', '', '', 'Total', s.totals.cfs, s.totals.af, '', ''],
+      ];
+      const ws = XLSX.utils.aoa_to_sheet(data);
+      ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 7 } }];
+      ws['!cols'] = [{ wch: 12 }, { wch: 11 }, { wch: 17 }, { wch: 17 },
+                     { wch: 11 }, { wch: 11 }, { wch: 10 }, { wch: 40 }];
+      // Two decimals for the computed columns, as on the sheets.
+      for (let r = 2; r < data.length; r++) {
+        for (const c of [4, 5]) {
+          const cell = ws[XLSX.utils.encode_cell({ r, c })];
+          if (cell && cell.t === 'n') cell.z = '0.00';
+        }
+      }
+      XLSX.utils.book_append_sheet(wb, ws, sheetName(s.structure_name));
+    }
+    if (!structures.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['No turnouts found']]), 'Canal');
+    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="Canal_Monthly_${range.month}.xlsx"`);
     return res.send(buf);
   } catch (err) { handleErr(res, err); }
 });
