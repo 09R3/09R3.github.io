@@ -4452,19 +4452,27 @@ const ppIso = ms => new Date(ms).toISOString().slice(0, 19);
 async function ppSiteEquipment(siteId) {
   const { rows: site } = await pool.query('SELECT site_id, site_name FROM sites WHERE site_id = $1', [siteId]);
   if (!site.length) return null;
+  // Every column is cast explicitly: UNION needs one type per column, so a
+  // numeric pge_meters.meter_number (or monitor_number, pump_letter...) beside
+  // the text columns fails the whole report with "UNION types ... cannot be
+  // matched". Casting keeps it independent of how those columns are typed.
   const { rows } = await pool.query(`
-    SELECT 'pump' AS type, pp.position_id AS id, b.building_id, b.building_letter, b.building_name,
-           pp.pump_letter AS name, NULL::text AS extra
+    SELECT 'pump' AS type, pp.position_id::int AS id, b.building_id::int AS building_id,
+           b.building_letter::text AS building_letter, b.building_name::text AS building_name,
+           pp.pump_letter::text AS name, NULL::text AS extra
     FROM pump_positions pp JOIN buildings b ON b.building_id = pp.building_id
-    WHERE b.site_id = $1 AND COALESCE(pp.status, '') !~* 'spare'
+    WHERE b.site_id = $1 AND COALESCE(pp.status::text, '') !~* 'spare'
     UNION ALL
-    SELECT 'compressor', ac.compressor_id, b.building_id, b.building_letter, b.building_name, NULL, NULL
+    SELECT 'compressor', ac.compressor_id::int, b.building_id::int, b.building_letter::text, b.building_name::text,
+           NULL::text, NULL::text
     FROM air_compressors ac JOIN buildings b ON b.building_id = ac.building_id WHERE b.site_id = $1
     UNION ALL
-    SELECT 'pge', pm.pge_meter_id, b.building_id, b.building_letter, b.building_name, pm.meter_name, pm.meter_number
+    SELECT 'pge', pm.pge_meter_id::int, b.building_id::int, b.building_letter::text, b.building_name::text,
+           pm.meter_name::text, pm.meter_number::text
     FROM pge_meters pm JOIN buildings b ON b.building_id = pm.building_id WHERE b.site_id = $1
     UNION ALL
-    SELECT 'monitor', pw.monitor_id, b.building_id, b.building_letter, b.building_name, pw.monitor_number::text, NULL
+    SELECT 'monitor', pw.monitor_id::int, b.building_id::int, b.building_letter::text, b.building_name::text,
+           pw.monitor_number::text, NULL::text
     FROM power_monitors pw JOIN buildings b ON b.building_id = pw.building_id WHERE b.site_id = $1
   `, [siteId]);
   const typeOrder = { pump: 0, compressor: 1, pge: 2, monitor: 3 };
