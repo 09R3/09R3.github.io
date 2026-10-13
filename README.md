@@ -217,7 +217,11 @@ Configuration is via environment variables (`.env`):
 | `PORT` | HTTP port (defaults to 4000; deployed on 3067, beta on 3066) |
 
 SCADA plant/tag layout lives in `watermark/scada-config.json`, so sites, pumps
-and sensors can change without touching code.
+and sensors can change without touching code. A site's `overviewRows` adds
+named readings to its Overview card under FB / TR / AB — PP 7A shows its
+Downstream Level (`DSLvl`) as **CAWELO**:
+`"overviewRows": [{ "label": "CAWELO", "sensor": "DSLvl" }]`. The sensor must be
+one the site reads (its `sensors`, or `defaultSensors`).
 
 Timestamps are stored as naive local (Pacific) date + time columns; the pool
 sets `timezone = 'America/Los_Angeles'` on every connection so interval maths

@@ -24,7 +24,7 @@
     { "id": "pp5b", "name": "CVC PP 5B", "influxSite": "CVC_PP5B", "pumps": ["A","B","C"], "pumpLabels": {"A":"K","B":"L","C":"M"} },
     { "id": "pp6a", "name": "CVC PP 6A", "influxSite": "CVC_PP6A", "pumps": ["A","B","C","D","E","F","G","H"] },
     { "id": "pp6b", "name": "CVC PP 6B", "influxSite": "CVC_PP6B", "pumps": ["A","B","C","D"], "pumpLabels": {"A":"K","B":"L","C":"M","D":"N"} },
-    { "id": "pp7a", "name": "CVC PP 7A", "influxSite": "CVC_PP7A", "pumps": ["A","B","C","D","E","F"] }
+    { "id": "pp7a", "name": "CVC PP 7A", "influxSite": "CVC_PP7A", "pumps": ["A","B","C","D","E","F"], "overviewRows": [{"label":"CAWELO","sensor":"DSLvl"}] }
   ],
 
   "_powerNote": "Power monitoring reads the `power_meters` bucket (measurement `power_reading`, tagged by meter_id) on the same InfluxDB the SCADA pollers use. If a field name below doesn't match your actual meter schema, just edit it here — no code changes needed.",

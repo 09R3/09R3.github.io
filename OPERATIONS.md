@@ -117,8 +117,9 @@ returns 404 and the login screen hides the button.
 ### Non-env configuration
 
 `watermark/scada-config.json` defines the SCADA plant tree — 13 plants, their
-pumps and pump-letter labels, sensor sets, computed sensors, the power-meter
-list, field groups and alarm thresholds. Editing this file changes the SCADA UI
+pumps and pump-letter labels, sensor sets, computed sensors, extra Overview
+rows (`overviewRows`, e.g. PP 7A's CAWELO), the power-meter list, field groups
+and alarm thresholds. Editing this file changes the SCADA UI
 with no code change. It is copied into the image, so a change requires a
 redeploy.
 
