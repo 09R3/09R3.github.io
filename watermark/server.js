@@ -4415,6 +4415,281 @@ app.get('/api/reports/canal/export', async (req, res) => {
   } catch (err) { handleErr(res, err); }
 });
 
+// ── Pumping Plant report ──────────────────────────────────────────────────────
+// Usage over a range for every meter at one plant (site): pump hours, air
+// compressor hours, PG&E kWh and power monitor kWh. The meters only count up,
+// so "used" is worked out from the meter itself:
+//
+//  - M(t), the meter at time t, is a straight line between consecutive
+//    readings. It is never extrapolated past the first or last reading.
+//  - Used = M(end) - M(start), with start/end clipped to the readings that
+//    exist. A month therefore runs midnight to midnight even though nobody
+//    reads at midnight, and the totals of consecutive months add up.
+//  - The per-day series is the average rate between each pair of readings
+//    (hours run per day, kWh per day), so a weekend gap shows as three days
+//    at the average rather than one 72-hour spike.
+//
+// 24 Hours and 1 Week end at the plant's latest reading, not the clock: the
+// readings are daily, so "the last 24 hours" ending now would cover only part
+// of a day and read as if the pumps ran less.
+const PP_METERS = Object.assign(Object.create(null), {
+  pump:       { table: 'readings_pump_hours',       fk: 'position_id',   col: 'hour_reading', unit: 'hrs' },
+  compressor: { table: 'readings_compressor_hours', fk: 'compressor_id', col: 'hour_reading', unit: 'hrs' },
+  pge:        { table: 'readings_pge_meters',       fk: 'pge_meter_id',  col: 'kwh_reading',  unit: 'kWh' },
+  monitor:    { table: 'readings_power_monitors',   fk: 'monitor_id',    col: 'kwh_reading',  unit: 'kWh' },
+});
+const PP_RATE_MIN_GAP_MS = 2 * 3600 * 1000;   // readings closer than this are a correction, not a rate
+// 24 Hours / 1 Week: a meter read within this long of the plant's latest
+// reading gets a window ending at its own reading, so equipment read at 07:07
+// and 07:35 on the same round both cover a full 24 hours.
+const PP_ALIGN_MS = 3 * 3600 * 1000;
+
+// Naive Pacific timestamps ("2026-10-13T07:00:00") are handled as if UTC so the
+// arithmetic stays in wall-clock terms.
+const ppMs  = ts => Date.parse(ts + 'Z');
+const ppIso = ms => new Date(ms).toISOString().slice(0, 19);
+
+async function ppSiteEquipment(siteId) {
+  const { rows: site } = await pool.query('SELECT site_id, site_name FROM sites WHERE site_id = $1', [siteId]);
+  if (!site.length) return null;
+  const { rows } = await pool.query(`
+    SELECT 'pump' AS type, pp.position_id AS id, b.building_id, b.building_letter, b.building_name,
+           pp.pump_letter AS name, NULL::text AS extra
+    FROM pump_positions pp JOIN buildings b ON b.building_id = pp.building_id
+    WHERE b.site_id = $1 AND COALESCE(pp.status, '') !~* 'spare'
+    UNION ALL
+    SELECT 'compressor', ac.compressor_id, b.building_id, b.building_letter, b.building_name, NULL, NULL
+    FROM air_compressors ac JOIN buildings b ON b.building_id = ac.building_id WHERE b.site_id = $1
+    UNION ALL
+    SELECT 'pge', pm.pge_meter_id, b.building_id, b.building_letter, b.building_name, pm.meter_name, pm.meter_number
+    FROM pge_meters pm JOIN buildings b ON b.building_id = pm.building_id WHERE b.site_id = $1
+    UNION ALL
+    SELECT 'monitor', pw.monitor_id, b.building_id, b.building_letter, b.building_name, pw.monitor_number::text, NULL
+    FROM power_monitors pw JOIN buildings b ON b.building_id = pw.building_id WHERE b.site_id = $1
+  `, [siteId]);
+  const typeOrder = { pump: 0, compressor: 1, pge: 2, monitor: 3 };
+  rows.sort((a, b) => String(a.building_letter || '').localeCompare(String(b.building_letter || ''))
+    || typeOrder[a.type] - typeOrder[b.type]
+    || String(a.name || '').localeCompare(String(b.name || ''), undefined, { numeric: true })
+    || a.id - b.id);
+  // Several compressors in one building are numbered; one is just "Air Compressor".
+  const compCount = {};
+  rows.forEach(r => { if (r.type === 'compressor') compCount[r.building_id] = (compCount[r.building_id] || 0) + 1; });
+  const compSeen = {};
+  const equipment = rows.map(r => {
+    const building = r.building_name || (r.building_letter ? `${r.building_letter} Plant` : 'Plant');
+    let what;
+    if (r.type === 'pump') what = `Pump ${r.name || r.id}`;
+    else if (r.type === 'compressor') {
+      compSeen[r.building_id] = (compSeen[r.building_id] || 0) + 1;
+      what = compCount[r.building_id] > 1 ? `Air Compressor ${compSeen[r.building_id]}` : 'Air Compressor';
+    } else if (r.type === 'pge') what = `PG&E ${r.name || r.extra || r.id}`.trim();
+    else what = `Power Monitor ${r.name || r.id}`;
+    return { key: `${r.type}:${r.id}`, type: r.type, id: r.id, building, label: `${building} · ${what}`,
+             unit: PP_METERS[r.type].unit };
+  });
+  return { site: site[0], equipment };
+}
+
+// Resolve the requested range to a [start, end) window of naive timestamps.
+async function ppWindow(q, equipment) {
+  const mode = String(q.range || '');
+  const dayMs = 86400000;
+  const { rows: [{ now }] } = await pool.query(`SELECT to_char(LOCALTIMESTAMP, 'YYYY-MM-DD"T"HH24:MI:SS') AS now`);
+  if (mode === '24h' || mode === '7d') {
+    // Anchor on the latest reading at this plant (falls back to now).
+    let latest = null;
+    for (const [type, m] of Object.entries(PP_METERS)) {
+      const ids = equipment.filter(e => e.type === type).map(e => e.id);
+      if (!ids.length) continue;
+      const { rows } = await pool.query(
+        `SELECT to_char(MAX(reading_date + COALESCE(reading_time, TIME '00:00')), 'YYYY-MM-DD"T"HH24:MI:SS') AS ts
+         FROM ${m.table} WHERE ${m.fk} = ANY($1::int[]) AND ${m.col} IS NOT NULL`, [ids]);
+      if (rows[0].ts && (!latest || rows[0].ts > latest)) latest = rows[0].ts;
+    }
+    const end = latest && latest < now ? latest : now;
+    return { mode, start: ppIso(ppMs(end) - (mode === '24h' ? 1 : 7) * dayMs), end };
+  }
+  if (mode === 'month') {
+    const m = /^(\d{4})-(\d{2})$/.exec(String(q.month || ''));
+    if (!m || +m[2] < 1 || +m[2] > 12) return { error: 'month must be YYYY-MM' };
+    const start = `${m[1]}-${m[2]}-01T00:00:00`;
+    const next  = new Date(Date.UTC(+m[1], +m[2], 1)).toISOString().slice(0, 10) + 'T00:00:00';
+    return { mode, month: `${m[1]}-${m[2]}`, start, end: next };
+  }
+  if (mode === 'custom') {
+    const s = String(q.start || ''), e = String(q.end || '');
+    if (!isValidIsoDate(s) || !isValidIsoDate(e)) return { error: 'start and end must be YYYY-MM-DD' };
+    if (e < s) return { error: 'end must be on or after start' };
+    if (ppMs(e + 'T00:00:00') - ppMs(s + 'T00:00:00') > 400 * dayMs) return { error: 'Range is limited to about a year' };
+    return { mode, start: `${s}T00:00:00`, end: ppIso(ppMs(e + 'T00:00:00') + dayMs) };
+  }
+  return { error: 'range must be 24h, 7d, month or custom' };
+}
+
+function ppUsage(points, ws, we) {
+  // points: [{ t (ms), v }] sorted; one per timestamp (the last entered wins).
+  const out = { total: null, start_value: null, end_value: null, start_at: null, end_at: null,
+                start_est: false, end_est: false, avg_per_day: null, series: [] };
+  if (!points.length) return out;
+  const M = t => {
+    if (t < points[0].t || t > points[points.length - 1].t) return null;
+    let i = 1;
+    while (i < points.length && points[i].t < t) i++;
+    if (i >= points.length) return points[points.length - 1].v;
+    const a = points[i - 1], b = points[i];
+    return b.t === a.t ? b.v : a.v + (b.v - a.v) * (t - a.t) / (b.t - a.t);
+  };
+  const a = Math.max(ws, points[0].t), b = Math.min(we, points[points.length - 1].t);
+  if (b > a) {
+    const at = t => points.some(p => p.t === t);
+    out.start_value = M(a); out.end_value = M(b);
+    out.total = out.end_value - out.start_value;
+    out.start_at = ppIso(a); out.end_at = ppIso(b);
+    out.start_est = !at(a); out.end_est = !at(b);
+    out.avg_per_day = out.total / ((b - a) / 86400000);
+  }
+  // Rate series. Readings within two hours of the previous one are folded in
+  // (a correction or a second save), otherwise a 10-minute gap reads as a
+  // ridiculous rate.
+  const kept = [];
+  for (const p of points) {
+    if (kept.length && p.t - kept[kept.length - 1].t < PP_RATE_MIN_GAP_MS) {
+      if (kept.length > 1) kept[kept.length - 1] = p;
+      continue;
+    }
+    kept.push(p);
+  }
+  for (let i = 1; i < kept.length; i++) {
+    const p0 = kept[i - 1], p1 = kept[i];
+    const s0 = Math.max(p0.t, ws), s1 = Math.min(p1.t, we);
+    if (s1 <= s0) continue;
+    const rate = (p1.v - p0.v) / ((p1.t - p0.t) / 86400000);
+    out.series.push({ x: ppIso(s0), y: rate }, { x: ppIso(s1), y: rate });
+  }
+  return out;
+}
+
+async function buildPumpingPlantReport(siteId, q) {
+  const base = await ppSiteEquipment(siteId);
+  if (!base) return { notFound: true };
+  const win = await ppWindow(q, base.equipment);
+  if (win.error) return { error: win.error };
+  const ws = ppMs(win.start), we = ppMs(win.end);
+  const rolling = win.mode === '24h' || win.mode === '7d';
+  const fetchStart = ppIso(rolling ? ws - PP_ALIGN_MS : ws);
+
+  const pointsByKey = new Map();
+  for (const [type, m] of Object.entries(PP_METERS)) {
+    const ids = base.equipment.filter(e => e.type === type).map(e => e.id);
+    if (!ids.length) continue;
+    // Everything inside the window, plus the last reading before it and the
+    // first after it so the meter can be interpolated right to the edges.
+    const { rows } = await pool.query(`
+      WITH r AS (
+        SELECT ${m.fk} AS id, reading_id, (reading_date + COALESCE(reading_time, TIME '00:00')) AS ts,
+               ${m.col}::float8 AS v
+        FROM ${m.table} WHERE ${m.fk} = ANY($1::int[]) AND ${m.col} IS NOT NULL
+      )
+      SELECT id, to_char(ts, 'YYYY-MM-DD"T"HH24:MI:SS') AS ts, v FROM (
+        (SELECT id, reading_id, ts, v FROM r WHERE ts > $2::timestamp AND ts < $3::timestamp)
+        UNION ALL
+        (SELECT DISTINCT ON (id) id, reading_id, ts, v FROM r WHERE ts <= $2::timestamp ORDER BY id, ts DESC, reading_id DESC)
+        UNION ALL
+        (SELECT DISTINCT ON (id) id, reading_id, ts, v FROM r WHERE ts >= $3::timestamp ORDER BY id, ts ASC, reading_id ASC)
+      ) x
+      ORDER BY id, ts, reading_id`, [ids, fetchStart.replace('T', ' '), win.end.replace('T', ' ')]);
+    for (const r of rows) {
+      const k = `${type}:${r.id}`;
+      if (!pointsByKey.has(k)) pointsByKey.set(k, []);
+      const arr = pointsByKey.get(k), t = ppMs(r.ts);
+      if (arr.length && arr[arr.length - 1].t === t) arr[arr.length - 1].v = r.v;
+      else arr.push({ t, v: r.v });
+    }
+  }
+
+  const round = (v, d) => (v == null ? null : Number(v.toFixed(d)));
+  const equipment = base.equipment.map(e => {
+    const pts = pointsByKey.get(e.key) || [];
+    let s = ws, t = we;
+    const last = pts[pts.length - 1];
+    if (rolling && last && last.t <= we && we - last.t <= PP_ALIGN_MS) { t = last.t; s = t - (we - ws); }
+    const u = ppUsage(pts, s, t);
+    const d = e.unit === 'kWh' ? 0 : 1;
+    return {
+      ...e,
+      readings: pts.filter(p => p.t > s && p.t <= t).length,
+      total: round(u.total, d), avg_per_day: round(u.avg_per_day, d + 1),
+      start_value: round(u.start_value, d), end_value: round(u.end_value, d),
+      start_at: u.start_at, end_at: u.end_at, start_est: u.start_est, end_est: u.end_est,
+      series: u.series.map(p => ({ x: p.x, y: round(p.y, 2) })),
+    };
+  });
+  const pumpTotals = equipment.filter(e => e.type === 'pump' && e.total != null);
+  return {
+    site_id: base.site.site_id, site_name: base.site.site_name,
+    range: win,
+    pump_hours_total: pumpTotals.length ? round(pumpTotals.reduce((t, e) => t + e.total, 0), 1) : null,
+    equipment,
+  };
+}
+
+app.get('/api/reports/pumping-plant', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
+  const siteId = parseInt(req.query.site_id, 10);
+  if (!Number.isInteger(siteId) || siteId <= 0) return res.status(400).json({ error: 'site_id required' });
+  try {
+    const r = await buildPumpingPlantReport(siteId, req.query);
+    if (r.notFound) return res.status(404).json({ error: 'Plant not found' });
+    if (r.error) return res.status(400).json({ error: r.error });
+    res.json(r);
+  } catch (err) { handleErr(res, err); }
+});
+
+app.get('/api/reports/pumping-plant/export', async (req, res) => {
+  const { token } = req.query;
+  if (token) {
+    const t = downloadTokens.get(token);
+    if (!t || Date.now() > t.expires) return res.status(401).json({ error: 'Invalid or expired token' });
+    downloadTokens.delete(token);
+  } else {
+    const sessionUser = getSession(req.cookies?.fo_session);
+    if (!sessionUser) return res.status(401).json({ error: 'Unauthorized' });
+    if (!SUPERVISOR_ROLES.includes(sessionUser.role)) return res.status(403).json({ error: 'Forbidden' });
+  }
+  const siteId = parseInt(req.query.site_id, 10);
+  if (!Number.isInteger(siteId) || siteId <= 0) return res.status(400).json({ error: 'site_id required' });
+  try {
+    const r = await buildPumpingPlantReport(siteId, req.query);
+    if (r.notFound) return res.status(404).json({ error: 'Plant not found' });
+    if (r.error) return res.status(400).json({ error: r.error });
+    const fmtTs = ts => (ts ? ts.slice(0, 16).replace('T', ' ') : '');
+    const plant = String(r.site_name || 'Plant').replace(/Site/, 'Plant');
+    const data = [
+      [`Pumping Plant Report — ${plant}`],
+      [`${fmtTs(r.range.start)} to ${fmtTs(r.range.end)}`],
+      ['Total pump hours', r.pump_hours_total ?? ''],
+      [],
+      ['Equipment', 'Unit', 'Start', 'Start at', 'End', 'End at', 'Used', 'Avg / day', 'Readings in range'],
+      ...r.equipment.map(e => [
+        e.label, e.unit,
+        e.start_value ?? '', fmtTs(e.start_at) + (e.start_est ? ' (est.)' : ''),
+        e.end_value ?? '',   fmtTs(e.end_at)   + (e.end_est   ? ' (est.)' : ''),
+        e.total ?? '', e.avg_per_day ?? '', e.readings,
+      ]),
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    ws['!cols'] = [{ wch: 34 }, { wch: 6 }, { wch: 12 }, { wch: 22 }, { wch: 12 }, { wch: 22 },
+                   { wch: 11 }, { wch: 10 }, { wch: 10 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Pumping Plant');
+    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    const fn = `PumpingPlant_${plant.replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '')}_${r.range.start.slice(0, 10)}_to_${r.range.end.slice(0, 10)}`;
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${fn}.xlsx"`);
+    return res.send(buf);
+  } catch (err) { handleErr(res, err); }
+});
+
 // ── Canal Readings — Monthly ────────────────────────────────────────────────
 // One row per day for each selected turnout / turn-in, from the last day of the
 // previous month (the starting point) to the end of the month, or to today for

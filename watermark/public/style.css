@@ -1443,6 +1443,31 @@ input[type="date"].ctrl-input { min-height: 44px; }
 .report-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .report-scroll > .report-table { min-width: 640px; }
 
+/* ── Pumping Plant report ─────────────────────────────────────────────────── */
+/* Plant pills, equipment chips and the chart frame come from the SCADA
+   dashboard's classes so the two read as one system. */
+.ppr-card + .ppr-card { margin-top: 14px; }
+/* Four range buttons have to fit a phone: let them share the row instead of
+   each holding the shared 96px minimum. */
+#ppr-range { flex: 1 1 260px; min-width: 0; }
+#ppr-range .seg-btn { min-width: 0; padding: 10px 6px; }
+.ppr-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.ppr-title, .ppr-sub { text-align: left; }
+.ppr-sub { margin-bottom: 10px; }
+.ppr-total { text-align: right; flex-shrink: 0; }
+.ppr-total-val { font-size: 1.6rem; font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
+.ppr-total-unit { font-size: 0.85rem; color: var(--text-dim); margin-left: 4px; }
+.ppr-total-label {
+  font-size: 0.62rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--text-dim);
+}
+.ppr-glance-wrap { position: relative; width: 100%; }
+.ppr-note { font-size: 0.76rem; color: var(--text-dim); margin-top: 8px; line-height: 1.4; }
+.ppr-table td { vertical-align: top; }
+.ppr-at { font-size: 0.7rem; color: var(--text-dim); white-space: nowrap; }
+.ppr-est { color: var(--yellow); margin-right: 2px; }
+.ppr-unit { font-size: 0.72rem; color: var(--text-dim); }
+
 /* ── Canal Readings — Monthly ─────────────────────────────────────────────── */
 /* Turnout picker: the DWR multi-select, sized for a report toolbar. */
 .canal-ms { flex: 1 1 200px; min-width: 180px; max-width: 320px; }

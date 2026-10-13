@@ -79,7 +79,30 @@ reverse-flow totals; and power monitoring. Charts support drag-select statistics
 
 **Reports** — vehicle mileage and last service, KF completion, maintenance
 issues, PM grids, piezometers, canal readings (daily, and monthly per turnout
-like the CVC turnout sheets), pond levels and well readings.
+like the CVC turnout sheets), pond levels, well readings and pumping plant meter
+usage.
+
+**Pumping Plant report** (Reports → Pumping Plant) shows what each plant's
+meters used over a range — pump hours, air compressor hours, PG&E kWh and power
+monitor kWh — laid out like the SCADA dashboard: plant pills, quick ranges
+(**24 Hours**, **1 Week**, **Month** with a month picker, **Custom** dates), a
+bar graph of hours run per pump with the plant total, a "use per day" graph for
+up to 8 picked pieces of equipment, and a table with CSV / Excel / PDF export.
+
+- The meters only count up, so usage is the change in the meter. The meter is
+  taken as a straight line between readings, which lets a month run midnight to
+  midnight even though nobody reads at midnight; consecutive months add up. A
+  start or end value marked ≈ is estimated between the readings either side.
+  Nothing is extrapolated past the first or last reading.
+- 24 Hours and 1 Week end at the plant's **latest reading**, not the clock, so a
+  daily round always covers a full day. A meter read within 3 hours of that
+  reading gets a window ending at its own reading.
+- Use per day is the average rate between consecutive readings, so a missed
+  weekend shows as three days at the average rather than one 72-hour spike.
+  Readings less than 2 hours apart are treated as a correction, not a rate.
+- Spare pumps are left out, as on the Pumping Plant screen. The calculation is
+  `buildPumpingPlantReport()` in `server.js`, shared by the screen and the
+  Excel export.
 Pond Reports opens on **Pioneer Daily Readings**: eleven head gates with the CFS
 read that day, the time and the operator. Each row totals one or more sources —
 pond gates or canal structures — defined in `PIONEER_ROWS` in `server.js`, which

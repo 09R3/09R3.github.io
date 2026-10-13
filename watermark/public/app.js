@@ -10734,7 +10734,7 @@ let vehicleReportType = 'mileage';
 let lastReportRows  = [];
 
 // ── Navigation ────────────────────────────────────────────────────────────────
-const ALL_REPORT_PANELS = ['vehicles','kf','maintenance','pms','piezometers','canal','ponds','wells'];
+const ALL_REPORT_PANELS = ['vehicles','kf','maintenance','pms','piezometers','canal','ponds','wells','pp'];
 
 function initReportsScreen() {
   el('report-main').classList.remove('hidden');
@@ -10750,6 +10750,7 @@ const REPORT_PANEL_NAMES = {
   canal:        'Canal Readings',
   ponds:        'Pond Reports',
   wells:        'Well Readings',
+  pp:           'Pumping Plant',
 };
 function openReportPanel(cat) {
   el('report-main').classList.add('hidden');
@@ -10765,6 +10766,7 @@ function openReportPanel(cat) {
   if (cat === 'canal')       initCanalReportPanel();
   if (cat === 'ponds')       initPondsReportPanel();
   if (cat === 'wells')       initWellReportPanel();
+  if (cat === 'pp')          initPPReportPanel();
 }
 
 function closeReportPanel() {
@@ -11766,6 +11768,452 @@ async function renderCanalReport() {
   }
 }
 
+// ── Pumping Plant Report Panel ────────────────────────────────────────────────
+// Usage from the plant's meters — pump hours, air compressor hours, PG&E kWh
+// and power monitor kWh — laid out like the SCADA dashboard: pick a plant, a
+// range, and the equipment to graph. The numbers are worked out server-side
+// (buildPumpingPlantReport in server.js): totals interpolate the meter to the
+// edges of the range, and the graph is the average use per day between
+// readings. Chart.js comes from the SCADA vendor bundle (loadScadaVendor).
+const PPR_KEY = 'wm.ppReport';
+let pprState = null;          // { site, range, month, from, to }
+let pprSites = [];
+let lastPPReport = null;
+let _pprSeq = 0;
+let _pprGlanceChart = null, _pprEquipChart = null;
+
+function pprLoad() {
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(PPR_KEY)) || {}; } catch { /* */ }
+  const today = pacificToday();
+  return {
+    site: saved.site || '',
+    range: ['24h', '7d', 'month', 'custom'].includes(saved.range) ? saved.range : '24h',
+    month: saved.month || today.slice(0, 7),
+    from: saved.from || today.slice(0, 8) + '01',
+    to: saved.to || today,
+    sel: saved.sel && typeof saved.sel === 'object' ? saved.sel : {},   // siteId -> [equipment keys]
+  };
+}
+function pprSave() {
+  try { localStorage.setItem(PPR_KEY, JSON.stringify(pprState)); } catch { /* */ }
+}
+
+async function initPPReportPanel() {
+  if (!pprState) pprState = pprLoad();
+  const pills = el('ppr-plants');
+  if (!pprSites.length) {
+    pills.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+    try {
+      // Same plant list as the Pumping Plant screen: no Service Truck, O&M last.
+      pprSites = (await api('GET', '/api/sites'))
+        .filter(s => !/service.truck/i.test(s.site_name))
+        .sort((a, b) => /o\s*&\s*m/i.test(a.site_name) - /o\s*&\s*m/i.test(b.site_name));
+    } catch {
+      pills.innerHTML = '<div class="placeholder-msg">Failed to load.</div>';
+      return;
+    }
+  }
+  if (!pprSites.some(s => String(s.site_id) === String(pprState.site))) pprState.site = String(pprSites[0]?.site_id || '');
+  pills.innerHTML = pprSites.map(s => `<button class="scada-plant-pill${String(s.site_id) === pprState.site ? ' active' : ''}"
+    data-site="${s.site_id}">${escHtml(s.site_name.replace('Site', 'Plant'))}</button>`).join('');
+  el('ppr-month').value = pprState.month;
+  el('ppr-from').value  = pprState.from;
+  el('ppr-to').value    = pprState.to;
+  pprShowRangeControls();
+  renderPPReport();
+}
+
+function pprShowRangeControls() {
+  el('ppr-range').querySelectorAll('.seg-btn').forEach(b => b.classList.toggle('active', b.dataset.range === pprState.range));
+  el('ppr-month-row').classList.toggle('hidden', pprState.range !== 'month');
+  el('ppr-custom-row').classList.toggle('hidden', pprState.range !== 'custom');
+}
+
+el('ppr-plants').addEventListener('click', e => {
+  const pill = e.target.closest('[data-site]');
+  if (!pill) return;
+  pprState.site = pill.dataset.site;
+  pprSave();
+  el('ppr-plants').querySelectorAll('.scada-plant-pill').forEach(p => p.classList.toggle('active', p === pill));
+  renderPPReport();
+});
+el('ppr-range').addEventListener('click', e => {
+  const b = e.target.closest('.seg-btn');
+  if (!b) return;
+  pprState.range = b.dataset.range;
+  pprSave();
+  pprShowRangeControls();
+  renderPPReport();
+});
+function pprStepMonth(delta) {
+  const [y, m] = (el('ppr-month').value || pacificToday().slice(0, 7)).split('-').map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  el('ppr-month').value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  pprMonthChanged();
+}
+function pprMonthChanged() {
+  if (!el('ppr-month').value) return;
+  pprState.month = el('ppr-month').value;
+  pprSave();
+  renderPPReport();
+}
+el('ppr-month').addEventListener('change', pprMonthChanged);
+el('ppr-month-prev').addEventListener('click', () => pprStepMonth(-1));
+el('ppr-month-next').addEventListener('click', () => pprStepMonth(1));
+el('ppr-apply').addEventListener('click', () => {
+  const from = el('ppr-from').value, to = el('ppr-to').value;
+  if (!from || !to) return showToast('Pick both dates', 'error');
+  if (to < from) return showToast('The end date is before the start date', 'error');
+  pprState.from = from; pprState.to = to;
+  pprSave();
+  renderPPReport();
+});
+
+function pprQuery() {
+  const q = `site_id=${encodeURIComponent(pprState.site)}&range=${pprState.range}`;
+  if (pprState.range === 'month')  return `${q}&month=${encodeURIComponent(pprState.month)}`;
+  if (pprState.range === 'custom') return `${q}&start=${encodeURIComponent(pprState.from)}&end=${encodeURIComponent(pprState.to)}`;
+  return q;
+}
+
+// Naive Pacific timestamps from the server, shown in the browser's terms.
+const pprDate = ts => new Date(ts);
+function pprFmtTs(ts) {
+  return ts ? pprDate(ts).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+}
+function pprRangeLabel(data) {
+  const r = data.range;
+  if (r.mode === 'month') return localDateStr(`${r.month}-01`, { month: 'long', year: 'numeric' });
+  if (r.mode === 'custom') {
+    const last = new Date(Date.parse(r.end.slice(0, 10) + 'T00:00:00Z') - 86400000).toISOString().slice(0, 10);
+    const s = r.start.slice(0, 10);
+    return s === last ? localDateStr(s) : `${localDateStr(s)} – ${localDateStr(last)}`;
+  }
+  return `${r.mode === '24h' ? 'Last 24 hours' : 'Last 7 days'} of readings · ${pprFmtTs(r.start)} – ${pprFmtTs(r.end)}`;
+}
+function pprFmt(v, unit) {
+  if (v == null) return '—';
+  return Number(v).toLocaleString('en-US', { maximumFractionDigits: unit === 'kWh' ? 0 : 1, minimumFractionDigits: unit === 'kWh' ? 0 : 1 });
+}
+// "A Plant · Pump C" -> "Pump C" when every item is in the same building.
+function pprShortLabel(e, data) {
+  const oneBuilding = new Set(data.equipment.map(x => x.building)).size <= 1;
+  return oneBuilding ? e.label.split(' · ').slice(1).join(' · ') || e.label : e.label;
+}
+function pprSelected(data) {
+  const saved = pprState.sel[String(data.site_id)];
+  const keys = new Set(data.equipment.map(e => e.key));
+  const sel = Array.isArray(saved) ? saved.filter(k => keys.has(k))
+    : data.equipment.filter(e => e.type === 'pump').map(e => e.key);   // default: the pumps
+  return sel.slice(0, 8);
+}
+
+function pprDestroyCharts() {
+  if (_pprGlanceChart) { _pprGlanceChart.destroy(); _pprGlanceChart = null; }
+  if (_pprEquipChart)  { _pprEquipChart.destroy();  _pprEquipChart  = null; }
+}
+
+async function renderPPReport() {
+  const out = el('ppr-output');
+  if (!pprState?.site) { out.innerHTML = '<div class="placeholder-msg">No plants found.</div>'; return; }
+  if (pprState.range === 'custom' && (!pprState.from || !pprState.to)) {
+    out.innerHTML = '<div class="placeholder-msg">Pick a start and end date, then tap Apply.</div>';
+    return;
+  }
+  const seq = ++_pprSeq;
+  pprDestroyCharts();
+  out.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  let data;
+  try {
+    [data] = await Promise.all([api('GET', `/api/reports/pumping-plant?${pprQuery()}`), loadScadaVendor()]);
+  } catch {
+    if (seq === _pprSeq) { lastPPReport = null; out.innerHTML = '<div class="placeholder-msg">Failed to load.</div>'; }
+    return;
+  }
+  if (seq !== _pprSeq) return;   // a newer plant / range was picked while this loaded
+  lastPPReport = data;
+  if (!data.equipment.length) {
+    out.innerHTML = '<div class="placeholder-msg">No equipment found.</div>';
+    return;
+  }
+  const pumps = data.equipment.filter(e => e.type === 'pump');
+  const unread = pumps.filter(e => e.total == null);
+  const sel = new Set(pprSelected(data));
+  out.innerHTML = `
+    <div class="report-card ppr-card">
+      <div class="ppr-head">
+        <div>
+          <div class="report-title ppr-title">Pump Hours</div>
+          <div class="report-subtitle ppr-sub">${escHtml(pprRangeLabel(data))}</div>
+        </div>
+        <div class="ppr-total">
+          <span class="ppr-total-val">${pprFmt(data.pump_hours_total, 'hrs')}</span><span class="ppr-total-unit">hrs</span>
+          <div class="ppr-total-label">Total</div>
+        </div>
+      </div>
+      ${pumps.some(e => e.total != null)
+        ? `<div class="ppr-glance-wrap" style="height:${Math.max(90, 34 * pumps.length + 30)}px"><canvas id="ppr-glance"></canvas></div>`
+        : '<div class="placeholder-msg">No pump readings found.</div>'}
+      ${unread.length && unread.length < pumps.length
+        ? `<div class="ppr-note">No readings in this range: ${unread.map(e => escHtml(pprShortLabel(e, data))).join(', ')}</div>` : ''}
+    </div>
+
+    <div class="report-card ppr-card">
+      <div class="report-title ppr-title">Use per Day</div>
+      <div class="report-subtitle ppr-sub">Average between readings &middot; pick up to 8</div>
+      <div class="scada-trend-chips" id="ppr-chips">
+        ${data.equipment.map(e => `<button class="scada-trend-chip${sel.has(e.key) ? ' selected' : ''}" data-key="${escHtml(e.key)}">${escHtml(pprShortLabel(e, data))}</button>`).join('')}
+      </div>
+      <div class="scada-chart-wrap ppr-equip-wrap${sel.size ? '' : ' hidden'}"><canvas id="ppr-equip" class="scada-chart-canvas"></canvas></div>
+      <div class="placeholder-msg${sel.size ? ' hidden' : ''}" id="ppr-equip-empty">Pick equipment above to graph its use per day.</div>
+    </div>
+
+    <div class="report-card ppr-card">
+      <div class="report-title ppr-title">Meter Usage</div>
+      ${pprTableHtml(data)}
+    </div>`;
+
+  const c = scadaThemeColors();
+  if (el('ppr-glance')) _pprGlanceChart = new window.Chart(el('ppr-glance').getContext('2d'), pprGlanceConfig(data, c));
+  pprDrawEquip(data);
+
+  el('ppr-chips').addEventListener('click', e => {
+    const chip = e.target.closest('[data-key]');
+    if (!chip) return;
+    const cur = new Set(pprSelected(data));
+    if (cur.has(chip.dataset.key)) cur.delete(chip.dataset.key);
+    else if (cur.size >= 8) return showToast('Up to 8 at once', 'error');
+    else cur.add(chip.dataset.key);
+    pprState.sel[String(data.site_id)] = [...cur];
+    pprSave();
+    chip.classList.toggle('selected', cur.has(chip.dataset.key));
+    pprDrawEquip(data);
+  });
+}
+
+function pprTableHtml(data) {
+  const cell = (v, at, est, unit) => v == null ? '<td class="report-num">—</td>'
+    : `<td class="report-num">${est ? '<span class="ppr-est" title="Estimated between the readings either side">≈</span>' : ''}${pprFmt(v, unit)}
+         <div class="ppr-at">${escHtml(pprFmtTs(at))}</div></td>`;
+  return `<div class="report-scroll"><table class="report-table ppr-table">
+    <thead><tr>
+      <th>Equipment</th><th class="report-num">Start</th><th class="report-num">End</th>
+      <th class="report-num">Used</th><th class="report-num">Avg / Day</th>
+    </tr></thead>
+    <tbody>${data.equipment.map(e => `<tr>
+      <td>${escHtml(e.label)}</td>
+      ${cell(e.start_value, e.start_at, e.start_est, e.unit)}
+      ${cell(e.end_value, e.end_at, e.end_est, e.unit)}
+      <td class="report-num"><strong>${pprFmt(e.total, e.unit)}</strong>${e.total != null ? ` <span class="ppr-unit">${e.unit}</span>` : ''}</td>
+      <td class="report-num">${e.avg_per_day == null ? '—' : Number(e.avg_per_day).toLocaleString('en-US', { maximumFractionDigits: e.unit === 'kWh' ? 0 : 1 })}</td>
+    </tr>`).join('')}</tbody>
+  </table></div>
+  <div class="ppr-note">&asymp; = the meter at the edge of the range, estimated between the readings either side.</div>`;
+}
+
+// Each pump's hours written at the end of its bar, so the graph reads without
+// the axis; "—" marks a pump with no readings in the range.
+const pprBarLabels = {
+  id: 'pprBarLabels',
+  afterDatasetsDraw(chart, _args, opts) {
+    const { ctx } = chart;
+    const meta = chart.getDatasetMeta(0);
+    ctx.save();
+    ctx.font = '600 12px system-ui, -apple-system, sans-serif';
+    ctx.fillStyle = opts.color;
+    ctx.textBaseline = 'middle';
+    meta.data.forEach((bar, i) => {
+      const v = chart.data.datasets[0].data[i];
+      const x = v == null ? chart.scales.x.getPixelForValue(0) : bar.x;
+      ctx.fillText(v == null ? '\u2014' : pprFmt(v, 'hrs'), x + 6, bar.y);
+    });
+    ctx.restore();
+  },
+};
+
+function pprGlanceConfig(data, c, print = false) {
+  const pumps = data.equipment.filter(e => e.type === 'pump');
+  // Head-room so the label on the longest bar isn't clipped.
+  const max = Math.max(0, ...pumps.map(e => e.total || 0));
+  return {
+    type: 'bar',
+    plugins: [pprBarLabels],
+    data: {
+      labels: pumps.map(e => pprShortLabel(e, data)),
+      datasets: [{
+        data: pumps.map(e => e.total),
+        backgroundColor: SCADA_COLORS[0] + (print ? 'cc' : '99'),
+        borderColor: SCADA_COLORS[0], borderWidth: 1, borderRadius: 4, maxBarThickness: 26,
+      }],
+    },
+    options: {
+      indexAxis: 'y', responsive: !print, maintainAspectRatio: false, animation: false,
+      devicePixelRatio: print ? 2 : undefined,
+      plugins: {
+        legend: { display: false },
+        pprBarLabels: { color: c.text },
+        tooltip: { backgroundColor: c.surface, titleColor: c.text, bodyColor: c.text, borderColor: c.grid, borderWidth: 1,
+                   callbacks: { label: ctx => `${pprFmt(ctx.parsed.x, 'hrs')} hrs` } },
+      },
+      scales: {
+        x: { beginAtZero: true, suggestedMax: max ? max * 1.18 : 24, ticks: { color: c.dim }, grid: { color: c.grid },
+             title: { display: true, text: 'Hours run', color: c.dim } },
+        y: { ticks: { color: c.text }, grid: { display: false } },
+      },
+    },
+  };
+}
+
+function pprEquipConfig(data, keys, c, print = false) {
+  const items = keys.map(k => data.equipment.find(e => e.key === k)).filter(Boolean);
+  const hasHrs = items.some(e => e.unit === 'hrs'), hasKwh = items.some(e => e.unit === 'kWh');
+  const axisFor = e => (e.unit === 'kWh' && hasHrs ? 'yKwh' : 'y');
+  // Never draw past now: the current month's window runs to the 1st of next.
+  const xMax = Math.min(pprDate(data.range.end).getTime(), Date.now());
+  return {
+    type: 'line',
+    data: {
+      datasets: items.map((e, i) => {
+        const color = SCADA_COLORS[i % SCADA_COLORS.length];
+        return {
+          label: `${pprShortLabel(e, data)} (${e.unit === 'kWh' ? 'kWh' : 'h'}/day)`,
+          data: e.series.map(p => ({ x: pprDate(p.x).getTime(), y: p.y })),
+          yAxisID: axisFor(e),
+          borderColor: color, backgroundColor: color + '22',
+          borderWidth: 1.8, pointRadius: 0, tension: 0, fill: false, spanGaps: false,
+        };
+      }),
+    },
+    options: {
+      responsive: !print, maintainAspectRatio: false, animation: false,
+      devicePixelRatio: print ? 2 : undefined,
+      interaction: { mode: 'nearest', axis: 'x', intersect: false },
+      plugins: {
+        legend: { display: true, labels: { color: c.text, boxWidth: 14, usePointStyle: true } },
+        tooltip: { backgroundColor: c.surface, titleColor: c.text, bodyColor: c.text, borderColor: c.grid, borderWidth: 1,
+                   callbacks: { label: ctx => `${ctx.dataset.label}: ${Number(ctx.parsed.y).toLocaleString('en-US', { maximumFractionDigits: 1 })}` } },
+      },
+      scales: {
+        x: { type: 'time', min: pprDate(data.range.start).getTime(), max: xMax,
+             time: { tooltipFormat: 'MMM d, h:mm a' },
+             ticks: { color: c.dim, maxTicksLimit: 8, autoSkip: true }, grid: { color: c.grid } },
+        y: { beginAtZero: true, ticks: { color: c.dim }, grid: { color: c.grid },
+             title: { display: true, text: hasHrs ? 'Hours per day' : 'kWh per day', color: c.dim } },
+        ...(hasHrs && hasKwh ? { yKwh: { beginAtZero: true, position: 'right', ticks: { color: c.dim },
+             grid: { display: false }, title: { display: true, text: 'kWh per day', color: c.dim } } } : {}),
+      },
+    },
+  };
+}
+
+function pprDrawEquip(data) {
+  const keys = pprSelected(data);
+  const wrap = document.querySelector('.ppr-equip-wrap');
+  if (!wrap) return;
+  wrap.classList.toggle('hidden', !keys.length);
+  el('ppr-equip-empty').classList.toggle('hidden', keys.length > 0);
+  if (_pprEquipChart) { _pprEquipChart.destroy(); _pprEquipChart = null; }
+  if (keys.length) _pprEquipChart = new window.Chart(el('ppr-equip').getContext('2d'), pprEquipConfig(data, keys, scadaThemeColors()));
+}
+
+// ── Export ──
+function pprExportName(data) {
+  const plant = String(data.site_name || 'Plant').replace('Site', 'Plant').replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '');
+  const r = data.range;
+  const span = r.mode === 'month' ? r.month
+    : r.mode === 'custom' ? `${pprState.from}_to_${pprState.to}`
+    : `${r.mode === '24h' ? '24h' : '7d'}_${r.end.slice(0, 10)}`;
+  return `PumpingPlant_${plant}_${span}`;
+}
+
+el('ppr-export-btn').addEventListener('click', () => {
+  if (!lastPPReport?.equipment?.length) return showToast('No report data to export', 'error');
+  exportContext = 'pp-report';
+  el('export-modal-subtitle').textContent =
+    `Pumping Plant — ${String(lastPPReport.site_name).replace('Site', 'Plant')} — ${pprRangeLabel(lastPPReport)}`;
+  el('export-modal').classList.remove('hidden');
+});
+
+function pprCsv(data) {
+  const csvEsc = v => (v == null || v === '') ? '' : /[,"\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v);
+  const ts = t => (t ? t.slice(0, 16).replace('T', ' ') : '');
+  const lines = [
+    csvEsc(`Pumping Plant Report — ${String(data.site_name).replace('Site', 'Plant')}`),
+    csvEsc(pprRangeLabel(data)),
+    `Total pump hours,${data.pump_hours_total ?? ''}`,
+    '',
+    'Equipment,Unit,Start,Start at,End,End at,Used,Avg / day,Readings in range',
+    ...data.equipment.map(e => [
+      e.label, e.unit, e.start_value ?? '', ts(e.start_at) + (e.start_est ? ' (est.)' : ''),
+      e.end_value ?? '', ts(e.end_at) + (e.end_est ? ' (est.)' : ''),
+      e.total ?? '', e.avg_per_day ?? '', e.readings,
+    ].map(csvEsc).join(',')),
+  ];
+  return lines.join('\r\n');
+}
+
+// Print-coloured copies of the two graphs, as images for the PDF.
+function pprChartImage(config, width, height) {
+  const canvas = document.createElement('canvas');
+  canvas.width = width; canvas.height = height;
+  canvas.style.cssText = `position:fixed;left:-10000px;top:0;width:${width}px;height:${height}px`;
+  document.body.appendChild(canvas);
+  try {
+    const chart = new window.Chart(canvas.getContext('2d'), config);
+    const url = chart.toBase64Image('image/png', 1);
+    chart.destroy();
+    return url;
+  } finally { canvas.remove(); }
+}
+
+const PPR_PDF_CSS = `
+  .pdf-root, .pdf-root * { color: #000 !important; }
+  .pp-title { font-size: 14pt; font-weight: 700; text-align: center; margin: 0 0 2px; }
+  .pp-sub { font-size: 9pt; text-align: center; margin: 0 0 8px; }
+  .pp-h { font-size: 10pt; font-weight: 700; margin: 10px 0 4px; border-bottom: 1px solid #000; padding-bottom: 2px; }
+  .pp-total { font-size: 11pt; margin: 0 0 4px; }
+  .pp-img { display: block; width: 100%; height: auto; }
+  .pp-table { width: 100%; border-collapse: collapse; font-size: 8.5pt; }
+  .pp-table th { font-size: 7.5pt; font-weight: 700; text-transform: uppercase; text-align: left; padding: 2px 4px; border-bottom: 1.5px solid #000; }
+  .pp-table td { padding: 2px 4px; border-bottom: 0.5px solid #ccc; }
+  .pp-table .num { text-align: right; white-space: nowrap; }
+  .pp-at { font-size: 7pt; }
+  .pp-note { font-size: 7.5pt; margin-top: 4px; }
+  tr { page-break-inside: avoid; }`;
+
+async function buildPPReportPdfHtml(data) {
+  await loadScadaVendor();
+  const print = { text: '#000', dim: '#333', grid: '#ddd', surface: '#fff' };
+  const pumps = data.equipment.filter(e => e.type === 'pump');
+  const keys = pprSelected(data);
+  const glance = pumps.some(e => e.total != null)
+    ? pprChartImage(pprGlanceConfig(data, print, true), 760, Math.max(90, 34 * pumps.length + 30)) : '';
+  const equip = keys.length ? pprChartImage(pprEquipConfig(data, keys, print, true), 760, 300) : '';
+  const cell = (v, at, est, unit) => v == null ? '<td class="num">—</td>'
+    : `<td class="num">${est ? '≈' : ''}${pprFmt(v, unit)}<div class="pp-at">${escHtml(pprFmtTs(at))}</div></td>`;
+  return `
+    <div class="pp-title">Pumping Plant Report — ${escHtml(String(data.site_name).replace('Site', 'Plant'))}</div>
+    <div class="pp-sub">${escHtml(pprRangeLabel(data))}</div>
+    <div class="pp-h">Pump Hours</div>
+    <div class="pp-total">Total: <strong>${pprFmt(data.pump_hours_total, 'hrs')} hrs</strong></div>
+    ${glance ? `<img class="pp-img" src="${glance}" alt="">` : '<div class="pp-note">No pump readings found.</div>'}
+    ${equip ? `<div class="pp-h">Use per Day</div><img class="pp-img" src="${equip}" alt="">` : ''}
+    <div class="pp-h">Meter Usage</div>
+    <table class="pp-table">
+      <thead><tr><th>Equipment</th><th class="num">Start</th><th class="num">End</th><th class="num">Used</th><th class="num">Avg / Day</th></tr></thead>
+      <tbody>${data.equipment.map(e => `<tr>
+        <td>${escHtml(e.label)}</td>
+        ${cell(e.start_value, e.start_at, e.start_est, e.unit)}
+        ${cell(e.end_value, e.end_at, e.end_est, e.unit)}
+        <td class="num"><strong>${pprFmt(e.total, e.unit)}</strong>${e.total != null ? ' ' + e.unit : ''}</td>
+        <td class="num">${e.avg_per_day == null ? '—' : Number(e.avg_per_day).toLocaleString('en-US', { maximumFractionDigits: e.unit === 'kWh' ? 0 : 1 })}</td>
+      </tr>`).join('')}</tbody>
+    </table>
+    <div class="pp-note">≈ = the meter at the edge of the range, estimated between the readings either side.
+      Use per day is the average between consecutive readings.</div>`;
+}
+
 // ── Canal Readings — Daily / Monthly tabs ─────────────────────────────────────
 function canalReportTab() {
   return el('canal-report-seg').querySelector('.seg-btn.active')?.dataset.val || 'daily';
@@ -12539,6 +12987,12 @@ el('export-csv-btn').addEventListener('click', async () => {
     return;
   }
 
+  if (exportContext === 'pp-report') {
+    if (!lastPPReport) return;
+    await shareFile(new Blob([pprCsv(lastPPReport)], { type: 'text/csv' }), `${pprExportName(lastPPReport)}.csv`, 'Pumping Plant');
+    return;
+  }
+
   if (exportContext === 'canal-monthly') {
     if (!lastCanalMonthly) return;
     await shareFile(new Blob([canalMonthlyCsv(lastCanalMonthly)], { type: 'text/csv' }),
@@ -12637,6 +13091,15 @@ el('export-xlsx-btn').addEventListener('click', async () => {
       const res = await fetch(`/api/reports/vehicle-service/export?token=${token}`);
       if (!res.ok) throw new Error('Export failed');
       await shareFile(await res.blob(), 'LastService.xlsx', 'Last Service');
+      return;
+    }
+    if (exportContext === 'pp-report') {
+      const data = lastPPReport;
+      if (!data) throw new Error('No report data to export');
+      const { token } = await api('POST', '/api/reports/download-token', {});
+      const res = await fetch(`/api/reports/pumping-plant/export?${pprQuery()}&token=${token}`);
+      if (!res.ok) throw new Error('Export failed');
+      await shareFile(await res.blob(), `${pprExportName(data)}.xlsx`, 'Pumping Plant');
       return;
     }
     if (exportContext === 'canal-monthly') {
@@ -12934,6 +13397,9 @@ el('export-pdf-btn').addEventListener('click', async () => {
       const card = el('report-output').querySelector('.report-card');
       if (!card) throw new Error('No report to export');
       await sharePdfFromHtml(card.outerHTML, REPORT_PDF_CSS, 'LastService', 'Last Service');
+    } else if (exportContext === 'pp-report') {
+      if (!lastPPReport) throw new Error('No report to export');
+      await sharePdfFromHtml(await buildPPReportPdfHtml(lastPPReport), PPR_PDF_CSS, pprExportName(lastPPReport), 'Pumping Plant');
     } else if (exportContext === 'canal-monthly') {
       if (!lastCanalMonthly) throw new Error('No report to export');
       await sharePdfFromHtml(buildCanalMonthlyPdfHtml(lastCanalMonthly), CANAL_MONTHLY_PDF_CSS,
