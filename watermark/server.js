@@ -4450,36 +4450,37 @@ const ppMs  = ts => Date.parse(ts + 'Z');
 const ppIso = ms => new Date(ms).toISOString().slice(0, 19);
 
 async function ppSiteEquipment(siteId) {
-  const { rows: site } = await pool.query('SELECT site_id, site_name FROM sites WHERE site_id = $1', [siteId]);
+  const { rows: site } = await pool.query('SELECT site_id, site_name FROM sites WHERE site_id::text = $1', [siteId]);
   if (!site.length) return null;
-  // Every column is cast explicitly: UNION needs one type per column, so a
-  // numeric pge_meters.meter_number (or monitor_number, pump_letter...) beside
-  // the text columns fails the whole report with "UNION types ... cannot be
-  // matched". Casting keeps it independent of how those columns are typed.
+  // Every column is cast to text. UNION needs one type per column, so a numeric
+  // pge_meters.meter_number beside the text columns failed the whole report
+  // ("UNION types ... cannot be matched"); and ids can't be assumed numeric
+  // either — live building ids are text like "1B". Ids are handled as strings
+  // from here on and matched with ::text, whatever their column type.
   const { rows } = await pool.query(`
-    SELECT 'pump' AS type, pp.position_id::int AS id, b.building_id::int AS building_id,
+    SELECT 'pump' AS type, pp.position_id::text AS id, b.building_id::text AS building_id,
            b.building_letter::text AS building_letter, b.building_name::text AS building_name,
            pp.pump_letter::text AS name, NULL::text AS extra
     FROM pump_positions pp JOIN buildings b ON b.building_id = pp.building_id
-    WHERE b.site_id = $1 AND COALESCE(pp.status::text, '') !~* 'spare'
+    WHERE b.site_id::text = $1 AND COALESCE(pp.status::text, '') !~* 'spare'
     UNION ALL
-    SELECT 'compressor', ac.compressor_id::int, b.building_id::int, b.building_letter::text, b.building_name::text,
+    SELECT 'compressor', ac.compressor_id::text, b.building_id::text, b.building_letter::text, b.building_name::text,
            NULL::text, NULL::text
-    FROM air_compressors ac JOIN buildings b ON b.building_id = ac.building_id WHERE b.site_id = $1
+    FROM air_compressors ac JOIN buildings b ON b.building_id = ac.building_id WHERE b.site_id::text = $1
     UNION ALL
-    SELECT 'pge', pm.pge_meter_id::int, b.building_id::int, b.building_letter::text, b.building_name::text,
+    SELECT 'pge', pm.pge_meter_id::text, b.building_id::text, b.building_letter::text, b.building_name::text,
            pm.meter_name::text, pm.meter_number::text
-    FROM pge_meters pm JOIN buildings b ON b.building_id = pm.building_id WHERE b.site_id = $1
+    FROM pge_meters pm JOIN buildings b ON b.building_id = pm.building_id WHERE b.site_id::text = $1
     UNION ALL
-    SELECT 'monitor', pw.monitor_id::int, b.building_id::int, b.building_letter::text, b.building_name::text,
+    SELECT 'monitor', pw.monitor_id::text, b.building_id::text, b.building_letter::text, b.building_name::text,
            pw.monitor_number::text, NULL::text
-    FROM power_monitors pw JOIN buildings b ON b.building_id = pw.building_id WHERE b.site_id = $1
+    FROM power_monitors pw JOIN buildings b ON b.building_id = pw.building_id WHERE b.site_id::text = $1
   `, [siteId]);
   const typeOrder = { pump: 0, compressor: 1, pge: 2, monitor: 3 };
   rows.sort((a, b) => String(a.building_letter || '').localeCompare(String(b.building_letter || ''))
     || typeOrder[a.type] - typeOrder[b.type]
     || String(a.name || '').localeCompare(String(b.name || ''), undefined, { numeric: true })
-    || a.id - b.id);
+    || String(a.id).localeCompare(String(b.id), undefined, { numeric: true }));
   // Several compressors in one building are numbered; one is just "Air Compressor".
   const compCount = {};
   rows.forEach(r => { if (r.type === 'compressor') compCount[r.building_id] = (compCount[r.building_id] || 0) + 1; });
@@ -4512,7 +4513,7 @@ async function ppWindow(q, equipment) {
       if (!ids.length) continue;
       const { rows } = await pool.query(
         `SELECT to_char(MAX(reading_date + COALESCE(reading_time, TIME '00:00')), 'YYYY-MM-DD"T"HH24:MI:SS') AS ts
-         FROM ${m.table} WHERE ${m.fk} = ANY($1::int[]) AND ${m.col} IS NOT NULL`, [ids]);
+         FROM ${m.table} WHERE ${m.fk}::text = ANY($1::text[]) AND ${m.col} IS NOT NULL`, [ids]);
       if (rows[0].ts && (!latest || rows[0].ts > latest)) latest = rows[0].ts;
     }
     const end = latest && latest < now ? latest : now;
@@ -4595,9 +4596,9 @@ async function buildPumpingPlantReport(siteId, q) {
     // first after it so the meter can be interpolated right to the edges.
     const { rows } = await pool.query(`
       WITH r AS (
-        SELECT ${m.fk} AS id, reading_id, (reading_date + COALESCE(reading_time, TIME '00:00')) AS ts,
+        SELECT ${m.fk}::text AS id, reading_id, (reading_date + COALESCE(reading_time, TIME '00:00')) AS ts,
                ${m.col}::float8 AS v
-        FROM ${m.table} WHERE ${m.fk} = ANY($1::int[]) AND ${m.col} IS NOT NULL
+        FROM ${m.table} WHERE ${m.fk}::text = ANY($1::text[]) AND ${m.col} IS NOT NULL
       )
       SELECT id, to_char(ts, 'YYYY-MM-DD"T"HH24:MI:SS') AS ts, v FROM (
         (SELECT id, reading_id, ts, v FROM r WHERE ts > $2::timestamp AND ts < $3::timestamp)
@@ -4643,8 +4644,9 @@ async function buildPumpingPlantReport(siteId, q) {
 }
 
 app.get('/api/reports/pumping-plant', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
-  const siteId = parseInt(req.query.site_id, 10);
-  if (!Number.isInteger(siteId) || siteId <= 0) return res.status(400).json({ error: 'site_id required' });
+  // Matched as text (see ppSiteEquipment), so only the shape is checked here.
+  const siteId = String(req.query.site_id ?? '').trim();
+  if (!/^[A-Za-z0-9_-]{1,40}$/.test(siteId)) return res.status(400).json({ error: 'site_id required' });
   try {
     const r = await buildPumpingPlantReport(siteId, req.query);
     if (r.notFound) return res.status(404).json({ error: 'Plant not found' });
@@ -4664,8 +4666,9 @@ app.get('/api/reports/pumping-plant/export', async (req, res) => {
     if (!sessionUser) return res.status(401).json({ error: 'Unauthorized' });
     if (!SUPERVISOR_ROLES.includes(sessionUser.role)) return res.status(403).json({ error: 'Forbidden' });
   }
-  const siteId = parseInt(req.query.site_id, 10);
-  if (!Number.isInteger(siteId) || siteId <= 0) return res.status(400).json({ error: 'site_id required' });
+  // Matched as text (see ppSiteEquipment), so only the shape is checked here.
+  const siteId = String(req.query.site_id ?? '').trim();
+  if (!/^[A-Za-z0-9_-]{1,40}$/.test(siteId)) return res.status(400).json({ error: 'site_id required' });
   try {
     const r = await buildPumpingPlantReport(siteId, req.query);
     if (r.notFound) return res.status(404).json({ error: 'Plant not found' });
