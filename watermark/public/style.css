@@ -1498,6 +1498,9 @@ input[type="date"].ctrl-input { min-height: 44px; }
 .canal-adj-btn:hover { border-color: var(--accent); }
 .canal-adj-btn.is-override, .canal-adj-override { color: var(--yellow); font-weight: 700; }
 .canal-adjust-meta { font-size: 0.85rem; color: var(--text-dim); margin-bottom: 12px; line-height: 1.5; }
+.cm-est { color: var(--yellow); font-weight: 700; margin-right: 2px; }
+.cm-pending { color: var(--text-dim); }
+.cm-pending-note { font-weight: 400; font-size: 0.75rem; color: var(--text-dim); }
 .canal-adjust-meta strong { color: var(--text); }
 
 /* Monthly well grid — wide table with a sticky day column + grouped area headers */

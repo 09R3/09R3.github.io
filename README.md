@@ -354,30 +354,42 @@ CVC turnout sheets: pick a month and tick any number of turnouts (All / None
 buttons; the selection is remembered on that device).
 
 One row per day, from the last day of the previous month (the starting point)
-to the end of the month — or to today for the current month:
+to the end of the month — or to today for the current month. The report answers
+how much water went through each turnout **midnight to midnight**:
 
 | Column | Source |
 |--------|--------|
-| Date / Time Value | The day, and the time of the reading used for it (24-hour, e.g. `0948`) |
-| Observed Reading | `totalizer_reading_af` |
-| Adjusted Reading | `adjusted_af` if a supervisor set one, otherwise the observed reading |
-| AF / Day | Adjusted reading minus the previous day's |
+| Date / Time Value | The day, and the time of the reading shown for it (24-hour, e.g. `0948`) |
+| Observed Reading | `totalizer_reading_af`, or a supervisor's correction (`adjusted_af`) |
+| Adjusted Midnight Reading | The meter at the midnight that **ends** the day, from the readings either side |
+| AF / Day | That midnight minus the previous one: the water used that day |
 | CFS / Day | AF / Day ÷ 1.9835 (the same volume in cfs-days) |
 | Flow Rate | `instantaneous_flow_cfs` |
 | Note | Every note entered that day |
 
-- **No reading that day:** the previous reading, adjusted reading and flow are
-  repeated and the change is zero. These rows are greyed.
-- **Several readings that day:** the last one with a totalizer is used; flow is
-  the last flow entered; all of the day's notes are shown.
-- **Totals** sum CFS / Day and AF / Day **without the starting row**, whose
-  change belongs to the previous month. AF total = last adjusted reading minus
-  the starting one.
-- **Adjusting:** supervisors, admins and water planners tap an Adjusted Reading
-  to correct it (e.g. a mis-keyed or reset totalizer). Only days with a reading
-  can be adjusted. The value is stored in `readings_canal.adjusted_af` — the
-  operator's observed reading is never changed — and "Use Observed" clears it.
-  `PUT /api/canal-readings/:id/adjusted` enforces the role.
+- **Midnight reading:** the totalizer is a straight line between readings. 24 AF
+  at 10 AM and 48 AF at 10 AM the next day gives 24 + 24 × 14⁄24 = **38 AF** at
+  the midnight in between. Where two consecutive days both have readings this
+  matches the Adjusted Reading on the CVC turnout sheets exactly (the sheets show
+  it on the following day's row).
+- **Turned on or off between readings:** if the earlier reading had 0 flow, the
+  turnout was off, so the meter stays flat until just before the later reading —
+  as long before as the later reading's flow takes to pass the water gained —
+  instead of spreading it back over the days it was off. The reverse applies when
+  the later reading has 0 flow.
+- **No reading that day:** the previous reading repeats in the Observed column
+  (greyed). Gaps are expected only while a turnout is off, when the meter doesn't
+  move and the day is 0 AF. If the meter did move across a day with no reading,
+  the day is marked ≈ ("estimated").
+- **After the last reading:** held flat if the last flow entered was 0; otherwise
+  the midnight shows — until the next reading comes in (and the month's total
+  notes how many days are waiting).
+- **Totals** sum CFS / Day and AF / Day **without the starting row**.
+- **Correcting:** supervisors, admins and water planners tap an Observed Reading
+  to correct a mis-keyed meter reading. The correction is stored in
+  `readings_canal.adjusted_af`, the operator's entry is kept (and shown in the
+  Note on export), the midnights either side are recalculated, and "Use
+  Original" removes it. `PUT /api/canal-readings/:id/adjusted` enforces the role.
 - **Export:** CSV (one section per turnout), Excel (one sheet per turnout) and
   PDF (one page per turnout).
 

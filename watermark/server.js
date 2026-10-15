@@ -4704,19 +4704,34 @@ app.get('/api/reports/pumping-plant/export', async (req, res) => {
 // ── Canal Readings — Monthly ────────────────────────────────────────────────
 // One row per day for each selected turnout / turn-in, from the last day of the
 // previous month (the starting point) to the end of the month, or to today for
-// the current month. Laid out like the monthly CVC turnout sheets.
+// the current month. Laid out like the monthly CVC turnout sheets, and built to
+// answer one question: how much water went through each turnout midnight to
+// midnight.
 //
-//  - A day with no reading repeats the previous one: observed, adjusted and
-//    flow carry forward and the day's change is zero.
-//  - A day with readings uses its LAST reading that has a totalizer (or an
-//    adjustment); flow is the last flow entered that day; notes are all of the
-//    day's notes.
-//  - Adjusted Reading is readings_canal.adjusted_af when a supervisor has set
-//    one, otherwise the observed reading. AF / Day is the change in adjusted
-//    reading since the previous day's; CFS / Day is the same volume in
-//    cfs-days (AF / 1.9835), as on the sheets.
-//  - Totals leave out the starting row: its change belongs to the previous
-//    month, and counting it would put that day in two months' totals.
+//  - The totalizer is taken as a straight line between consecutive readings.
+//    A day's Adjusted Midnight Reading is that line read at the midnight that
+//    ENDS the day: 24 AF at 10 AM and 48 AF at 10 AM the next day gives
+//    24 + 24 x 14/24 = 38 AF at midnight.
+//  - AF / Day is that midnight minus the previous one, i.e. the water used on
+//    that day. CFS / Day is the same volume in cfs-days (AF / 1.9835).
+//  - A day with no reading repeats the previous reading in the Observed column.
+//    Gaps happen when a turnout is off, so the readings either side match and
+//    the line is flat: 0 AF that day. If the meter DID move across a day with
+//    no reading, the water is spread along the line and the day is flagged
+//    "estimated" so a supervisor can check it.
+//  - Turning a turnout on or off between readings: if the earlier reading had
+//    0 flow, the water is placed just before the later reading (the time the
+//    later reading's flow takes to pass it), not spread back over the days it
+//    was off; the reverse when the later reading has 0 flow.
+//  - After the last reading the line is only carried on flat when the last
+//    flow entered was 0; otherwise those midnights wait for the next reading.
+//    A midnight still in the future is never filled in.
+//  - A supervisor can correct a mis-keyed reading. The correction is stored in
+//    readings_canal.adjusted_af, the operator's entry is kept, and the midnight
+//    values either side are worked out from the corrected figure.
+//  - Several readings on one day all shape the line; the row shows the last one
+//    with a totalizer, the last flow entered and all of the day's notes.
+//  - Totals leave out the starting row: its day belongs to the previous month.
 const AF_PER_CFS_DAY = 86400 / 43560;   // 1 cfs flowing for a day = 1.9835 AF
 
 function canalMonthRange(month) {
@@ -4740,79 +4755,157 @@ function parseIdList(v) {
 
 async function buildCanalMonthly(range, ids) {
   const { rows: structs } = await pool.query(`
-    SELECT cs.structure_id, cs.structure_name,
-      (SELECT r.totalizer_reading_af FROM readings_canal r
-        WHERE r.structure_id = cs.structure_id AND r.reading_date < $2
-          AND r.totalizer_reading_af IS NOT NULL
-        ORDER BY r.reading_date DESC, r.reading_time DESC NULLS LAST, r.reading_id DESC
-        LIMIT 1) AS base_obs,
-      (SELECT COALESCE(r.adjusted_af, r.totalizer_reading_af) FROM readings_canal r
-        WHERE r.structure_id = cs.structure_id AND r.reading_date < $2
-          AND (r.adjusted_af IS NOT NULL OR r.totalizer_reading_af IS NOT NULL)
-        ORDER BY r.reading_date DESC, r.reading_time DESC NULLS LAST, r.reading_id DESC
-        LIMIT 1) AS base_adj,
-      (SELECT r.instantaneous_flow_cfs FROM readings_canal r
-        WHERE r.structure_id = cs.structure_id AND r.reading_date < $2
-          AND r.instantaneous_flow_cfs IS NOT NULL
-        ORDER BY r.reading_date DESC, r.reading_time DESC NULLS LAST, r.reading_id DESC
-        LIMIT 1) AS base_flow
-    FROM canal_structures cs
-    WHERE cs.structure_id = ANY($1::int[])
-    ORDER BY cs.sort_order, cs.structure_id
-  `, [ids, range.start]);
-
-  const { rows: readings } = range.end < range.start ? { rows: [] } : await pool.query(`
-    SELECT reading_id, structure_id,
-           to_char(reading_date, 'YYYY-MM-DD') AS d,
-           to_char(reading_time, 'HH24MI')     AS t,
-           totalizer_reading_af, adjusted_af, instantaneous_flow_cfs, notes
-    FROM readings_canal
-    WHERE structure_id = ANY($1::int[]) AND reading_date BETWEEN $2 AND $3
-    ORDER BY structure_id, reading_date, reading_time NULLS FIRST, reading_id
-  `, [ids, range.start, range.end]);
-
-  const days = [];
-  for (let d = new Date(range.start + 'T00:00:00Z'); d.toISOString().slice(0, 10) <= range.end;
-       d.setUTCDate(d.getUTCDate() + 1)) {
-    days.push(d.toISOString().slice(0, 10));
+    SELECT structure_id, structure_name FROM canal_structures
+    WHERE structure_id = ANY($1::int[])
+    ORDER BY sort_order, structure_id
+  `, [ids]);
+  if (range.end < range.start) {
+    return structs.map(s => ({ structure_id: s.structure_id, structure_name: s.structure_name,
+                               rows: [], totals: { af: 0, cfs: 0 }, pending: 0 }));
   }
 
+  const dayMs = 86400000;
+  const nextDay = d => ppIso(ppMs(d + 'T00:00:00') + dayMs).slice(0, 10);
+  const days = [];
+  for (let d = range.start; d <= range.end; d = nextDay(d)) days.push(d);
+  // Midnights needed: the one opening the starting row through the one closing
+  // the last row. Readings are fetched from the last one at or before the first
+  // midnight to the first one at or after the last, so every midnight in between
+  // has a reading on each side when one exists.
+  const openTs  = `${range.start}T00:00:00`;
+  const closeTs = `${nextDay(range.end)}T00:00:00`;
+  const { rows: [{ now }] } = await pool.query(`SELECT to_char(LOCALTIMESTAMP, 'YYYY-MM-DD"T"HH24:MI:SS') AS now`);
+  const nowMs = ppMs(now);
+
+  const { rows: readings } = await pool.query(`
+    WITH r AS (
+      SELECT reading_id, structure_id, reading_date, reading_time,
+             (reading_date + COALESCE(reading_time, TIME '00:00')) AS ts,
+             totalizer_reading_af, adjusted_af, instantaneous_flow_cfs, notes
+      FROM readings_canal WHERE structure_id = ANY($1::int[])
+    )
+    SELECT DISTINCT ON (structure_id, ts, reading_id)
+           reading_id, structure_id,
+           to_char(reading_date, 'YYYY-MM-DD') AS d,
+           to_char(reading_time, 'HH24MI')     AS t,
+           to_char(ts, 'YYYY-MM-DD"T"HH24:MI:SS') AS ts,
+           totalizer_reading_af, adjusted_af, instantaneous_flow_cfs, notes
+    FROM (
+      (SELECT * FROM r WHERE ts > $2::timestamp AND ts < $3::timestamp)
+      UNION ALL
+      (SELECT DISTINCT ON (structure_id) * FROM r
+        WHERE ts <= $2::timestamp AND (totalizer_reading_af IS NOT NULL OR adjusted_af IS NOT NULL)
+        ORDER BY structure_id, ts DESC, reading_id DESC)
+      UNION ALL
+      (SELECT DISTINCT ON (structure_id) * FROM r
+        WHERE ts <= $2::timestamp AND instantaneous_flow_cfs IS NOT NULL
+        ORDER BY structure_id, ts DESC, reading_id DESC)
+      UNION ALL
+      (SELECT DISTINCT ON (structure_id) * FROM r
+        WHERE ts >= $3::timestamp AND (totalizer_reading_af IS NOT NULL OR adjusted_af IS NOT NULL)
+        ORDER BY structure_id, ts ASC, reading_id ASC)
+    ) x
+    ORDER BY structure_id, ts, reading_id
+  `, [ids, openTs.replace('T', ' '), closeTs.replace('T', ' ')]);
+
   const num = v => (v == null ? null : Number(v));
-  const byStructDay = new Map();
+  const byStruct = new Map();
   for (const r of readings) {
-    const k = `${r.structure_id}|${r.d}`;
-    if (!byStructDay.has(k)) byStructDay.set(k, []);
-    byStructDay.get(k).push(r);
+    if (!byStruct.has(r.structure_id)) byStruct.set(r.structure_id, []);
+    byStruct.get(r.structure_id).push({ ...r, ms: ppMs(r.ts),
+      eff: r.adjusted_af != null ? num(r.adjusted_af) : num(r.totalizer_reading_af) });
   }
 
   return structs.map(s => {
-    let obs = num(s.base_obs), adj = num(s.base_adj), flow = num(s.base_flow);
+    const all = byStruct.get(s.structure_id) || [];
+    // The line: one point per timestamp (the last entered wins).
+    const pts = [];
+    for (const r of all) {
+      if (r.eff == null) continue;
+      if (pts.length && pts[pts.length - 1].t === r.ms) pts[pts.length - 1].v = r.eff;
+      else pts.push({ t: r.ms, v: r.eff });
+    }
+    const flowAt = t => {
+      let f = null;
+      for (const r of all) { if (r.ms > t) break; if (r.instantaneous_flow_cfs != null) f = num(r.instantaneous_flow_cfs); }
+      return f;
+    };
+    // Where the meter actually rose between two readings. Normally the whole
+    // gap (a straight line). But a turnout that was OFF at the earlier reading
+    // (flow 0) only started when someone turned it on, so the rise is put just
+    // before the later reading, as long as the flow entered there takes to pass
+    // that much water (or from the start of that day if no flow was entered).
+    // Likewise a turnout OFF at the later reading stopped after the earlier one.
+    // Without this, a turn-on after weeks off would be spread back over every
+    // day it was off.
+    const AF_PER_CFS_MS = AF_PER_CFS_DAY / dayMs;
+    const riseWindow = (a, b) => {
+      const dv = b.v - a.v;
+      if (!(dv > 0) || b.t <= a.t) return [a.t, b.t];
+      const fa = flowAt(a.t), fb = flowAt(b.t);
+      const offA = fa === 0, offB = fb === 0;
+      if (offA && !offB) {
+        const start = fb > 0 ? b.t - dv / (fb * AF_PER_CFS_MS) : b.t - (b.t % dayMs);
+        return [Math.min(Math.max(a.t, start), b.t), b.t];
+      }
+      if (offB && !offA && fa > 0) {
+        return [a.t, Math.max(Math.min(b.t, a.t + dv / (fa * AF_PER_CFS_MS)), a.t)];
+      }
+      return [a.t, b.t];   // running at both (or unknown): straight line
+    };
+    const M = t => {
+      if (t > nowMs || !pts.length || t < pts[0].t) return null;
+      const last = pts[pts.length - 1];
+      if (t > last.t) return flowAt(t) === 0 ? last.v : null;   // off: the meter holds
+      let i = 1;
+      while (i < pts.length && pts[i].t < t) i++;
+      if (i >= pts.length) return last.v;
+      const a = pts[i - 1], b = pts[i];
+      if (b.t === a.t) return b.v;
+      const [s0, e0] = riseWindow(a, b);
+      if (t <= s0) return a.v;
+      if (t >= e0) return b.v;
+      return a.v + (b.v - a.v) * (t - s0) / (e0 - s0);
+    };
+
+    let obs = null, obsOrig = null, flow = null;
+    for (const r of all) {   // carried values from before the starting row
+      if (r.d >= range.start) break;
+      if (r.eff != null) { obs = r.eff; obsOrig = num(r.totalizer_reading_af); }
+      if (r.instantaneous_flow_cfs != null) flow = num(r.instantaneous_flow_cfs);
+    }
+
     const rows = days.map((date, i) => {
-      const dayReadings = byStructDay.get(`${s.structure_id}|${date}`) || [];
-      const start = i === 0;
-      if (!dayReadings.length) {
-        return { date, start, carried: true, reading_id: null, time: null,
-                 observed: obs, adjusted: adj, adjusted_override: false,
-                 af: adj == null ? null : 0, cfs: adj == null ? null : 0, flow, notes: '' };
-      }
-      const withTotal = dayReadings.filter(r => r.totalizer_reading_af != null || r.adjusted_af != null);
-      const dayReading = withTotal[withTotal.length - 1] || dayReadings[dayReadings.length - 1];
-      let af = null, override = false;
-      if (withTotal.length) {
-        if (dayReading.totalizer_reading_af != null) obs = num(dayReading.totalizer_reading_af);
-        override = dayReading.adjusted_af != null;
-        const next = num(override ? dayReading.adjusted_af : dayReading.totalizer_reading_af);
-        af = adj == null ? null : Number((next - adj).toFixed(4));
-        adj = next;
-      } else if (adj != null) {
-        af = 0;
-      }
+      const dayReadings = all.filter(r => r.d === date);
+      const withTotal = dayReadings.filter(r => r.eff != null);
+      const dayReading = withTotal[withTotal.length - 1] || dayReadings[dayReadings.length - 1] || null;
+      if (withTotal.length) { obs = dayReading.eff; obsOrig = num(dayReading.totalizer_reading_af); }
       const flows = dayReadings.filter(r => r.instantaneous_flow_cfs != null);
       if (flows.length) flow = num(flows[flows.length - 1].instantaneous_flow_cfs);
-      const notes = [...new Set(dayReadings.map(r => (r.notes || '').trim()).filter(Boolean))].join('; ');
-      return { date, start, carried: false, reading_id: dayReading.reading_id, time: dayReading.t,
-               observed: obs, adjusted: adj, adjusted_override: override,
-               af, cfs: af == null ? null : af / AF_PER_CFS_DAY, flow, notes };
+
+      const open  = ppMs(date + 'T00:00:00');
+      const close = open + dayMs;
+      const midnight = M(close), prior = M(open);
+      const af = midnight != null && prior != null ? midnight - prior : null;
+      return {
+        date, start: i === 0,
+        carried: !dayReadings.length,
+        reading_id: dayReading ? dayReading.reading_id : null,
+        time: dayReading ? dayReading.t : null,
+        observed: obs,
+        corrected: !!(withTotal.length && dayReading.adjusted_af != null),
+        observed_original: withTotal.length && dayReading.adjusted_af != null ? obsOrig : null,
+        midnight,
+        af, cfs: af == null ? null : af / AF_PER_CFS_DAY,
+        // The meter moved on a day nobody read it — against the "gaps only when
+        // off" rule, so worth a look.
+        estimated: !withTotal.length && af != null && Math.abs(af) >= 0.005,
+        // This midnight comes after the last reading (or hasn't happened) and
+        // can't be worked out yet. Days before the first reading are just blank.
+        pending: midnight == null && pts.length > 0 && close > pts[pts.length - 1].t,
+        flow,
+        notes: [...new Set(dayReadings.map(r => (r.notes || '').trim()).filter(Boolean))].join('; '),
+      };
     });
     const counted = rows.filter(r => !r.start && r.af != null);
     const totals = {
@@ -4820,10 +4913,12 @@ async function buildCanalMonthly(range, ids) {
       cfs: Number(counted.reduce((t, r) => t + r.cfs, 0).toFixed(2)),
     };
     for (const r of rows) {
+      if (r.midnight != null) r.midnight = Number(r.midnight.toFixed(2));
       if (r.af  != null) r.af  = Number(r.af.toFixed(2));
       if (r.cfs != null) r.cfs = Number(r.cfs.toFixed(2));
     }
-    return { structure_id: s.structure_id, structure_name: s.structure_name, rows, totals };
+    return { structure_id: s.structure_id, structure_name: s.structure_name, rows, totals,
+             pending: rows.filter(r => !r.start && r.af == null && r.pending).length };
   });
 }
 
@@ -4857,8 +4952,9 @@ app.get('/api/reports/canal/monthly', requireAuth, requireRole(...SUPERVISOR_ROL
   } catch (err) { handleErr(res, err); }
 });
 
-// Set or clear a supervisor's adjusted reading. Only a day that has a reading
-// can be adjusted, so this always targets an existing readings_canal row.
+// Set or clear a supervisor's correction to a reading (readings_canal.adjusted_af).
+// The operator's totalizer_reading_af is never changed; the Monthly report uses
+// the correction in its place. Always targets an existing reading.
 app.put('/api/canal-readings/:id/adjusted', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Invalid reading' });
@@ -4875,6 +4971,18 @@ app.put('/api/canal-readings/:id/adjusted', requireAuth, requireRole(...SUPERVIS
     res.json({ reading_id: id, adjusted_af: value });
   } catch (err) { handleErr(res, err); }
 });
+
+// The Note column in exports: the operator's notes plus what the report itself
+// needs to say about the row. Mirrored by canalMonthlyRowNote() in app.js.
+function canalMonthlyRowNote(r) {
+  return [
+    r.start ? 'Starting point (not in totals)' : '',
+    r.corrected ? `Reading corrected from ${r.observed_original ?? 'blank'}` : '',
+    r.estimated ? 'Estimated: meter moved with no reading' : '',
+    !r.start && r.pending ? 'Waiting for the next reading' : '',
+    r.notes,
+  ].filter(Boolean).join(' - ');
+}
 
 // Excel: one sheet per turnout / turn-in, laid out like the monthly sheets.
 app.get('/api/reports/canal/monthly/export', async (req, res) => {
@@ -4907,21 +5015,20 @@ app.get('/api/reports/canal/monthly/export', async (req, res) => {
     for (const s of structures) {
       const data = [
         [s.structure_name],
-        ['Date', 'Time Value', 'Observed Reading', 'Adjusted Reading', 'CFS / Day', 'AF / Day', 'Flow Rate', 'Note'],
+        ['Date', 'Time Value', 'Observed Reading', 'Adjusted Midnight Reading', 'CFS / Day', 'AF / Day', 'Flow Rate', 'Note'],
         ...s.rows.map(r => [
-          r.date, r.time || '', r.observed ?? '', r.adjusted ?? '',
-          r.cfs ?? '', r.af ?? '', r.flow ?? '',
-          [r.start ? 'Starting point (not in totals)' : '', r.notes].filter(Boolean).join(' - '),
+          r.date, r.time || '', r.observed ?? '', r.midnight ?? '',
+          r.cfs ?? '', r.af ?? '', r.flow ?? '', canalMonthlyRowNote(r),
         ]),
         ['', '', '', 'Total', s.totals.cfs, s.totals.af, '', ''],
       ];
       const ws = XLSX.utils.aoa_to_sheet(data);
       ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 7 } }];
-      ws['!cols'] = [{ wch: 12 }, { wch: 11 }, { wch: 17 }, { wch: 17 },
-                     { wch: 11 }, { wch: 11 }, { wch: 10 }, { wch: 40 }];
+      ws['!cols'] = [{ wch: 12 }, { wch: 11 }, { wch: 17 }, { wch: 25 },
+                     { wch: 11 }, { wch: 11 }, { wch: 10 }, { wch: 48 }];
       // Two decimals for the computed columns, as on the sheets.
       for (let r = 2; r < data.length; r++) {
-        for (const c of [4, 5]) {
+        for (const c of [3, 4, 5]) {
           const cell = ws[XLSX.utils.encode_cell({ r, c })];
           if (cell && cell.t === 'n') cell.z = '0.00';
         }

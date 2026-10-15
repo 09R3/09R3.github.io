@@ -12359,29 +12359,49 @@ const cmFixed   = v => (v == null ? '' : Number(v).toFixed(2));
 
 function canalMonthlyNoteHtml(data, canEdit) {
   return `<div class="canal-month-foot">
+    <strong>Adjusted Midnight Reading</strong> is the meter at the midnight that ends each day, read off a
+    straight line between the readings either side, so AF / Day is the water used that day, midnight to
+    midnight. CFS / Day is AF / Day &divide; 1.9835.
     The first row (${escHtml(fmtDate(data.start))}) is the starting point and is not in the totals.
-    Greyed rows had no reading, so the previous reading is repeated. CFS / Day is AF / Day &divide; 1.9835.
-    ${canEdit ? 'Tap an Adjusted Reading to correct it.' : ''}
+    Greyed rows had no reading. <span class="cm-est">&asymp;</span> marks a day the meter moved with no
+    reading; &mdash; means waiting for the next reading.
+    ${canEdit ? 'Tap an Observed Reading to correct it.' : ''}
   </div>`;
+}
+
+// Mirrors canalMonthlyRowNote() in server.js (the Excel Note column).
+function canalMonthlyRowNote(r) {
+  return [
+    r.start ? 'Starting point (not in totals)' : '',
+    r.corrected ? `Reading corrected from ${r.observed_original ?? 'blank'}` : '',
+    r.estimated ? 'Estimated: meter moved with no reading' : '',
+    !r.start && r.pending ? 'Waiting for the next reading' : '',
+    r.notes,
+  ].filter(Boolean).join(' - ');
 }
 
 function canalMonthlyCardHtml(s, data, canEdit) {
   const monthLabel = localDateStr(`${data.month}-01`, { month: 'long', year: 'numeric' });
   const partial = data.end < data.monthEnd;
   const body = s.rows.map(r => {
-    const adj = r.reading_id && canEdit
-      ? `<button type="button" class="canal-adj-btn${r.adjusted_override ? ' is-override' : ''}"
+    const corrTitle = r.corrected ? `Corrected by a supervisor (entered as ${cmReading(r.observed_original) || 'blank'})` : '';
+    const obs = r.reading_id && canEdit
+      ? `<button type="button" class="canal-adj-btn${r.corrected ? ' is-override' : ''}"
            data-rid="${r.reading_id}" data-sid="${s.structure_id}" data-date="${r.date}"
-           title="${r.adjusted_override ? 'Adjusted by a supervisor' : 'Tap to adjust'}">${cmReading(r.adjusted)}</button>`
-      : `<span${r.adjusted_override ? ' class="canal-adj-override" title="Adjusted by a supervisor"' : ''}>${cmReading(r.adjusted)}</span>`;
+           title="${escHtml(corrTitle || 'Tap to correct this reading')}">${cmReading(r.observed) || '&mdash;'}</button>`
+      : `<span${r.corrected ? ` class="canal-adj-override" title="${escHtml(corrTitle)}"` : ''}>${cmReading(r.observed)}</span>`;
+    const mid = r.midnight == null && !r.start && r.pending
+      ? '<span class="cm-pending" title="Waiting for the next reading">&mdash;</span>'
+      : cmReading(r.midnight);
+    const est = r.estimated ? '<span class="cm-est" title="The meter moved on a day with no reading">&asymp;</span>' : '';
     const cls = [r.carried ? 'cm-carried' : '', r.start ? 'cm-start' : ''].filter(Boolean).join(' ');
     return `<tr${cls ? ` class="${cls}"` : ''}>
       <td>${escHtml(fmtDate(r.date))}</td>
       <td>${escHtml(r.time || '')}</td>
-      <td class="report-num">${cmReading(r.observed)}</td>
-      <td class="report-num">${adj}</td>
-      <td class="report-num">${cmFixed(r.cfs)}</td>
-      <td class="report-num">${cmFixed(r.af)}</td>
+      <td class="report-num">${obs}</td>
+      <td class="report-num">${mid}</td>
+      <td class="report-num">${est}${cmFixed(r.cfs)}</td>
+      <td class="report-num">${est}${cmFixed(r.af)}</td>
       <td class="report-num">${cmReading(r.flow)}</td>
       <td class="cm-note">${escHtml(r.notes || '')}</td>
     </tr>`;
@@ -12393,13 +12413,13 @@ function canalMonthlyCardHtml(s, data, canEdit) {
       <table class="report-table canal-month-table">
         <thead><tr>
           <th>Date</th><th>Time Value</th>
-          <th class="report-num">Observed Reading</th><th class="report-num">Adjusted Reading</th>
+          <th class="report-num">Observed Reading</th><th class="report-num">Adjusted Midnight Reading</th>
           <th class="report-num">CFS / Day</th><th class="report-num">AF / Day</th>
           <th class="report-num">Flow Rate</th><th>Note</th>
         </tr></thead>
         <tbody>${body}</tbody>
         <tfoot><tr class="canal-month-total">
-          <td colspan="4">Total</td>
+          <td colspan="4">Total${s.pending ? ` <span class="cm-pending-note">(${s.pending} day${s.pending === 1 ? '' : 's'} waiting for a reading)</span>` : ''}</td>
           <td class="report-num">${cmFixed(s.totals.cfs)}</td>
           <td class="report-num">${cmFixed(s.totals.af)}</td>
           <td colspan="2"></td>
@@ -12443,7 +12463,9 @@ async function renderCanalMonthly() {
     data.structures.map(s => canalMonthlyCardHtml(s, data, canEdit)).join('');
 }
 
-// ── Adjusted reading (supervisor-level only; the endpoint enforces it too) ──
+// ── Correcting a reading (supervisor-level only; the endpoint enforces it too) ──
+// The correction is stored in readings_canal.adjusted_af and the operator's
+// entry is kept; the midnight values either side are recalculated from it.
 let _canalAdjustTarget = null;
 
 el('report-canal-monthly-output').addEventListener('click', e => {
@@ -12456,14 +12478,16 @@ function openCanalAdjust(readingId, structureId, date) {
   const r = s?.rows.find(x => x.reading_id === readingId && x.date === date);
   if (!r) return;
   _canalAdjustTarget = { readingId };
+  // What the operator entered: the original when corrected, else what's shown.
+  const entered = r.corrected ? r.observed_original : r.observed;
   el('canal-adjust-meta').innerHTML = `
     <strong>${escHtml(s.structure_name)}</strong><br>
     ${escHtml(localDateStr(date, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }))}${r.time ? ` &middot; ${escHtml(r.time)}` : ''}<br>
-    Observed reading: ${r.observed == null ? '&mdash;' : escHtml(cmReading(r.observed))}`;
+    Entered reading: ${entered == null ? '&mdash;' : escHtml(cmReading(entered))}`;
   const input = el('canal-adjust-input');
-  input.value = r.adjusted_override ? cmReading(r.adjusted) : '';
-  input.placeholder = r.observed == null ? '' : cmReading(r.observed);
-  el('canal-adjust-clear').disabled = !r.adjusted_override;
+  input.value = r.corrected ? cmReading(r.observed) : '';
+  input.placeholder = entered == null ? '' : cmReading(entered);
+  el('canal-adjust-clear').disabled = !r.corrected;
   el('canal-adjust-error').classList.add('hidden');
   el('canal-adjust-modal').classList.remove('hidden');
   setTimeout(() => input.focus(), 50);
@@ -12481,8 +12505,8 @@ async function saveCanalAdjust(value) {
   try {
     await api('PUT', `/api/canal-readings/${_canalAdjustTarget.readingId}/adjusted`, { adjusted_af: value });
     closeCanalAdjust();
-    showToast(value == null ? 'Adjustment cleared' : 'Adjusted reading saved', 'success');
-    // Every later day's change runs from this one, so redraw the whole month.
+    showToast(value == null ? 'Correction removed' : 'Corrected reading saved', 'success');
+    // The midnights either side move with it, so redraw the whole month.
     renderCanalMonthly();
   } catch (err) {
     showError('canal-adjust-error', err.message);
@@ -12493,7 +12517,7 @@ el('canal-adjust-save').addEventListener('click', () => {
   const raw = el('canal-adjust-input').value.trim();
   const v = Number(raw);
   if (raw === '' || !Number.isFinite(v)) {
-    return showError('canal-adjust-error', 'Enter a reading, or use Observed to remove the adjustment.');
+    return showError('canal-adjust-error', 'Enter a reading, or use Original to remove the correction.');
   }
   saveCanalAdjust(v);
 });
@@ -12528,11 +12552,10 @@ function canalMonthlyCsv(data) {
   data.structures.forEach((s, i) => {
     if (i) lines.push('');
     lines.push(csvEsc(s.structure_name));
-    lines.push('Date,Time Value,Observed Reading,Adjusted Reading,CFS / Day,AF / Day,Flow Rate,Note');
+    lines.push('Date,Time Value,Observed Reading,Adjusted Midnight Reading,CFS / Day,AF / Day,Flow Rate,Note');
     s.rows.forEach(r => lines.push([
-      r.date, r.time || '', cmReading(r.observed), cmReading(r.adjusted),
-      cmFixed(r.cfs), cmFixed(r.af), cmReading(r.flow),
-      [r.start ? 'Starting point (not in totals)' : '', r.notes].filter(Boolean).join(' - '),
+      r.date, r.time || '', cmReading(r.observed), cmFixed(r.midnight),
+      cmFixed(r.cfs), cmFixed(r.af), cmReading(r.flow), canalMonthlyRowNote(r),
     ].map(csvEsc).join(',')));
     lines.push(['', '', '', 'Total', cmFixed(s.totals.cfs), cmFixed(s.totals.af), '', ''].join(','));
   });
@@ -12545,15 +12568,15 @@ function canalMonthlyCsv(data) {
 // print. One turnout per page, split with html2pdf's own page-break marker.
 const CANAL_MONTHLY_PDF_CSS = `
   .pdf-root, .pdf-root * { color: #000 !important; }
-  .cmp-foot { font-size: 8pt; margin: 0 0 8px; }
+  .cmp-foot { font-size: 7pt; margin: 0 0 6px; line-height: 1.35; }
   .cmp-title { font-size: 14pt; font-weight: 700; text-align: center; margin: 0 0 2px; }
   .cmp-sub { font-size: 9pt; text-align: center; margin: 0 0 8px; }
-  .cmp-table { width: 100%; border-collapse: collapse; font-size: 8.5pt; }
+  .cmp-table { width: 100%; border-collapse: collapse; font-size: 8pt; }
   .cmp-table th { font-size: 7.5pt; font-weight: 700; text-transform: uppercase; text-align: left;
                   padding: 2px 4px; border-bottom: 1.5px solid #000; white-space: nowrap; }
-  .cmp-table td { padding: 2px 4px; border-bottom: 0.5px solid #ccc; white-space: nowrap; }
+  .cmp-table td { padding: 1px 4px; border-bottom: 0.5px solid #ccc; white-space: nowrap; }
   .cmp-table .num { text-align: right; }
-  .cmp-table td.note { white-space: normal; font-size: 7.5pt; }
+  .cmp-table td.note { white-space: normal; font-size: 7pt; line-height: 1.2; }
   .cmp-table tr.carried td { color: #777 !important; }
   .cmp-table tr.start td { font-style: italic; }
   .cmp-table .override { font-weight: 700; text-decoration: underline; }
@@ -12563,9 +12586,13 @@ const CANAL_MONTHLY_PDF_CSS = `
 function buildCanalMonthlyPdfHtml(data) {
   const monthLabel = localDateStr(`${data.month}-01`, { month: 'long', year: 'numeric' });
   const partial = data.end < data.monthEnd;
-  const foot = `<div class="cmp-foot">The first row (${escHtml(fmtDate(data.start))}) is the starting point and is
-    not in the totals. Grey rows had no reading, so the previous reading is repeated. Underlined adjusted
-    readings were corrected by a supervisor. CFS / Day is AF / Day &divide; 1.9835.</div>`;
+  // Short lines: html2canvas can overlap words when a long paragraph wraps.
+  const foot = `<div class="cmp-foot">
+    <div>Adjusted Midnight Reading: the meter at the midnight that ends each day, from the readings either side.</div>
+    <div>AF / Day: water used that day, midnight to midnight. CFS / Day = AF / Day &divide; 1.9835.</div>
+    <div>First row (${escHtml(fmtDate(data.start))}): starting point, not in the totals. Grey: no reading.
+      Underlined: reading corrected by a supervisor. &asymp;: meter moved with no reading. &mdash;: waiting for the next reading.</div>
+  </div>`;
   return data.structures.map((s, i) => `
     ${i ? '<div class="html2pdf__page-break"></div>' : ''}
     ${foot}
@@ -12573,19 +12600,19 @@ function buildCanalMonthlyPdfHtml(data) {
     <div class="cmp-sub">${escHtml(monthLabel)}${partial ? ` &middot; to ${escHtml(fmtDate(data.end))}` : ''}</div>
     <table class="cmp-table">
       <thead><tr>
-        <th>Date</th><th>Time Value</th><th class="num">Observed Reading</th><th class="num">Adjusted Reading</th>
+        <th>Date</th><th>Time Value</th><th class="num">Observed Reading</th><th class="num">Adjusted Midnight Reading</th>
         <th class="num">CFS / Day</th><th class="num">AF / Day</th><th class="num">Flow Rate</th><th>Note</th>
       </tr></thead>
       <tbody>${s.rows.map(r => `
         <tr class="${[r.carried ? 'carried' : '', r.start ? 'start' : ''].join(' ').trim()}">
           <td>${escHtml(fmtDate(r.date))}</td>
           <td>${escHtml(r.time || '')}</td>
-          <td class="num">${cmReading(r.observed)}</td>
-          <td class="num${r.adjusted_override ? ' override' : ''}">${cmReading(r.adjusted)}</td>
-          <td class="num">${cmFixed(r.cfs)}</td>
-          <td class="num">${cmFixed(r.af)}</td>
+          <td class="num${r.corrected ? ' override' : ''}">${cmReading(r.observed)}</td>
+          <td class="num">${r.midnight == null && !r.start && r.pending ? '&mdash;' : cmFixed(r.midnight)}</td>
+          <td class="num">${r.estimated ? '&asymp;' : ''}${cmFixed(r.cfs)}</td>
+          <td class="num">${r.estimated ? '&asymp;' : ''}${cmFixed(r.af)}</td>
           <td class="num">${cmReading(r.flow)}</td>
-          <td class="note">${escHtml(r.notes || '')}</td>
+          <td class="note">${escHtml(canalMonthlyRowNote({ ...r, start: false }) || '')}</td>
         </tr>`).join('')}
       </tbody>
       <tfoot><tr>
