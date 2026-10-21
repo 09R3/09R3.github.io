@@ -129,7 +129,7 @@
         Sign in with Microsoft 365
       </a>
       <div id="ms-login-error" class="error-msg hidden"></div>
-      <div class="login-version">v 3.42</div>
+      <div class="login-version">v 3.43</div>
     </div>
   </div>
 </div>
@@ -2031,7 +2031,7 @@
     <div id="settings-panel-appinfo" class="settings-panel hidden">
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 3.42</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 3.43</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>
@@ -2539,12 +2539,22 @@
                 <label>Breakdown</label>
                 <select id="cc-split-select" class="ctrl-select"></select>
               </div>
-              <div class="charts-field-row">
+              <div class="seg-group cc-variant hidden" id="cc-split-variant"></div>
+              <div class="charts-field-row" id="cc-split-hours-row">
                 <label>Total Hours</label>
                 <input type="number" id="cc-split-hours" class="ctrl-input" min="0" step="0.25" placeholder="hrs">
                 <span class="charts-unit-label">h</span>
               </div>
+              <div class="cc-split-desc hidden" id="cc-split-desc"></div>
               <div id="cc-split-result" class="cc-split-result"></div>
+              <!-- From the Field Staff Time Charging Guide (Oct 21 2026). -->
+              <div class="cc-rules">
+                <div class="cc-rules-title">Rules</div>
+                <ul>
+                  <li>610H and 611I codes always need a project code.</li>
+                  <li>611A, 611H and 611L are admin codes. WRD field staff should not use them.</li>
+                </ul>
+              </div>
             </div>
           </div>
         </div>

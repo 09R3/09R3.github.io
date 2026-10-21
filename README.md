@@ -196,6 +196,25 @@ their total without it.
 **HR** — time-off requests and a charge-code reference with a split calculator
 that breaks hours across codes to the nearest quarter hour.
 
+The Breakdown tab leads with the **Field Staff Time Charging Guide** (updated
+Oct 21, 2026), shown as Charge Code | % of Time | Hours with the guide's rules
+as a footnote:
+
+- **Water Level Monitoring** splits by district and uses the Feb & Oct (Kern
+  Fan) column in February and October, the other column the rest of the year;
+  either can be picked by hand. Built in as `CHARGE_GUIDE` in `app.js`.
+- **Sounder Calibration & Repair** is an ordinary breakdown (editable in
+  Settings). On the first start after the update, `applyChargeGuideOnce()` in
+  `server.js` sets the existing "sounder" breakdown to the guide's codes and
+  order — or adds one if none exists, or skips if more than one matches — and
+  records that in `app_settings` (`charge_guide_2026_10_21`) so it never runs
+  again and later edits stand.
+- **Water Quality Sampling (Purge Pump)** is a reference list of which code goes
+  with which wells; there's no hours math. Also in `CHARGE_GUIDE`.
+
+When the guide is reissued, update `CHARGE_GUIDE` (and, for the sounder split,
+either edit it in Settings or add a new one-time key in `server.js`).
+
 **Tools & admin** — user management, SCADA access control, GPS location and pond
 GPS pickers, an EXIF reader, a SCADA scaling tester, bug reporting, and a global
 search across wells, vehicles, piezometers and structures.

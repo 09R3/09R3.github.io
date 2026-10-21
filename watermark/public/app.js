@@ -14511,13 +14511,61 @@ function renderCCList() {
     </div>`).join('');
 }
 
+// Field Staff Time Charging Guide (updated Oct 21 2026). The two sections that
+// don't fit a single percentage split are built in here; the guide's Sounder
+// Calibration & Repair split is an ordinary database breakdown (server.js
+// applies the guide's codes to it once). Update this when the guide changes.
+const CHARGE_GUIDE = [
+  {
+    key: 'wlm', name: 'Water Level Monitoring', type: 'monthly',
+    desc: 'Split well run time by district. Feb & Oct use the Kern Fan template.',
+    // Percentages per district for each set of months; null = not charged then.
+    variants: [
+      { key: 'std',  label: 'Jan, Mar–Sep, Nov, Dec', months: [1, 3, 4, 5, 6, 7, 8, 9, 11, 12] },
+      { key: 'kern', label: 'Feb & Oct (Kern Fan)',   months: [2, 10] },
+    ],
+    rows: [
+      { district: 'BM',                  code: '711H',       pct: { std: 10,   kern: 5 } },
+      { district: 'KWB',                 code: '831H',       pct: { std: 65,   kern: 40 } },
+      { district: 'Pioneer',             code: '771H',       pct: { std: 25,   kern: 15 } },
+      { district: 'City of Bakersfield', code: '610H-61006', pct: { std: null, kern: 15 } },
+      { district: 'DWR',                 code: '870H-87008', pct: { std: null, kern: 10 } },
+      { district: 'Undistricted',        code: '610H-61007', pct: { std: null, kern: 15 } },
+    ],
+  },
+  {
+    key: 'purge', name: 'Water Quality Sampling (Purge Pump)', type: 'reference',
+    desc: 'Charge purge pump runs to the wells sampled.',
+    rows: [
+      { label: 'KDWD',                code: '611I-61010' },
+      { label: 'RRBWSD',              code: '611I-61011' },
+      { label: 'Semitropic',          code: '611I-61012' },
+      { label: 'City of Bakersfield', code: '611I-61013' },
+      { label: 'BV',                  code: '611I-61014' },
+      { label: 'KWB',                 code: '831I' },
+      { label: 'Pioneer',             code: '771I' },
+      { label: 'Purge pump repair',   code: '831C-61024' },
+    ],
+  },
+];
+let _ccVariant = null;   // Water Level Monitoring month set picked by hand (null = by month)
+
 function renderCCSplitOptions() {
   const sel = el('cc-split-select');
-  if (!_ccSplits.length) {
-    sel.innerHTML = '<option value="">No breakdowns defined</option>';
-  } else {
-    sel.innerHTML = _ccSplits.map(s => `<option value="${s.split_id}">${escHtml(s.name)}</option>`).join('');
-  }
+  const prev = sel.value;
+  // The guide's three sections first, in its order; the Sounder split is the
+  // database one whose name mentions sounder. Everything else follows.
+  const sounder = _ccSplits.filter(sp => /sounder/i.test(sp.name));
+  const others  = _ccSplits.filter(sp => !/sounder/i.test(sp.name));
+  const opt = (value, label) => `<option value="${escHtml(value)}">${escHtml(label)}</option>`;
+  sel.innerHTML = `
+    <optgroup label="Field Staff Time Charging Guide">
+      ${opt('guide:wlm', CHARGE_GUIDE[0].name)}
+      ${sounder.map(sp => opt(`split:${sp.split_id}`, sp.name)).join('')}
+      ${opt('guide:purge', CHARGE_GUIDE[1].name)}
+    </optgroup>
+    ${others.length ? `<optgroup label="Other breakdowns">${others.map(sp => opt(`split:${sp.split_id}`, sp.name)).join('')}</optgroup>` : ''}`;
+  if (prev && sel.querySelector(`option[value="${CSS.escape(prev)}"]`)) sel.value = prev;
   renderCCSplitResult();
 }
 
@@ -14539,23 +14587,83 @@ function computeChargeSplit(total, components) {
   return parts;
 }
 
+function ccMonthNow() { return Number(pacificToday().slice(5, 7)); }
+
+// Charge Code | % of Time | Hours, as laid out in the guide; District leads for
+// Water Level Monitoring.
+function ccSplitTableHtml(parts, { district = false } = {}) {
+  const total = parts.reduce((a, p) => a + (p.hrs || 0), 0);
+  return `<div class="report-scroll"><table class="report-table cc-split-table">
+    <thead><tr>
+      ${district ? '<th>District</th>' : ''}<th>Charge Code</th><th class="report-num">% of Time</th><th class="report-num">Hours</th>
+    </tr></thead>
+    <tbody>${parts.map(p => `<tr${p.percent == null ? ' class="cc-row-na"' : ''}>
+      ${district ? `<td>${escHtml(p.district)}</td>` : ''}
+      <td class="cc-item-code">${escHtml(p.code)}</td>
+      <td class="report-num">${p.percent == null ? '&mdash;' : `${p.percent}%`}</td>
+      <td class="report-num">${p.hrs == null ? '' : `${p.hrs.toFixed(2)} h`}</td>
+    </tr>`).join('')}</tbody>
+    <tfoot><tr>
+      ${district ? '<td></td>' : ''}<td>Total</td>
+      <td class="report-num">${parts.reduce((a, p) => a + (p.percent || 0), 0)}%</td>
+      <td class="report-num">${parts.some(p => p.hrs != null) ? `${total.toFixed(2)} h` : ''}</td>
+    </tr></tfoot>
+  </table></div>`;
+}
+
 function renderCCSplitResult() {
   const out = el('cc-split-result');
-  const split = _ccSplits.find(s => String(s.split_id) === el('cc-split-select').value);
+  const value = el('cc-split-select').value;
+  const guide = value.startsWith('guide:') ? CHARGE_GUIDE.find(g => `guide:${g.key}` === value) : null;
+  const split = value.startsWith('split:') ? _ccSplits.find(sp => `split:${sp.split_id}` === value) : null;
   const total = parseFloat(el('cc-split-hours').value);
-  if (!split || !Array.isArray(split.components) || !split.components.length) { out.innerHTML = ''; return; }
-  if (isNaN(total) || total < 0) {
-    out.innerHTML = '<div class="placeholder-msg">Enter total hours above.</div>';
+  const hasHours = !isNaN(total) && total >= 0;
+  const variantEl = el('cc-split-variant'), descEl = el('cc-split-desc');
+  variantEl.classList.toggle('hidden', guide?.type !== 'monthly');
+  el('cc-split-hours-row').classList.toggle('hidden', guide?.type === 'reference');
+  descEl.classList.toggle('hidden', !guide && !/sounder/i.test(split?.name || ''));
+  descEl.textContent = guide ? guide.desc
+    : /sounder/i.test(split?.name || '') ? 'Split by the year’s water level monitoring beneficiaries.' : '';
+
+  if (guide?.type === 'reference') {
+    out.innerHTML = `<div class="report-scroll"><table class="report-table cc-split-table">
+      <thead><tr><th>Wells</th><th>Charge Code</th></tr></thead>
+      <tbody>${guide.rows.map(r => `<tr><td>${escHtml(r.label)}</td><td class="cc-item-code">${escHtml(r.code)}</td></tr>`).join('')}</tbody>
+    </table></div>`;
     return;
   }
-  const parts = computeChargeSplit(total, split.components);
-  out.innerHTML = parts.map(p => `
-    <div class="cc-split-row">
-      <span><strong class="cc-item-code">${escHtml(p.code)}</strong> <span style="color:var(--text-dim)">(${p.percent}%)</span></span>
-      <strong>${p.hrs.toFixed(2)} h</strong>
-    </div>`).join('') + `
-    <div class="cc-split-total"><span>Total</span><span>${parts.reduce((a, p) => a + p.hrs, 0).toFixed(2)} h</span></div>`;
+
+  if (guide?.type === 'monthly') {
+    const auto = guide.variants.find(v => v.months.includes(ccMonthNow())) || guide.variants[0];
+    const variant = guide.variants.find(v => v.key === _ccVariant) || auto;
+    variantEl.innerHTML = guide.variants.map(v => `<button type="button" class="seg-btn${v === variant ? ' active' : ''}"
+      data-variant="${v.key}">${escHtml(v.label)}${v === auto ? ' <span class="cc-variant-now">this month</span>' : ''}</button>`).join('');
+    const live = guide.rows.filter(r => r.pct[variant.key] != null);
+    const alloc = hasHours ? computeChargeSplit(total, live.map(r => ({ code: r.code, percent: r.pct[variant.key] }))) : [];
+    const parts = guide.rows.map(r => {
+      const i = live.indexOf(r);
+      return { district: r.district, code: r.code, percent: r.pct[variant.key], hrs: i >= 0 && hasHours ? alloc[i].hrs : null };
+    });
+    out.innerHTML = ccSplitTableHtml(parts, { district: true })
+      + (hasHours ? '' : '<div class="placeholder-msg">Enter total hours above.</div>');
+    return;
+  }
+
+  if (!split || !Array.isArray(split.components) || !split.components.length) { out.innerHTML = ''; return; }
+  if (!hasHours) {
+    out.innerHTML = ccSplitTableHtml(split.components.map(c => ({ code: c.code, percent: Number(c.percent), hrs: null })))
+      + '<div class="placeholder-msg">Enter total hours above.</div>';
+    return;
+  }
+  out.innerHTML = ccSplitTableHtml(computeChargeSplit(total, split.components));
 }
+
+el('cc-split-variant').addEventListener('click', e => {
+  const b = e.target.closest('[data-variant]');
+  if (!b) return;
+  _ccVariant = b.dataset.variant;
+  renderCCSplitResult();
+});
 
 function initTimeOffPanel() {
   const today = new Date().toLocaleDateString('en-CA');

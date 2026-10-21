@@ -586,7 +586,51 @@ pool.query(`
     created_at   TIMESTAMPTZ DEFAULT NOW(),
     updated_at   TIMESTAMPTZ DEFAULT NOW()
   )
-`).catch(err => console.error('Migration error (charge_code_splits):', err.message));
+`).then(() => applyChargeGuideOnce()
+    .catch(err => console.error('Charge guide update failed:', err.message)))
+  .catch(err => console.error('Migration error (charge_code_splits):', err.message));
+
+// Field Staff Time Charging Guide, updated Oct 21 2026: the Sounder Calibration &
+// Repair split, in the guide's order. Applied ONCE to the existing "sounder"
+// breakdown (or added if there isn't one); the app_settings key records that it
+// ran, so edits made afterwards in Settings are never overwritten. Water Level
+// Monitoring and Purge Pump from the same guide are built into the Breakdown tab
+// (CHARGE_GUIDE in app.js) because they don't fit a single percentage split.
+const CHARGE_GUIDE_KEY = 'charge_guide_2026_10_21';
+const CHARGE_GUIDE_SOUNDER = [
+  { code: '831H-87020', percent: 46 },
+  { code: '870D-87020', percent: 18 },
+  { code: '771H-87020', percent: 17 },
+  { code: '890H-87020', percent: 8 },
+  { code: '711H-87020', percent: 7 },
+  { code: '610H-61006', percent: 2 },
+  { code: '610H-61007', percent: 2 },
+];
+async function applyChargeGuideOnce() {
+  const { rows: done } = await pool.query('SELECT 1 FROM app_settings WHERE key = $1', [CHARGE_GUIDE_KEY]);
+  if (done.length) return;
+  const { rows } = await pool.query(`SELECT split_id, name FROM charge_code_splits WHERE name ~* 'sounder'`);
+  const json = JSON.stringify(CHARGE_GUIDE_SOUNDER);
+  let result;
+  if (rows.length === 1) {
+    await pool.query(
+      'UPDATE charge_code_splits SET components = $1::jsonb, updated_at = NOW() WHERE split_id = $2',
+      [json, rows[0].split_id]);
+    result = `updated "${rows[0].name}"`;
+  } else if (!rows.length) {
+    await pool.query(
+      `INSERT INTO charge_code_splits (name, components, created_by) VALUES ('Sounder Calibration & Repair', $1::jsonb, 'system')`,
+      [json]);
+    result = 'added "Sounder Calibration & Repair"';
+  } else {
+    // More than one candidate: don't guess which to overwrite.
+    result = `skipped: ${rows.length} breakdowns match "sounder" (${rows.map(r => r.name).join(', ')})`;
+  }
+  await pool.query(
+    `INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2, NOW())
+     ON CONFLICT (key) DO NOTHING`, [CHARGE_GUIDE_KEY, result]);
+  console.log(`Charge guide (Oct 21 2026): Sounder breakdown ${result}`);
+}
 
 pool.query(`
   CREATE TABLE IF NOT EXISTS pest_tasks (

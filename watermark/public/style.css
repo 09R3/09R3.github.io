@@ -4257,6 +4257,32 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
   display: flex; justify-content: space-between; padding: 10px 12px;
   font-weight: 700; font-variant-numeric: tabular-nums;
 }
+/* Breakdown result: Charge Code | % of Time | Hours, as in the time charging guide. */
+/* Narrow enough for a phone: opt out of the shared 640px wide-table minimum so
+   Hours is never pushed off-screen. */
+.report-scroll > .report-table.cc-split-table { min-width: 0; }
+.cc-split-table { font-size: 0.85rem; }
+.cc-split-table th, .cc-split-table td { padding: 6px 6px; }
+.cc-split-table th { white-space: normal; vertical-align: bottom; }   /* "% of Time" may wrap on a phone */
+.cc-split-table td.cc-item-code { white-space: nowrap; }
+.cc-split-table td.report-num { white-space: nowrap; }
+@media (max-width: 360px) {
+  .cc-split-table { font-size: 0.78rem; }
+  .cc-split-table th, .cc-split-table td { padding: 5px 4px; }
+}
+.cc-split-table tfoot td { font-weight: 700; border-top: 2px solid var(--border); border-bottom: none; }
+.cc-split-table tr.cc-row-na td { color: var(--text-dim); }
+.cc-split-desc { font-size: 0.82rem; color: var(--text-dim); margin: -4px 0 8px; }
+.cc-variant { margin: 0 0 12px; }
+.cc-variant .seg-btn { min-width: 0; padding: 8px 8px; font-size: 0.8rem; white-space: normal; line-height: 1.25; flex-direction: column; }
+.cc-variant-now { display: block; font-size: 0.65rem; font-weight: 600; opacity: 0.8; text-transform: uppercase; letter-spacing: 0.04em; }
+.cc-rules {
+  margin-top: 16px; padding: 10px 12px;
+  border: 1px solid var(--border); border-left: 3px solid var(--yellow); border-radius: var(--radius-sm);
+  background: var(--surface2); font-size: 0.82rem; line-height: 1.45;
+}
+.cc-rules-title { font-weight: 700; margin-bottom: 4px; }
+.cc-rules ul { margin: 0; padding-left: 18px; }
 .csm-comp-row { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
 .csm-comp-row .csm-comp-code { flex: 1; }
 .csm-comp-row .csm-comp-pct { width: 80px; }
