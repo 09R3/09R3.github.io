@@ -1467,6 +1467,17 @@ input[type="date"].ctrl-input { min-height: 44px; }
 .ppr-at { font-size: 0.7rem; color: var(--text-dim); white-space: nowrap; }
 .ppr-est { color: var(--yellow); margin-right: 2px; }
 .ppr-unit { font-size: 0.72rem; color: var(--text-dim); }
+/* Type pills (one type across every plant) sit ahead of the plant pills */
+.ppr-pill-sep { flex-basis: 100%; height: 0; }
+.ppr-type-pill:not(.active) { border-style: dashed; }
+/* Check column — readings that look wrong */
+.ppr-check { min-width: 150px; }
+.ppr-issue { font-size: 0.74rem; color: var(--yellow); line-height: 1.35; }
+.ppr-issue-stale { color: var(--text-dim); }
+.ppr-row-issue td:first-child { box-shadow: inset 3px 0 0 var(--yellow); }
+.ppr-check-summary { font-size: 0.82rem; font-weight: 600; margin-bottom: 8px; }
+.ppr-check-warn { color: var(--yellow); }
+.ppr-check-ok { color: var(--green); }
 
 /* ── Canal Readings — Monthly ─────────────────────────────────────────────── */
 /* Turnout picker: the DWR multi-select, sized for a report toolbar. */

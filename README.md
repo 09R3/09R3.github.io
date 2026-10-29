@@ -103,6 +103,15 @@ up to 8 picked pieces of equipment, and a table with CSV / Excel / PDF export.
 - Spare pumps are left out, as on the Pumping Plant screen. The calculation is
   `buildPumpingPlantReport()` in `server.js`, shared by the screen and the
   Excel export.
+- **Air Compressors**, **PG&E** and **Power Monitors** pills (ahead of the plant
+  pills) show that one kind of meter across every plant, with the same ranges —
+  a quick way to spot a bad reading. A meter read within 12 hours of the latest
+  reading of that type gets its own window end.
+- The **Check** column (screen and all exports, plant and type views) flags a
+  meter that went backwards, an hour meter over 24 h/day, a reading period over
+  4× the meter's own typical use, and a meter with no readings in the range.
+  The climb back after a low reading isn't flagged a second time. See
+  `ppIssues()` in `server.js`.
 Pond Reports opens on **Pioneer Daily Readings**: eleven head gates with the CFS
 read that day, the time and the operator. Each row totals one or more sources —
 pond gates or canal structures — defined in `PIONEER_ROWS` in `server.js`, which

@@ -11776,6 +11776,12 @@ async function renderCanalReport() {
 // edges of the range, and the graph is the average use per day between
 // readings. Chart.js comes from the SCADA vendor bundle (loadScadaVendor).
 const PPR_KEY = 'wm.ppReport';
+// Per-type views across every plant (server: PP_TYPE_LABELS).
+const PPR_TYPES = [
+  { type: 'compressor', pill: 'Air Compressors', what: 'Air Compressor Hours' },
+  { type: 'pge',        pill: 'PG&E',            what: 'PG&E kWh' },
+  { type: 'monitor',    pill: 'Power Monitors',  what: 'Power Monitor kWh' },
+];
 let pprState = null;          // { site, range, month, from, to }
 let pprSites = [];
 let lastPPReport = null;
@@ -11814,9 +11820,14 @@ async function initPPReportPanel() {
       return;
     }
   }
-  if (!pprSites.some(s => String(s.site_id) === String(pprState.site))) pprState.site = String(pprSites[0]?.site_id || '');
-  pills.innerHTML = pprSites.map(s => `<button class="scada-plant-pill${String(s.site_id) === pprState.site ? ' active' : ''}"
-    data-site="${s.site_id}">${escHtml(s.site_name.replace('Site', 'Plant'))}</button>`).join('');
+  const valid = v => PPR_TYPES.some(t => `type:${t.type}` === v) || pprSites.some(s => String(s.site_id) === v);
+  if (!valid(String(pprState.site))) pprState.site = String(pprSites[0]?.site_id || '');
+  const pill = (value, label, extra = '') => `<button class="scada-plant-pill${extra}${value === pprState.site ? ' active' : ''}"
+    data-site="${escHtml(value)}">${escHtml(label)}</button>`;
+  // One type across every plant first (for spotting bad readings), then each plant.
+  pills.innerHTML = PPR_TYPES.map(t => pill(`type:${t.type}`, t.pill, ' ppr-type-pill')).join('')
+    + '<span class="ppr-pill-sep" aria-hidden="true"></span>'
+    + pprSites.map(s => pill(String(s.site_id), s.site_name.replace('Site', 'Plant'))).join('');
   el('ppr-month').value = pprState.month;
   el('ppr-from').value  = pprState.from;
   el('ppr-to').value    = pprState.to;
@@ -11871,7 +11882,8 @@ el('ppr-apply').addEventListener('click', () => {
 });
 
 function pprQuery() {
-  const q = `site_id=${encodeURIComponent(pprState.site)}&range=${pprState.range}`;
+  const site = String(pprState.site);
+  const q = `${site.startsWith('type:') ? `type=${encodeURIComponent(site.slice(5))}` : `site_id=${encodeURIComponent(site)}`}&range=${pprState.range}`;
   if (pprState.range === 'month')  return `${q}&month=${encodeURIComponent(pprState.month)}`;
   if (pprState.range === 'custom') return `${q}&start=${encodeURIComponent(pprState.from)}&end=${encodeURIComponent(pprState.to)}`;
   return q;
@@ -11897,16 +11909,24 @@ function pprFmt(v, unit) {
   return Number(v).toLocaleString('en-US', { maximumFractionDigits: unit === 'kWh' ? 0 : 1, minimumFractionDigits: unit === 'kWh' ? 0 : 1 });
 }
 // "A Plant · Pump C" -> "Pump C" when every item is in the same building.
+// Across plants the full "Plant 1 · A Plant · Air Compressor" is kept.
 function pprShortLabel(e, data) {
+  if (data.view === 'type') return e.label;
   const oneBuilding = new Set(data.equipment.map(x => x.building)).size <= 1;
   return oneBuilding ? e.label.split(' · ').slice(1).join(' · ') || e.label : e.label;
 }
+const pprSelKey = data => (data.view === 'type' ? `type:${data.type}` : String(data.site_id));
 function pprSelected(data) {
-  const saved = pprState.sel[String(data.site_id)];
+  const saved = pprState.sel[pprSelKey(data)];
   const keys = new Set(data.equipment.map(e => e.key));
   const sel = Array.isArray(saved) ? saved.filter(k => keys.has(k))
+    : data.view === 'type' ? data.equipment.map(e => e.key)             // default: the first 8 of the type
     : data.equipment.filter(e => e.type === 'pump').map(e => e.key);   // default: the pumps
   return sel.slice(0, 8);
+}
+// The bar graph: pumps for a plant, or every meter of the type across plants.
+function pprGlanceItems(data) {
+  return data.view === 'type' ? data.equipment : data.equipment.filter(e => e.type === 'pump');
 }
 
 function pprDestroyCharts() {
@@ -11937,25 +11957,27 @@ async function renderPPReport() {
     out.innerHTML = '<div class="placeholder-msg">No equipment found.</div>';
     return;
   }
-  const pumps = data.equipment.filter(e => e.type === 'pump');
-  const unread = pumps.filter(e => e.total == null);
+  const items = pprGlanceItems(data);
+  const typeView = data.view === 'type';
+  const unit = typeView ? data.unit : 'hrs';
+  const unread = items.filter(e => e.total == null);
   const sel = new Set(pprSelected(data));
   out.innerHTML = `
     <div class="report-card ppr-card">
       <div class="ppr-head">
         <div>
-          <div class="report-title ppr-title">Pump Hours</div>
-          <div class="report-subtitle ppr-sub">${escHtml(pprRangeLabel(data))}</div>
+          <div class="report-title ppr-title">${escHtml(typeView ? PPR_TYPES.find(t => t.type === data.type).what : 'Pump Hours')}</div>
+          <div class="report-subtitle ppr-sub">${escHtml(typeView ? `All plants \u00b7 ${pprRangeLabel(data)}` : pprRangeLabel(data))}</div>
         </div>
         <div class="ppr-total">
-          <span class="ppr-total-val">${pprFmt(data.pump_hours_total, 'hrs')}</span><span class="ppr-total-unit">hrs</span>
+          <span class="ppr-total-val">${pprFmt(typeView ? data.type_total : data.pump_hours_total, unit)}</span><span class="ppr-total-unit">${unit}</span>
           <div class="ppr-total-label">Total</div>
         </div>
       </div>
-      ${pumps.some(e => e.total != null)
-        ? `<div class="ppr-glance-wrap" style="height:${Math.max(90, 34 * pumps.length + 30)}px"><canvas id="ppr-glance"></canvas></div>`
-        : '<div class="placeholder-msg">No pump readings found.</div>'}
-      ${unread.length && unread.length < pumps.length
+      ${items.some(e => e.total != null)
+        ? `<div class="ppr-glance-wrap" style="height:${Math.max(90, (typeView ? 44 : 34) * items.length + 30)}px"><canvas id="ppr-glance"></canvas></div>`
+        : `<div class="placeholder-msg">No ${typeView ? 'readings' : 'pump readings'} found.</div>`}
+      ${unread.length && unread.length < items.length
         ? `<div class="ppr-note">No readings in this range: ${unread.map(e => escHtml(pprShortLabel(e, data))).join(', ')}</div>` : ''}
     </div>
 
@@ -11985,7 +12007,7 @@ async function renderPPReport() {
     if (cur.has(chip.dataset.key)) cur.delete(chip.dataset.key);
     else if (cur.size >= 8) return showToast('Up to 8 at once', 'error');
     else cur.add(chip.dataset.key);
-    pprState.sel[String(data.site_id)] = [...cur];
+    pprState.sel[pprSelKey(data)] = [...cur];
     pprSave();
     chip.classList.toggle('selected', cur.has(chip.dataset.key));
     pprDrawEquip(data);
@@ -11996,20 +12018,32 @@ function pprTableHtml(data) {
   const cell = (v, at, est, unit) => v == null ? '<td class="report-num">—</td>'
     : `<td class="report-num">${est ? '<span class="ppr-est" title="Estimated between the readings either side">≈</span>' : ''}${pprFmt(v, unit)}
          <div class="ppr-at">${escHtml(pprFmtTs(at))}</div></td>`;
-  return `<div class="report-scroll"><table class="report-table ppr-table">
+  const checks = e => [
+    ...e.issues.map(i => `<div class="ppr-issue${i.kind === 'stale' ? ' ppr-issue-stale' : ''}">${escHtml(i.text)}</div>`),
+    e.more_issues ? `<div class="ppr-issue">+${e.more_issues} more</div>` : '',
+  ].join('');
+  const flagged = e => e.issues.some(i => i.kind !== 'stale');
+  const n = data.issue_count;
+  return `<div class="ppr-check-summary ${n ? 'ppr-check-warn' : 'ppr-check-ok'}">${n
+      ? `&#9888; ${n} reading${n === 1 ? '' : 's'} to check &mdash; see the Check column`
+      : 'No reading problems found in this range.'}</div>
+  <div class="report-scroll"><table class="report-table ppr-table">
     <thead><tr>
       <th>Equipment</th><th class="report-num">Start</th><th class="report-num">End</th>
-      <th class="report-num">Used</th><th class="report-num">Avg / Day</th>
+      <th class="report-num">Used</th><th class="report-num">Avg / Day</th><th>Check</th>
     </tr></thead>
-    <tbody>${data.equipment.map(e => `<tr>
+    <tbody>${data.equipment.map(e => `<tr${flagged(e) ? ' class="ppr-row-issue"' : ''}>
       <td>${escHtml(e.label)}</td>
       ${cell(e.start_value, e.start_at, e.start_est, e.unit)}
       ${cell(e.end_value, e.end_at, e.end_est, e.unit)}
       <td class="report-num"><strong>${pprFmt(e.total, e.unit)}</strong>${e.total != null ? ` <span class="ppr-unit">${e.unit}</span>` : ''}</td>
       <td class="report-num">${e.avg_per_day == null ? '—' : Number(e.avg_per_day).toLocaleString('en-US', { maximumFractionDigits: e.unit === 'kWh' ? 0 : 1 })}</td>
+      <td class="ppr-check">${checks(e)}</td>
     </tr>`).join('')}</tbody>
   </table></div>
-  <div class="ppr-note">&asymp; = the meter at the edge of the range, estimated between the readings either side.</div>`;
+  <div class="ppr-note">&asymp; = the meter at the edge of the range, estimated between the readings either side.
+    Check flags a meter that went backwards, an hour meter over 24 h/day, and a reading period over
+    4&times; the meter's typical use.</div>`;
 }
 
 // Each pump's hours written at the end of its bar, so the graph reads without
@@ -12026,21 +12060,23 @@ const pprBarLabels = {
     meta.data.forEach((bar, i) => {
       const v = chart.data.datasets[0].data[i];
       const x = v == null ? chart.scales.x.getPixelForValue(0) : bar.x;
-      ctx.fillText(v == null ? '\u2014' : pprFmt(v, 'hrs'), x + 6, bar.y);
+      ctx.fillText(v == null ? '\u2014' : pprFmt(v, opts.unit || 'hrs'), x + 6, bar.y);
     });
     ctx.restore();
   },
 };
 
 function pprGlanceConfig(data, c, print = false) {
-  const pumps = data.equipment.filter(e => e.type === 'pump');
+  const pumps = pprGlanceItems(data);
+  const unit = data.view === 'type' ? data.unit : 'hrs';
   // Head-room so the label on the longest bar isn't clipped.
   const max = Math.max(0, ...pumps.map(e => e.total || 0));
   return {
     type: 'bar',
     plugins: [pprBarLabels],
     data: {
-      labels: pumps.map(e => pprShortLabel(e, data)),
+      // Across plants the labels are long, so the plant goes on its own line.
+      labels: pumps.map(e => data.view === 'type' ? [e.plant, e.label.split(' · ').slice(1).join(' · ')] : pprShortLabel(e, data)),
       datasets: [{
         data: pumps.map(e => e.total),
         backgroundColor: SCADA_COLORS[0] + (print ? 'cc' : '99'),
@@ -12052,13 +12088,13 @@ function pprGlanceConfig(data, c, print = false) {
       devicePixelRatio: print ? 2 : undefined,
       plugins: {
         legend: { display: false },
-        pprBarLabels: { color: c.text },
+        pprBarLabels: { color: c.text, unit },
         tooltip: { backgroundColor: c.surface, titleColor: c.text, bodyColor: c.text, borderColor: c.grid, borderWidth: 1,
-                   callbacks: { label: ctx => `${pprFmt(ctx.parsed.x, 'hrs')} hrs` } },
+                   callbacks: { label: ctx => `${pprFmt(ctx.parsed.x, unit)} ${unit}` } },
       },
       scales: {
-        x: { beginAtZero: true, suggestedMax: max ? max * 1.18 : 24, ticks: { color: c.dim }, grid: { color: c.grid },
-             title: { display: true, text: 'Hours run', color: c.dim } },
+        x: { beginAtZero: true, suggestedMax: max ? max * (unit === 'kWh' ? 1.25 : 1.18) : 24, ticks: { color: c.dim }, grid: { color: c.grid },
+             title: { display: true, text: unit === 'kWh' ? 'kWh used' : 'Hours run', color: c.dim } },
         y: { ticks: { color: c.text }, grid: { display: false } },
       },
     },
@@ -12119,7 +12155,7 @@ function pprDrawEquip(data) {
 
 // ── Export ──
 function pprExportName(data) {
-  const plant = String(data.site_name || 'Plant').replace('Site', 'Plant').replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '');
+  const plant = String(data.title || 'Plant').replace(/&/g, '').replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '');
   const r = data.range;
   const span = r.mode === 'month' ? r.month
     : r.mode === 'custom' ? `${pprState.from}_to_${pprState.to}`
@@ -12131,23 +12167,29 @@ el('ppr-export-btn').addEventListener('click', () => {
   if (!lastPPReport?.equipment?.length) return showToast('No report data to export', 'error');
   exportContext = 'pp-report';
   el('export-modal-subtitle').textContent =
-    `Pumping Plant — ${String(lastPPReport.site_name).replace('Site', 'Plant')} — ${pprRangeLabel(lastPPReport)}`;
+    `Pumping Plant — ${lastPPReport.title} — ${pprRangeLabel(lastPPReport)}`;
   el('export-modal').classList.remove('hidden');
 });
+
+// The Check column as one line, for CSV / PDF.
+function pprCheckText(e) {
+  return [...e.issues.map(i => i.text), ...(e.more_issues ? [`+${e.more_issues} more`] : [])].join('; ');
+}
 
 function pprCsv(data) {
   const csvEsc = v => (v == null || v === '') ? '' : /[,"\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v);
   const ts = t => (t ? t.slice(0, 16).replace('T', ' ') : '');
   const lines = [
-    csvEsc(`Pumping Plant Report — ${String(data.site_name).replace('Site', 'Plant')}`),
+    csvEsc(`Pumping Plant Report — ${data.title}`),
     csvEsc(pprRangeLabel(data)),
-    `Total pump hours,${data.pump_hours_total ?? ''}`,
+    data.view === 'type' ? `Total (${data.unit}),${data.type_total ?? ''}` : `Total pump hours,${data.pump_hours_total ?? ''}`,
+    `Readings to check,${data.issue_count}`,
     '',
-    'Equipment,Unit,Start,Start at,End,End at,Used,Avg / day,Readings in range',
+    'Equipment,Unit,Start,Start at,End,End at,Used,Avg / day,Readings in range,Check',
     ...data.equipment.map(e => [
       e.label, e.unit, e.start_value ?? '', ts(e.start_at) + (e.start_est ? ' (est.)' : ''),
       e.end_value ?? '', ts(e.end_at) + (e.end_est ? ' (est.)' : ''),
-      e.total ?? '', e.avg_per_day ?? '', e.readings,
+      e.total ?? '', e.avg_per_day ?? '', e.readings, pprCheckText(e),
     ].map(csvEsc).join(',')),
   ];
   return lines.join('\r\n');
@@ -12180,38 +12222,45 @@ const PPR_PDF_CSS = `
   .pp-table .num { text-align: right; white-space: nowrap; }
   .pp-at { font-size: 7pt; }
   .pp-note { font-size: 7.5pt; margin-top: 4px; }
+  .pp-check { font-size: 7pt; }
+  .pp-flag td { background: #fff3cd; }
   tr { page-break-inside: avoid; }`;
 
 async function buildPPReportPdfHtml(data) {
   await loadScadaVendor();
   const print = { text: '#000', dim: '#333', grid: '#ddd', surface: '#fff' };
-  const pumps = data.equipment.filter(e => e.type === 'pump');
+  const pumps = pprGlanceItems(data);
+  const typeView = data.view === 'type';
+  const unit = typeView ? data.unit : 'hrs';
   const keys = pprSelected(data);
   const glance = pumps.some(e => e.total != null)
-    ? pprChartImage(pprGlanceConfig(data, print, true), 760, Math.max(90, 34 * pumps.length + 30)) : '';
+    ? pprChartImage(pprGlanceConfig(data, print, true), 760, Math.max(90, (typeView ? 44 : 34) * pumps.length + 30)) : '';
   const equip = keys.length ? pprChartImage(pprEquipConfig(data, keys, print, true), 760, 300) : '';
   const cell = (v, at, est, unit) => v == null ? '<td class="num">—</td>'
     : `<td class="num">${est ? '≈' : ''}${pprFmt(v, unit)}<div class="pp-at">${escHtml(pprFmtTs(at))}</div></td>`;
   return `
-    <div class="pp-title">Pumping Plant Report — ${escHtml(String(data.site_name).replace('Site', 'Plant'))}</div>
-    <div class="pp-sub">${escHtml(pprRangeLabel(data))}</div>
-    <div class="pp-h">Pump Hours</div>
-    <div class="pp-total">Total: <strong>${pprFmt(data.pump_hours_total, 'hrs')} hrs</strong></div>
-    ${glance ? `<img class="pp-img" src="${glance}" alt="">` : '<div class="pp-note">No pump readings found.</div>'}
+    <div class="pp-title">Pumping Plant Report — ${escHtml(data.title)}</div>
+    <div class="pp-sub">${escHtml(typeView ? `All plants · ${pprRangeLabel(data)}` : pprRangeLabel(data))}</div>
+    <div class="pp-h">${escHtml(typeView ? PPR_TYPES.find(t => t.type === data.type).what : 'Pump Hours')}</div>
+    <div class="pp-total">Total: <strong>${pprFmt(typeView ? data.type_total : data.pump_hours_total, unit)} ${unit}</strong>
+      &nbsp;·&nbsp; Readings to check: <strong>${data.issue_count}</strong></div>
+    ${glance ? `<img class="pp-img" src="${glance}" alt="">` : `<div class="pp-note">No ${typeView ? 'readings' : 'pump readings'} found.</div>`}
     ${equip ? `<div class="pp-h">Use per Day</div><img class="pp-img" src="${equip}" alt="">` : ''}
     <div class="pp-h">Meter Usage</div>
     <table class="pp-table">
-      <thead><tr><th>Equipment</th><th class="num">Start</th><th class="num">End</th><th class="num">Used</th><th class="num">Avg / Day</th></tr></thead>
-      <tbody>${data.equipment.map(e => `<tr>
+      <thead><tr><th>Equipment</th><th class="num">Start</th><th class="num">End</th><th class="num">Used</th><th class="num">Avg / Day</th><th>Check</th></tr></thead>
+      <tbody>${data.equipment.map(e => `<tr${e.issues.some(i => i.kind !== 'stale') ? ' class="pp-flag"' : ''}>
         <td>${escHtml(e.label)}</td>
         ${cell(e.start_value, e.start_at, e.start_est, e.unit)}
         ${cell(e.end_value, e.end_at, e.end_est, e.unit)}
         <td class="num"><strong>${pprFmt(e.total, e.unit)}</strong>${e.total != null ? ' ' + e.unit : ''}</td>
         <td class="num">${e.avg_per_day == null ? '—' : Number(e.avg_per_day).toLocaleString('en-US', { maximumFractionDigits: e.unit === 'kWh' ? 0 : 1 })}</td>
+        <td class="pp-check">${escHtml(pprCheckText(e))}</td>
       </tr>`).join('')}</tbody>
     </table>
-    <div class="pp-note">≈ = the meter at the edge of the range, estimated between the readings either side.
-      Use per day is the average between consecutive readings.</div>`;
+    <div class="pp-note">≈ = the meter at the edge of the range, estimated between the readings either side.</div>
+    <div class="pp-note">Use per day is the average between consecutive readings.</div>
+    <div class="pp-note">Check: meter went backwards, hour meter over 24 h/day, or a period over 4× typical use.</div>`;
 }
 
 // ── Canal Readings — Daily / Monthly tabs ─────────────────────────────────────

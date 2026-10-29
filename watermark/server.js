@@ -4493,35 +4493,59 @@ const PP_ALIGN_MS = 3 * 3600 * 1000;
 const ppMs  = ts => Date.parse(ts + 'Z');
 const ppIso = ms => new Date(ms).toISOString().slice(0, 19);
 
-async function ppSiteEquipment(siteId) {
-  const { rows: site } = await pool.query('SELECT site_id, site_name FROM sites WHERE site_id::text = $1', [siteId]);
-  if (!site.length) return null;
-  // Every column is cast to text. UNION needs one type per column, so a numeric
-  // pge_meters.meter_number beside the text columns failed the whole report
-  // ("UNION types ... cannot be matched"); and ids can't be assumed numeric
-  // either — live building ids are text like "1B". Ids are handled as strings
-  // from here on and matched with ::text, whatever their column type.
+// Equipment for one plant (siteId) or for one type across every plant (type).
+// Every column is cast to text. UNION needs one type per column, so a numeric
+// pge_meters.meter_number beside the text columns failed the whole report
+// ("UNION types ... cannot be matched"); and ids can't be assumed numeric
+// either — live building ids are text like "1B". Ids are handled as strings
+// from here on and matched with ::text, whatever their column type.
+const PP_TYPE_LABELS = Object.assign(Object.create(null), {
+  compressor: { title: 'Air Compressors', what: 'Air Compressor Hours' },
+  pge:        { title: 'PG&E',            what: 'PG&E kWh' },
+  monitor:    { title: 'Power Monitors',  what: 'Power Monitor kWh' },
+});
+
+async function ppEquipment({ siteId = null, type = null }) {
+  let site = null;
+  if (siteId != null) {
+    const { rows } = await pool.query('SELECT site_id, site_name FROM sites WHERE site_id::text = $1', [siteId]);
+    if (!rows.length) return null;
+    site = rows[0];
+  }
   const { rows } = await pool.query(`
-    SELECT 'pump' AS type, pp.position_id::text AS id, b.building_id::text AS building_id,
-           b.building_letter::text AS building_letter, b.building_name::text AS building_name,
-           pp.pump_letter::text AS name, NULL::text AS extra
-    FROM pump_positions pp JOIN buildings b ON b.building_id = pp.building_id
-    WHERE b.site_id::text = $1 AND COALESCE(pp.status::text, '') !~* 'spare'
-    UNION ALL
-    SELECT 'compressor', ac.compressor_id::text, b.building_id::text, b.building_letter::text, b.building_name::text,
-           NULL::text, NULL::text
-    FROM air_compressors ac JOIN buildings b ON b.building_id = ac.building_id WHERE b.site_id::text = $1
-    UNION ALL
-    SELECT 'pge', pm.pge_meter_id::text, b.building_id::text, b.building_letter::text, b.building_name::text,
-           pm.meter_name::text, pm.meter_number::text
-    FROM pge_meters pm JOIN buildings b ON b.building_id = pm.building_id WHERE b.site_id::text = $1
-    UNION ALL
-    SELECT 'monitor', pw.monitor_id::text, b.building_id::text, b.building_letter::text, b.building_name::text,
-           pw.monitor_number::text, NULL::text
-    FROM power_monitors pw JOIN buildings b ON b.building_id = pw.building_id WHERE b.site_id::text = $1
-  `, [siteId]);
+    SELECT * FROM (
+      SELECT 'pump' AS type, pp.position_id::text AS id, b.building_id::text AS building_id,
+             b.building_letter::text AS building_letter, b.building_name::text AS building_name,
+             pp.pump_letter::text AS name, NULL::text AS extra,
+             s.site_id::text AS site_id, s.site_name::text AS site_name
+      FROM pump_positions pp JOIN buildings b ON b.building_id = pp.building_id
+           JOIN sites s ON s.site_id = b.site_id
+      WHERE COALESCE(pp.status::text, '') !~* 'spare'
+      UNION ALL
+      SELECT 'compressor', ac.compressor_id::text, b.building_id::text, b.building_letter::text, b.building_name::text,
+             NULL::text, NULL::text, s.site_id::text, s.site_name::text
+      FROM air_compressors ac JOIN buildings b ON b.building_id = ac.building_id
+           JOIN sites s ON s.site_id = b.site_id
+      UNION ALL
+      SELECT 'pge', pm.pge_meter_id::text, b.building_id::text, b.building_letter::text, b.building_name::text,
+             pm.meter_name::text, pm.meter_number::text, s.site_id::text, s.site_name::text
+      FROM pge_meters pm JOIN buildings b ON b.building_id = pm.building_id
+           JOIN sites s ON s.site_id = b.site_id
+      UNION ALL
+      SELECT 'monitor', pw.monitor_id::text, b.building_id::text, b.building_letter::text, b.building_name::text,
+             pw.monitor_number::text, NULL::text, s.site_id::text, s.site_name::text
+      FROM power_monitors pw JOIN buildings b ON b.building_id = pw.building_id
+           JOIN sites s ON s.site_id = b.site_id
+    ) e
+    WHERE ($1::text IS NULL OR e.site_id = $1::text)
+      AND ($2::text IS NULL OR e.type = $2::text)
+      AND COALESCE(e.site_name, '') !~* 'service.?truck'   -- not a plant (hidden on the Pumping Plant screen too)
+  `, [siteId, type]);
   const typeOrder = { pump: 0, compressor: 1, pge: 2, monitor: 3 };
-  rows.sort((a, b) => String(a.building_letter || '').localeCompare(String(b.building_letter || ''))
+  // Plants in name order with O&M last, as on the Pumping Plant screen.
+  const plantKey = r => `${/o\s*&\s*m/i.test(r.site_name || '') ? 1 : 0}|${r.site_name || ''}`;
+  rows.sort((a, b) => plantKey(a).localeCompare(plantKey(b), undefined, { numeric: true })
+    || String(a.building_letter || '').localeCompare(String(b.building_letter || ''))
     || typeOrder[a.type] - typeOrder[b.type]
     || String(a.name || '').localeCompare(String(b.name || ''), undefined, { numeric: true })
     || String(a.id).localeCompare(String(b.id), undefined, { numeric: true }));
@@ -4530,6 +4554,7 @@ async function ppSiteEquipment(siteId) {
   rows.forEach(r => { if (r.type === 'compressor') compCount[r.building_id] = (compCount[r.building_id] || 0) + 1; });
   const compSeen = {};
   const equipment = rows.map(r => {
+    const plant = String(r.site_name || 'Plant').replace('Site', 'Plant');
     const building = r.building_name || (r.building_letter ? `${r.building_letter} Plant` : 'Plant');
     let what;
     if (r.type === 'pump') what = `Pump ${r.name || r.id}`;
@@ -4538,10 +4563,12 @@ async function ppSiteEquipment(siteId) {
       what = compCount[r.building_id] > 1 ? `Air Compressor ${compSeen[r.building_id]}` : 'Air Compressor';
     } else if (r.type === 'pge') what = `PG&E ${r.name || r.extra || r.id}`.trim();
     else what = `Power Monitor ${r.name || r.id}`;
-    return { key: `${r.type}:${r.id}`, type: r.type, id: r.id, building, label: `${building} · ${what}`,
+    // Across plants the plant leads the label; within one plant it's implied.
+    return { key: `${r.type}:${r.id}`, type: r.type, id: r.id, plant, building,
+             label: type ? `${plant} · ${building} · ${what}` : `${building} · ${what}`,
              unit: PP_METERS[r.type].unit };
   });
-  return { site: site[0], equipment };
+  return { site, equipment };
 }
 
 // Resolve the requested range to a [start, end) window of naive timestamps.
@@ -4580,10 +4607,10 @@ async function ppWindow(q, equipment) {
   return { error: 'range must be 24h, 7d, month or custom' };
 }
 
-function ppUsage(points, ws, we) {
+function ppUsage(points, ws, we, unit) {
   // points: [{ t (ms), v }] sorted; one per timestamp (the last entered wins).
   const out = { total: null, start_value: null, end_value: null, start_at: null, end_at: null,
-                start_est: false, end_est: false, avg_per_day: null, series: [] };
+                start_est: false, end_est: false, avg_per_day: null, series: [], issues: [] };
   if (!points.length) return out;
   const M = t => {
     if (t < points[0].t || t > points[points.length - 1].t) return null;
@@ -4613,24 +4640,75 @@ function ppUsage(points, ws, we) {
     }
     kept.push(p);
   }
+  const rates = [];
   for (let i = 1; i < kept.length; i++) {
     const p0 = kept[i - 1], p1 = kept[i];
     const s0 = Math.max(p0.t, ws), s1 = Math.min(p1.t, we);
     if (s1 <= s0) continue;
     const rate = (p1.v - p0.v) / ((p1.t - p0.t) / 86400000);
     out.series.push({ x: ppIso(s0), y: rate }, { x: ppIso(s1), y: rate });
+    rates.push({ rate, from: p0.t, at: p1.t });
   }
+  out.issues = ppIssues(points, rates, ws, we, unit);
   return out;
 }
 
-async function buildPumpingPlantReport(siteId, q) {
-  const base = await ppSiteEquipment(siteId);
+// Readings worth a second look — the point of the per-type views. Only checks
+// that are wrong on their face, so the list stays short enough to act on:
+//  - the meter went backwards (a mis-keyed or swapped reading, or a meter change)
+//  - an hour meter ran more than 24 hours a day
+//  - one reading period far above the meter's own typical use (a slipped digit
+//    usually shows as a spike followed by a drop)
+const PP_SPIKE_FACTOR = 4;
+function ppIssues(points, rates, ws, we, unit) {
+  const issues = [];
+  const when = t => ppIso(t).slice(0, 16);
+  const low = new Set();   // readings that dropped below the one before
+  for (let i = 1; i < points.length; i++) {
+    const p0 = points[i - 1], p1 = points[i];
+    if (p1.v < p0.v - 1e-6) low.add(p1.t);
+    if (p1.t <= ws || p1.t > we) continue;
+    if (p1.v < p0.v - 1e-6) issues.push({ kind: 'backwards', at: when(p1.t), from: p0.v, to: p1.v });
+  }
+  // The climb back up after a low reading is the same mistake, not a second one.
+  rates = rates.filter(r => !low.has(r.from));
+  if (unit === 'hrs') {
+    for (const r of rates) if (r.rate > 24.5) issues.push({ kind: 'over24', at: when(r.at), rate: r.rate });
+  }
+  const positive = rates.map(r => r.rate).filter(v => v > 0).sort((a, b) => a - b);
+  if (positive.length >= 4) {
+    const median = positive[Math.floor(positive.length / 2)];
+    for (const r of rates) {
+      if (median > 0 && r.rate > PP_SPIKE_FACTOR * median && !(unit === 'hrs' && r.rate > 24.5)) {
+        issues.push({ kind: 'spike', at: when(r.at), rate: r.rate, typical: median });
+      }
+    }
+  }
+  return issues.sort((a, b) => a.at.localeCompare(b.at));
+}
+
+// One line per issue, used by the screen and every export.
+function ppIssueText(i, unit) {
+  const d = unit === 'kWh' ? 0 : 1;
+  const n = v => Number(v).toLocaleString('en-US', { maximumFractionDigits: d, minimumFractionDigits: d });
+  const day = d => `${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][Number(d.slice(5, 7)) - 1]} ${Number(d.slice(8, 10))}`;
+  const [date, time] = i.at.split('T');
+  const at = `${day(date)} ${time}`;
+  if (i.kind === 'backwards') return `Went backwards ${at} (${n(i.from)} → ${n(i.to)})`;
+  if (i.kind === 'over24')    return `Over 24 h/day: ${n(i.rate)} h/day to ${at}`;
+  if (i.kind === 'spike')     return `Unusually high: ${n(i.rate)} ${unit}/day to ${at} (typical ${n(i.typical)})`;
+  if (i.kind === 'stale')     return i.last ? `No readings in this range (last ${day(i.last)}, ${i.last.slice(0, 4)})` : 'No readings';
+  return '';
+}
+
+async function buildPumpingPlantReport(scope, q) {
+  const base = await ppEquipment(scope);
   if (!base) return { notFound: true };
   const win = await ppWindow(q, base.equipment);
   if (win.error) return { error: win.error };
   const ws = ppMs(win.start), we = ppMs(win.end);
   const rolling = win.mode === '24h' || win.mode === '7d';
-  const fetchStart = ppIso(rolling ? ws - PP_ALIGN_MS : ws);
+  const fetchStart = ppIso(rolling ? ws - (scope.type ? 12 * 3600 * 1000 : PP_ALIGN_MS) : ws);
 
   const pointsByKey = new Map();
   for (const [type, m] of Object.entries(PP_METERS)) {
@@ -4666,12 +4744,22 @@ async function buildPumpingPlantReport(siteId, q) {
     const pts = pointsByKey.get(e.key) || [];
     let s = ws, t = we;
     const last = pts[pts.length - 1];
-    if (rolling && last && last.t <= we && we - last.t <= PP_ALIGN_MS) { t = last.t; s = t - (we - ws); }
-    const u = ppUsage(pts, s, t);
+    // Plants are read at different times of day, so across plants a meter may
+    // be read up to 12 hours before the latest reading anywhere.
+    const align = scope.type ? 12 * 3600 * 1000 : PP_ALIGN_MS;
+    if (rolling && last && last.t <= we && we - last.t <= align) { t = last.t; s = t - (we - ws); }
+    const u = ppUsage(pts, s, t, e.unit);
     const d = e.unit === 'kWh' ? 0 : 1;
+    const readings = pts.filter(p => p.t > s && p.t <= t).length;
+    if (!readings) {
+      const before = pts.filter(p => p.t <= s).pop();
+      u.issues.unshift({ kind: 'stale', at: '', last: before ? ppIso(before.t).slice(0, 16).replace('T', ' ') : null });
+    }
     return {
       ...e,
-      readings: pts.filter(p => p.t > s && p.t <= t).length,
+      readings,
+      issues: u.issues.slice(0, 6).map(i => ({ ...i, text: ppIssueText(i, e.unit) })),
+      more_issues: Math.max(0, u.issues.length - 6),
       total: round(u.total, d), avg_per_day: round(u.avg_per_day, d + 1),
       start_value: round(u.start_value, d), end_value: round(u.end_value, d),
       start_at: u.start_at, end_at: u.end_at, start_est: u.start_est, end_est: u.end_est,
@@ -4679,20 +4767,43 @@ async function buildPumpingPlantReport(siteId, q) {
     };
   });
   const pumpTotals = equipment.filter(e => e.type === 'pump' && e.total != null);
+  const typeTotals = equipment.filter(e => e.total != null);
+  const typeView = !!scope.type;
   return {
-    site_id: base.site.site_id, site_name: base.site.site_name,
+    view: typeView ? 'type' : 'plant',
+    type: scope.type || null,
+    site_id: base.site?.site_id ?? null,
+    site_name: base.site?.site_name ?? null,
+    title: typeView ? PP_TYPE_LABELS[scope.type].title : String(base.site.site_name).replace('Site', 'Plant'),
     range: win,
     pump_hours_total: pumpTotals.length ? round(pumpTotals.reduce((t, e) => t + e.total, 0), 1) : null,
+    // Per-type views total that type instead (hours or kWh).
+    type_total: typeView && typeTotals.length
+      ? round(typeTotals.reduce((t, e) => t + e.total, 0), PP_METERS[scope.type].unit === 'kWh' ? 0 : 1) : null,
+    unit: typeView ? PP_METERS[scope.type].unit : 'hrs',
+    issue_count: equipment.reduce((n, e) => n + e.issues.filter(i => i.kind !== 'stale').length + e.more_issues, 0),
     equipment,
   };
 }
 
+// ?site_id=… for one plant, or ?type=compressor|pge|monitor for that equipment
+// across every plant.
+function ppScope(q) {
+  if (q.type != null && q.type !== '') {
+    const type = String(q.type);
+    return PP_TYPE_LABELS[type] ? { type } : { error: 'type must be compressor, pge or monitor' };
+  }
+  // Matched as text (see ppEquipment), so only the shape is checked here.
+  const siteId = String(q.site_id ?? '').trim();
+  if (!/^[A-Za-z0-9_-]{1,40}$/.test(siteId)) return { error: 'site_id required' };
+  return { siteId };
+}
+
 app.get('/api/reports/pumping-plant', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
-  // Matched as text (see ppSiteEquipment), so only the shape is checked here.
-  const siteId = String(req.query.site_id ?? '').trim();
-  if (!/^[A-Za-z0-9_-]{1,40}$/.test(siteId)) return res.status(400).json({ error: 'site_id required' });
+  const scope = ppScope(req.query);
+  if (scope.error) return res.status(400).json({ error: scope.error });
   try {
-    const r = await buildPumpingPlantReport(siteId, req.query);
+    const r = await buildPumpingPlantReport(scope, req.query);
     if (r.notFound) return res.status(404).json({ error: 'Plant not found' });
     if (r.error) return res.status(400).json({ error: r.error });
     res.json(r);
@@ -4710,31 +4821,31 @@ app.get('/api/reports/pumping-plant/export', async (req, res) => {
     if (!sessionUser) return res.status(401).json({ error: 'Unauthorized' });
     if (!SUPERVISOR_ROLES.includes(sessionUser.role)) return res.status(403).json({ error: 'Forbidden' });
   }
-  // Matched as text (see ppSiteEquipment), so only the shape is checked here.
-  const siteId = String(req.query.site_id ?? '').trim();
-  if (!/^[A-Za-z0-9_-]{1,40}$/.test(siteId)) return res.status(400).json({ error: 'site_id required' });
+  const scope = ppScope(req.query);
+  if (scope.error) return res.status(400).json({ error: scope.error });
   try {
-    const r = await buildPumpingPlantReport(siteId, req.query);
+    const r = await buildPumpingPlantReport(scope, req.query);
     if (r.notFound) return res.status(404).json({ error: 'Plant not found' });
     if (r.error) return res.status(400).json({ error: r.error });
     const fmtTs = ts => (ts ? ts.slice(0, 16).replace('T', ' ') : '');
-    const plant = String(r.site_name || 'Plant').replace(/Site/, 'Plant');
+    const plant = r.title;
     const data = [
       [`Pumping Plant Report — ${plant}`],
       [`${fmtTs(r.range.start)} to ${fmtTs(r.range.end)}`],
-      ['Total pump hours', r.pump_hours_total ?? ''],
+      r.view === 'type' ? [`Total (${r.unit})`, r.type_total ?? ''] : ['Total pump hours', r.pump_hours_total ?? ''],
       [],
-      ['Equipment', 'Unit', 'Start', 'Start at', 'End', 'End at', 'Used', 'Avg / day', 'Readings in range'],
+      ['Equipment', 'Unit', 'Start', 'Start at', 'End', 'End at', 'Used', 'Avg / day', 'Readings in range', 'Check'],
       ...r.equipment.map(e => [
         e.label, e.unit,
         e.start_value ?? '', fmtTs(e.start_at) + (e.start_est ? ' (est.)' : ''),
         e.end_value ?? '',   fmtTs(e.end_at)   + (e.end_est   ? ' (est.)' : ''),
         e.total ?? '', e.avg_per_day ?? '', e.readings,
+        [...e.issues.map(i => i.text), e.more_issues ? `+${e.more_issues} more` : ''].filter(Boolean).join('; '),
       ]),
     ];
     const ws = XLSX.utils.aoa_to_sheet(data);
-    ws['!cols'] = [{ wch: 34 }, { wch: 6 }, { wch: 12 }, { wch: 22 }, { wch: 12 }, { wch: 22 },
-                   { wch: 11 }, { wch: 10 }, { wch: 10 }];
+    ws['!cols'] = [{ wch: 40 }, { wch: 6 }, { wch: 12 }, { wch: 22 }, { wch: 12 }, { wch: 22 },
+                   { wch: 11 }, { wch: 10 }, { wch: 10 }, { wch: 60 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Pumping Plant');
     const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
