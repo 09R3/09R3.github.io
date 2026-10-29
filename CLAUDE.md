@@ -73,10 +73,12 @@ bring the affected area into compliance if it isn't already.
 - All save/submit actions use `.btn-save` (green background).
 - Never use `.btn-primary` (blue) for a save or submit action — blue is for
   non-destructive navigation or secondary actions only.
-- **Pumping Plant** is the only screen that uses a single batch-save button
-  for all readings at once. This is intentional — all PP readings are taken at
-  the same location at the same time. All other reading screens save each item
-  individually from within its expanded row.
+- **Pumping Plant** is the only screen that batch-saves: each plant section
+  (A Plant, B Plant…) has its own save button at the bottom that saves only
+  that section's readings, then collapses the section. This is intentional —
+  all readings in a plant are taken at the same place at the same time. All
+  other reading screens save each item individually from within its expanded
+  row.
 
 ---
 

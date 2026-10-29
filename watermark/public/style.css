@@ -831,9 +831,7 @@ input[type="date"].ctrl-input { min-height: 44px; }
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 4px;
+  padding: 10px 12px;
 }
 .pp-save-row .btn-save { flex-shrink: 0; min-height: 40px; padding: 8px 20px; }
 .save-status { font-size: 0.9rem; color: var(--text-dim); }

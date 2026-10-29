@@ -1515,7 +1515,6 @@ function onLogout() {
   ppLoaded = false;
   el('pp-site-tabs').innerHTML = '';
   el('pp-form-body').innerHTML = '<div class="placeholder-msg">Loading plants…</div>';
-  el('pp-save-bar').classList.add('hidden');
   // Refresh DB status on logout
   checkDBStatus();
 }
@@ -1877,23 +1876,26 @@ async function renderPPBody() {
     buildings.forEach(building => {
       const items = buildBuildingRows(building);
       if (!items.length) return;
-      const section = makeCollapsibleSection(
-        building.building_name || (building.building_letter + ' Plant'),
-        items
-      );
+      const name = building.building_name || (building.building_letter + ' Plant');
+      const section = makeCollapsibleSection(name, items);
       section.querySelector('.list-section-header').addEventListener('click', () => {
         if (!section.classList.contains('collapsed')) el('pp-time').value = nowHHMM();
       });
+      // Each plant (A, B…) saves on its own, from the bottom of its section.
+      const saveRow = document.createElement('div');
+      saveRow.className = 'pp-save-row';
+      saveRow.innerHTML = `<button class="btn btn-save">Save ${escHtml(name)}</button><span class="save-status"></span>`;
+      const saveBtn = saveRow.querySelector('.btn-save');
+      saveBtn.dataset.label = saveBtn.textContent;
+      saveBtn.addEventListener('click', () => savePPReadings(section, saveBtn, saveRow.querySelector('.save-status'), name));
+      section.querySelector('.list-section-items').appendChild(saveRow);
       body.appendChild(section);
     });
   });
 
   if (!body.children.length) {
     body.innerHTML = '<div class="placeholder-msg">No readings found.</div>';
-    return;
   }
-
-  el('pp-save-bar').classList.remove('hidden');
 }
 
 function buildBuildingRows(building) {
@@ -1993,9 +1995,10 @@ function createReadingRow({ type, id, label, prev, prevDate, prevNotes, unit, de
   return row;
 }
 
-el('pp-save-btn').addEventListener('click', savePPReadings);
-
-async function savePPReadings() {
+// Saves one plant section (A Plant, B Plant…) — only the rows inside it — and
+// collapses the section once the readings are saved or queued. Blank pump hours
+// carry the previous reading forward; other blank meters are skipped.
+async function savePPReadings(section, saveBtn, status, name) {
   const readingDate = el('pp-date').value;
   const readingTime = el('pp-time').value;
 
@@ -2009,7 +2012,7 @@ async function savePPReadings() {
   const pge_readings        = [];
   const monitor_readings    = [];
 
-  document.querySelectorAll('.list-section:not(.collapsed) .reading-row').forEach(row => {
+  section.querySelectorAll('.reading-row').forEach(row => {
     const curInput = row.querySelector('.rr-current');
     let cur = curInput.value.trim();
     const notes = row.querySelector('.rr-notes').value.trim();
@@ -2042,8 +2045,6 @@ async function savePPReadings() {
     return;
   }
 
-  const saveBtn = el('pp-save-btn');
-  const status  = el('pp-save-status');
   saveBtn.disabled = true;
   saveBtn.textContent = 'Saving…';
   status.textContent = '';
@@ -2059,9 +2060,9 @@ async function savePPReadings() {
     if (result.queued) {
       status.textContent = '⏳ Saved offline — will sync when connected';
       status.className = 'save-status warn';
-      showToast(`Pumping Plant queued offline`, 'warn');
-      // Clear expanded section inputs so they can't be re-submitted
-      document.querySelectorAll('.list-section:not(.collapsed) .reading-row').forEach(row => {
+      showToast(`${name} queued offline`, 'warn');
+      // Clear this section's inputs so they can't be re-submitted
+      section.querySelectorAll('.reading-row').forEach(row => {
         row.querySelector('.rr-current').value = '';
         row.querySelector('.rr-notes').value = '';
         row.classList.add('saved');
@@ -2073,7 +2074,7 @@ async function savePPReadings() {
       const savedPge      = new Set(result.saved.pge.map(r => String(r.pge_meter_id)));
       const savedMonitors = new Set(result.saved.monitor.map(r => String(r.monitor_id)));
 
-      document.querySelectorAll('.reading-row').forEach(row => {
+      section.querySelectorAll('.reading-row').forEach(row => {
         const type = row.dataset.type;
         const id   = row.dataset.id;
         const shouldMark =
@@ -2101,15 +2102,16 @@ async function savePPReadings() {
                     result.saved.pge.length + result.saved.monitor.length;
       status.textContent = `✓ ${count} reading${count !== 1 ? 's' : ''} saved`;
       status.className = 'save-status success';
-      showToast(`Saved ${count} reading${count !== 1 ? 's' : ''}`, 'success');
+      showToast(`${name}: saved ${count} reading${count !== 1 ? 's' : ''}`, 'success');
     }
+    section.classList.add('collapsed');
   } catch (err) {
     status.textContent = 'Error: ' + err.message;
     status.className = 'save-status error';
     showToast('Save failed: ' + err.message, 'error');
   } finally {
     saveBtn.disabled = false;
-    saveBtn.textContent = 'Save Readings';
+    saveBtn.textContent = saveBtn.dataset.label;
   }
 }
 
