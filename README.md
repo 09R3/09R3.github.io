@@ -267,6 +267,23 @@ full database schema — live in [`CLAUDE.md`](CLAUDE.md). The short version:
 
 ---
 
+## WaterMark — Ponds Screen Saving
+
+- Each pond / river outlet card has **one Save button** at the bottom
+  (`Save Pond 1`) that saves every gate and canal inflow on the card in one
+  transaction (`POST /api/readings/ponds`). The **Staff Gauge** keeps its own
+  Save, since it's sometimes read from a different spot.
+- A gate with nothing entered is saved as **closed**: opening (or weir
+  overpour) 0 and flow 0. A blank flow with a 0 opening is also saved as 0.
+  A canal inflow left blank is skipped, not zeroed — it's a metered turnout
+  and a made-up 0 would throw off the canal reports.
+- **Total Outflow** at the bottom of the card adds the outflow gates only
+  (pond → pond gates leaving that pond, and every gate on a river outlet);
+  canal inflows and gates on canal connections are left out. Under it is the
+  **previous day's** total: the last day before today with outflow readings,
+  each gate's last reading that day, a gate not read that day counting 0
+  (`GET /api/ponds/prev-outflow`).
+
 ## WaterMark — Ponds Screen Sort Order
 
 The ponds screen is ordered entirely by `sort_order` columns in the database.

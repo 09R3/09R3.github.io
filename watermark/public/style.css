@@ -837,6 +837,7 @@ input[type="date"].ctrl-input { min-height: 44px; }
 .save-status { font-size: 0.9rem; color: var(--text-dim); }
 .save-status.success { color: #4caf50; }
 .save-status.error { color: var(--red-light); }
+.save-status.warn { color: var(--yellow); }
 
 .placeholder-msg {
   text-align: center;

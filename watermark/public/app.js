@@ -16673,11 +16673,15 @@ async function initPondsScreen() {
   body.innerHTML = '<div class="placeholder-msg">Loading…</div>';
 
   try {
-    const rows = await api('GET', '/api/ponds');
+    const [rows, prevOut] = await Promise.all([
+      api('GET', '/api/ponds'),
+      api('GET', '/api/ponds/prev-outflow').catch(() => []),   // nice-to-have; the screen works without it
+    ]);
     if (!rows.length) {
       body.innerHTML = '<div class="placeholder-msg">No ponds found.</div>';
       return;
     }
+    const prevOutMap = new Map(prevOut.map(r => [`${r.kind}:${r.ent_id}`, r]));
 
     // Group flat rows → locations → (ponds + outlets) → connections → gates
     const locMap = new Map();
@@ -16719,6 +16723,7 @@ async function initPondsScreen() {
           loc.outlets.set(row.outlet_id, {
             outlet_id: row.outlet_id, name: row.pond_name, sort: row.pond_sort,
             isOutlet: true,
+            prevOut: prevOutMap.get(`outlet:${row.outlet_id}`) || null,
             max_gauge: row.max_gauge,
             last_gauge_level: row.last_gauge_level,
             last_gauge_date:  row.last_gauge_date,
@@ -16733,6 +16738,7 @@ async function initPondsScreen() {
         if (!loc.ponds.has(row.pond_id)) {
           loc.ponds.set(row.pond_id, {
             pond_id: row.pond_id, name: row.pond_name, sort: row.pond_sort,
+            prevOut: prevOutMap.get(`pond:${row.pond_id}`) || null,
             max_gauge: row.max_gauge,
             last_gauge_level: row.last_gauge_level,
             last_gauge_date:  row.last_gauge_date,
@@ -16819,26 +16825,21 @@ function createPondCard(pond, dateInput, timeInput) {
   // Staff gauge section
   form.appendChild(buildGaugeForm(pond, dateInput, timeInput, div));
 
-  // Connection rows — canal gets a special inflow row; river/pond use gate rows
+  // Connection rows — canal gets a special inflow row; river/pond use gate rows.
+  // Canal connections bring water in, so their gates aren't outflow.
+  const rows = [];
   const sortedConns = [...pond.connections.values()].sort((a, b) => a.sort - b.sort);
   for (const conn of sortedConns) {
     if (conn.source_type === 'canal' && conn.source_canal_id) {
-      form.appendChild(buildCanalRow(conn, dateInput, timeInput, div));
+      rows.push(buildCanalRow(conn, dateInput, timeInput, div));
     } else {
+      const dir = conn.source_type === 'canal' ? 'in' : 'out';
       const sortedGates = [...conn.gates].sort((a, b) => a.sort - b.sort);
-      for (const gate of sortedGates) {
-        form.appendChild(buildGateRow(gate, dateInput, timeInput, div));
-      }
+      for (const gate of sortedGates) rows.push(buildGateRow(gate, dateInput, timeInput, div, dir));
     }
   }
-
-  // Total row (only when multiple gates)
-  if (allGates.length > 1) {
-    const totalRow = document.createElement('div');
-    totalRow.className = 'pond-total-row';
-    totalRow.innerHTML = `<span>Total</span><span class="pond-total-cfs">—</span>`;
-    form.appendChild(totalRow);
-  }
+  rows.forEach(r => form.appendChild(r));
+  appendPondSave(form, div, pond, rows, dateInput, timeInput);
 
   div.querySelector('.list-item-header').addEventListener('click', () => {
     const open = !div.classList.contains('expanded');
@@ -16893,20 +16894,15 @@ function createOutletCard(outlet, dateInput, timeInput) {
 
   form.appendChild(buildGaugeForm(outlet, dateInput, timeInput, div));
 
+  // Every gate on a river outlet takes water out of it.
+  const rows = [];
   const sortedConns = [...outlet.connections.values()].sort((a, b) => a.sort - b.sort);
   for (const conn of sortedConns) {
     const sortedGates = [...conn.gates].sort((a, b) => a.sort - b.sort);
-    for (const gate of sortedGates) {
-      form.appendChild(buildGateRow(gate, dateInput, timeInput, div));
-    }
+    for (const gate of sortedGates) rows.push(buildGateRow(gate, dateInput, timeInput, div, 'out'));
   }
-
-  if (allGates.length > 1) {
-    const totalRow = document.createElement('div');
-    totalRow.className = 'pond-total-row';
-    totalRow.innerHTML = `<span>Total</span><span class="pond-total-cfs">—</span>`;
-    form.appendChild(totalRow);
-  }
+  rows.forEach(r => form.appendChild(r));
+  appendPondSave(form, div, outlet, rows, dateInput, timeInput);
 
   div.querySelector('.list-item-header').addEventListener('click', () => {
     const open = !div.classList.contains('expanded');
@@ -16955,7 +16951,6 @@ function buildCanalRow(conn, dateInput, timeInput, cardEl) {
         <textarea class="rr-notes-input pg-canal-notes" rows="1" placeholder="Notes…"></textarea>
         ${notesBtnHtml('canal', conn.source_canal_id, `${conn.name}${conn.canal_structure_name ? ' — ' + conn.canal_structure_name : ''}`, { iconOnly: true })}
         <button class="btn btn-secondary btn-sm pond-hist-btn" title="History" style="flex-shrink:0">${icon('history')}</button>
-        <button class="btn btn-save btn-sm pg-canal-save" style="flex-shrink:0">Save</button>
       </div>
       <span class="live-delta" style="visibility:hidden;pointer-events:none">x</span>
     </div>`;
@@ -16969,7 +16964,6 @@ function buildCanalRow(conn, dateInput, timeInput, cardEl) {
   const flowInput      = row.querySelector('.pg-canal-flow');
   const totalizerInput = row.querySelector('.pg-canal-totalizer');
   const notesInput     = row.querySelector('.pg-canal-notes');
-  const saveBtn        = row.querySelector('.pg-canal-save');
   const flowDeltaEl    = row.querySelector('.pg-canal-flow-delta');
 
   flowInput.dataset.savedFlow = conn.last_canal_flow ?? '';
@@ -16983,38 +16977,34 @@ function buildCanalRow(conn, dateInput, timeInput, cardEl) {
     openHistoryModal('canal', conn.source_canal_id,
       `${conn.name}${conn.canal_structure_name ? ' — ' + conn.canal_structure_name : ''}`));
 
-  saveBtn.addEventListener('click', async () => {
-    const flow      = parseFloat(flowInput.value);
-    const totalizer = parseFloat(totalizerInput.value);
-    if (isNaN(flow) && isNaN(totalizer)) {
-      errDiv.textContent = 'Enter flow or totalizer.';
-      errDiv.classList.remove('hidden');
-      return;
-    }
-    errDiv.classList.add('hidden');
-    saveBtn.disabled = true;
-    saveBtn.textContent = 'Saving…';
-    try {
-      await api('POST', '/api/readings/canal', {
-        structure_id:           conn.source_canal_id,
-        reading_date:           dateInput.value,
-        reading_time:           timeInput.value,
-        instantaneous_flow_cfs: isNaN(flow)      ? null : flow,
-        totalizer_reading_af:   isNaN(totalizer) ? null : totalizer,
-        notes:                  notesInput.value || null,
-      });
-      saveBtn.textContent = 'Saved ✓';
-      saveBtn.disabled = false;
-      flowInput.dataset.savedFlow = isNaN(flow) ? '' : String(flow);
+  // Saved by the pond's Save button. A canal inflow left blank is skipped —
+  // it's a metered turnout, so a made-up 0 would throw off the canal reports.
+  wrap.pondRow = {
+    collect() {
+      const flow = parseFloat(flowInput.value), totalizer = parseFloat(totalizerInput.value);
+      if (isNaN(flow) && isNaN(totalizer)) return null;
+      return {
+        kind: 'canal',
+        body: {
+          structure_id:           conn.source_canal_id,
+          instantaneous_flow_cfs: isNaN(flow)      ? null : flow,
+          totalizer_reading_af:   isNaN(totalizer) ? null : totalizer,
+          notes:                  notesInput.value || null,
+        },
+      };
+    },
+    markSaved({ body }) {
+      const flow = body.instantaneous_flow_cfs;
+      flowInput.dataset.savedFlow = flow == null ? '' : String(flow);
       flowDeltaEl.innerHTML = '';
-      showToast(`${conn.name} saved`, 'success');
-    } catch (err) {
-      errDiv.textContent = err.message;
-      errDiv.classList.remove('hidden');
-      saveBtn.disabled = false;
-      saveBtn.textContent = 'Save';
-    }
-  });
+      if (flow != null) {
+        const hints = row.querySelectorAll('.rr-label .prev-date:not([style*="italic"])');
+        const text = `${flow.toFixed(2)} cfs · Today`;
+        if (hints.length) hints[hints.length - 1].textContent = text;
+        else row.querySelector('.rr-label').insertAdjacentHTML('beforeend', `<div class="prev-date">${text}</div>`);
+      }
+    },
+  };
 
   return wrap;
 }
@@ -17120,7 +17110,7 @@ function buildGaugeForm(pond, dateInput, timeInput, cardEl) {
   return wrap;
 }
 
-function buildGateRow(gate, dateInput, timeInput, cardEl) {
+function buildGateRow(gate, dateInput, timeInput, cardEl, dir = 'out') {
   const today    = todayISO();
   const prevDate = gate.last_date ? String(gate.last_date).slice(0, 10) : null;
   const lastFlow = gate.last_flow != null ? Number(gate.last_flow) : null;
@@ -17161,7 +17151,7 @@ function buildGateRow(gate, dateInput, timeInput, cardEl) {
     </div>`}
     <div class="rr-field-group" style="width:84px">
       <span class="rr-col-hd">Flow (cfs)</span>
-      <input type="number" class="rr-input pg-flow" step="0.01" placeholder="—" inputmode="decimal">
+      <input type="number" class="rr-input pg-flow" data-dir="${dir}" step="0.01" placeholder="—" inputmode="decimal">
       <span class="pg-flow-delta live-delta"></span>
     </div>
     <div style="flex:1;min-width:50px;display:flex;flex-direction:column">
@@ -17171,7 +17161,6 @@ function buildGateRow(gate, dateInput, timeInput, cardEl) {
         <textarea class="rr-notes-input pg-gate-notes" rows="1" placeholder="Notes…"></textarea>
         ${notesBtnHtml('pond-gate', gate.gate_id, gate.label, { iconOnly: true })}
         <button class="btn btn-secondary btn-sm pond-hist-btn" title="History" style="flex-shrink:0">${icon('history')}</button>
-        <button class="btn btn-save btn-sm pg-gate-save" style="flex-shrink:0">Save</button>
       </div>
       <span class="live-delta" style="visibility:hidden;pointer-events:none">x</span>
     </div>`;
@@ -17188,7 +17177,6 @@ function buildGateRow(gate, dateInput, timeInput, cardEl) {
   const overpourInput = row.querySelector('.pg-overpour');
   const flowInput     = row.querySelector('.pg-flow');
   const notesInput    = row.querySelector('.pg-gate-notes');
-  const saveBtn       = row.querySelector('.pg-gate-save');
 
   // Dataset refs for live delta comparisons
   if (headInput)     headInput.dataset.savedHead         = gate.last_head     ?? '';
@@ -17245,72 +17233,129 @@ function buildGateRow(gate, dateInput, timeInput, cardEl) {
   row.querySelector('.pond-hist-btn').addEventListener('click', () =>
     openHistoryModal('pond-gate', gate.gate_id, gate.label));
 
-  saveBtn.addEventListener('click', async () => {
-    errDiv.classList.add('hidden');
-
-    if (lastFlow != null && flowInput && flowInput.value.trim() === '') {
-      const _ra = await showReadingAlert('Incomplete Reading',
-        `<p><strong>Flow (cfs)</strong> was recorded last time (<strong>${lastFlow.toFixed(2)} cfs</strong>) but is now blank.</p>`,
-        [{ key: 'cancel', label: 'Cancel',             cls: 'btn-secondary' },
-         { key: 'fill',   label: 'Fill with Previous', cls: 'btn-primary'   },
-         { key: 'save',   label: 'Save Anyway',        cls: 'btn-save'      }]);
-      if (_ra === 'cancel') return;
-      if (_ra === 'fill') { flowInput.value = lastFlow.toFixed(2); return; }
-    }
-
-    saveBtn.disabled = true;
-    saveBtn.textContent = 'Saving…';
-    const h  = parseFloat(headInput?.value);
-    const o  = parseFloat(openingInput?.value);
-    const ov = parseFloat(overpourInput?.value);
-    const fl = parseFloat(flowInput?.value);
-    try {
-      await api('POST', '/api/readings/pond-gate', {
-        gate_id:      gate.gate_id,
-        reading_date: dateInput.value,
-        reading_time: timeInput.value,
-        head_ft:      isNaN(h)  ? null : h,
-        opening_in:   isNaN(o)  ? null : o,
-        overpour_in:  isNaN(ov) ? null : ov,
-        flow_cfs:     isNaN(fl) ? null : fl,
-        notes:        notesInput.value || null,
-      });
-      saveBtn.textContent = 'Saved ✓';
-      saveBtn.disabled = false;
-      // Update all saved refs and clear delta spans
-      if (headInput)     headInput.dataset.savedHead         = isNaN(h)  ? '' : h;
-      if (openingInput)  openingInput.dataset.savedOpening   = isNaN(o)  ? '' : o;
-      if (overpourInput) overpourInput.dataset.savedOverpour = isNaN(ov) ? '' : ov;
-      flowInput.dataset.savedFlow = isNaN(fl) ? '' : fl;
-      if (headDeltaEl)     headDeltaEl.innerHTML     = '';
-      if (openingDeltaEl)  openingDeltaEl.innerHTML  = '';
-      if (overpourDeltaEl) overpourDeltaEl.innerHTML = '';
-      flowDeltaEl.innerHTML = '';
-      updatePondTotal(cardEl);
-      // Update prev hint in label
+  // Saved by the pond's Save button. A gate with nothing entered is taken as
+  // closed: opening (or overpour) 0 and flow 0. A blank flow with a 0 opening
+  // is also 0; otherwise blank fields stay blank.
+  wrap.pondRow = {
+    collect() {
+      const h  = parseFloat(headInput?.value);
+      const o  = parseFloat(openingInput?.value);
+      const ov = parseFloat(overpourInput?.value);
+      let fl   = parseFloat(flowInput?.value);
+      const closed = [headInput, openingInput, overpourInput, flowInput].every(i => !i || i.value.trim() === '');
+      const shut = isWeir ? (closed || ov === 0) : (closed || o === 0);
+      if (isNaN(fl) && shut) fl = 0;
+      return {
+        kind: 'gate', closed,
+        body: {
+          gate_id:     gate.gate_id,
+          head_ft:     isNaN(h) ? null : h,
+          opening_in:  isWeir ? null : (closed ? 0 : (isNaN(o) ? null : o)),
+          overpour_in: isWeir ? (closed ? 0 : (isNaN(ov) ? null : ov)) : null,
+          flow_cfs:    isNaN(fl) ? null : fl,
+          notes:       notesInput.value || null,
+        },
+      };
+    },
+    markSaved({ body }) {
+      const fl = body.flow_cfs;
+      // Show what was saved, including the 0s filled in for a closed gate
+      if (openingInput  && body.opening_in  != null) openingInput.value  = body.opening_in;
+      if (overpourInput && body.overpour_in != null) overpourInput.value = body.overpour_in;
+      if (fl != null) flowInput.value = fl.toFixed(2);
+      if (headInput)     headInput.dataset.savedHead         = body.head_ft     ?? '';
+      if (openingInput)  openingInput.dataset.savedOpening   = body.opening_in  ?? '';
+      if (overpourInput) overpourInput.dataset.savedOverpour = body.overpour_in ?? '';
+      flowInput.dataset.savedFlow = fl ?? '';
+      [headDeltaEl, openingDeltaEl, overpourDeltaEl, flowDeltaEl].forEach(d => { if (d) d.innerHTML = ''; });
       const label = row.querySelector('.rr-label');
-      const existingDate = label.querySelector('.prev-date:not([style*="italic"])') || label.querySelector('.prev-date');
+      const existingDate = label.querySelector('.prev-date:not([style*="italic"])');
       const flowText = fl != null ? `${fl.toFixed(2)} cfs · Today` : 'Today';
       if (existingDate) existingDate.textContent = flowText;
-      else label.insertAdjacentHTML('beforeend', `<div class="prev-date">${flowText}</div>`);
-      updatePondBadge(cardEl, 'Today');
-      showToast(`${gate.label} saved`, 'success');
-    } catch (err) {
-      errDiv.textContent = err.message;
-      errDiv.classList.remove('hidden');
-      saveBtn.disabled = false;
-      saveBtn.textContent = 'Save Gate';
-    }
-  });
+      else {
+        const gateNote = label.querySelector('.prev-date');   // the italic gate note, if any
+        const html = `<div class="prev-date">${flowText}</div>`;
+        if (gateNote) gateNote.insertAdjacentHTML('beforebegin', html);
+        else label.insertAdjacentHTML('beforeend', html);
+      }
+    },
+  };
 
   return wrap;
+}
+
+// Bottom of a pond / outlet card: Total Outflow (live, from the gates being
+// entered) with the previous day's total under it, then the one Save button for
+// every gate and canal inflow on the card. The staff gauge keeps its own Save.
+function appendPondSave(form, cardEl, ent, rows, dateInput, timeInput) {
+  const outGates = rows.filter(r => r.querySelector('.pg-flow[data-dir="out"]')).length;
+  if (outGates) {
+    const p = ent.prevOut;
+    const totalRow = document.createElement('div');
+    totalRow.className = 'pond-total-row';
+    totalRow.innerHTML = `
+      <div>Total Outflow
+        <div class="pond-prev-total">${p
+          ? `Previous day (${escHtml(fmtDate(p.day))}): <strong>${Number(p.total_cfs).toFixed(2)} cfs</strong>`
+          : 'Previous day: no readings'}</div>
+      </div>
+      <span class="pond-total-cfs">—</span>`;
+    form.appendChild(totalRow);
+  }
+  if (!rows.length) return;
+
+  const saveRow = document.createElement('div');
+  saveRow.className = 'pond-save-row';
+  saveRow.innerHTML = `<button class="btn btn-save pond-save-btn">Save ${escHtml(ent.name)}</button><span class="save-status"></span>`;
+  form.appendChild(saveRow);
+  const btn = saveRow.querySelector('.pond-save-btn');
+  const status = saveRow.querySelector('.save-status');
+  const label = btn.textContent;
+
+  btn.addEventListener('click', async () => {
+    if (!dateInput.value || !timeInput.value) return showToast('Date and time are required', 'error');
+    const items = rows.map(r => ({ row: r, item: r.pondRow.collect() })).filter(x => x.item);
+    const gates = items.filter(x => x.item.kind === 'gate');
+    const canal = items.filter(x => x.item.kind === 'canal');
+    if (!items.length) return showToast('No readings entered', 'error');
+    btn.disabled = true; btn.textContent = 'Saving…';
+    status.textContent = ''; status.className = 'save-status';
+    try {
+      const result = await api('POST', '/api/readings/ponds', {
+        reading_date: dateInput.value,
+        reading_time: timeInput.value,
+        gates: gates.map(x => x.item.body),
+        canal: canal.map(x => x.item.body),
+      }, ent.name);
+      items.forEach(x => x.row.pondRow.markSaved(x.item));
+      updatePondTotal(cardEl);
+      const closed = gates.filter(x => x.item.closed).length;
+      const closedTxt = closed ? ` (${closed} closed)` : '';
+      if (result.queued) {
+        status.textContent = '⏳ Saved offline — will sync when connected';
+        status.className = 'save-status warn';
+        showToast(`${ent.name} queued offline`, 'warn');
+      } else {
+        status.textContent = `✓ ${items.length} reading${items.length !== 1 ? 's' : ''} saved${closedTxt}`;
+        status.className = 'save-status success';
+        updatePondBadge(cardEl, 'Today');
+        showToast(`${ent.name} saved${closedTxt}`, 'success');
+      }
+    } catch (err) {
+      status.textContent = 'Error: ' + err.message;
+      status.className = 'save-status error';
+      showToast('Save failed: ' + err.message, 'error');
+    } finally {
+      btn.disabled = false; btn.textContent = label;
+    }
+  });
 }
 
 function updatePondTotal(cardEl) {
   const totalEl = cardEl.querySelector('.pond-total-cfs');
   if (!totalEl) return;
   let liveTotal = 0, savedForTyped = 0, hasAny = false, hasSaved = false;
-  cardEl.querySelectorAll('.pg-flow').forEach(inp => {
+  cardEl.querySelectorAll('.pg-flow[data-dir="out"]').forEach(inp => {
     const v = parseFloat(inp.value);
     if (!isNaN(v)) {
       liveTotal += v;

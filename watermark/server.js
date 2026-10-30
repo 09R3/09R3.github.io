@@ -2570,6 +2570,86 @@ app.post('/api/readings/pond-gate', requireAuth, async (req, res) => {
   }
 });
 
+// One save per pond / river outlet card: every gate on the card plus any canal
+// inflow row, in one transaction. The client fills a gate left blank with a
+// closed (0) reading before sending; the staff gauge still saves on its own.
+app.post('/api/readings/ponds', requireAuth, async (req, res) => {
+  const { reading_date, reading_time } = req.body;
+  const gates = Array.isArray(req.body.gates) ? req.body.gates : [];
+  const canal = Array.isArray(req.body.canal) ? req.body.canal : [];
+  if (!reading_date || !reading_time) {
+    return res.status(400).json({ error: 'reading_date and reading_time are required' });
+  }
+  if (!gates.length && !canal.length) return res.status(400).json({ error: 'No readings to save' });
+  const num = v => (v === '' || v == null || isNaN(Number(v)) ? null : Number(v));
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const saved = { gates: [], canal: [] };
+    for (const g of gates) {
+      const { rows } = await client.query(
+        `INSERT INTO readings_pond_gates
+           (gate_id, reading_date, reading_time, head_ft, opening_in, overpour_in, flow_cfs, entered_by, notes)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING reading_id`,
+        [g.gate_id, reading_date, reading_time, num(g.head_ft), num(g.opening_in), num(g.overpour_in),
+         num(g.flow_cfs), req.user.username, g.notes || null]);
+      saved.gates.push({ gate_id: g.gate_id, reading_id: rows[0].reading_id });
+    }
+    for (const c of canal) {
+      const { rows } = await client.query(
+        `INSERT INTO readings_canal
+           (structure_id, reading_date, reading_time, instantaneous_flow_cfs, totalizer_reading_af, entered_by, notes)
+         VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING reading_id`,
+        [c.structure_id, reading_date, reading_time, num(c.instantaneous_flow_cfs),
+         num(c.totalizer_reading_af), req.user.username, c.notes || null]);
+      saved.canal.push({ structure_id: c.structure_id, reading_id: rows[0].reading_id });
+    }
+    await client.query('COMMIT');
+    res.json({ ok: true, saved });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    handleErr(res, err);
+  } finally {
+    client.release();
+  }
+});
+
+// Total outflow on the last day before today with outflow readings, per pond
+// (gates on pond → pond connections leaving it) and per river outlet (gates on
+// its connections). Canal inflows, and any gates on them, are not outflow.
+// Each gate counts its last reading that day; a gate not read that day counts 0.
+app.get('/api/ponds/prev-outflow', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      WITH g AS (
+        SELECT 'pond'::text AS kind, pc.source_pond_id AS ent_id, pg.gate_id
+        FROM pond_connections pc JOIN pond_gates pg ON pg.connection_id = pc.connection_id AND pg.active = true
+        WHERE pc.active = true AND pc.source_type = 'pond' AND pc.source_pond_id IS NOT NULL
+        UNION ALL
+        SELECT 'outlet', pc.source_river_id, pg.gate_id
+        FROM pond_connections pc JOIN pond_gates pg ON pg.connection_id = pc.connection_id AND pg.active = true
+        WHERE pc.active = true AND pc.source_river_id IS NOT NULL
+      ), d AS (
+        SELECT g.kind, g.ent_id, MAX(r.reading_date) AS day
+        FROM g JOIN readings_pond_gates r ON r.gate_id = g.gate_id
+        WHERE r.reading_date < CURRENT_DATE
+        GROUP BY g.kind, g.ent_id
+      ), last AS (
+        SELECT DISTINCT ON (g.gate_id) g.kind, g.ent_id, r.flow_cfs
+        FROM g JOIN d ON d.kind = g.kind AND d.ent_id = g.ent_id
+        JOIN readings_pond_gates r ON r.gate_id = g.gate_id AND r.reading_date = d.day
+        ORDER BY g.gate_id, r.reading_time DESC NULLS LAST, r.reading_id DESC
+      )
+      SELECT d.kind, d.ent_id, to_char(d.day, 'YYYY-MM-DD') AS day,
+             COALESCE(SUM(last.flow_cfs), 0)::float AS total_cfs
+      FROM d LEFT JOIN last ON last.kind = d.kind AND last.ent_id = d.ent_id
+      GROUP BY d.kind, d.ent_id, d.day`);
+    res.json(rows);
+  } catch (err) {
+    handleErr(res, err);
+  }
+});
+
 app.delete('/api/readings/staff-gauge/:id', requireAuth, (req, res) =>
   deleteReading(req, res, 'readings_staff_gauge', 'reading_id'));
 
