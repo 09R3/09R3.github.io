@@ -880,8 +880,19 @@ function compactSideHtml(site) {
       <div>FB&nbsp;<strong data-scada-sensor="FBLvl" data-scada-tag="${fbPath}">${fmtSensor('FBLvl', scadaVal(fbPath))}</strong></div>
       <div>TR&nbsp;<strong data-scada-sensor="TRLvl" data-scada-tag="${trPath}">${fmtSensor('TRLvl', scadaVal(trPath))}</strong></div>
       <div>AB&nbsp;<strong data-scada-sensor="ABLvl" data-scada-tag="${abPath}">${fmtSensor('ABLvl', scadaVal(abPath))}</strong></div>
+      ${overviewRowsHtml(site)}
     </div>
   </div>`;
+}
+
+// Extra named readings a site adds to its Overview card, from "overviewRows" in
+// scada-config.json — e.g. PP 7A's Downstream Level shown as CAWELO. They carry
+// data-scada-sensor/-tag, so patchScadaOverview() keeps them live like FB/TR/AB.
+function overviewRowsHtml(site) {
+  return (site.overviewRows || []).map(r => {
+    const path = scadaSensorPath(site, r.sensor);
+    return `<div>${escHtml(r.label)}&nbsp;<strong data-scada-sensor="${escHtml(r.sensor)}" data-scada-tag="${escHtml(path)}">${fmtSensor(r.sensor, scadaVal(path))}</strong></div>`;
+  }).join('');
 }
 
 function patchScadaOverview() {

@@ -78,7 +78,40 @@ reverse-flow totals; and power monitoring. Charts support drag-select statistics
 (high, low, difference, standard deviation).
 
 **Reports** — vehicle mileage and last service, KF completion, maintenance
-issues, PM grids, piezometers, canal readings, pond levels and well readings.
+issues, PM grids, piezometers, canal readings (daily, and monthly per turnout
+like the CVC turnout sheets), pond levels, well readings and pumping plant meter
+usage.
+
+**Pumping Plant report** (Reports → Pumping Plant) shows what each plant's
+meters used over a range — pump hours, air compressor hours, PG&E kWh and power
+monitor kWh — laid out like the SCADA dashboard: plant pills, quick ranges
+(**24 Hours**, **1 Week**, **Month** with a month picker, **Custom** dates), a
+bar graph of hours run per pump with the plant total, a "use per day" graph for
+up to 8 picked pieces of equipment, and a table with CSV / Excel / PDF export.
+
+- The meters only count up, so usage is the change in the meter. The meter is
+  taken as a straight line between readings, which lets a month run midnight to
+  midnight even though nobody reads at midnight; consecutive months add up. A
+  start or end value marked ≈ is estimated between the readings either side.
+  Nothing is extrapolated past the first or last reading.
+- 24 Hours and 1 Week end at the plant's **latest reading**, not the clock, so a
+  daily round always covers a full day. A meter read within 3 hours of that
+  reading gets a window ending at its own reading.
+- Use per day is the average rate between consecutive readings, so a missed
+  weekend shows as three days at the average rather than one 72-hour spike.
+  Readings less than 2 hours apart are treated as a correction, not a rate.
+- Spare pumps are left out, as on the Pumping Plant screen. The calculation is
+  `buildPumpingPlantReport()` in `server.js`, shared by the screen and the
+  Excel export.
+- **Air Compressors**, **PG&E** and **Power Monitors** pills (ahead of the plant
+  pills) show that one kind of meter across every plant, with the same ranges —
+  a quick way to spot a bad reading. A meter read within 12 hours of the latest
+  reading of that type gets its own window end.
+- The **Check** column (screen and all exports, plant and type views) flags a
+  meter that went backwards, an hour meter over 24 h/day, a reading period over
+  4× the meter's own typical use, and a meter with no readings in the range.
+  The climb back after a low reading isn't flagged a second time. See
+  `ppIssues()` in `server.js`.
 Pond Reports opens on **Pioneer Daily Readings**: eleven head gates with the CFS
 read that day, the time and the operator. Each row totals one or more sources —
 pond gates or canal structures — defined in `PIONEER_ROWS` in `server.js`, which
@@ -172,6 +205,25 @@ their total without it.
 **HR** — time-off requests and a charge-code reference with a split calculator
 that breaks hours across codes to the nearest quarter hour.
 
+The Breakdown tab leads with the **Field Staff Time Charging Guide** (updated
+Oct 21, 2026), shown as Charge Code | % of Time | Hours with the guide's rules
+as a footnote:
+
+- **Water Level Monitoring** splits by district and uses the Feb & Oct (Kern
+  Fan) column in February and October, the other column the rest of the year;
+  either can be picked by hand. Built in as `CHARGE_GUIDE` in `app.js`.
+- **Sounder Calibration & Repair** is an ordinary breakdown (editable in
+  Settings). On the first start after the update, `applyChargeGuideOnce()` in
+  `server.js` sets the existing "sounder" breakdown to the guide's codes and
+  order — or adds one if none exists, or skips if more than one matches — and
+  records that in `app_settings` (`charge_guide_2026_10_21`) so it never runs
+  again and later edits stand.
+- **Water Quality Sampling (Purge Pump)** is a reference list of which code goes
+  with which wells; there's no hours math. Also in `CHARGE_GUIDE`.
+
+When the guide is reissued, update `CHARGE_GUIDE` (and, for the sounder split,
+either edit it in Settings or add a new one-time key in `server.js`).
+
 **Tools & admin** — user management, SCADA access control, GPS location and pond
 GPS pickers, an EXIF reader, a SCADA scaling tester, bug reporting, and a global
 search across wells, vehicles, piezometers and structures.
@@ -193,7 +245,11 @@ Configuration is via environment variables (`.env`):
 | `PORT` | HTTP port (defaults to 4000; deployed on 3067, beta on 3066) |
 
 SCADA plant/tag layout lives in `watermark/scada-config.json`, so sites, pumps
-and sensors can change without touching code.
+and sensors can change without touching code. A site's `overviewRows` adds
+named readings to its Overview card under FB / TR / AB — PP 7A shows its
+Downstream Level (`DSLvl`) as **CAWELO**:
+`"overviewRows": [{ "label": "CAWELO", "sensor": "DSLvl" }]`. The sensor must be
+one the site reads (its `sensors`, or `defaultSensors`).
 
 Timestamps are stored as naive local (Pacific) date + time columns; the pool
 sets `timezone = 'America/Los_Angeles'` on every connection so interval maths
@@ -210,6 +266,23 @@ full database schema — live in [`CLAUDE.md`](CLAUDE.md). The short version:
   They must match — the cache name is what invalidates the service worker.
 
 ---
+
+## WaterMark — Ponds Screen Saving
+
+- Each pond / river outlet card has **one Save button** at the bottom
+  (`Save Pond 1`) that saves every gate and canal inflow on the card in one
+  transaction (`POST /api/readings/ponds`). The **Staff Gauge** keeps its own
+  Save, since it's sometimes read from a different spot.
+- A gate with nothing entered is saved as **closed**: opening (or weir
+  overpour) 0 and flow 0. A blank flow with a 0 opening is also saved as 0.
+  A canal inflow left blank is skipped, not zeroed — it's a metered turnout
+  and a made-up 0 would throw off the canal reports.
+- **Total Outflow** at the bottom of the card adds the outflow gates only
+  (pond → pond gates leaving that pond, and every gate on a river outlet);
+  canal inflows and gates on canal connections are left out. Under it is the
+  **previous day's** total: the last day before today with outflow readings,
+  each gate's last reading that day, a gate not read that day counting 0
+  (`GET /api/ponds/prev-outflow`).
 
 ## WaterMark — Ponds Screen Sort Order
 
@@ -312,10 +385,61 @@ Two things to know:
 - The filter is `in_service = true`, so a row where `in_service` is **NULL** is
   hidden too. If a structure is unexpectedly missing from the screen, check with
   `SELECT structure_name, in_service FROM canal_structures WHERE in_service IS NOT TRUE;`
-- `/api/canal-structures` also fills the Canal report's turnout dropdown, so a
-  retired structure drops out of it. Its readings still show under "All turnouts
-  / turn-ins", and the API still accepts its `structure_id` directly, but you
-  cannot pick it by name in the UI.
+- `/api/canal-structures` also fills the Canal report's Daily turnout dropdown,
+  so a retired structure drops out of it. Its readings still show under "All
+  turnouts / turn-ins", and the API still accepts its `structure_id` directly,
+  but you cannot pick it by name there. The **Monthly** tab's picker does offer
+  a retired structure for any month in which it has readings.
+
+### Canal report — Monthly tab
+
+Reports → Canal Readings has two tabs. **Daily** is the original date-range
+report. **Monthly** lays out one table per turnout / turn-in like the monthly
+CVC turnout sheets: pick a month and tick any number of turnouts (All / None
+buttons; the selection is remembered on that device).
+
+One row per day, from the last day of the previous month (the starting point)
+to the end of the month — or to today for the current month. The report answers
+how much water went through each turnout **midnight to midnight**:
+
+| Column | Source |
+|--------|--------|
+| Date / Time Value | The day, and the time of the reading shown for it (24-hour, e.g. `0948`) |
+| Observed Reading | `totalizer_reading_af`, or a supervisor's correction (`adjusted_af`) |
+| Adjusted Midnight Reading | The meter at the midnight that **ends** the day, from the readings either side |
+| AF / Day | That midnight minus the previous one: the water used that day |
+| CFS / Day | AF / Day ÷ 1.9835 (the same volume in cfs-days) |
+| Flow Rate | `instantaneous_flow_cfs` |
+| Note | Every note entered that day |
+
+- **Midnight reading:** the totalizer is a straight line between readings. 24 AF
+  at 10 AM and 48 AF at 10 AM the next day gives 24 + 24 × 14⁄24 = **38 AF** at
+  the midnight in between. Where two consecutive days both have readings this
+  matches the Adjusted Reading on the CVC turnout sheets exactly (the sheets show
+  it on the following day's row).
+- **Turned on or off between readings:** if the earlier reading had 0 flow, the
+  turnout was off, so the meter stays flat until just before the later reading —
+  as long before as the later reading's flow takes to pass the water gained —
+  instead of spreading it back over the days it was off. The reverse applies when
+  the later reading has 0 flow.
+- **No reading that day:** the previous reading repeats in the Observed column
+  (greyed). Gaps are expected only while a turnout is off, when the meter doesn't
+  move and the day is 0 AF. If the meter did move across a day with no reading,
+  the day is marked ≈ ("estimated").
+- **After the last reading:** held flat if the last flow entered was 0; otherwise
+  the midnight shows — until the next reading comes in (and the month's total
+  notes how many days are waiting).
+- **Totals** sum CFS / Day and AF / Day **without the starting row**.
+- **Correcting:** supervisors, admins and water planners tap an Observed Reading
+  to correct a mis-keyed meter reading. The correction is stored in
+  `readings_canal.adjusted_af`, the operator's entry is kept (and shown in the
+  Note on export), the midnights either side are recalculated, and "Use
+  Original" removes it. `PUT /api/canal-readings/:id/adjusted` enforces the role.
+- **Export:** CSV (one section per turnout), Excel (one sheet per turnout) and
+  PDF (one page per turnout).
+
+The calculation is `buildCanalMonthly()` in `server.js`; the JSON endpoint and
+the Excel export share it, so the screen and the spreadsheet cannot disagree.
 
 ---
 

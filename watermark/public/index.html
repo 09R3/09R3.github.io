@@ -86,6 +86,10 @@
       color: var(--accent);
       font-variant-numeric: tabular-nums;
     }
+    .pond-prev-total { font-size: 0.74rem; font-weight: 400; color: var(--text-muted); margin-top: 2px; }
+    .pond-prev-total strong { color: var(--text-dim); font-weight: 600; }
+    .pond-save-row { display: flex; align-items: center; gap: 12px; padding: 10px; flex-wrap: wrap; }
+    .pond-save-row .btn-save { min-height: 44px; padding: 8px 20px; }
     .pond-delta { font-size: 0.75rem; font-weight: 700; margin-left: 2px; }
     .delta-up   { color: #4caf50; }
     .delta-dn   { color: #ef5350; }
@@ -129,7 +133,7 @@
         Sign in with Microsoft 365
       </a>
       <div id="ms-login-error" class="error-msg hidden"></div>
-      <div class="login-version">v 3.36</div>
+      <div class="login-version">v 3.46</div>
     </div>
   </div>
 </div>
@@ -494,10 +498,6 @@
       <input type="time" id="pp-time" class="ctrl-input ctrl-input-sm ctrl-time">
     </div>
     <div id="pp-site-tabs" class="set-tabs pp-tabs-inline"></div>
-    <div id="pp-save-bar" class="pp-save-row hidden">
-      <button class="btn btn-save" id="pp-save-btn">Save Readings</button>
-      <span class="save-status" id="pp-save-status"></span>
-    </div>
     <div id="pp-form-body">
       <div class="placeholder-msg">Loading plants…</div>
     </div>
@@ -1539,6 +1539,12 @@
         </div>
         <div class="dash-label">Well Readings</div>
       </div>
+      <div class="dash-tile" data-report-cat="pp">
+        <div class="dash-icon-wrap">
+          <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-pumping-plant.svg);mask-image:url(/marv-site/icons/icon-pumping-plant.svg)"></span>
+        </div>
+        <div class="dash-label">Pumping Plant</div>
+      </div>
     </div>
 
     <!-- Vehicles panel -->
@@ -1648,8 +1654,42 @@
       <div id="report-piez-output"></div>
     </div>
 
+    <!-- Pumping Plant panel: usage from the pump hour, compressor hour, PG&E and
+         power monitor meters, laid out like the SCADA dashboard -->
+    <div id="report-panel-pp" class="maint-panel hidden">
+      <div class="scada-plant-pills" id="ppr-plants"></div>
+      <div class="report-toolbar">
+        <div class="seg-group" id="ppr-range">
+          <button class="seg-btn" data-range="24h">24 Hours</button>
+          <button class="seg-btn" data-range="7d">1 Week</button>
+          <button class="seg-btn" data-range="month">Month</button>
+          <button class="seg-btn" data-range="custom">Custom</button>
+        </div>
+        <button class="btn btn-secondary btn-sm" id="ppr-export-btn" style="margin-left:auto"><span class="app-icon" style="width:14px;height:14px;-webkit-mask-image:url(/marv-site/icons/icon-download.svg);mask-image:url(/marv-site/icons/icon-download.svg)"></span> Export</button>
+      </div>
+      <div class="report-toolbar hidden" id="ppr-month-row">
+        <button class="btn btn-secondary btn-sm" id="ppr-month-prev" title="Previous month">&#8592;</button>
+        <input type="month" id="ppr-month" class="ctrl-input ctrl-input-sm">
+        <button class="btn btn-secondary btn-sm" id="ppr-month-next" title="Next month">&#8594;</button>
+      </div>
+      <div class="report-toolbar hidden" id="ppr-custom-row">
+        <input type="date" id="ppr-from" class="ctrl-input ctrl-input-sm">
+        <span class="report-date-sep">&#8211;</span>
+        <input type="date" id="ppr-to" class="ctrl-input ctrl-input-sm">
+        <button class="btn btn-secondary btn-sm" id="ppr-apply">Apply</button>
+      </div>
+      <div id="ppr-output"></div>
+    </div>
+
     <!-- Canal Readings panel -->
     <div id="report-panel-canal" class="maint-panel hidden">
+      <div class="report-toolbar">
+        <div class="seg-group" id="canal-report-seg">
+          <button class="seg-btn active" data-val="daily">Daily</button>
+          <button class="seg-btn" data-val="monthly">Monthly</button>
+        </div>
+      </div>
+      <div id="canal-daily-view">
       <div class="report-toolbar">
         <button class="btn btn-secondary btn-sm" id="canal-report-prev" title="Back one day">&#8592;</button>
         <input type="date" id="canal-report-start-date" class="ctrl-input ctrl-input-sm">
@@ -1663,6 +1703,28 @@
         <button class="btn btn-secondary btn-sm" id="canal-export-btn" style="margin-left:auto"><span class="app-icon" style="width:14px;height:14px;-webkit-mask-image:url(/marv-site/icons/icon-download.svg);mask-image:url(/marv-site/icons/icon-download.svg)"></span> Export</button>
       </div>
       <div id="report-canal-output"></div>
+      </div><!-- /canal-daily-view -->
+
+      <!-- Monthly: one table per turnout / turn-in, like the monthly CVC sheets -->
+      <div id="canal-monthly-view" class="hidden">
+        <div class="report-toolbar">
+          <button class="btn btn-secondary btn-sm" id="canal-month-prev" title="Previous month">&#8592;</button>
+          <input type="month" id="canal-month" class="ctrl-input ctrl-input-sm">
+          <button class="btn btn-secondary btn-sm" id="canal-month-next" title="Next month">&#8594;</button>
+          <div class="dwr-ms-wrap canal-ms" id="canal-month-ms">
+            <button type="button" class="dwr-ms-btn" id="canal-month-ms-btn">Select turnouts / turn-ins</button>
+            <div class="dwr-ms-panel" id="canal-month-ms-panel">
+              <div class="canal-ms-actions">
+                <button type="button" class="btn btn-secondary btn-xs" id="canal-month-ms-all">All</button>
+                <button type="button" class="btn btn-secondary btn-xs" id="canal-month-ms-none">None</button>
+              </div>
+              <div id="canal-month-ms-options"></div>
+            </div>
+          </div>
+          <button class="btn btn-secondary btn-sm" id="canal-month-export-btn" style="margin-left:auto"><span class="app-icon" style="width:14px;height:14px;-webkit-mask-image:url(/marv-site/icons/icon-download.svg);mask-image:url(/marv-site/icons/icon-download.svg)"></span> Export</button>
+        </div>
+        <div id="report-canal-monthly-output"></div>
+      </div>
     </div>
 
     <!-- Pond Report panel -->
@@ -1969,7 +2031,7 @@
     <div id="settings-panel-appinfo" class="settings-panel hidden">
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 3.36</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 3.46</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>
@@ -2477,12 +2539,22 @@
                 <label>Breakdown</label>
                 <select id="cc-split-select" class="ctrl-select"></select>
               </div>
-              <div class="charts-field-row">
+              <div class="seg-group cc-variant hidden" id="cc-split-variant"></div>
+              <div class="charts-field-row" id="cc-split-hours-row">
                 <label>Total Hours</label>
                 <input type="number" id="cc-split-hours" class="ctrl-input" min="0" step="0.25" placeholder="hrs">
                 <span class="charts-unit-label">h</span>
               </div>
+              <div class="cc-split-desc hidden" id="cc-split-desc"></div>
               <div id="cc-split-result" class="cc-split-result"></div>
+              <!-- From the Field Staff Time Charging Guide (Oct 21 2026). -->
+              <div class="cc-rules">
+                <div class="cc-rules-title">Rules</div>
+                <ul>
+                  <li>610H and 611I codes always need a project code.</li>
+                  <li>611A, 611H and 611L are admin codes. WRD field staff should not use them.</li>
+                </ul>
+              </div>
             </div>
           </div>
         </div>
@@ -3011,6 +3083,28 @@
       <button class="modal-close" id="vehicle-info-modal-close">&times;</button>
     </div>
     <div class="modal-body" id="vehicle-info-modal-body" style="padding:0"></div>
+  </div>
+</div>
+
+<!-- Canal Monthly: supervisor's correction to one day's reading -->
+<div id="canal-adjust-modal" class="modal-overlay hidden">
+  <div class="modal-card" style="max-width:420px;width:calc(100vw - 32px)">
+    <div class="modal-header">
+      <h2 id="canal-adjust-title">Correct Reading</h2>
+      <button class="modal-close" id="canal-adjust-close">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="canal-adjust-meta" id="canal-adjust-meta"></div>
+      <div class="form-group">
+        <label for="canal-adjust-input">Corrected Reading (AF)</label>
+        <input type="number" step="any" inputmode="decimal" id="canal-adjust-input" class="ctrl-input">
+      </div>
+      <div id="canal-adjust-error" class="error-msg hidden"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" id="canal-adjust-clear">Use Original</button>
+      <button class="btn btn-save" id="canal-adjust-save">Save</button>
+    </div>
   </div>
 </div>
 

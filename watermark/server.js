@@ -503,6 +503,13 @@ pool.query(`ALTER TABLE readings_kf_monthly  ADD COLUMN IF NOT EXISTS sounder_nu
 pool.query(`ALTER TABLE canal_structures ADD COLUMN IF NOT EXISTS sort_order INT DEFAULT 0`)
   .catch(err => console.error('Migration error (canal sort_order):', err.message));
 
+// A supervisor's correction to a canal totalizer reading, in AF. NULL means the
+// observed reading stands. The Monthly canal report uses it in place of the
+// observed value when working out each day's change, so a mis-keyed or reset
+// totalizer can be fixed without rewriting what the operator recorded.
+pool.query(`ALTER TABLE readings_canal ADD COLUMN IF NOT EXISTS adjusted_af NUMERIC`)
+  .catch(err => console.error('Migration error (canal adjusted_af):', err.message));
+
 pool.query(`ALTER TABLE maintenance_vehicles ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'open'`)
   .catch(err => console.error('Migration error (mv_status):', err.message));
 
@@ -579,7 +586,51 @@ pool.query(`
     created_at   TIMESTAMPTZ DEFAULT NOW(),
     updated_at   TIMESTAMPTZ DEFAULT NOW()
   )
-`).catch(err => console.error('Migration error (charge_code_splits):', err.message));
+`).then(() => applyChargeGuideOnce()
+    .catch(err => console.error('Charge guide update failed:', err.message)))
+  .catch(err => console.error('Migration error (charge_code_splits):', err.message));
+
+// Field Staff Time Charging Guide, updated Oct 21 2026: the Sounder Calibration &
+// Repair split, in the guide's order. Applied ONCE to the existing "sounder"
+// breakdown (or added if there isn't one); the app_settings key records that it
+// ran, so edits made afterwards in Settings are never overwritten. Water Level
+// Monitoring and Purge Pump from the same guide are built into the Breakdown tab
+// (CHARGE_GUIDE in app.js) because they don't fit a single percentage split.
+const CHARGE_GUIDE_KEY = 'charge_guide_2026_10_21';
+const CHARGE_GUIDE_SOUNDER = [
+  { code: '831H-87020', percent: 46 },
+  { code: '870D-87020', percent: 18 },
+  { code: '771H-87020', percent: 17 },
+  { code: '890H-87020', percent: 8 },
+  { code: '711H-87020', percent: 7 },
+  { code: '610H-61006', percent: 2 },
+  { code: '610H-61007', percent: 2 },
+];
+async function applyChargeGuideOnce() {
+  const { rows: done } = await pool.query('SELECT 1 FROM app_settings WHERE key = $1', [CHARGE_GUIDE_KEY]);
+  if (done.length) return;
+  const { rows } = await pool.query(`SELECT split_id, name FROM charge_code_splits WHERE name ~* 'sounder'`);
+  const json = JSON.stringify(CHARGE_GUIDE_SOUNDER);
+  let result;
+  if (rows.length === 1) {
+    await pool.query(
+      'UPDATE charge_code_splits SET components = $1::jsonb, updated_at = NOW() WHERE split_id = $2',
+      [json, rows[0].split_id]);
+    result = `updated "${rows[0].name}"`;
+  } else if (!rows.length) {
+    await pool.query(
+      `INSERT INTO charge_code_splits (name, components, created_by) VALUES ('Sounder Calibration & Repair', $1::jsonb, 'system')`,
+      [json]);
+    result = 'added "Sounder Calibration & Repair"';
+  } else {
+    // More than one candidate: don't guess which to overwrite.
+    result = `skipped: ${rows.length} breakdowns match "sounder" (${rows.map(r => r.name).join(', ')})`;
+  }
+  await pool.query(
+    `INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2, NOW())
+     ON CONFLICT (key) DO NOTHING`, [CHARGE_GUIDE_KEY, result]);
+  console.log(`Charge guide (Oct 21 2026): Sounder breakdown ${result}`);
+}
 
 pool.query(`
   CREATE TABLE IF NOT EXISTS pest_tasks (
@@ -2519,6 +2570,86 @@ app.post('/api/readings/pond-gate', requireAuth, async (req, res) => {
   }
 });
 
+// One save per pond / river outlet card: every gate on the card plus any canal
+// inflow row, in one transaction. The client fills a gate left blank with a
+// closed (0) reading before sending; the staff gauge still saves on its own.
+app.post('/api/readings/ponds', requireAuth, async (req, res) => {
+  const { reading_date, reading_time } = req.body;
+  const gates = Array.isArray(req.body.gates) ? req.body.gates : [];
+  const canal = Array.isArray(req.body.canal) ? req.body.canal : [];
+  if (!reading_date || !reading_time) {
+    return res.status(400).json({ error: 'reading_date and reading_time are required' });
+  }
+  if (!gates.length && !canal.length) return res.status(400).json({ error: 'No readings to save' });
+  const num = v => (v === '' || v == null || isNaN(Number(v)) ? null : Number(v));
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const saved = { gates: [], canal: [] };
+    for (const g of gates) {
+      const { rows } = await client.query(
+        `INSERT INTO readings_pond_gates
+           (gate_id, reading_date, reading_time, head_ft, opening_in, overpour_in, flow_cfs, entered_by, notes)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING reading_id`,
+        [g.gate_id, reading_date, reading_time, num(g.head_ft), num(g.opening_in), num(g.overpour_in),
+         num(g.flow_cfs), req.user.username, g.notes || null]);
+      saved.gates.push({ gate_id: g.gate_id, reading_id: rows[0].reading_id });
+    }
+    for (const c of canal) {
+      const { rows } = await client.query(
+        `INSERT INTO readings_canal
+           (structure_id, reading_date, reading_time, instantaneous_flow_cfs, totalizer_reading_af, entered_by, notes)
+         VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING reading_id`,
+        [c.structure_id, reading_date, reading_time, num(c.instantaneous_flow_cfs),
+         num(c.totalizer_reading_af), req.user.username, c.notes || null]);
+      saved.canal.push({ structure_id: c.structure_id, reading_id: rows[0].reading_id });
+    }
+    await client.query('COMMIT');
+    res.json({ ok: true, saved });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    handleErr(res, err);
+  } finally {
+    client.release();
+  }
+});
+
+// Total outflow on the last day before today with outflow readings, per pond
+// (gates on pond → pond connections leaving it) and per river outlet (gates on
+// its connections). Canal inflows, and any gates on them, are not outflow.
+// Each gate counts its last reading that day; a gate not read that day counts 0.
+app.get('/api/ponds/prev-outflow', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      WITH g AS (
+        SELECT 'pond'::text AS kind, pc.source_pond_id AS ent_id, pg.gate_id
+        FROM pond_connections pc JOIN pond_gates pg ON pg.connection_id = pc.connection_id AND pg.active = true
+        WHERE pc.active = true AND pc.source_type = 'pond' AND pc.source_pond_id IS NOT NULL
+        UNION ALL
+        SELECT 'outlet', pc.source_river_id, pg.gate_id
+        FROM pond_connections pc JOIN pond_gates pg ON pg.connection_id = pc.connection_id AND pg.active = true
+        WHERE pc.active = true AND pc.source_river_id IS NOT NULL
+      ), d AS (
+        SELECT g.kind, g.ent_id, MAX(r.reading_date) AS day
+        FROM g JOIN readings_pond_gates r ON r.gate_id = g.gate_id
+        WHERE r.reading_date < CURRENT_DATE
+        GROUP BY g.kind, g.ent_id
+      ), last AS (
+        SELECT DISTINCT ON (g.gate_id) g.kind, g.ent_id, r.flow_cfs
+        FROM g JOIN d ON d.kind = g.kind AND d.ent_id = g.ent_id
+        JOIN readings_pond_gates r ON r.gate_id = g.gate_id AND r.reading_date = d.day
+        ORDER BY g.gate_id, r.reading_time DESC NULLS LAST, r.reading_id DESC
+      )
+      SELECT d.kind, d.ent_id, to_char(d.day, 'YYYY-MM-DD') AS day,
+             COALESCE(SUM(last.flow_cfs), 0)::float AS total_cfs
+      FROM d LEFT JOIN last ON last.kind = d.kind AND last.ent_id = d.ent_id
+      GROUP BY d.kind, d.ent_id, d.day`);
+    res.json(rows);
+  } catch (err) {
+    handleErr(res, err);
+  }
+});
+
 app.delete('/api/readings/staff-gauge/:id', requireAuth, (req, res) =>
   deleteReading(req, res, 'readings_staff_gauge', 'reading_id'));
 
@@ -4404,6 +4535,745 @@ app.get('/api/reports/canal/export', async (req, res) => {
       .trim().replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '') || 'Structure';
     const fnRange = start_date === end_date ? start_date : `${start_date}_to_${end_date}`;
     res.setHeader('Content-Disposition', `attachment; filename="Canal_${fnPart}_${fnRange}.xlsx"`);
+    return res.send(buf);
+  } catch (err) { handleErr(res, err); }
+});
+
+// ── Pumping Plant report ──────────────────────────────────────────────────────
+// Usage over a range for every meter at one plant (site): pump hours, air
+// compressor hours, PG&E kWh and power monitor kWh. The meters only count up,
+// so "used" is worked out from the meter itself:
+//
+//  - M(t), the meter at time t, is a straight line between consecutive
+//    readings. It is never extrapolated past the first or last reading.
+//  - Used = M(end) - M(start), with start/end clipped to the readings that
+//    exist. A month therefore runs midnight to midnight even though nobody
+//    reads at midnight, and the totals of consecutive months add up.
+//  - The per-day series is the average rate between each pair of readings
+//    (hours run per day, kWh per day), so a weekend gap shows as three days
+//    at the average rather than one 72-hour spike.
+//
+// 24 Hours and 1 Week end at the plant's latest reading, not the clock: the
+// readings are daily, so "the last 24 hours" ending now would cover only part
+// of a day and read as if the pumps ran less.
+const PP_METERS = Object.assign(Object.create(null), {
+  pump:       { table: 'readings_pump_hours',       fk: 'position_id',   col: 'hour_reading', unit: 'hrs' },
+  compressor: { table: 'readings_compressor_hours', fk: 'compressor_id', col: 'hour_reading', unit: 'hrs' },
+  pge:        { table: 'readings_pge_meters',       fk: 'pge_meter_id',  col: 'kwh_reading',  unit: 'kWh' },
+  monitor:    { table: 'readings_power_monitors',   fk: 'monitor_id',    col: 'kwh_reading',  unit: 'kWh' },
+});
+const PP_RATE_MIN_GAP_MS = 2 * 3600 * 1000;   // readings closer than this are a correction, not a rate
+// 24 Hours / 1 Week: a meter read within this long of the plant's latest
+// reading gets a window ending at its own reading, so equipment read at 07:07
+// and 07:35 on the same round both cover a full 24 hours.
+const PP_ALIGN_MS = 3 * 3600 * 1000;
+
+// Naive Pacific timestamps ("2026-10-13T07:00:00") are handled as if UTC so the
+// arithmetic stays in wall-clock terms.
+const ppMs  = ts => Date.parse(ts + 'Z');
+const ppIso = ms => new Date(ms).toISOString().slice(0, 19);
+
+// Equipment for one plant (siteId) or for one type across every plant (type).
+// Every column is cast to text. UNION needs one type per column, so a numeric
+// pge_meters.meter_number beside the text columns failed the whole report
+// ("UNION types ... cannot be matched"); and ids can't be assumed numeric
+// either — live building ids are text like "1B". Ids are handled as strings
+// from here on and matched with ::text, whatever their column type.
+const PP_TYPE_LABELS = Object.assign(Object.create(null), {
+  compressor: { title: 'Air Compressors', what: 'Air Compressor Hours' },
+  pge:        { title: 'PG&E',            what: 'PG&E kWh' },
+  monitor:    { title: 'Power Monitors',  what: 'Power Monitor kWh' },
+});
+
+async function ppEquipment({ siteId = null, type = null }) {
+  let site = null;
+  if (siteId != null) {
+    const { rows } = await pool.query('SELECT site_id, site_name FROM sites WHERE site_id::text = $1', [siteId]);
+    if (!rows.length) return null;
+    site = rows[0];
+  }
+  const { rows } = await pool.query(`
+    SELECT * FROM (
+      SELECT 'pump' AS type, pp.position_id::text AS id, b.building_id::text AS building_id,
+             b.building_letter::text AS building_letter, b.building_name::text AS building_name,
+             pp.pump_letter::text AS name, NULL::text AS extra,
+             s.site_id::text AS site_id, s.site_name::text AS site_name
+      FROM pump_positions pp JOIN buildings b ON b.building_id = pp.building_id
+           JOIN sites s ON s.site_id = b.site_id
+      WHERE COALESCE(pp.status::text, '') !~* 'spare'
+      UNION ALL
+      SELECT 'compressor', ac.compressor_id::text, b.building_id::text, b.building_letter::text, b.building_name::text,
+             NULL::text, NULL::text, s.site_id::text, s.site_name::text
+      FROM air_compressors ac JOIN buildings b ON b.building_id = ac.building_id
+           JOIN sites s ON s.site_id = b.site_id
+      UNION ALL
+      SELECT 'pge', pm.pge_meter_id::text, b.building_id::text, b.building_letter::text, b.building_name::text,
+             pm.meter_name::text, pm.meter_number::text, s.site_id::text, s.site_name::text
+      FROM pge_meters pm JOIN buildings b ON b.building_id = pm.building_id
+           JOIN sites s ON s.site_id = b.site_id
+      UNION ALL
+      SELECT 'monitor', pw.monitor_id::text, b.building_id::text, b.building_letter::text, b.building_name::text,
+             pw.monitor_number::text, NULL::text, s.site_id::text, s.site_name::text
+      FROM power_monitors pw JOIN buildings b ON b.building_id = pw.building_id
+           JOIN sites s ON s.site_id = b.site_id
+    ) e
+    WHERE ($1::text IS NULL OR e.site_id = $1::text)
+      AND ($2::text IS NULL OR e.type = $2::text)
+      AND COALESCE(e.site_name, '') !~* 'service.?truck'   -- not a plant (hidden on the Pumping Plant screen too)
+  `, [siteId, type]);
+  const typeOrder = { pump: 0, compressor: 1, pge: 2, monitor: 3 };
+  // Plants in name order with O&M last, as on the Pumping Plant screen.
+  const plantKey = r => `${/o\s*&\s*m/i.test(r.site_name || '') ? 1 : 0}|${r.site_name || ''}`;
+  rows.sort((a, b) => plantKey(a).localeCompare(plantKey(b), undefined, { numeric: true })
+    || String(a.building_letter || '').localeCompare(String(b.building_letter || ''))
+    || typeOrder[a.type] - typeOrder[b.type]
+    || String(a.name || '').localeCompare(String(b.name || ''), undefined, { numeric: true })
+    || String(a.id).localeCompare(String(b.id), undefined, { numeric: true }));
+  // Several compressors in one building are numbered; one is just "Air Compressor".
+  const compCount = {};
+  rows.forEach(r => { if (r.type === 'compressor') compCount[r.building_id] = (compCount[r.building_id] || 0) + 1; });
+  const compSeen = {};
+  const equipment = rows.map(r => {
+    const plant = String(r.site_name || 'Plant').replace('Site', 'Plant');
+    const building = r.building_name || (r.building_letter ? `${r.building_letter} Plant` : 'Plant');
+    let what;
+    if (r.type === 'pump') what = `Pump ${r.name || r.id}`;
+    else if (r.type === 'compressor') {
+      compSeen[r.building_id] = (compSeen[r.building_id] || 0) + 1;
+      what = compCount[r.building_id] > 1 ? `Air Compressor ${compSeen[r.building_id]}` : 'Air Compressor';
+    } else if (r.type === 'pge') what = `PG&E ${r.name || r.extra || r.id}`.trim();
+    else what = `Power Monitor ${r.name || r.id}`;
+    // Across plants the plant leads the label; within one plant it's implied.
+    return { key: `${r.type}:${r.id}`, type: r.type, id: r.id, plant, building,
+             label: type ? `${plant} · ${building} · ${what}` : `${building} · ${what}`,
+             unit: PP_METERS[r.type].unit };
+  });
+  return { site, equipment };
+}
+
+// Resolve the requested range to a [start, end) window of naive timestamps.
+async function ppWindow(q, equipment) {
+  const mode = String(q.range || '');
+  const dayMs = 86400000;
+  const { rows: [{ now }] } = await pool.query(`SELECT to_char(LOCALTIMESTAMP, 'YYYY-MM-DD"T"HH24:MI:SS') AS now`);
+  if (mode === '24h' || mode === '7d') {
+    // Anchor on the latest reading at this plant (falls back to now).
+    let latest = null;
+    for (const [type, m] of Object.entries(PP_METERS)) {
+      const ids = equipment.filter(e => e.type === type).map(e => e.id);
+      if (!ids.length) continue;
+      const { rows } = await pool.query(
+        `SELECT to_char(MAX(reading_date + COALESCE(reading_time, TIME '00:00')), 'YYYY-MM-DD"T"HH24:MI:SS') AS ts
+         FROM ${m.table} WHERE ${m.fk}::text = ANY($1::text[]) AND ${m.col} IS NOT NULL`, [ids]);
+      if (rows[0].ts && (!latest || rows[0].ts > latest)) latest = rows[0].ts;
+    }
+    const end = latest && latest < now ? latest : now;
+    return { mode, start: ppIso(ppMs(end) - (mode === '24h' ? 1 : 7) * dayMs), end };
+  }
+  if (mode === 'month') {
+    const m = /^(\d{4})-(\d{2})$/.exec(String(q.month || ''));
+    if (!m || +m[2] < 1 || +m[2] > 12) return { error: 'month must be YYYY-MM' };
+    const start = `${m[1]}-${m[2]}-01T00:00:00`;
+    const next  = new Date(Date.UTC(+m[1], +m[2], 1)).toISOString().slice(0, 10) + 'T00:00:00';
+    return { mode, month: `${m[1]}-${m[2]}`, start, end: next };
+  }
+  if (mode === 'custom') {
+    const s = String(q.start || ''), e = String(q.end || '');
+    if (!isValidIsoDate(s) || !isValidIsoDate(e)) return { error: 'start and end must be YYYY-MM-DD' };
+    if (e < s) return { error: 'end must be on or after start' };
+    if (ppMs(e + 'T00:00:00') - ppMs(s + 'T00:00:00') > 400 * dayMs) return { error: 'Range is limited to about a year' };
+    return { mode, start: `${s}T00:00:00`, end: ppIso(ppMs(e + 'T00:00:00') + dayMs) };
+  }
+  return { error: 'range must be 24h, 7d, month or custom' };
+}
+
+function ppUsage(points, ws, we, unit) {
+  // points: [{ t (ms), v }] sorted; one per timestamp (the last entered wins).
+  const out = { total: null, start_value: null, end_value: null, start_at: null, end_at: null,
+                start_est: false, end_est: false, avg_per_day: null, series: [], issues: [] };
+  if (!points.length) return out;
+  const M = t => {
+    if (t < points[0].t || t > points[points.length - 1].t) return null;
+    let i = 1;
+    while (i < points.length && points[i].t < t) i++;
+    if (i >= points.length) return points[points.length - 1].v;
+    const a = points[i - 1], b = points[i];
+    return b.t === a.t ? b.v : a.v + (b.v - a.v) * (t - a.t) / (b.t - a.t);
+  };
+  const a = Math.max(ws, points[0].t), b = Math.min(we, points[points.length - 1].t);
+  if (b > a) {
+    const at = t => points.some(p => p.t === t);
+    out.start_value = M(a); out.end_value = M(b);
+    out.total = out.end_value - out.start_value;
+    out.start_at = ppIso(a); out.end_at = ppIso(b);
+    out.start_est = !at(a); out.end_est = !at(b);
+    out.avg_per_day = out.total / ((b - a) / 86400000);
+  }
+  // Rate series. Readings within two hours of the previous one are folded in
+  // (a correction or a second save), otherwise a 10-minute gap reads as a
+  // ridiculous rate.
+  const kept = [];
+  for (const p of points) {
+    if (kept.length && p.t - kept[kept.length - 1].t < PP_RATE_MIN_GAP_MS) {
+      if (kept.length > 1) kept[kept.length - 1] = p;
+      continue;
+    }
+    kept.push(p);
+  }
+  const rates = [];
+  for (let i = 1; i < kept.length; i++) {
+    const p0 = kept[i - 1], p1 = kept[i];
+    const s0 = Math.max(p0.t, ws), s1 = Math.min(p1.t, we);
+    if (s1 <= s0) continue;
+    const rate = (p1.v - p0.v) / ((p1.t - p0.t) / 86400000);
+    out.series.push({ x: ppIso(s0), y: rate }, { x: ppIso(s1), y: rate });
+    rates.push({ rate, from: p0.t, at: p1.t });
+  }
+  out.issues = ppIssues(points, rates, ws, we, unit);
+  return out;
+}
+
+// Readings worth a second look — the point of the per-type views. Only checks
+// that are wrong on their face, so the list stays short enough to act on:
+//  - the meter went backwards (a mis-keyed or swapped reading, or a meter change)
+//  - an hour meter ran more than 24 hours a day
+//  - one reading period far above the meter's own typical use (a slipped digit
+//    usually shows as a spike followed by a drop)
+const PP_SPIKE_FACTOR = 4;
+function ppIssues(points, rates, ws, we, unit) {
+  const issues = [];
+  const when = t => ppIso(t).slice(0, 16);
+  const low = new Set();   // readings that dropped below the one before
+  for (let i = 1; i < points.length; i++) {
+    const p0 = points[i - 1], p1 = points[i];
+    if (p1.v < p0.v - 1e-6) low.add(p1.t);
+    if (p1.t <= ws || p1.t > we) continue;
+    if (p1.v < p0.v - 1e-6) issues.push({ kind: 'backwards', at: when(p1.t), from: p0.v, to: p1.v });
+  }
+  // The climb back up after a low reading is the same mistake, not a second one.
+  rates = rates.filter(r => !low.has(r.from));
+  if (unit === 'hrs') {
+    for (const r of rates) if (r.rate > 24.5) issues.push({ kind: 'over24', at: when(r.at), rate: r.rate });
+  }
+  const positive = rates.map(r => r.rate).filter(v => v > 0).sort((a, b) => a - b);
+  if (positive.length >= 4) {
+    const median = positive[Math.floor(positive.length / 2)];
+    for (const r of rates) {
+      if (median > 0 && r.rate > PP_SPIKE_FACTOR * median && !(unit === 'hrs' && r.rate > 24.5)) {
+        issues.push({ kind: 'spike', at: when(r.at), rate: r.rate, typical: median });
+      }
+    }
+  }
+  return issues.sort((a, b) => a.at.localeCompare(b.at));
+}
+
+// One line per issue, used by the screen and every export.
+function ppIssueText(i, unit) {
+  const d = unit === 'kWh' ? 0 : 1;
+  const n = v => Number(v).toLocaleString('en-US', { maximumFractionDigits: d, minimumFractionDigits: d });
+  const day = d => `${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][Number(d.slice(5, 7)) - 1]} ${Number(d.slice(8, 10))}`;
+  const [date, time] = i.at.split('T');
+  const at = `${day(date)} ${time}`;
+  if (i.kind === 'backwards') return `Went backwards ${at} (${n(i.from)} → ${n(i.to)})`;
+  if (i.kind === 'over24')    return `Over 24 h/day: ${n(i.rate)} h/day to ${at}`;
+  if (i.kind === 'spike')     return `Unusually high: ${n(i.rate)} ${unit}/day to ${at} (typical ${n(i.typical)})`;
+  if (i.kind === 'stale')     return i.last ? `No readings in this range (last ${day(i.last)}, ${i.last.slice(0, 4)})` : 'No readings';
+  return '';
+}
+
+async function buildPumpingPlantReport(scope, q) {
+  const base = await ppEquipment(scope);
+  if (!base) return { notFound: true };
+  const win = await ppWindow(q, base.equipment);
+  if (win.error) return { error: win.error };
+  const ws = ppMs(win.start), we = ppMs(win.end);
+  const rolling = win.mode === '24h' || win.mode === '7d';
+  const fetchStart = ppIso(rolling ? ws - (scope.type ? 12 * 3600 * 1000 : PP_ALIGN_MS) : ws);
+
+  const pointsByKey = new Map();
+  for (const [type, m] of Object.entries(PP_METERS)) {
+    const ids = base.equipment.filter(e => e.type === type).map(e => e.id);
+    if (!ids.length) continue;
+    // Everything inside the window, plus the last reading before it and the
+    // first after it so the meter can be interpolated right to the edges.
+    const { rows } = await pool.query(`
+      WITH r AS (
+        SELECT ${m.fk}::text AS id, reading_id, (reading_date + COALESCE(reading_time, TIME '00:00')) AS ts,
+               ${m.col}::float8 AS v
+        FROM ${m.table} WHERE ${m.fk}::text = ANY($1::text[]) AND ${m.col} IS NOT NULL
+      )
+      SELECT id, to_char(ts, 'YYYY-MM-DD"T"HH24:MI:SS') AS ts, v FROM (
+        (SELECT id, reading_id, ts, v FROM r WHERE ts > $2::timestamp AND ts < $3::timestamp)
+        UNION ALL
+        (SELECT DISTINCT ON (id) id, reading_id, ts, v FROM r WHERE ts <= $2::timestamp ORDER BY id, ts DESC, reading_id DESC)
+        UNION ALL
+        (SELECT DISTINCT ON (id) id, reading_id, ts, v FROM r WHERE ts >= $3::timestamp ORDER BY id, ts ASC, reading_id ASC)
+      ) x
+      ORDER BY id, ts, reading_id`, [ids, fetchStart.replace('T', ' '), win.end.replace('T', ' ')]);
+    for (const r of rows) {
+      const k = `${type}:${r.id}`;
+      if (!pointsByKey.has(k)) pointsByKey.set(k, []);
+      const arr = pointsByKey.get(k), t = ppMs(r.ts);
+      if (arr.length && arr[arr.length - 1].t === t) arr[arr.length - 1].v = r.v;
+      else arr.push({ t, v: r.v });
+    }
+  }
+
+  const round = (v, d) => (v == null ? null : Number(v.toFixed(d)));
+  const equipment = base.equipment.map(e => {
+    const pts = pointsByKey.get(e.key) || [];
+    let s = ws, t = we;
+    const last = pts[pts.length - 1];
+    // Plants are read at different times of day, so across plants a meter may
+    // be read up to 12 hours before the latest reading anywhere.
+    const align = scope.type ? 12 * 3600 * 1000 : PP_ALIGN_MS;
+    if (rolling && last && last.t <= we && we - last.t <= align) { t = last.t; s = t - (we - ws); }
+    const u = ppUsage(pts, s, t, e.unit);
+    const d = e.unit === 'kWh' ? 0 : 1;
+    const readings = pts.filter(p => p.t > s && p.t <= t).length;
+    if (!readings) {
+      const before = pts.filter(p => p.t <= s).pop();
+      u.issues.unshift({ kind: 'stale', at: '', last: before ? ppIso(before.t).slice(0, 16).replace('T', ' ') : null });
+    }
+    return {
+      ...e,
+      readings,
+      issues: u.issues.slice(0, 6).map(i => ({ ...i, text: ppIssueText(i, e.unit) })),
+      more_issues: Math.max(0, u.issues.length - 6),
+      total: round(u.total, d), avg_per_day: round(u.avg_per_day, d + 1),
+      start_value: round(u.start_value, d), end_value: round(u.end_value, d),
+      start_at: u.start_at, end_at: u.end_at, start_est: u.start_est, end_est: u.end_est,
+      series: u.series.map(p => ({ x: p.x, y: round(p.y, 2) })),
+    };
+  });
+  const pumpTotals = equipment.filter(e => e.type === 'pump' && e.total != null);
+  const typeTotals = equipment.filter(e => e.total != null);
+  const typeView = !!scope.type;
+  return {
+    view: typeView ? 'type' : 'plant',
+    type: scope.type || null,
+    site_id: base.site?.site_id ?? null,
+    site_name: base.site?.site_name ?? null,
+    title: typeView ? PP_TYPE_LABELS[scope.type].title : String(base.site.site_name).replace('Site', 'Plant'),
+    range: win,
+    pump_hours_total: pumpTotals.length ? round(pumpTotals.reduce((t, e) => t + e.total, 0), 1) : null,
+    // Per-type views total that type instead (hours or kWh).
+    type_total: typeView && typeTotals.length
+      ? round(typeTotals.reduce((t, e) => t + e.total, 0), PP_METERS[scope.type].unit === 'kWh' ? 0 : 1) : null,
+    unit: typeView ? PP_METERS[scope.type].unit : 'hrs',
+    issue_count: equipment.reduce((n, e) => n + e.issues.filter(i => i.kind !== 'stale').length + e.more_issues, 0),
+    equipment,
+  };
+}
+
+// ?site_id=… for one plant, or ?type=compressor|pge|monitor for that equipment
+// across every plant.
+function ppScope(q) {
+  if (q.type != null && q.type !== '') {
+    const type = String(q.type);
+    return PP_TYPE_LABELS[type] ? { type } : { error: 'type must be compressor, pge or monitor' };
+  }
+  // Matched as text (see ppEquipment), so only the shape is checked here.
+  const siteId = String(q.site_id ?? '').trim();
+  if (!/^[A-Za-z0-9_-]{1,40}$/.test(siteId)) return { error: 'site_id required' };
+  return { siteId };
+}
+
+app.get('/api/reports/pumping-plant', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
+  const scope = ppScope(req.query);
+  if (scope.error) return res.status(400).json({ error: scope.error });
+  try {
+    const r = await buildPumpingPlantReport(scope, req.query);
+    if (r.notFound) return res.status(404).json({ error: 'Plant not found' });
+    if (r.error) return res.status(400).json({ error: r.error });
+    res.json(r);
+  } catch (err) { handleErr(res, err); }
+});
+
+app.get('/api/reports/pumping-plant/export', async (req, res) => {
+  const { token } = req.query;
+  if (token) {
+    const t = downloadTokens.get(token);
+    if (!t || Date.now() > t.expires) return res.status(401).json({ error: 'Invalid or expired token' });
+    downloadTokens.delete(token);
+  } else {
+    const sessionUser = getSession(req.cookies?.fo_session);
+    if (!sessionUser) return res.status(401).json({ error: 'Unauthorized' });
+    if (!SUPERVISOR_ROLES.includes(sessionUser.role)) return res.status(403).json({ error: 'Forbidden' });
+  }
+  const scope = ppScope(req.query);
+  if (scope.error) return res.status(400).json({ error: scope.error });
+  try {
+    const r = await buildPumpingPlantReport(scope, req.query);
+    if (r.notFound) return res.status(404).json({ error: 'Plant not found' });
+    if (r.error) return res.status(400).json({ error: r.error });
+    const fmtTs = ts => (ts ? ts.slice(0, 16).replace('T', ' ') : '');
+    const plant = r.title;
+    const data = [
+      [`Pumping Plant Report — ${plant}`],
+      [`${fmtTs(r.range.start)} to ${fmtTs(r.range.end)}`],
+      r.view === 'type' ? [`Total (${r.unit})`, r.type_total ?? ''] : ['Total pump hours', r.pump_hours_total ?? ''],
+      [],
+      ['Equipment', 'Unit', 'Start', 'Start at', 'End', 'End at', 'Used', 'Avg / day', 'Readings in range', 'Check'],
+      ...r.equipment.map(e => [
+        e.label, e.unit,
+        e.start_value ?? '', fmtTs(e.start_at) + (e.start_est ? ' (est.)' : ''),
+        e.end_value ?? '',   fmtTs(e.end_at)   + (e.end_est   ? ' (est.)' : ''),
+        e.total ?? '', e.avg_per_day ?? '', e.readings,
+        [...e.issues.map(i => i.text), e.more_issues ? `+${e.more_issues} more` : ''].filter(Boolean).join('; '),
+      ]),
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    ws['!cols'] = [{ wch: 40 }, { wch: 6 }, { wch: 12 }, { wch: 22 }, { wch: 12 }, { wch: 22 },
+                   { wch: 11 }, { wch: 10 }, { wch: 10 }, { wch: 60 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Pumping Plant');
+    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    const fn = `PumpingPlant_${plant.replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '')}_${r.range.start.slice(0, 10)}_to_${r.range.end.slice(0, 10)}`;
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${fn}.xlsx"`);
+    return res.send(buf);
+  } catch (err) { handleErr(res, err); }
+});
+
+// ── Canal Readings — Monthly ────────────────────────────────────────────────
+// One row per day for each selected turnout / turn-in, from the last day of the
+// previous month (the starting point) to the end of the month, or to today for
+// the current month. Laid out like the monthly CVC turnout sheets, and built to
+// answer one question: how much water went through each turnout midnight to
+// midnight.
+//
+//  - The totalizer is taken as a straight line between consecutive readings.
+//    A day's Adjusted Midnight Reading is that line read at the midnight that
+//    ENDS the day: 24 AF at 10 AM and 48 AF at 10 AM the next day gives
+//    24 + 24 x 14/24 = 38 AF at midnight.
+//  - AF / Day is that midnight minus the previous one, i.e. the water used on
+//    that day. CFS / Day is the same volume in cfs-days (AF / 1.9835).
+//  - A day with no reading repeats the previous reading in the Observed column.
+//    Gaps happen when a turnout is off, so the readings either side match and
+//    the line is flat: 0 AF that day. If the meter DID move across a day with
+//    no reading, the water is spread along the line and the day is flagged
+//    "estimated" so a supervisor can check it.
+//  - Turning a turnout on or off between readings: if the earlier reading had
+//    0 flow, the water is placed just before the later reading (the time the
+//    later reading's flow takes to pass it), not spread back over the days it
+//    was off; the reverse when the later reading has 0 flow.
+//  - After the last reading the line is only carried on flat when the last
+//    flow entered was 0; otherwise those midnights wait for the next reading.
+//    A midnight still in the future is never filled in.
+//  - A supervisor can correct a mis-keyed reading. The correction is stored in
+//    readings_canal.adjusted_af, the operator's entry is kept, and the midnight
+//    values either side are worked out from the corrected figure.
+//  - Several readings on one day all shape the line; the row shows the last one
+//    with a totalizer, the last flow entered and all of the day's notes.
+//  - Totals leave out the starting row: its day belongs to the previous month.
+const AF_PER_CFS_DAY = 86400 / 43560;   // 1 cfs flowing for a day = 1.9835 AF
+
+function canalMonthRange(month) {
+  const m = /^(\d{4})-(\d{2})$/.exec(String(month ?? ''));
+  if (!m || +m[2] < 1 || +m[2] > 12) return null;
+  const y = +m[1], mo = +m[2];
+  const iso = d => d.toISOString().slice(0, 10);
+  const start    = iso(new Date(Date.UTC(y, mo - 1, 0)));   // last day of previous month
+  const monthEnd = iso(new Date(Date.UTC(y, mo, 0)));
+  const today = todayString();
+  return { month: m[0], start, monthEnd, end: monthEnd < today ? monthEnd : today };
+}
+
+// "1,2,3" -> [1, 2, 3]; anything else is dropped. Capped so a request can't
+// ask for an unbounded IN list.
+function parseIdList(v) {
+  const ids = [...new Set(String(v ?? '').split(',').map(x => parseInt(x, 10))
+    .filter(n => Number.isInteger(n) && n > 0))];
+  return ids.slice(0, 500);
+}
+
+async function buildCanalMonthly(range, ids) {
+  const { rows: structs } = await pool.query(`
+    SELECT structure_id, structure_name FROM canal_structures
+    WHERE structure_id = ANY($1::int[])
+    ORDER BY sort_order, structure_id
+  `, [ids]);
+  if (range.end < range.start) {
+    return structs.map(s => ({ structure_id: s.structure_id, structure_name: s.structure_name,
+                               rows: [], totals: { af: 0, cfs: 0 }, pending: 0 }));
+  }
+
+  const dayMs = 86400000;
+  const nextDay = d => ppIso(ppMs(d + 'T00:00:00') + dayMs).slice(0, 10);
+  const days = [];
+  for (let d = range.start; d <= range.end; d = nextDay(d)) days.push(d);
+  // Midnights needed: the one opening the starting row through the one closing
+  // the last row. Readings are fetched from the last one at or before the first
+  // midnight to the first one at or after the last, so every midnight in between
+  // has a reading on each side when one exists.
+  const openTs  = `${range.start}T00:00:00`;
+  const closeTs = `${nextDay(range.end)}T00:00:00`;
+  const { rows: [{ now }] } = await pool.query(`SELECT to_char(LOCALTIMESTAMP, 'YYYY-MM-DD"T"HH24:MI:SS') AS now`);
+  const nowMs = ppMs(now);
+
+  const { rows: readings } = await pool.query(`
+    WITH r AS (
+      SELECT reading_id, structure_id, reading_date, reading_time,
+             (reading_date + COALESCE(reading_time, TIME '00:00')) AS ts,
+             totalizer_reading_af, adjusted_af, instantaneous_flow_cfs, notes
+      FROM readings_canal WHERE structure_id = ANY($1::int[])
+    )
+    SELECT DISTINCT ON (structure_id, ts, reading_id)
+           reading_id, structure_id,
+           to_char(reading_date, 'YYYY-MM-DD') AS d,
+           to_char(reading_time, 'HH24MI')     AS t,
+           to_char(ts, 'YYYY-MM-DD"T"HH24:MI:SS') AS ts,
+           totalizer_reading_af, adjusted_af, instantaneous_flow_cfs, notes
+    FROM (
+      (SELECT * FROM r WHERE ts > $2::timestamp AND ts < $3::timestamp)
+      UNION ALL
+      (SELECT DISTINCT ON (structure_id) * FROM r
+        WHERE ts <= $2::timestamp AND (totalizer_reading_af IS NOT NULL OR adjusted_af IS NOT NULL)
+        ORDER BY structure_id, ts DESC, reading_id DESC)
+      UNION ALL
+      (SELECT DISTINCT ON (structure_id) * FROM r
+        WHERE ts <= $2::timestamp AND instantaneous_flow_cfs IS NOT NULL
+        ORDER BY structure_id, ts DESC, reading_id DESC)
+      UNION ALL
+      (SELECT DISTINCT ON (structure_id) * FROM r
+        WHERE ts >= $3::timestamp AND (totalizer_reading_af IS NOT NULL OR adjusted_af IS NOT NULL)
+        ORDER BY structure_id, ts ASC, reading_id ASC)
+    ) x
+    ORDER BY structure_id, ts, reading_id
+  `, [ids, openTs.replace('T', ' '), closeTs.replace('T', ' ')]);
+
+  const num = v => (v == null ? null : Number(v));
+  const byStruct = new Map();
+  for (const r of readings) {
+    if (!byStruct.has(r.structure_id)) byStruct.set(r.structure_id, []);
+    byStruct.get(r.structure_id).push({ ...r, ms: ppMs(r.ts),
+      eff: r.adjusted_af != null ? num(r.adjusted_af) : num(r.totalizer_reading_af) });
+  }
+
+  return structs.map(s => {
+    const all = byStruct.get(s.structure_id) || [];
+    // The line: one point per timestamp (the last entered wins).
+    const pts = [];
+    for (const r of all) {
+      if (r.eff == null) continue;
+      if (pts.length && pts[pts.length - 1].t === r.ms) pts[pts.length - 1].v = r.eff;
+      else pts.push({ t: r.ms, v: r.eff });
+    }
+    const flowAt = t => {
+      let f = null;
+      for (const r of all) { if (r.ms > t) break; if (r.instantaneous_flow_cfs != null) f = num(r.instantaneous_flow_cfs); }
+      return f;
+    };
+    // Where the meter actually rose between two readings. Normally the whole
+    // gap (a straight line). But a turnout that was OFF at the earlier reading
+    // (flow 0) only started when someone turned it on, so the rise is put just
+    // before the later reading, as long as the flow entered there takes to pass
+    // that much water (or from the start of that day if no flow was entered).
+    // Likewise a turnout OFF at the later reading stopped after the earlier one.
+    // Without this, a turn-on after weeks off would be spread back over every
+    // day it was off.
+    const AF_PER_CFS_MS = AF_PER_CFS_DAY / dayMs;
+    const riseWindow = (a, b) => {
+      const dv = b.v - a.v;
+      if (!(dv > 0) || b.t <= a.t) return [a.t, b.t];
+      const fa = flowAt(a.t), fb = flowAt(b.t);
+      const offA = fa === 0, offB = fb === 0;
+      if (offA && !offB) {
+        const start = fb > 0 ? b.t - dv / (fb * AF_PER_CFS_MS) : b.t - (b.t % dayMs);
+        return [Math.min(Math.max(a.t, start), b.t), b.t];
+      }
+      if (offB && !offA && fa > 0) {
+        return [a.t, Math.max(Math.min(b.t, a.t + dv / (fa * AF_PER_CFS_MS)), a.t)];
+      }
+      return [a.t, b.t];   // running at both (or unknown): straight line
+    };
+    const M = t => {
+      if (t > nowMs || !pts.length || t < pts[0].t) return null;
+      const last = pts[pts.length - 1];
+      if (t > last.t) return flowAt(t) === 0 ? last.v : null;   // off: the meter holds
+      let i = 1;
+      while (i < pts.length && pts[i].t < t) i++;
+      if (i >= pts.length) return last.v;
+      const a = pts[i - 1], b = pts[i];
+      if (b.t === a.t) return b.v;
+      const [s0, e0] = riseWindow(a, b);
+      if (t <= s0) return a.v;
+      if (t >= e0) return b.v;
+      return a.v + (b.v - a.v) * (t - s0) / (e0 - s0);
+    };
+
+    let obs = null, obsOrig = null, flow = null;
+    for (const r of all) {   // carried values from before the starting row
+      if (r.d >= range.start) break;
+      if (r.eff != null) { obs = r.eff; obsOrig = num(r.totalizer_reading_af); }
+      if (r.instantaneous_flow_cfs != null) flow = num(r.instantaneous_flow_cfs);
+    }
+
+    const rows = days.map((date, i) => {
+      const dayReadings = all.filter(r => r.d === date);
+      const withTotal = dayReadings.filter(r => r.eff != null);
+      const dayReading = withTotal[withTotal.length - 1] || dayReadings[dayReadings.length - 1] || null;
+      if (withTotal.length) { obs = dayReading.eff; obsOrig = num(dayReading.totalizer_reading_af); }
+      const flows = dayReadings.filter(r => r.instantaneous_flow_cfs != null);
+      if (flows.length) flow = num(flows[flows.length - 1].instantaneous_flow_cfs);
+
+      const open  = ppMs(date + 'T00:00:00');
+      const close = open + dayMs;
+      const midnight = M(close), prior = M(open);
+      const af = midnight != null && prior != null ? midnight - prior : null;
+      return {
+        date, start: i === 0,
+        carried: !dayReadings.length,
+        reading_id: dayReading ? dayReading.reading_id : null,
+        time: dayReading ? dayReading.t : null,
+        observed: obs,
+        corrected: !!(withTotal.length && dayReading.adjusted_af != null),
+        observed_original: withTotal.length && dayReading.adjusted_af != null ? obsOrig : null,
+        midnight,
+        af, cfs: af == null ? null : af / AF_PER_CFS_DAY,
+        // The meter moved on a day nobody read it — against the "gaps only when
+        // off" rule, so worth a look.
+        estimated: !withTotal.length && af != null && Math.abs(af) >= 0.005,
+        // This midnight comes after the last reading (or hasn't happened) and
+        // can't be worked out yet. Days before the first reading are just blank.
+        pending: midnight == null && pts.length > 0 && close > pts[pts.length - 1].t,
+        flow,
+        notes: [...new Set(dayReadings.map(r => (r.notes || '').trim()).filter(Boolean))].join('; '),
+      };
+    });
+    const counted = rows.filter(r => !r.start && r.af != null);
+    const totals = {
+      af:  Number(counted.reduce((t, r) => t + r.af, 0).toFixed(2)),
+      cfs: Number(counted.reduce((t, r) => t + r.cfs, 0).toFixed(2)),
+    };
+    for (const r of rows) {
+      if (r.midnight != null) r.midnight = Number(r.midnight.toFixed(2));
+      if (r.af  != null) r.af  = Number(r.af.toFixed(2));
+      if (r.cfs != null) r.cfs = Number(r.cfs.toFixed(2));
+    }
+    return { structure_id: s.structure_id, structure_name: s.structure_name, rows, totals,
+             pending: rows.filter(r => !r.start && r.af == null && r.pending).length };
+  });
+}
+
+// Turnouts / turn-ins to offer for a month: everything in service, plus any
+// retired structure that still has readings in that month, so a past month's
+// report can still be run for it.
+app.get('/api/reports/canal/monthly/structures', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
+  const range = canalMonthRange(req.query.month);
+  if (!range) return res.status(400).json({ error: 'month must be YYYY-MM' });
+  try {
+    const { rows } = await pool.query(`
+      SELECT cs.structure_id, cs.structure_name, cs.in_service
+      FROM canal_structures cs
+      WHERE cs.in_service = true
+         OR EXISTS (SELECT 1 FROM readings_canal r
+                    WHERE r.structure_id = cs.structure_id
+                      AND r.reading_date BETWEEN $1 AND $2)
+      ORDER BY cs.sort_order, cs.structure_id
+    `, [range.start, range.monthEnd]);
+    res.json(rows);
+  } catch (err) { handleErr(res, err); }
+});
+
+app.get('/api/reports/canal/monthly', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
+  const range = canalMonthRange(req.query.month);
+  if (!range) return res.status(400).json({ error: 'month must be YYYY-MM' });
+  const ids = parseIdList(req.query.ids);
+  if (!ids.length) return res.status(400).json({ error: 'Select at least one turnout / turn-in' });
+  try {
+    res.json({ ...range, structures: await buildCanalMonthly(range, ids) });
+  } catch (err) { handleErr(res, err); }
+});
+
+// Set or clear a supervisor's correction to a reading (readings_canal.adjusted_af).
+// The operator's totalizer_reading_af is never changed; the Monthly report uses
+// the correction in its place. Always targets an existing reading.
+app.put('/api/canal-readings/:id/adjusted', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Invalid reading' });
+  const raw = req.body?.adjusted_af;
+  let value = null;
+  if (raw !== null && raw !== undefined && String(raw).trim() !== '') {
+    value = Number(raw);
+    if (!Number.isFinite(value)) return res.status(400).json({ error: 'Adjusted reading must be a number' });
+  }
+  try {
+    const { rowCount } = await pool.query(
+      'UPDATE readings_canal SET adjusted_af = $1 WHERE reading_id = $2', [value, id]);
+    if (!rowCount) return res.status(404).json({ error: 'Reading not found' });
+    res.json({ reading_id: id, adjusted_af: value });
+  } catch (err) { handleErr(res, err); }
+});
+
+// The Note column in exports: the operator's notes plus what the report itself
+// needs to say about the row. Mirrored by canalMonthlyRowNote() in app.js.
+function canalMonthlyRowNote(r) {
+  return [
+    r.start ? 'Starting point (not in totals)' : '',
+    r.corrected ? `Reading corrected from ${r.observed_original ?? 'blank'}` : '',
+    r.estimated ? 'Estimated: meter moved with no reading' : '',
+    !r.start && r.pending ? 'Waiting for the next reading' : '',
+    r.notes,
+  ].filter(Boolean).join(' - ');
+}
+
+// Excel: one sheet per turnout / turn-in, laid out like the monthly sheets.
+app.get('/api/reports/canal/monthly/export', async (req, res) => {
+  const { token } = req.query;
+  if (token) {
+    const t = downloadTokens.get(token);
+    if (!t || Date.now() > t.expires) return res.status(401).json({ error: 'Invalid or expired token' });
+    downloadTokens.delete(token);
+  } else {
+    const sessionUser = getSession(req.cookies?.fo_session);
+    if (!sessionUser) return res.status(401).json({ error: 'Unauthorized' });
+    if (!SUPERVISOR_ROLES.includes(sessionUser.role)) return res.status(403).json({ error: 'Forbidden' });
+  }
+  const range = canalMonthRange(req.query.month);
+  if (!range) return res.status(400).json({ error: 'month must be YYYY-MM' });
+  const ids = parseIdList(req.query.ids);
+  if (!ids.length) return res.status(400).json({ error: 'Select at least one turnout / turn-in' });
+  try {
+    const structures = await buildCanalMonthly(range, ids);
+    const wb = XLSX.utils.book_new();
+    const used = new Set();
+    const sheetName = name => {
+      // Excel: 31 chars max, none of []:*?/\ and unique within the workbook.
+      const base = String(name || 'Sheet').replace(/[[\]:*?/\\]/g, '-').trim().slice(0, 31) || 'Sheet';
+      let n = base, i = 2;
+      while (used.has(n.toLowerCase())) { const sfx = ` (${i++})`; n = base.slice(0, 31 - sfx.length) + sfx; }
+      used.add(n.toLowerCase());
+      return n;
+    };
+    for (const s of structures) {
+      const data = [
+        [s.structure_name],
+        ['Date', 'Time Value', 'Observed Reading', 'Adjusted Midnight Reading', 'CFS / Day', 'AF / Day', 'Flow Rate', 'Note'],
+        ...s.rows.map(r => [
+          r.date, r.time || '', r.observed ?? '', r.midnight ?? '',
+          r.cfs ?? '', r.af ?? '', r.flow ?? '', canalMonthlyRowNote(r),
+        ]),
+        ['', '', '', 'Total', s.totals.cfs, s.totals.af, '', ''],
+      ];
+      const ws = XLSX.utils.aoa_to_sheet(data);
+      ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 7 } }];
+      ws['!cols'] = [{ wch: 12 }, { wch: 11 }, { wch: 17 }, { wch: 25 },
+                     { wch: 11 }, { wch: 11 }, { wch: 10 }, { wch: 48 }];
+      // Two decimals for the computed columns, as on the sheets.
+      for (let r = 2; r < data.length; r++) {
+        for (const c of [3, 4, 5]) {
+          const cell = ws[XLSX.utils.encode_cell({ r, c })];
+          if (cell && cell.t === 'n') cell.z = '0.00';
+        }
+      }
+      XLSX.utils.book_append_sheet(wb, ws, sheetName(s.structure_name));
+    }
+    if (!structures.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['No turnouts found']]), 'Canal');
+    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="Canal_Monthly_${range.month}.xlsx"`);
     return res.send(buf);
   } catch (err) { handleErr(res, err); }
 });

@@ -1515,7 +1515,6 @@ function onLogout() {
   ppLoaded = false;
   el('pp-site-tabs').innerHTML = '';
   el('pp-form-body').innerHTML = '<div class="placeholder-msg">Loading plants…</div>';
-  el('pp-save-bar').classList.add('hidden');
   // Refresh DB status on logout
   checkDBStatus();
 }
@@ -1877,23 +1876,26 @@ async function renderPPBody() {
     buildings.forEach(building => {
       const items = buildBuildingRows(building);
       if (!items.length) return;
-      const section = makeCollapsibleSection(
-        building.building_name || (building.building_letter + ' Plant'),
-        items
-      );
+      const name = building.building_name || (building.building_letter + ' Plant');
+      const section = makeCollapsibleSection(name, items);
       section.querySelector('.list-section-header').addEventListener('click', () => {
         if (!section.classList.contains('collapsed')) el('pp-time').value = nowHHMM();
       });
+      // Each plant (A, B…) saves on its own, from the bottom of its section.
+      const saveRow = document.createElement('div');
+      saveRow.className = 'pp-save-row';
+      saveRow.innerHTML = `<button class="btn btn-save">Save ${escHtml(name)}</button><span class="save-status"></span>`;
+      const saveBtn = saveRow.querySelector('.btn-save');
+      saveBtn.dataset.label = saveBtn.textContent;
+      saveBtn.addEventListener('click', () => savePPReadings(section, saveBtn, saveRow.querySelector('.save-status'), name));
+      section.querySelector('.list-section-items').appendChild(saveRow);
       body.appendChild(section);
     });
   });
 
   if (!body.children.length) {
     body.innerHTML = '<div class="placeholder-msg">No readings found.</div>';
-    return;
   }
-
-  el('pp-save-bar').classList.remove('hidden');
 }
 
 function buildBuildingRows(building) {
@@ -1993,9 +1995,10 @@ function createReadingRow({ type, id, label, prev, prevDate, prevNotes, unit, de
   return row;
 }
 
-el('pp-save-btn').addEventListener('click', savePPReadings);
-
-async function savePPReadings() {
+// Saves one plant section (A Plant, B Plant…) — only the rows inside it — and
+// collapses the section once the readings are saved or queued. Blank pump hours
+// carry the previous reading forward; other blank meters are skipped.
+async function savePPReadings(section, saveBtn, status, name) {
   const readingDate = el('pp-date').value;
   const readingTime = el('pp-time').value;
 
@@ -2009,7 +2012,7 @@ async function savePPReadings() {
   const pge_readings        = [];
   const monitor_readings    = [];
 
-  document.querySelectorAll('.list-section:not(.collapsed) .reading-row').forEach(row => {
+  section.querySelectorAll('.reading-row').forEach(row => {
     const curInput = row.querySelector('.rr-current');
     let cur = curInput.value.trim();
     const notes = row.querySelector('.rr-notes').value.trim();
@@ -2042,8 +2045,6 @@ async function savePPReadings() {
     return;
   }
 
-  const saveBtn = el('pp-save-btn');
-  const status  = el('pp-save-status');
   saveBtn.disabled = true;
   saveBtn.textContent = 'Saving…';
   status.textContent = '';
@@ -2059,9 +2060,9 @@ async function savePPReadings() {
     if (result.queued) {
       status.textContent = '⏳ Saved offline — will sync when connected';
       status.className = 'save-status warn';
-      showToast(`Pumping Plant queued offline`, 'warn');
-      // Clear expanded section inputs so they can't be re-submitted
-      document.querySelectorAll('.list-section:not(.collapsed) .reading-row').forEach(row => {
+      showToast(`${name} queued offline`, 'warn');
+      // Clear this section's inputs so they can't be re-submitted
+      section.querySelectorAll('.reading-row').forEach(row => {
         row.querySelector('.rr-current').value = '';
         row.querySelector('.rr-notes').value = '';
         row.classList.add('saved');
@@ -2073,7 +2074,7 @@ async function savePPReadings() {
       const savedPge      = new Set(result.saved.pge.map(r => String(r.pge_meter_id)));
       const savedMonitors = new Set(result.saved.monitor.map(r => String(r.monitor_id)));
 
-      document.querySelectorAll('.reading-row').forEach(row => {
+      section.querySelectorAll('.reading-row').forEach(row => {
         const type = row.dataset.type;
         const id   = row.dataset.id;
         const shouldMark =
@@ -2101,15 +2102,16 @@ async function savePPReadings() {
                     result.saved.pge.length + result.saved.monitor.length;
       status.textContent = `✓ ${count} reading${count !== 1 ? 's' : ''} saved`;
       status.className = 'save-status success';
-      showToast(`Saved ${count} reading${count !== 1 ? 's' : ''}`, 'success');
+      showToast(`${name}: saved ${count} reading${count !== 1 ? 's' : ''}`, 'success');
     }
+    section.classList.add('collapsed');
   } catch (err) {
     status.textContent = 'Error: ' + err.message;
     status.className = 'save-status error';
     showToast('Save failed: ' + err.message, 'error');
   } finally {
     saveBtn.disabled = false;
-    saveBtn.textContent = 'Save Readings';
+    saveBtn.textContent = saveBtn.dataset.label;
   }
 }
 
@@ -10734,7 +10736,7 @@ let vehicleReportType = 'mileage';
 let lastReportRows  = [];
 
 // ── Navigation ────────────────────────────────────────────────────────────────
-const ALL_REPORT_PANELS = ['vehicles','kf','maintenance','pms','piezometers','canal','ponds','wells'];
+const ALL_REPORT_PANELS = ['vehicles','kf','maintenance','pms','piezometers','canal','ponds','wells','pp'];
 
 function initReportsScreen() {
   el('report-main').classList.remove('hidden');
@@ -10750,6 +10752,7 @@ const REPORT_PANEL_NAMES = {
   canal:        'Canal Readings',
   ponds:        'Pond Reports',
   wells:        'Well Readings',
+  pp:           'Pumping Plant',
 };
 function openReportPanel(cat) {
   el('report-main').classList.add('hidden');
@@ -10765,6 +10768,7 @@ function openReportPanel(cat) {
   if (cat === 'canal')       initCanalReportPanel();
   if (cat === 'ponds')       initPondsReportPanel();
   if (cat === 'wells')       initWellReportPanel();
+  if (cat === 'pp')          initPPReportPanel();
 }
 
 function closeReportPanel() {
@@ -11626,7 +11630,7 @@ function initCanalReportPanel() {
       rows.map(r => `<option value="${r.structure_id}">${escHtml(r.structure_name)}</option>`).join('');
     if (prev && sel.querySelector(`option[value="${prev}"]`)) sel.value = prev;
   }).catch(() => {});
-  renderCanalReport();
+  showCanalReportTab();
 }
 
 el('canal-report-start-date').addEventListener('change', renderCanalReport);
@@ -11764,6 +11768,911 @@ async function renderCanalReport() {
     lastCanalRows = [];
     out.innerHTML = `<div class="placeholder-msg" style="color:var(--red-light)">${escHtml(err.message)}</div>`;
   }
+}
+
+// ── Pumping Plant Report Panel ────────────────────────────────────────────────
+// Usage from the plant's meters — pump hours, air compressor hours, PG&E kWh
+// and power monitor kWh — laid out like the SCADA dashboard: pick a plant, a
+// range, and the equipment to graph. The numbers are worked out server-side
+// (buildPumpingPlantReport in server.js): totals interpolate the meter to the
+// edges of the range, and the graph is the average use per day between
+// readings. Chart.js comes from the SCADA vendor bundle (loadScadaVendor).
+const PPR_KEY = 'wm.ppReport';
+// Per-type views across every plant (server: PP_TYPE_LABELS).
+const PPR_TYPES = [
+  { type: 'compressor', pill: 'Air Compressors', what: 'Air Compressor Hours' },
+  { type: 'pge',        pill: 'PG&E',            what: 'PG&E kWh' },
+  { type: 'monitor',    pill: 'Power Monitors',  what: 'Power Monitor kWh' },
+];
+let pprState = null;          // { site, range, month, from, to }
+let pprSites = [];
+let lastPPReport = null;
+let _pprSeq = 0;
+let _pprGlanceChart = null, _pprEquipChart = null;
+
+function pprLoad() {
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(PPR_KEY)) || {}; } catch { /* */ }
+  const today = pacificToday();
+  return {
+    site: saved.site || '',
+    range: ['24h', '7d', 'month', 'custom'].includes(saved.range) ? saved.range : '24h',
+    month: saved.month || today.slice(0, 7),
+    from: saved.from || today.slice(0, 8) + '01',
+    to: saved.to || today,
+    sel: saved.sel && typeof saved.sel === 'object' ? saved.sel : {},   // siteId -> [equipment keys]
+  };
+}
+function pprSave() {
+  try { localStorage.setItem(PPR_KEY, JSON.stringify(pprState)); } catch { /* */ }
+}
+
+async function initPPReportPanel() {
+  if (!pprState) pprState = pprLoad();
+  const pills = el('ppr-plants');
+  if (!pprSites.length) {
+    pills.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+    try {
+      // Same plant list as the Pumping Plant screen: no Service Truck, O&M last.
+      pprSites = (await api('GET', '/api/sites'))
+        .filter(s => !/service.truck/i.test(s.site_name))
+        .sort((a, b) => /o\s*&\s*m/i.test(a.site_name) - /o\s*&\s*m/i.test(b.site_name));
+    } catch {
+      pills.innerHTML = '<div class="placeholder-msg">Failed to load.</div>';
+      return;
+    }
+  }
+  const valid = v => PPR_TYPES.some(t => `type:${t.type}` === v) || pprSites.some(s => String(s.site_id) === v);
+  if (!valid(String(pprState.site))) pprState.site = String(pprSites[0]?.site_id || '');
+  const pill = (value, label, extra = '') => `<button class="scada-plant-pill${extra}${value === pprState.site ? ' active' : ''}"
+    data-site="${escHtml(value)}">${escHtml(label)}</button>`;
+  // One type across every plant first (for spotting bad readings), then each plant.
+  pills.innerHTML = PPR_TYPES.map(t => pill(`type:${t.type}`, t.pill, ' ppr-type-pill')).join('')
+    + '<span class="ppr-pill-sep" aria-hidden="true"></span>'
+    + pprSites.map(s => pill(String(s.site_id), s.site_name.replace('Site', 'Plant'))).join('');
+  el('ppr-month').value = pprState.month;
+  el('ppr-from').value  = pprState.from;
+  el('ppr-to').value    = pprState.to;
+  pprShowRangeControls();
+  renderPPReport();
+}
+
+function pprShowRangeControls() {
+  el('ppr-range').querySelectorAll('.seg-btn').forEach(b => b.classList.toggle('active', b.dataset.range === pprState.range));
+  el('ppr-month-row').classList.toggle('hidden', pprState.range !== 'month');
+  el('ppr-custom-row').classList.toggle('hidden', pprState.range !== 'custom');
+}
+
+el('ppr-plants').addEventListener('click', e => {
+  const pill = e.target.closest('[data-site]');
+  if (!pill) return;
+  pprState.site = pill.dataset.site;
+  pprSave();
+  el('ppr-plants').querySelectorAll('.scada-plant-pill').forEach(p => p.classList.toggle('active', p === pill));
+  renderPPReport();
+});
+el('ppr-range').addEventListener('click', e => {
+  const b = e.target.closest('.seg-btn');
+  if (!b) return;
+  pprState.range = b.dataset.range;
+  pprSave();
+  pprShowRangeControls();
+  renderPPReport();
+});
+function pprStepMonth(delta) {
+  const [y, m] = (el('ppr-month').value || pacificToday().slice(0, 7)).split('-').map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  el('ppr-month').value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  pprMonthChanged();
+}
+function pprMonthChanged() {
+  if (!el('ppr-month').value) return;
+  pprState.month = el('ppr-month').value;
+  pprSave();
+  renderPPReport();
+}
+el('ppr-month').addEventListener('change', pprMonthChanged);
+el('ppr-month-prev').addEventListener('click', () => pprStepMonth(-1));
+el('ppr-month-next').addEventListener('click', () => pprStepMonth(1));
+el('ppr-apply').addEventListener('click', () => {
+  const from = el('ppr-from').value, to = el('ppr-to').value;
+  if (!from || !to) return showToast('Pick both dates', 'error');
+  if (to < from) return showToast('The end date is before the start date', 'error');
+  pprState.from = from; pprState.to = to;
+  pprSave();
+  renderPPReport();
+});
+
+function pprQuery() {
+  const site = String(pprState.site);
+  const q = `${site.startsWith('type:') ? `type=${encodeURIComponent(site.slice(5))}` : `site_id=${encodeURIComponent(site)}`}&range=${pprState.range}`;
+  if (pprState.range === 'month')  return `${q}&month=${encodeURIComponent(pprState.month)}`;
+  if (pprState.range === 'custom') return `${q}&start=${encodeURIComponent(pprState.from)}&end=${encodeURIComponent(pprState.to)}`;
+  return q;
+}
+
+// Naive Pacific timestamps from the server, shown in the browser's terms.
+const pprDate = ts => new Date(ts);
+function pprFmtTs(ts) {
+  return ts ? pprDate(ts).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+}
+function pprRangeLabel(data) {
+  const r = data.range;
+  if (r.mode === 'month') return localDateStr(`${r.month}-01`, { month: 'long', year: 'numeric' });
+  if (r.mode === 'custom') {
+    const last = new Date(Date.parse(r.end.slice(0, 10) + 'T00:00:00Z') - 86400000).toISOString().slice(0, 10);
+    const s = r.start.slice(0, 10);
+    return s === last ? localDateStr(s) : `${localDateStr(s)} – ${localDateStr(last)}`;
+  }
+  return `${r.mode === '24h' ? 'Last 24 hours' : 'Last 7 days'} of readings · ${pprFmtTs(r.start)} – ${pprFmtTs(r.end)}`;
+}
+function pprFmt(v, unit) {
+  if (v == null) return '—';
+  return Number(v).toLocaleString('en-US', { maximumFractionDigits: unit === 'kWh' ? 0 : 1, minimumFractionDigits: unit === 'kWh' ? 0 : 1 });
+}
+// "A Plant · Pump C" -> "Pump C" when every item is in the same building.
+// Across plants the full "Plant 1 · A Plant · Air Compressor" is kept.
+function pprShortLabel(e, data) {
+  if (data.view === 'type') return e.label;
+  const oneBuilding = new Set(data.equipment.map(x => x.building)).size <= 1;
+  return oneBuilding ? e.label.split(' · ').slice(1).join(' · ') || e.label : e.label;
+}
+const pprSelKey = data => (data.view === 'type' ? `type:${data.type}` : String(data.site_id));
+function pprSelected(data) {
+  const saved = pprState.sel[pprSelKey(data)];
+  const keys = new Set(data.equipment.map(e => e.key));
+  const sel = Array.isArray(saved) ? saved.filter(k => keys.has(k))
+    : data.view === 'type' ? data.equipment.map(e => e.key)             // default: the first 8 of the type
+    : data.equipment.filter(e => e.type === 'pump').map(e => e.key);   // default: the pumps
+  return sel.slice(0, 8);
+}
+// The bar graph: pumps for a plant, or every meter of the type across plants.
+function pprGlanceItems(data) {
+  return data.view === 'type' ? data.equipment : data.equipment.filter(e => e.type === 'pump');
+}
+
+function pprDestroyCharts() {
+  if (_pprGlanceChart) { _pprGlanceChart.destroy(); _pprGlanceChart = null; }
+  if (_pprEquipChart)  { _pprEquipChart.destroy();  _pprEquipChart  = null; }
+}
+
+async function renderPPReport() {
+  const out = el('ppr-output');
+  if (!pprState?.site) { out.innerHTML = '<div class="placeholder-msg">No plants found.</div>'; return; }
+  if (pprState.range === 'custom' && (!pprState.from || !pprState.to)) {
+    out.innerHTML = '<div class="placeholder-msg">Pick a start and end date, then tap Apply.</div>';
+    return;
+  }
+  const seq = ++_pprSeq;
+  pprDestroyCharts();
+  out.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  let data;
+  try {
+    [data] = await Promise.all([api('GET', `/api/reports/pumping-plant?${pprQuery()}`), loadScadaVendor()]);
+  } catch {
+    if (seq === _pprSeq) { lastPPReport = null; out.innerHTML = '<div class="placeholder-msg">Failed to load.</div>'; }
+    return;
+  }
+  if (seq !== _pprSeq) return;   // a newer plant / range was picked while this loaded
+  lastPPReport = data;
+  if (!data.equipment.length) {
+    out.innerHTML = '<div class="placeholder-msg">No equipment found.</div>';
+    return;
+  }
+  const items = pprGlanceItems(data);
+  const typeView = data.view === 'type';
+  const unit = typeView ? data.unit : 'hrs';
+  const unread = items.filter(e => e.total == null);
+  const sel = new Set(pprSelected(data));
+  out.innerHTML = `
+    <div class="report-card ppr-card">
+      <div class="ppr-head">
+        <div>
+          <div class="report-title ppr-title">${escHtml(typeView ? PPR_TYPES.find(t => t.type === data.type).what : 'Pump Hours')}</div>
+          <div class="report-subtitle ppr-sub">${escHtml(typeView ? `All plants \u00b7 ${pprRangeLabel(data)}` : pprRangeLabel(data))}</div>
+        </div>
+        <div class="ppr-total">
+          <span class="ppr-total-val">${pprFmt(typeView ? data.type_total : data.pump_hours_total, unit)}</span><span class="ppr-total-unit">${unit}</span>
+          <div class="ppr-total-label">Total</div>
+        </div>
+      </div>
+      ${items.some(e => e.total != null)
+        ? `<div class="ppr-glance-wrap" style="height:${Math.max(90, (typeView ? 44 : 34) * items.length + 30)}px"><canvas id="ppr-glance"></canvas></div>`
+        : `<div class="placeholder-msg">No ${typeView ? 'readings' : 'pump readings'} found.</div>`}
+      ${unread.length && unread.length < items.length
+        ? `<div class="ppr-note">No readings in this range: ${unread.map(e => escHtml(pprShortLabel(e, data))).join(', ')}</div>` : ''}
+    </div>
+
+    <div class="report-card ppr-card">
+      <div class="report-title ppr-title">Use per Day</div>
+      <div class="report-subtitle ppr-sub">Average between readings &middot; pick up to 8</div>
+      <div class="scada-trend-chips" id="ppr-chips">
+        ${data.equipment.map(e => `<button class="scada-trend-chip${sel.has(e.key) ? ' selected' : ''}" data-key="${escHtml(e.key)}">${escHtml(pprShortLabel(e, data))}</button>`).join('')}
+      </div>
+      <div class="scada-chart-wrap ppr-equip-wrap${sel.size ? '' : ' hidden'}"><canvas id="ppr-equip" class="scada-chart-canvas"></canvas></div>
+      <div class="placeholder-msg${sel.size ? ' hidden' : ''}" id="ppr-equip-empty">Pick equipment above to graph its use per day.</div>
+    </div>
+
+    <div class="report-card ppr-card">
+      <div class="report-title ppr-title">Meter Usage</div>
+      ${pprTableHtml(data)}
+    </div>`;
+
+  const c = scadaThemeColors();
+  if (el('ppr-glance')) _pprGlanceChart = new window.Chart(el('ppr-glance').getContext('2d'), pprGlanceConfig(data, c));
+  pprDrawEquip(data);
+
+  el('ppr-chips').addEventListener('click', e => {
+    const chip = e.target.closest('[data-key]');
+    if (!chip) return;
+    const cur = new Set(pprSelected(data));
+    if (cur.has(chip.dataset.key)) cur.delete(chip.dataset.key);
+    else if (cur.size >= 8) return showToast('Up to 8 at once', 'error');
+    else cur.add(chip.dataset.key);
+    pprState.sel[pprSelKey(data)] = [...cur];
+    pprSave();
+    chip.classList.toggle('selected', cur.has(chip.dataset.key));
+    pprDrawEquip(data);
+  });
+}
+
+function pprTableHtml(data) {
+  const cell = (v, at, est, unit) => v == null ? '<td class="report-num">—</td>'
+    : `<td class="report-num">${est ? '<span class="ppr-est" title="Estimated between the readings either side">≈</span>' : ''}${pprFmt(v, unit)}
+         <div class="ppr-at">${escHtml(pprFmtTs(at))}</div></td>`;
+  const checks = e => [
+    ...e.issues.map(i => `<div class="ppr-issue${i.kind === 'stale' ? ' ppr-issue-stale' : ''}">${escHtml(i.text)}</div>`),
+    e.more_issues ? `<div class="ppr-issue">+${e.more_issues} more</div>` : '',
+  ].join('');
+  const flagged = e => e.issues.some(i => i.kind !== 'stale');
+  const n = data.issue_count;
+  return `<div class="ppr-check-summary ${n ? 'ppr-check-warn' : 'ppr-check-ok'}">${n
+      ? `&#9888; ${n} reading${n === 1 ? '' : 's'} to check &mdash; see the Check column`
+      : 'No reading problems found in this range.'}</div>
+  <div class="report-scroll"><table class="report-table ppr-table">
+    <thead><tr>
+      <th>Equipment</th><th class="report-num">Start</th><th class="report-num">End</th>
+      <th class="report-num">Used</th><th class="report-num">Avg / Day</th><th>Check</th>
+    </tr></thead>
+    <tbody>${data.equipment.map(e => `<tr${flagged(e) ? ' class="ppr-row-issue"' : ''}>
+      <td>${escHtml(e.label)}</td>
+      ${cell(e.start_value, e.start_at, e.start_est, e.unit)}
+      ${cell(e.end_value, e.end_at, e.end_est, e.unit)}
+      <td class="report-num"><strong>${pprFmt(e.total, e.unit)}</strong>${e.total != null ? ` <span class="ppr-unit">${e.unit}</span>` : ''}</td>
+      <td class="report-num">${e.avg_per_day == null ? '—' : Number(e.avg_per_day).toLocaleString('en-US', { maximumFractionDigits: e.unit === 'kWh' ? 0 : 1 })}</td>
+      <td class="ppr-check">${checks(e)}</td>
+    </tr>`).join('')}</tbody>
+  </table></div>
+  <div class="ppr-note">&asymp; = the meter at the edge of the range, estimated between the readings either side.
+    Check flags a meter that went backwards, an hour meter over 24 h/day, and a reading period over
+    4&times; the meter's typical use.</div>`;
+}
+
+// Each pump's hours written at the end of its bar, so the graph reads without
+// the axis; "—" marks a pump with no readings in the range.
+const pprBarLabels = {
+  id: 'pprBarLabels',
+  afterDatasetsDraw(chart, _args, opts) {
+    const { ctx } = chart;
+    const meta = chart.getDatasetMeta(0);
+    ctx.save();
+    ctx.font = '600 12px system-ui, -apple-system, sans-serif';
+    ctx.fillStyle = opts.color;
+    ctx.textBaseline = 'middle';
+    meta.data.forEach((bar, i) => {
+      const v = chart.data.datasets[0].data[i];
+      const x = v == null ? chart.scales.x.getPixelForValue(0) : bar.x;
+      ctx.fillText(v == null ? '\u2014' : pprFmt(v, opts.unit || 'hrs'), x + 6, bar.y);
+    });
+    ctx.restore();
+  },
+};
+
+function pprGlanceConfig(data, c, print = false) {
+  const pumps = pprGlanceItems(data);
+  const unit = data.view === 'type' ? data.unit : 'hrs';
+  // Head-room so the label on the longest bar isn't clipped.
+  const max = Math.max(0, ...pumps.map(e => e.total || 0));
+  return {
+    type: 'bar',
+    plugins: [pprBarLabels],
+    data: {
+      // Across plants the labels are long, so the plant goes on its own line.
+      labels: pumps.map(e => data.view === 'type' ? [e.plant, e.label.split(' · ').slice(1).join(' · ')] : pprShortLabel(e, data)),
+      datasets: [{
+        data: pumps.map(e => e.total),
+        backgroundColor: SCADA_COLORS[0] + (print ? 'cc' : '99'),
+        borderColor: SCADA_COLORS[0], borderWidth: 1, borderRadius: 4, maxBarThickness: 26,
+      }],
+    },
+    options: {
+      indexAxis: 'y', responsive: !print, maintainAspectRatio: false, animation: false,
+      devicePixelRatio: print ? 2 : undefined,
+      plugins: {
+        legend: { display: false },
+        pprBarLabels: { color: c.text, unit },
+        tooltip: { backgroundColor: c.surface, titleColor: c.text, bodyColor: c.text, borderColor: c.grid, borderWidth: 1,
+                   callbacks: { label: ctx => `${pprFmt(ctx.parsed.x, unit)} ${unit}` } },
+      },
+      scales: {
+        x: { beginAtZero: true, suggestedMax: max ? max * (unit === 'kWh' ? 1.25 : 1.18) : 24, ticks: { color: c.dim }, grid: { color: c.grid },
+             title: { display: true, text: unit === 'kWh' ? 'kWh used' : 'Hours run', color: c.dim } },
+        y: { ticks: { color: c.text }, grid: { display: false } },
+      },
+    },
+  };
+}
+
+function pprEquipConfig(data, keys, c, print = false) {
+  const items = keys.map(k => data.equipment.find(e => e.key === k)).filter(Boolean);
+  const hasHrs = items.some(e => e.unit === 'hrs'), hasKwh = items.some(e => e.unit === 'kWh');
+  const axisFor = e => (e.unit === 'kWh' && hasHrs ? 'yKwh' : 'y');
+  // Never draw past now: the current month's window runs to the 1st of next.
+  const xMax = Math.min(pprDate(data.range.end).getTime(), Date.now());
+  return {
+    type: 'line',
+    data: {
+      datasets: items.map((e, i) => {
+        const color = SCADA_COLORS[i % SCADA_COLORS.length];
+        return {
+          label: `${pprShortLabel(e, data)} (${e.unit === 'kWh' ? 'kWh' : 'h'}/day)`,
+          data: e.series.map(p => ({ x: pprDate(p.x).getTime(), y: p.y })),
+          yAxisID: axisFor(e),
+          borderColor: color, backgroundColor: color + '22',
+          borderWidth: 1.8, pointRadius: 0, tension: 0, fill: false, spanGaps: false,
+        };
+      }),
+    },
+    options: {
+      responsive: !print, maintainAspectRatio: false, animation: false,
+      devicePixelRatio: print ? 2 : undefined,
+      interaction: { mode: 'nearest', axis: 'x', intersect: false },
+      plugins: {
+        legend: { display: true, labels: { color: c.text, boxWidth: 14, usePointStyle: true } },
+        tooltip: { backgroundColor: c.surface, titleColor: c.text, bodyColor: c.text, borderColor: c.grid, borderWidth: 1,
+                   callbacks: { label: ctx => `${ctx.dataset.label}: ${Number(ctx.parsed.y).toLocaleString('en-US', { maximumFractionDigits: 1 })}` } },
+      },
+      scales: {
+        x: { type: 'time', min: pprDate(data.range.start).getTime(), max: xMax,
+             time: { tooltipFormat: 'MMM d, h:mm a' },
+             ticks: { color: c.dim, maxTicksLimit: 8, autoSkip: true }, grid: { color: c.grid } },
+        y: { beginAtZero: true, ticks: { color: c.dim }, grid: { color: c.grid },
+             title: { display: true, text: hasHrs ? 'Hours per day' : 'kWh per day', color: c.dim } },
+        ...(hasHrs && hasKwh ? { yKwh: { beginAtZero: true, position: 'right', ticks: { color: c.dim },
+             grid: { display: false }, title: { display: true, text: 'kWh per day', color: c.dim } } } : {}),
+      },
+    },
+  };
+}
+
+function pprDrawEquip(data) {
+  const keys = pprSelected(data);
+  const wrap = document.querySelector('.ppr-equip-wrap');
+  if (!wrap) return;
+  wrap.classList.toggle('hidden', !keys.length);
+  el('ppr-equip-empty').classList.toggle('hidden', keys.length > 0);
+  if (_pprEquipChart) { _pprEquipChart.destroy(); _pprEquipChart = null; }
+  if (keys.length) _pprEquipChart = new window.Chart(el('ppr-equip').getContext('2d'), pprEquipConfig(data, keys, scadaThemeColors()));
+}
+
+// ── Export ──
+function pprExportName(data) {
+  const plant = String(data.title || 'Plant').replace(/&/g, '').replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '');
+  const r = data.range;
+  const span = r.mode === 'month' ? r.month
+    : r.mode === 'custom' ? `${pprState.from}_to_${pprState.to}`
+    : `${r.mode === '24h' ? '24h' : '7d'}_${r.end.slice(0, 10)}`;
+  return `PumpingPlant_${plant}_${span}`;
+}
+
+el('ppr-export-btn').addEventListener('click', () => {
+  if (!lastPPReport?.equipment?.length) return showToast('No report data to export', 'error');
+  exportContext = 'pp-report';
+  el('export-modal-subtitle').textContent =
+    `Pumping Plant — ${lastPPReport.title} — ${pprRangeLabel(lastPPReport)}`;
+  el('export-modal').classList.remove('hidden');
+});
+
+// The Check column as one line, for CSV / PDF.
+function pprCheckText(e) {
+  return [...e.issues.map(i => i.text), ...(e.more_issues ? [`+${e.more_issues} more`] : [])].join('; ');
+}
+
+function pprCsv(data) {
+  const csvEsc = v => (v == null || v === '') ? '' : /[,"\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v);
+  const ts = t => (t ? t.slice(0, 16).replace('T', ' ') : '');
+  const lines = [
+    csvEsc(`Pumping Plant Report — ${data.title}`),
+    csvEsc(pprRangeLabel(data)),
+    data.view === 'type' ? `Total (${data.unit}),${data.type_total ?? ''}` : `Total pump hours,${data.pump_hours_total ?? ''}`,
+    `Readings to check,${data.issue_count}`,
+    '',
+    'Equipment,Unit,Start,Start at,End,End at,Used,Avg / day,Readings in range,Check',
+    ...data.equipment.map(e => [
+      e.label, e.unit, e.start_value ?? '', ts(e.start_at) + (e.start_est ? ' (est.)' : ''),
+      e.end_value ?? '', ts(e.end_at) + (e.end_est ? ' (est.)' : ''),
+      e.total ?? '', e.avg_per_day ?? '', e.readings, pprCheckText(e),
+    ].map(csvEsc).join(',')),
+  ];
+  return lines.join('\r\n');
+}
+
+// Print-coloured copies of the two graphs, as images for the PDF.
+function pprChartImage(config, width, height) {
+  const canvas = document.createElement('canvas');
+  canvas.width = width; canvas.height = height;
+  canvas.style.cssText = `position:fixed;left:-10000px;top:0;width:${width}px;height:${height}px`;
+  document.body.appendChild(canvas);
+  try {
+    const chart = new window.Chart(canvas.getContext('2d'), config);
+    const url = chart.toBase64Image('image/png', 1);
+    chart.destroy();
+    return url;
+  } finally { canvas.remove(); }
+}
+
+const PPR_PDF_CSS = `
+  .pdf-root, .pdf-root * { color: #000 !important; }
+  .pp-title { font-size: 14pt; font-weight: 700; text-align: center; margin: 0 0 2px; }
+  .pp-sub { font-size: 9pt; text-align: center; margin: 0 0 8px; }
+  .pp-h { font-size: 10pt; font-weight: 700; margin: 10px 0 4px; border-bottom: 1px solid #000; padding-bottom: 2px; }
+  .pp-total { font-size: 11pt; margin: 0 0 4px; }
+  .pp-img { display: block; width: 100%; height: auto; }
+  .pp-table { width: 100%; border-collapse: collapse; font-size: 8.5pt; }
+  .pp-table th { font-size: 7.5pt; font-weight: 700; text-transform: uppercase; text-align: left; padding: 2px 4px; border-bottom: 1.5px solid #000; }
+  .pp-table td { padding: 2px 4px; border-bottom: 0.5px solid #ccc; }
+  .pp-table .num { text-align: right; white-space: nowrap; }
+  .pp-at { font-size: 7pt; }
+  .pp-note { font-size: 7.5pt; margin-top: 4px; }
+  .pp-check { font-size: 7pt; }
+  .pp-flag td { background: #fff3cd; }
+  tr { page-break-inside: avoid; }`;
+
+async function buildPPReportPdfHtml(data) {
+  await loadScadaVendor();
+  const print = { text: '#000', dim: '#333', grid: '#ddd', surface: '#fff' };
+  const pumps = pprGlanceItems(data);
+  const typeView = data.view === 'type';
+  const unit = typeView ? data.unit : 'hrs';
+  const keys = pprSelected(data);
+  const glance = pumps.some(e => e.total != null)
+    ? pprChartImage(pprGlanceConfig(data, print, true), 760, Math.max(90, (typeView ? 44 : 34) * pumps.length + 30)) : '';
+  const equip = keys.length ? pprChartImage(pprEquipConfig(data, keys, print, true), 760, 300) : '';
+  const cell = (v, at, est, unit) => v == null ? '<td class="num">—</td>'
+    : `<td class="num">${est ? '≈' : ''}${pprFmt(v, unit)}<div class="pp-at">${escHtml(pprFmtTs(at))}</div></td>`;
+  return `
+    <div class="pp-title">Pumping Plant Report — ${escHtml(data.title)}</div>
+    <div class="pp-sub">${escHtml(typeView ? `All plants · ${pprRangeLabel(data)}` : pprRangeLabel(data))}</div>
+    <div class="pp-h">${escHtml(typeView ? PPR_TYPES.find(t => t.type === data.type).what : 'Pump Hours')}</div>
+    <div class="pp-total">Total: <strong>${pprFmt(typeView ? data.type_total : data.pump_hours_total, unit)} ${unit}</strong>
+      &nbsp;·&nbsp; Readings to check: <strong>${data.issue_count}</strong></div>
+    ${glance ? `<img class="pp-img" src="${glance}" alt="">` : `<div class="pp-note">No ${typeView ? 'readings' : 'pump readings'} found.</div>`}
+    ${equip ? `<div class="pp-h">Use per Day</div><img class="pp-img" src="${equip}" alt="">` : ''}
+    <div class="pp-h">Meter Usage</div>
+    <table class="pp-table">
+      <thead><tr><th>Equipment</th><th class="num">Start</th><th class="num">End</th><th class="num">Used</th><th class="num">Avg / Day</th><th>Check</th></tr></thead>
+      <tbody>${data.equipment.map(e => `<tr${e.issues.some(i => i.kind !== 'stale') ? ' class="pp-flag"' : ''}>
+        <td>${escHtml(e.label)}</td>
+        ${cell(e.start_value, e.start_at, e.start_est, e.unit)}
+        ${cell(e.end_value, e.end_at, e.end_est, e.unit)}
+        <td class="num"><strong>${pprFmt(e.total, e.unit)}</strong>${e.total != null ? ' ' + e.unit : ''}</td>
+        <td class="num">${e.avg_per_day == null ? '—' : Number(e.avg_per_day).toLocaleString('en-US', { maximumFractionDigits: e.unit === 'kWh' ? 0 : 1 })}</td>
+        <td class="pp-check">${escHtml(pprCheckText(e))}</td>
+      </tr>`).join('')}</tbody>
+    </table>
+    <div class="pp-note">≈ = the meter at the edge of the range, estimated between the readings either side.</div>
+    <div class="pp-note">Use per day is the average between consecutive readings.</div>
+    <div class="pp-note">Check: meter went backwards, hour meter over 24 h/day, or a period over 4× typical use.</div>`;
+}
+
+// ── Canal Readings — Daily / Monthly tabs ─────────────────────────────────────
+function canalReportTab() {
+  return el('canal-report-seg').querySelector('.seg-btn.active')?.dataset.val || 'daily';
+}
+
+function showCanalReportTab() {
+  const monthly = canalReportTab() === 'monthly';
+  el('canal-daily-view').classList.toggle('hidden', monthly);
+  el('canal-monthly-view').classList.toggle('hidden', !monthly);
+  if (monthly) initCanalMonthly();
+  else renderCanalReport();
+}
+
+el('canal-report-seg').addEventListener('click', e => {
+  const btn = e.target.closest('.seg-btn');
+  if (!btn) return;
+  el('canal-report-seg').querySelectorAll('.seg-btn').forEach(b => b.classList.toggle('active', b === btn));
+  showCanalReportTab();
+});
+
+// ── Canal Readings — Monthly ──────────────────────────────────────────────────
+// One table per selected turnout / turn-in, laid out like the monthly CVC
+// sheets. The day-by-day figures are worked out server-side (see
+// buildCanalMonthly in server.js); this renders them, lets supervisors correct
+// a day's Adjusted Reading, and exports CSV / Excel / PDF.
+const CANAL_MONTHLY_KEY = 'wm.canalMonthly.ids';
+let canalMonthlyStructs  = [];     // turnouts / turn-ins offered for the month
+let canalMonthlySelected = null;   // Set of structure_id strings, remembered per device
+let lastCanalMonthly     = null;   // the report currently on screen
+let _canalMonthlyTimer   = null;
+let _canalMonthlySeq     = 0;
+
+function canalMonthlyLoadSaved() {
+  try {
+    const v = JSON.parse(localStorage.getItem(CANAL_MONTHLY_KEY));
+    return new Set(Array.isArray(v) ? v.map(String) : []);
+  } catch { return new Set(); }
+}
+function canalMonthlySave() {
+  try { localStorage.setItem(CANAL_MONTHLY_KEY, JSON.stringify([...canalMonthlySelected])); } catch { /* */ }
+}
+
+// The selection is remembered across months, but only structures offered for
+// the month on screen are asked for.
+function canalMonthlyIds() {
+  return canalMonthlyStructs.map(s => String(s.structure_id)).filter(id => canalMonthlySelected.has(id));
+}
+
+async function initCanalMonthly() {
+  if (!el('canal-month').value) el('canal-month').value = pacificToday().slice(0, 7);
+  if (!canalMonthlySelected) canalMonthlySelected = canalMonthlyLoadSaved();
+  await loadCanalMonthlyStructs();
+  renderCanalMonthly();
+}
+
+async function loadCanalMonthlyStructs() {
+  const box = el('canal-month-ms-options');
+  try {
+    canalMonthlyStructs = await api('GET',
+      `/api/reports/canal/monthly/structures?month=${encodeURIComponent(el('canal-month').value)}`);
+  } catch {
+    canalMonthlyStructs = [];
+    box.innerHTML = '<div class="placeholder-msg">Failed to load.</div>';
+    updateCanalMonthlyBtn();
+    return;
+  }
+  box.innerHTML = canalMonthlyStructs.map(s => {
+    const on = canalMonthlySelected.has(String(s.structure_id));
+    return `<label class="dwr-ms-option${on ? ' selected' : ''}">
+      <input type="checkbox" value="${s.structure_id}"${on ? ' checked' : ''}>
+      <span>${escHtml(s.structure_name)}${s.in_service ? '' : ' <span class="canal-ms-retired">(out of service)</span>'}</span>
+    </label>`;
+  }).join('') || '<div class="placeholder-msg">No turnouts found.</div>';
+  updateCanalMonthlyBtn();
+}
+
+function updateCanalMonthlyBtn() {
+  const ids = canalMonthlyIds(), total = canalMonthlyStructs.length;
+  const one = ids.length === 1 && canalMonthlyStructs.find(s => String(s.structure_id) === ids[0]);
+  el('canal-month-ms-btn').textContent =
+    !ids.length         ? 'Select turnouts / turn-ins'
+    : ids.length === total ? `All turnouts / turn-ins (${total})`
+    : one                  ? one.structure_name
+    : `${ids.length} turnouts / turn-ins`;
+  el('canal-month-ms-options').querySelectorAll('input[type=checkbox]').forEach(cb => {
+    cb.checked = canalMonthlySelected.has(cb.value);
+    cb.closest('.dwr-ms-option').classList.toggle('selected', cb.checked);
+  });
+}
+
+// Ticking boxes one after another shouldn't fire a request per tick.
+function scheduleCanalMonthly() {
+  clearTimeout(_canalMonthlyTimer);
+  _canalMonthlyTimer = setTimeout(renderCanalMonthly, 450);
+}
+
+function canalMonthlySetAll(on) {
+  canalMonthlyStructs.forEach(s => {
+    const id = String(s.structure_id);
+    if (on) canalMonthlySelected.add(id); else canalMonthlySelected.delete(id);
+  });
+  canalMonthlySave();
+  updateCanalMonthlyBtn();
+  scheduleCanalMonthly();
+}
+
+el('canal-month-ms-btn').addEventListener('click', e => {
+  e.stopPropagation();
+  el('canal-month-ms-panel').classList.toggle('open');
+});
+document.addEventListener('click', e => {
+  if (!el('canal-month-ms').contains(e.target)) el('canal-month-ms-panel').classList.remove('open');
+});
+el('canal-month-ms-all').addEventListener('click',  () => canalMonthlySetAll(true));
+el('canal-month-ms-none').addEventListener('click', () => canalMonthlySetAll(false));
+el('canal-month-ms-options').addEventListener('change', e => {
+  const cb = e.target.closest('input[type=checkbox]');
+  if (!cb) return;
+  if (cb.checked) canalMonthlySelected.add(cb.value); else canalMonthlySelected.delete(cb.value);
+  canalMonthlySave();
+  updateCanalMonthlyBtn();
+  scheduleCanalMonthly();
+});
+
+async function canalMonthlyChanged() {
+  await loadCanalMonthlyStructs();
+  renderCanalMonthly();
+}
+el('canal-month').addEventListener('change', canalMonthlyChanged);
+function canalStepMonth(delta) {
+  const [y, m] = (el('canal-month').value || pacificToday().slice(0, 7)).split('-').map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  el('canal-month').value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  canalMonthlyChanged();
+}
+el('canal-month-prev').addEventListener('click', () => canalStepMonth(-1));
+el('canal-month-next').addEventListener('click', () => canalStepMonth(1));
+
+// Totalizer readings as entered (no thousands separators, as on the sheets);
+// the computed columns always to two decimals.
+const cmReading = v => (v == null ? '' : String(Number(Number(v).toFixed(2))));
+const cmFixed   = v => (v == null ? '' : Number(v).toFixed(2));
+
+function canalMonthlyNoteHtml(data, canEdit) {
+  return `<div class="canal-month-foot">
+    <strong>Adjusted Midnight Reading</strong> is the meter at the midnight that ends each day, read off a
+    straight line between the readings either side, so AF / Day is the water used that day, midnight to
+    midnight. CFS / Day is AF / Day &divide; 1.9835.
+    The first row (${escHtml(fmtDate(data.start))}) is the starting point and is not in the totals.
+    Greyed rows had no reading. <span class="cm-est">&asymp;</span> marks a day the meter moved with no
+    reading; &mdash; means waiting for the next reading.
+    ${canEdit ? 'Tap an Observed Reading to correct it.' : ''}
+  </div>`;
+}
+
+// Mirrors canalMonthlyRowNote() in server.js (the Excel Note column).
+function canalMonthlyRowNote(r) {
+  return [
+    r.start ? 'Starting point (not in totals)' : '',
+    r.corrected ? `Reading corrected from ${r.observed_original ?? 'blank'}` : '',
+    r.estimated ? 'Estimated: meter moved with no reading' : '',
+    !r.start && r.pending ? 'Waiting for the next reading' : '',
+    r.notes,
+  ].filter(Boolean).join(' - ');
+}
+
+function canalMonthlyCardHtml(s, data, canEdit) {
+  const monthLabel = localDateStr(`${data.month}-01`, { month: 'long', year: 'numeric' });
+  const partial = data.end < data.monthEnd;
+  const body = s.rows.map(r => {
+    const corrTitle = r.corrected ? `Corrected by a supervisor (entered as ${cmReading(r.observed_original) || 'blank'})` : '';
+    const obs = r.reading_id && canEdit
+      ? `<button type="button" class="canal-adj-btn${r.corrected ? ' is-override' : ''}"
+           data-rid="${r.reading_id}" data-sid="${s.structure_id}" data-date="${r.date}"
+           title="${escHtml(corrTitle || 'Tap to correct this reading')}">${cmReading(r.observed) || '&mdash;'}</button>`
+      : `<span${r.corrected ? ` class="canal-adj-override" title="${escHtml(corrTitle)}"` : ''}>${cmReading(r.observed)}</span>`;
+    const mid = r.midnight == null && !r.start && r.pending
+      ? '<span class="cm-pending" title="Waiting for the next reading">&mdash;</span>'
+      : cmReading(r.midnight);
+    const est = r.estimated ? '<span class="cm-est" title="The meter moved on a day with no reading">&asymp;</span>' : '';
+    const cls = [r.carried ? 'cm-carried' : '', r.start ? 'cm-start' : ''].filter(Boolean).join(' ');
+    return `<tr${cls ? ` class="${cls}"` : ''}>
+      <td>${escHtml(fmtDate(r.date))}</td>
+      <td>${escHtml(r.time || '')}</td>
+      <td class="report-num">${obs}</td>
+      <td class="report-num">${mid}</td>
+      <td class="report-num">${est}${cmFixed(r.cfs)}</td>
+      <td class="report-num">${est}${cmFixed(r.af)}</td>
+      <td class="report-num">${cmReading(r.flow)}</td>
+      <td class="cm-note">${escHtml(r.notes || '')}</td>
+    </tr>`;
+  }).join('');
+  return `<div class="report-card canal-month-card">
+    <div class="report-title">${escHtml(s.structure_name)}</div>
+    <div class="report-subtitle">${escHtml(monthLabel)}${partial ? ` &middot; to ${escHtml(fmtDate(data.end))}` : ''}</div>
+    ${s.rows.length ? `<div class="report-scroll">
+      <table class="report-table canal-month-table">
+        <thead><tr>
+          <th>Date</th><th>Time Value</th>
+          <th class="report-num">Observed Reading</th><th class="report-num">Adjusted Midnight Reading</th>
+          <th class="report-num">CFS / Day</th><th class="report-num">AF / Day</th>
+          <th class="report-num">Flow Rate</th><th>Note</th>
+        </tr></thead>
+        <tbody>${body}</tbody>
+        <tfoot><tr class="canal-month-total">
+          <td colspan="4">Total${s.pending ? ` <span class="cm-pending-note">(${s.pending} day${s.pending === 1 ? '' : 's'} waiting for a reading)</span>` : ''}</td>
+          <td class="report-num">${cmFixed(s.totals.cfs)}</td>
+          <td class="report-num">${cmFixed(s.totals.af)}</td>
+          <td colspan="2"></td>
+        </tr></tfoot>
+      </table>
+    </div>` : '<div class="placeholder-msg">No readings found.</div>'}
+  </div>`;
+}
+
+async function renderCanalMonthly() {
+  clearTimeout(_canalMonthlyTimer);
+  const out = el('report-canal-monthly-output');
+  const month = el('canal-month').value;
+  if (!month) return;
+  const ids = canalMonthlyIds();
+  const seq = ++_canalMonthlySeq;
+  if (!ids.length) {
+    lastCanalMonthly = null;
+    out.innerHTML = '<div class="placeholder-msg">Select one or more turnouts / turn-ins.</div>';
+    return;
+  }
+  out.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  let data;
+  try {
+    data = await api('GET', `/api/reports/canal/monthly?month=${encodeURIComponent(month)}&ids=${ids.join(',')}`);
+  } catch {
+    if (seq !== _canalMonthlySeq) return;
+    lastCanalMonthly = null;
+    out.innerHTML = '<div class="placeholder-msg">Failed to load.</div>';
+    return;
+  }
+  // A newer request (another tick, another month) has already been sent.
+  if (seq !== _canalMonthlySeq) return;
+  lastCanalMonthly = data;
+  if (data.end < data.start) {
+    out.innerHTML = '<div class="placeholder-msg">No readings found.</div>';
+    return;
+  }
+  const canEdit = isSupervisorLevel(currentUser?.role);
+  out.innerHTML = canalMonthlyNoteHtml(data, canEdit) +
+    data.structures.map(s => canalMonthlyCardHtml(s, data, canEdit)).join('');
+}
+
+// ── Correcting a reading (supervisor-level only; the endpoint enforces it too) ──
+// The correction is stored in readings_canal.adjusted_af and the operator's
+// entry is kept; the midnight values either side are recalculated from it.
+let _canalAdjustTarget = null;
+
+el('report-canal-monthly-output').addEventListener('click', e => {
+  const btn = e.target.closest('.canal-adj-btn');
+  if (btn) openCanalAdjust(Number(btn.dataset.rid), Number(btn.dataset.sid), btn.dataset.date);
+});
+
+function openCanalAdjust(readingId, structureId, date) {
+  const s = lastCanalMonthly?.structures.find(x => x.structure_id === structureId);
+  const r = s?.rows.find(x => x.reading_id === readingId && x.date === date);
+  if (!r) return;
+  _canalAdjustTarget = { readingId };
+  // What the operator entered: the original when corrected, else what's shown.
+  const entered = r.corrected ? r.observed_original : r.observed;
+  el('canal-adjust-meta').innerHTML = `
+    <strong>${escHtml(s.structure_name)}</strong><br>
+    ${escHtml(localDateStr(date, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }))}${r.time ? ` &middot; ${escHtml(r.time)}` : ''}<br>
+    Entered reading: ${entered == null ? '&mdash;' : escHtml(cmReading(entered))}`;
+  const input = el('canal-adjust-input');
+  input.value = r.corrected ? cmReading(r.observed) : '';
+  input.placeholder = entered == null ? '' : cmReading(entered);
+  el('canal-adjust-clear').disabled = !r.corrected;
+  el('canal-adjust-error').classList.add('hidden');
+  el('canal-adjust-modal').classList.remove('hidden');
+  setTimeout(() => input.focus(), 50);
+}
+
+function closeCanalAdjust() {
+  el('canal-adjust-modal').classList.add('hidden');
+  _canalAdjustTarget = null;
+}
+
+async function saveCanalAdjust(value) {
+  if (!_canalAdjustTarget) return;
+  const btn = value == null ? el('canal-adjust-clear') : el('canal-adjust-save');
+  const done = beginSave(btn);
+  try {
+    await api('PUT', `/api/canal-readings/${_canalAdjustTarget.readingId}/adjusted`, { adjusted_af: value });
+    closeCanalAdjust();
+    showToast(value == null ? 'Correction removed' : 'Corrected reading saved', 'success');
+    // The midnights either side move with it, so redraw the whole month.
+    renderCanalMonthly();
+  } catch (err) {
+    showError('canal-adjust-error', err.message);
+  } finally { done(); }
+}
+
+el('canal-adjust-save').addEventListener('click', () => {
+  const raw = el('canal-adjust-input').value.trim();
+  const v = Number(raw);
+  if (raw === '' || !Number.isFinite(v)) {
+    return showError('canal-adjust-error', 'Enter a reading, or use Original to remove the correction.');
+  }
+  saveCanalAdjust(v);
+});
+el('canal-adjust-clear').addEventListener('click', () => saveCanalAdjust(null));
+el('canal-adjust-close').addEventListener('click', closeCanalAdjust);
+el('canal-adjust-modal').addEventListener('click', e => {
+  if (e.target === el('canal-adjust-modal')) closeCanalAdjust();
+});
+
+// ── Export ──
+function canalMonthlyExportName(data) {
+  const clean = t => String(t).trim().replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '') || 'Structure';
+  const one = data.structures.length === 1 ? `_${clean(data.structures[0].structure_name)}` : '';
+  return `Canal_Monthly_${data.month}${one}`;
+}
+
+el('canal-month-export-btn').addEventListener('click', () => {
+  if (!lastCanalMonthly?.structures?.length || lastCanalMonthly.end < lastCanalMonthly.start) {
+    return showToast('No report data to export', 'error');
+  }
+  exportContext = 'canal-monthly';
+  const n = lastCanalMonthly.structures.length;
+  el('export-modal-subtitle').textContent =
+    `Canal Monthly — ${localDateStr(`${lastCanalMonthly.month}-01`, { month: 'long', year: 'numeric' })} — `
+    + (n === 1 ? lastCanalMonthly.structures[0].structure_name : `${n} turnouts / turn-ins`);
+  el('export-modal').classList.remove('hidden');
+});
+
+function canalMonthlyCsv(data) {
+  const csvEsc = v => (v == null || v === '') ? '' : /[,"\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v);
+  const lines = [];
+  data.structures.forEach((s, i) => {
+    if (i) lines.push('');
+    lines.push(csvEsc(s.structure_name));
+    lines.push('Date,Time Value,Observed Reading,Adjusted Midnight Reading,CFS / Day,AF / Day,Flow Rate,Note');
+    s.rows.forEach(r => lines.push([
+      r.date, r.time || '', cmReading(r.observed), cmFixed(r.midnight),
+      cmFixed(r.cfs), cmFixed(r.af), cmReading(r.flow), canalMonthlyRowNote(r),
+    ].map(csvEsc).join(',')));
+    lines.push(['', '', '', 'Total', cmFixed(s.totals.cfs), cmFixed(s.totals.af), '', ''].join(','));
+  });
+  return lines.join('\r\n');
+}
+
+// The PDF is built from its own markup rather than the on-screen cards, as the
+// JHA export is: html2pdf clones the content out of its holder, so app classes
+// like .report-table would carry the dark theme's padding and colours into the
+// print. One turnout per page, split with html2pdf's own page-break marker.
+const CANAL_MONTHLY_PDF_CSS = `
+  .pdf-root, .pdf-root * { color: #000 !important; }
+  .cmp-foot { font-size: 7pt; margin: 0 0 6px; line-height: 1.35; }
+  .cmp-title { font-size: 14pt; font-weight: 700; text-align: center; margin: 0 0 2px; }
+  .cmp-sub { font-size: 9pt; text-align: center; margin: 0 0 8px; }
+  .cmp-table { width: 100%; border-collapse: collapse; font-size: 8pt; }
+  .cmp-table th { font-size: 7.5pt; font-weight: 700; text-transform: uppercase; text-align: left;
+                  padding: 2px 4px; border-bottom: 1.5px solid #000; white-space: nowrap; }
+  .cmp-table td { padding: 1px 4px; border-bottom: 0.5px solid #ccc; white-space: nowrap; }
+  .cmp-table .num { text-align: right; }
+  .cmp-table td.note { white-space: normal; font-size: 7pt; line-height: 1.2; }
+  .cmp-table tr.carried td { color: #777 !important; }
+  .cmp-table tr.start td { font-style: italic; }
+  .cmp-table .override { font-weight: 700; text-decoration: underline; }
+  .cmp-table tfoot td { font-weight: 700; border-top: 1.5px solid #000; border-bottom: none; }
+  tr { page-break-inside: avoid; }`;
+
+function buildCanalMonthlyPdfHtml(data) {
+  const monthLabel = localDateStr(`${data.month}-01`, { month: 'long', year: 'numeric' });
+  const partial = data.end < data.monthEnd;
+  // Short lines: html2canvas can overlap words when a long paragraph wraps.
+  const foot = `<div class="cmp-foot">
+    <div>Adjusted Midnight Reading: the meter at the midnight that ends each day, from the readings either side.</div>
+    <div>AF / Day: water used that day, midnight to midnight. CFS / Day = AF / Day &divide; 1.9835.</div>
+    <div>First row (${escHtml(fmtDate(data.start))}): starting point, not in the totals. Grey: no reading.
+      Underlined: reading corrected by a supervisor. &asymp;: meter moved with no reading. &mdash;: waiting for the next reading.</div>
+  </div>`;
+  return data.structures.map((s, i) => `
+    ${i ? '<div class="html2pdf__page-break"></div>' : ''}
+    ${foot}
+    <div class="cmp-title">${escHtml(s.structure_name)}</div>
+    <div class="cmp-sub">${escHtml(monthLabel)}${partial ? ` &middot; to ${escHtml(fmtDate(data.end))}` : ''}</div>
+    <table class="cmp-table">
+      <thead><tr>
+        <th>Date</th><th>Time Value</th><th class="num">Observed Reading</th><th class="num">Adjusted Midnight Reading</th>
+        <th class="num">CFS / Day</th><th class="num">AF / Day</th><th class="num">Flow Rate</th><th>Note</th>
+      </tr></thead>
+      <tbody>${s.rows.map(r => `
+        <tr class="${[r.carried ? 'carried' : '', r.start ? 'start' : ''].join(' ').trim()}">
+          <td>${escHtml(fmtDate(r.date))}</td>
+          <td>${escHtml(r.time || '')}</td>
+          <td class="num${r.corrected ? ' override' : ''}">${cmReading(r.observed)}</td>
+          <td class="num">${r.midnight == null && !r.start && r.pending ? '&mdash;' : cmFixed(r.midnight)}</td>
+          <td class="num">${r.estimated ? '&asymp;' : ''}${cmFixed(r.cfs)}</td>
+          <td class="num">${r.estimated ? '&asymp;' : ''}${cmFixed(r.af)}</td>
+          <td class="num">${cmReading(r.flow)}</td>
+          <td class="note">${escHtml(canalMonthlyRowNote({ ...r, start: false }) || '')}</td>
+        </tr>`).join('')}
+      </tbody>
+      <tfoot><tr>
+        <td colspan="4">Total</td>
+        <td class="num">${cmFixed(s.totals.cfs)}</td>
+        <td class="num">${cmFixed(s.totals.af)}</td>
+        <td colspan="2"></td>
+      </tr></tfoot>
+    </table>`).join('');
 }
 
 // ── Pioneer Daily Readings ───────────────────────────────────────────────────
@@ -12156,6 +13065,19 @@ el('export-csv-btn').addEventListener('click', async () => {
     return;
   }
 
+  if (exportContext === 'pp-report') {
+    if (!lastPPReport) return;
+    await shareFile(new Blob([pprCsv(lastPPReport)], { type: 'text/csv' }), `${pprExportName(lastPPReport)}.csv`, 'Pumping Plant');
+    return;
+  }
+
+  if (exportContext === 'canal-monthly') {
+    if (!lastCanalMonthly) return;
+    await shareFile(new Blob([canalMonthlyCsv(lastCanalMonthly)], { type: 'text/csv' }),
+      `${canalMonthlyExportName(lastCanalMonthly)}.csv`, 'Canal Monthly');
+    return;
+  }
+
   if (exportContext === 'canal') {
     const csvEsc = v => (v == null || v === '') ? '' : /[,"\n]/.test(String(v)) ? `"${String(v).replace(/"/g,'""')}"` : String(v);
     const s = el('canal-report-start-date').value, e = el('canal-report-end-date').value;
@@ -12247,6 +13169,25 @@ el('export-xlsx-btn').addEventListener('click', async () => {
       const res = await fetch(`/api/reports/vehicle-service/export?token=${token}`);
       if (!res.ok) throw new Error('Export failed');
       await shareFile(await res.blob(), 'LastService.xlsx', 'Last Service');
+      return;
+    }
+    if (exportContext === 'pp-report') {
+      const data = lastPPReport;
+      if (!data) throw new Error('No report data to export');
+      const { token } = await api('POST', '/api/reports/download-token', {});
+      const res = await fetch(`/api/reports/pumping-plant/export?${pprQuery()}&token=${token}`);
+      if (!res.ok) throw new Error('Export failed');
+      await shareFile(await res.blob(), `${pprExportName(data)}.xlsx`, 'Pumping Plant');
+      return;
+    }
+    if (exportContext === 'canal-monthly') {
+      const data = lastCanalMonthly;
+      if (!data) throw new Error('No report data to export');
+      const ids = data.structures.map(st => st.structure_id).join(',');
+      const { token } = await api('POST', '/api/reports/download-token', {});
+      const res = await fetch(`/api/reports/canal/monthly/export?month=${encodeURIComponent(data.month)}&ids=${ids}&token=${token}`);
+      if (!res.ok) throw new Error('Export failed');
+      await shareFile(await res.blob(), `${canalMonthlyExportName(data)}.xlsx`, 'Canal Monthly');
       return;
     }
     if (exportContext === 'canal') {
@@ -12534,6 +13475,13 @@ el('export-pdf-btn').addEventListener('click', async () => {
       const card = el('report-output').querySelector('.report-card');
       if (!card) throw new Error('No report to export');
       await sharePdfFromHtml(card.outerHTML, REPORT_PDF_CSS, 'LastService', 'Last Service');
+    } else if (exportContext === 'pp-report') {
+      if (!lastPPReport) throw new Error('No report to export');
+      await sharePdfFromHtml(await buildPPReportPdfHtml(lastPPReport), PPR_PDF_CSS, pprExportName(lastPPReport), 'Pumping Plant');
+    } else if (exportContext === 'canal-monthly') {
+      if (!lastCanalMonthly) throw new Error('No report to export');
+      await sharePdfFromHtml(buildCanalMonthlyPdfHtml(lastCanalMonthly), CANAL_MONTHLY_PDF_CSS,
+        canalMonthlyExportName(lastCanalMonthly), 'Canal Monthly');
     } else if (exportContext === 'canal') {
       const card = el('report-canal-output').querySelector('.report-card');
       if (!card) throw new Error('No report to export');
@@ -13614,13 +14562,61 @@ function renderCCList() {
     </div>`).join('');
 }
 
+// Field Staff Time Charging Guide (updated Oct 21 2026). The two sections that
+// don't fit a single percentage split are built in here; the guide's Sounder
+// Calibration & Repair split is an ordinary database breakdown (server.js
+// applies the guide's codes to it once). Update this when the guide changes.
+const CHARGE_GUIDE = [
+  {
+    key: 'wlm', name: 'Water Level Monitoring', type: 'monthly',
+    desc: 'Split well run time by district. Feb & Oct use the Kern Fan template.',
+    // Percentages per district for each set of months; null = not charged then.
+    variants: [
+      { key: 'std',  label: 'Jan, Mar–Sep, Nov, Dec', months: [1, 3, 4, 5, 6, 7, 8, 9, 11, 12] },
+      { key: 'kern', label: 'Feb & Oct (Kern Fan)',   months: [2, 10] },
+    ],
+    rows: [
+      { district: 'BM',                  code: '711H',       pct: { std: 10,   kern: 5 } },
+      { district: 'KWB',                 code: '831H',       pct: { std: 65,   kern: 40 } },
+      { district: 'Pioneer',             code: '771H',       pct: { std: 25,   kern: 15 } },
+      { district: 'City of Bakersfield', code: '610H-61006', pct: { std: null, kern: 15 } },
+      { district: 'DWR',                 code: '870H-87008', pct: { std: null, kern: 10 } },
+      { district: 'Undistricted',        code: '610H-61007', pct: { std: null, kern: 15 } },
+    ],
+  },
+  {
+    key: 'purge', name: 'Water Quality Sampling (Purge Pump)', type: 'reference',
+    desc: 'Charge purge pump runs to the wells sampled.',
+    rows: [
+      { label: 'KDWD',                code: '611I-61010' },
+      { label: 'RRBWSD',              code: '611I-61011' },
+      { label: 'Semitropic',          code: '611I-61012' },
+      { label: 'City of Bakersfield', code: '611I-61013' },
+      { label: 'BV',                  code: '611I-61014' },
+      { label: 'KWB',                 code: '831I' },
+      { label: 'Pioneer',             code: '771I' },
+      { label: 'Purge pump repair',   code: '831C-61024' },
+    ],
+  },
+];
+let _ccVariant = null;   // Water Level Monitoring month set picked by hand (null = by month)
+
 function renderCCSplitOptions() {
   const sel = el('cc-split-select');
-  if (!_ccSplits.length) {
-    sel.innerHTML = '<option value="">No breakdowns defined</option>';
-  } else {
-    sel.innerHTML = _ccSplits.map(s => `<option value="${s.split_id}">${escHtml(s.name)}</option>`).join('');
-  }
+  const prev = sel.value;
+  // The guide's three sections first, in its order; the Sounder split is the
+  // database one whose name mentions sounder. Everything else follows.
+  const sounder = _ccSplits.filter(sp => /sounder/i.test(sp.name));
+  const others  = _ccSplits.filter(sp => !/sounder/i.test(sp.name));
+  const opt = (value, label) => `<option value="${escHtml(value)}">${escHtml(label)}</option>`;
+  sel.innerHTML = `
+    <optgroup label="Field Staff Time Charging Guide">
+      ${opt('guide:wlm', CHARGE_GUIDE[0].name)}
+      ${sounder.map(sp => opt(`split:${sp.split_id}`, sp.name)).join('')}
+      ${opt('guide:purge', CHARGE_GUIDE[1].name)}
+    </optgroup>
+    ${others.length ? `<optgroup label="Other breakdowns">${others.map(sp => opt(`split:${sp.split_id}`, sp.name)).join('')}</optgroup>` : ''}`;
+  if (prev && sel.querySelector(`option[value="${CSS.escape(prev)}"]`)) sel.value = prev;
   renderCCSplitResult();
 }
 
@@ -13642,23 +14638,83 @@ function computeChargeSplit(total, components) {
   return parts;
 }
 
+function ccMonthNow() { return Number(pacificToday().slice(5, 7)); }
+
+// Charge Code | % of Time | Hours, as laid out in the guide; District leads for
+// Water Level Monitoring.
+function ccSplitTableHtml(parts, { district = false } = {}) {
+  const total = parts.reduce((a, p) => a + (p.hrs || 0), 0);
+  return `<div class="report-scroll"><table class="report-table cc-split-table">
+    <thead><tr>
+      ${district ? '<th>District</th>' : ''}<th>Charge Code</th><th class="report-num">% of Time</th><th class="report-num">Hours</th>
+    </tr></thead>
+    <tbody>${parts.map(p => `<tr${p.percent == null ? ' class="cc-row-na"' : ''}>
+      ${district ? `<td>${escHtml(p.district)}</td>` : ''}
+      <td class="cc-item-code">${escHtml(p.code)}</td>
+      <td class="report-num">${p.percent == null ? '&mdash;' : `${p.percent}%`}</td>
+      <td class="report-num">${p.hrs == null ? '' : `${p.hrs.toFixed(2)} h`}</td>
+    </tr>`).join('')}</tbody>
+    <tfoot><tr>
+      ${district ? '<td></td>' : ''}<td>Total</td>
+      <td class="report-num">${parts.reduce((a, p) => a + (p.percent || 0), 0)}%</td>
+      <td class="report-num">${parts.some(p => p.hrs != null) ? `${total.toFixed(2)} h` : ''}</td>
+    </tr></tfoot>
+  </table></div>`;
+}
+
 function renderCCSplitResult() {
   const out = el('cc-split-result');
-  const split = _ccSplits.find(s => String(s.split_id) === el('cc-split-select').value);
+  const value = el('cc-split-select').value;
+  const guide = value.startsWith('guide:') ? CHARGE_GUIDE.find(g => `guide:${g.key}` === value) : null;
+  const split = value.startsWith('split:') ? _ccSplits.find(sp => `split:${sp.split_id}` === value) : null;
   const total = parseFloat(el('cc-split-hours').value);
-  if (!split || !Array.isArray(split.components) || !split.components.length) { out.innerHTML = ''; return; }
-  if (isNaN(total) || total < 0) {
-    out.innerHTML = '<div class="placeholder-msg">Enter total hours above.</div>';
+  const hasHours = !isNaN(total) && total >= 0;
+  const variantEl = el('cc-split-variant'), descEl = el('cc-split-desc');
+  variantEl.classList.toggle('hidden', guide?.type !== 'monthly');
+  el('cc-split-hours-row').classList.toggle('hidden', guide?.type === 'reference');
+  descEl.classList.toggle('hidden', !guide && !/sounder/i.test(split?.name || ''));
+  descEl.textContent = guide ? guide.desc
+    : /sounder/i.test(split?.name || '') ? 'Split by the year’s water level monitoring beneficiaries.' : '';
+
+  if (guide?.type === 'reference') {
+    out.innerHTML = `<div class="report-scroll"><table class="report-table cc-split-table">
+      <thead><tr><th>Wells</th><th>Charge Code</th></tr></thead>
+      <tbody>${guide.rows.map(r => `<tr><td>${escHtml(r.label)}</td><td class="cc-item-code">${escHtml(r.code)}</td></tr>`).join('')}</tbody>
+    </table></div>`;
     return;
   }
-  const parts = computeChargeSplit(total, split.components);
-  out.innerHTML = parts.map(p => `
-    <div class="cc-split-row">
-      <span><strong class="cc-item-code">${escHtml(p.code)}</strong> <span style="color:var(--text-dim)">(${p.percent}%)</span></span>
-      <strong>${p.hrs.toFixed(2)} h</strong>
-    </div>`).join('') + `
-    <div class="cc-split-total"><span>Total</span><span>${parts.reduce((a, p) => a + p.hrs, 0).toFixed(2)} h</span></div>`;
+
+  if (guide?.type === 'monthly') {
+    const auto = guide.variants.find(v => v.months.includes(ccMonthNow())) || guide.variants[0];
+    const variant = guide.variants.find(v => v.key === _ccVariant) || auto;
+    variantEl.innerHTML = guide.variants.map(v => `<button type="button" class="seg-btn${v === variant ? ' active' : ''}"
+      data-variant="${v.key}">${escHtml(v.label)}${v === auto ? ' <span class="cc-variant-now">this month</span>' : ''}</button>`).join('');
+    const live = guide.rows.filter(r => r.pct[variant.key] != null);
+    const alloc = hasHours ? computeChargeSplit(total, live.map(r => ({ code: r.code, percent: r.pct[variant.key] }))) : [];
+    const parts = guide.rows.map(r => {
+      const i = live.indexOf(r);
+      return { district: r.district, code: r.code, percent: r.pct[variant.key], hrs: i >= 0 && hasHours ? alloc[i].hrs : null };
+    });
+    out.innerHTML = ccSplitTableHtml(parts, { district: true })
+      + (hasHours ? '' : '<div class="placeholder-msg">Enter total hours above.</div>');
+    return;
+  }
+
+  if (!split || !Array.isArray(split.components) || !split.components.length) { out.innerHTML = ''; return; }
+  if (!hasHours) {
+    out.innerHTML = ccSplitTableHtml(split.components.map(c => ({ code: c.code, percent: Number(c.percent), hrs: null })))
+      + '<div class="placeholder-msg">Enter total hours above.</div>';
+    return;
+  }
+  out.innerHTML = ccSplitTableHtml(computeChargeSplit(total, split.components));
 }
+
+el('cc-split-variant').addEventListener('click', e => {
+  const b = e.target.closest('[data-variant]');
+  if (!b) return;
+  _ccVariant = b.dataset.variant;
+  renderCCSplitResult();
+});
 
 function initTimeOffPanel() {
   const today = new Date().toLocaleDateString('en-CA');
@@ -15617,11 +16673,15 @@ async function initPondsScreen() {
   body.innerHTML = '<div class="placeholder-msg">Loading…</div>';
 
   try {
-    const rows = await api('GET', '/api/ponds');
+    const [rows, prevOut] = await Promise.all([
+      api('GET', '/api/ponds'),
+      api('GET', '/api/ponds/prev-outflow').catch(() => []),   // nice-to-have; the screen works without it
+    ]);
     if (!rows.length) {
       body.innerHTML = '<div class="placeholder-msg">No ponds found.</div>';
       return;
     }
+    const prevOutMap = new Map(prevOut.map(r => [`${r.kind}:${r.ent_id}`, r]));
 
     // Group flat rows → locations → (ponds + outlets) → connections → gates
     const locMap = new Map();
@@ -15663,6 +16723,7 @@ async function initPondsScreen() {
           loc.outlets.set(row.outlet_id, {
             outlet_id: row.outlet_id, name: row.pond_name, sort: row.pond_sort,
             isOutlet: true,
+            prevOut: prevOutMap.get(`outlet:${row.outlet_id}`) || null,
             max_gauge: row.max_gauge,
             last_gauge_level: row.last_gauge_level,
             last_gauge_date:  row.last_gauge_date,
@@ -15677,6 +16738,7 @@ async function initPondsScreen() {
         if (!loc.ponds.has(row.pond_id)) {
           loc.ponds.set(row.pond_id, {
             pond_id: row.pond_id, name: row.pond_name, sort: row.pond_sort,
+            prevOut: prevOutMap.get(`pond:${row.pond_id}`) || null,
             max_gauge: row.max_gauge,
             last_gauge_level: row.last_gauge_level,
             last_gauge_date:  row.last_gauge_date,
@@ -15763,26 +16825,21 @@ function createPondCard(pond, dateInput, timeInput) {
   // Staff gauge section
   form.appendChild(buildGaugeForm(pond, dateInput, timeInput, div));
 
-  // Connection rows — canal gets a special inflow row; river/pond use gate rows
+  // Connection rows — canal gets a special inflow row; river/pond use gate rows.
+  // Canal connections bring water in, so their gates aren't outflow.
+  const rows = [];
   const sortedConns = [...pond.connections.values()].sort((a, b) => a.sort - b.sort);
   for (const conn of sortedConns) {
     if (conn.source_type === 'canal' && conn.source_canal_id) {
-      form.appendChild(buildCanalRow(conn, dateInput, timeInput, div));
+      rows.push(buildCanalRow(conn, dateInput, timeInput, div));
     } else {
+      const dir = conn.source_type === 'canal' ? 'in' : 'out';
       const sortedGates = [...conn.gates].sort((a, b) => a.sort - b.sort);
-      for (const gate of sortedGates) {
-        form.appendChild(buildGateRow(gate, dateInput, timeInput, div));
-      }
+      for (const gate of sortedGates) rows.push(buildGateRow(gate, dateInput, timeInput, div, dir));
     }
   }
-
-  // Total row (only when multiple gates)
-  if (allGates.length > 1) {
-    const totalRow = document.createElement('div');
-    totalRow.className = 'pond-total-row';
-    totalRow.innerHTML = `<span>Total</span><span class="pond-total-cfs">—</span>`;
-    form.appendChild(totalRow);
-  }
+  rows.forEach(r => form.appendChild(r));
+  appendPondSave(form, div, pond, rows, dateInput, timeInput);
 
   div.querySelector('.list-item-header').addEventListener('click', () => {
     const open = !div.classList.contains('expanded');
@@ -15837,20 +16894,15 @@ function createOutletCard(outlet, dateInput, timeInput) {
 
   form.appendChild(buildGaugeForm(outlet, dateInput, timeInput, div));
 
+  // Every gate on a river outlet takes water out of it.
+  const rows = [];
   const sortedConns = [...outlet.connections.values()].sort((a, b) => a.sort - b.sort);
   for (const conn of sortedConns) {
     const sortedGates = [...conn.gates].sort((a, b) => a.sort - b.sort);
-    for (const gate of sortedGates) {
-      form.appendChild(buildGateRow(gate, dateInput, timeInput, div));
-    }
+    for (const gate of sortedGates) rows.push(buildGateRow(gate, dateInput, timeInput, div, 'out'));
   }
-
-  if (allGates.length > 1) {
-    const totalRow = document.createElement('div');
-    totalRow.className = 'pond-total-row';
-    totalRow.innerHTML = `<span>Total</span><span class="pond-total-cfs">—</span>`;
-    form.appendChild(totalRow);
-  }
+  rows.forEach(r => form.appendChild(r));
+  appendPondSave(form, div, outlet, rows, dateInput, timeInput);
 
   div.querySelector('.list-item-header').addEventListener('click', () => {
     const open = !div.classList.contains('expanded');
@@ -15899,7 +16951,6 @@ function buildCanalRow(conn, dateInput, timeInput, cardEl) {
         <textarea class="rr-notes-input pg-canal-notes" rows="1" placeholder="Notes…"></textarea>
         ${notesBtnHtml('canal', conn.source_canal_id, `${conn.name}${conn.canal_structure_name ? ' — ' + conn.canal_structure_name : ''}`, { iconOnly: true })}
         <button class="btn btn-secondary btn-sm pond-hist-btn" title="History" style="flex-shrink:0">${icon('history')}</button>
-        <button class="btn btn-save btn-sm pg-canal-save" style="flex-shrink:0">Save</button>
       </div>
       <span class="live-delta" style="visibility:hidden;pointer-events:none">x</span>
     </div>`;
@@ -15913,7 +16964,6 @@ function buildCanalRow(conn, dateInput, timeInput, cardEl) {
   const flowInput      = row.querySelector('.pg-canal-flow');
   const totalizerInput = row.querySelector('.pg-canal-totalizer');
   const notesInput     = row.querySelector('.pg-canal-notes');
-  const saveBtn        = row.querySelector('.pg-canal-save');
   const flowDeltaEl    = row.querySelector('.pg-canal-flow-delta');
 
   flowInput.dataset.savedFlow = conn.last_canal_flow ?? '';
@@ -15927,38 +16977,34 @@ function buildCanalRow(conn, dateInput, timeInput, cardEl) {
     openHistoryModal('canal', conn.source_canal_id,
       `${conn.name}${conn.canal_structure_name ? ' — ' + conn.canal_structure_name : ''}`));
 
-  saveBtn.addEventListener('click', async () => {
-    const flow      = parseFloat(flowInput.value);
-    const totalizer = parseFloat(totalizerInput.value);
-    if (isNaN(flow) && isNaN(totalizer)) {
-      errDiv.textContent = 'Enter flow or totalizer.';
-      errDiv.classList.remove('hidden');
-      return;
-    }
-    errDiv.classList.add('hidden');
-    saveBtn.disabled = true;
-    saveBtn.textContent = 'Saving…';
-    try {
-      await api('POST', '/api/readings/canal', {
-        structure_id:           conn.source_canal_id,
-        reading_date:           dateInput.value,
-        reading_time:           timeInput.value,
-        instantaneous_flow_cfs: isNaN(flow)      ? null : flow,
-        totalizer_reading_af:   isNaN(totalizer) ? null : totalizer,
-        notes:                  notesInput.value || null,
-      });
-      saveBtn.textContent = 'Saved ✓';
-      saveBtn.disabled = false;
-      flowInput.dataset.savedFlow = isNaN(flow) ? '' : String(flow);
+  // Saved by the pond's Save button. A canal inflow left blank is skipped —
+  // it's a metered turnout, so a made-up 0 would throw off the canal reports.
+  wrap.pondRow = {
+    collect() {
+      const flow = parseFloat(flowInput.value), totalizer = parseFloat(totalizerInput.value);
+      if (isNaN(flow) && isNaN(totalizer)) return null;
+      return {
+        kind: 'canal',
+        body: {
+          structure_id:           conn.source_canal_id,
+          instantaneous_flow_cfs: isNaN(flow)      ? null : flow,
+          totalizer_reading_af:   isNaN(totalizer) ? null : totalizer,
+          notes:                  notesInput.value || null,
+        },
+      };
+    },
+    markSaved({ body }) {
+      const flow = body.instantaneous_flow_cfs;
+      flowInput.dataset.savedFlow = flow == null ? '' : String(flow);
       flowDeltaEl.innerHTML = '';
-      showToast(`${conn.name} saved`, 'success');
-    } catch (err) {
-      errDiv.textContent = err.message;
-      errDiv.classList.remove('hidden');
-      saveBtn.disabled = false;
-      saveBtn.textContent = 'Save';
-    }
-  });
+      if (flow != null) {
+        const hints = row.querySelectorAll('.rr-label .prev-date:not([style*="italic"])');
+        const text = `${flow.toFixed(2)} cfs · Today`;
+        if (hints.length) hints[hints.length - 1].textContent = text;
+        else row.querySelector('.rr-label').insertAdjacentHTML('beforeend', `<div class="prev-date">${text}</div>`);
+      }
+    },
+  };
 
   return wrap;
 }
@@ -16064,7 +17110,7 @@ function buildGaugeForm(pond, dateInput, timeInput, cardEl) {
   return wrap;
 }
 
-function buildGateRow(gate, dateInput, timeInput, cardEl) {
+function buildGateRow(gate, dateInput, timeInput, cardEl, dir = 'out') {
   const today    = todayISO();
   const prevDate = gate.last_date ? String(gate.last_date).slice(0, 10) : null;
   const lastFlow = gate.last_flow != null ? Number(gate.last_flow) : null;
@@ -16105,7 +17151,7 @@ function buildGateRow(gate, dateInput, timeInput, cardEl) {
     </div>`}
     <div class="rr-field-group" style="width:84px">
       <span class="rr-col-hd">Flow (cfs)</span>
-      <input type="number" class="rr-input pg-flow" step="0.01" placeholder="—" inputmode="decimal">
+      <input type="number" class="rr-input pg-flow" data-dir="${dir}" step="0.01" placeholder="—" inputmode="decimal">
       <span class="pg-flow-delta live-delta"></span>
     </div>
     <div style="flex:1;min-width:50px;display:flex;flex-direction:column">
@@ -16115,7 +17161,6 @@ function buildGateRow(gate, dateInput, timeInput, cardEl) {
         <textarea class="rr-notes-input pg-gate-notes" rows="1" placeholder="Notes…"></textarea>
         ${notesBtnHtml('pond-gate', gate.gate_id, gate.label, { iconOnly: true })}
         <button class="btn btn-secondary btn-sm pond-hist-btn" title="History" style="flex-shrink:0">${icon('history')}</button>
-        <button class="btn btn-save btn-sm pg-gate-save" style="flex-shrink:0">Save</button>
       </div>
       <span class="live-delta" style="visibility:hidden;pointer-events:none">x</span>
     </div>`;
@@ -16132,7 +17177,6 @@ function buildGateRow(gate, dateInput, timeInput, cardEl) {
   const overpourInput = row.querySelector('.pg-overpour');
   const flowInput     = row.querySelector('.pg-flow');
   const notesInput    = row.querySelector('.pg-gate-notes');
-  const saveBtn       = row.querySelector('.pg-gate-save');
 
   // Dataset refs for live delta comparisons
   if (headInput)     headInput.dataset.savedHead         = gate.last_head     ?? '';
@@ -16189,72 +17233,129 @@ function buildGateRow(gate, dateInput, timeInput, cardEl) {
   row.querySelector('.pond-hist-btn').addEventListener('click', () =>
     openHistoryModal('pond-gate', gate.gate_id, gate.label));
 
-  saveBtn.addEventListener('click', async () => {
-    errDiv.classList.add('hidden');
-
-    if (lastFlow != null && flowInput && flowInput.value.trim() === '') {
-      const _ra = await showReadingAlert('Incomplete Reading',
-        `<p><strong>Flow (cfs)</strong> was recorded last time (<strong>${lastFlow.toFixed(2)} cfs</strong>) but is now blank.</p>`,
-        [{ key: 'cancel', label: 'Cancel',             cls: 'btn-secondary' },
-         { key: 'fill',   label: 'Fill with Previous', cls: 'btn-primary'   },
-         { key: 'save',   label: 'Save Anyway',        cls: 'btn-save'      }]);
-      if (_ra === 'cancel') return;
-      if (_ra === 'fill') { flowInput.value = lastFlow.toFixed(2); return; }
-    }
-
-    saveBtn.disabled = true;
-    saveBtn.textContent = 'Saving…';
-    const h  = parseFloat(headInput?.value);
-    const o  = parseFloat(openingInput?.value);
-    const ov = parseFloat(overpourInput?.value);
-    const fl = parseFloat(flowInput?.value);
-    try {
-      await api('POST', '/api/readings/pond-gate', {
-        gate_id:      gate.gate_id,
-        reading_date: dateInput.value,
-        reading_time: timeInput.value,
-        head_ft:      isNaN(h)  ? null : h,
-        opening_in:   isNaN(o)  ? null : o,
-        overpour_in:  isNaN(ov) ? null : ov,
-        flow_cfs:     isNaN(fl) ? null : fl,
-        notes:        notesInput.value || null,
-      });
-      saveBtn.textContent = 'Saved ✓';
-      saveBtn.disabled = false;
-      // Update all saved refs and clear delta spans
-      if (headInput)     headInput.dataset.savedHead         = isNaN(h)  ? '' : h;
-      if (openingInput)  openingInput.dataset.savedOpening   = isNaN(o)  ? '' : o;
-      if (overpourInput) overpourInput.dataset.savedOverpour = isNaN(ov) ? '' : ov;
-      flowInput.dataset.savedFlow = isNaN(fl) ? '' : fl;
-      if (headDeltaEl)     headDeltaEl.innerHTML     = '';
-      if (openingDeltaEl)  openingDeltaEl.innerHTML  = '';
-      if (overpourDeltaEl) overpourDeltaEl.innerHTML = '';
-      flowDeltaEl.innerHTML = '';
-      updatePondTotal(cardEl);
-      // Update prev hint in label
+  // Saved by the pond's Save button. A gate with nothing entered is taken as
+  // closed: opening (or overpour) 0 and flow 0. A blank flow with a 0 opening
+  // is also 0; otherwise blank fields stay blank.
+  wrap.pondRow = {
+    collect() {
+      const h  = parseFloat(headInput?.value);
+      const o  = parseFloat(openingInput?.value);
+      const ov = parseFloat(overpourInput?.value);
+      let fl   = parseFloat(flowInput?.value);
+      const closed = [headInput, openingInput, overpourInput, flowInput].every(i => !i || i.value.trim() === '');
+      const shut = isWeir ? (closed || ov === 0) : (closed || o === 0);
+      if (isNaN(fl) && shut) fl = 0;
+      return {
+        kind: 'gate', closed,
+        body: {
+          gate_id:     gate.gate_id,
+          head_ft:     isNaN(h) ? null : h,
+          opening_in:  isWeir ? null : (closed ? 0 : (isNaN(o) ? null : o)),
+          overpour_in: isWeir ? (closed ? 0 : (isNaN(ov) ? null : ov)) : null,
+          flow_cfs:    isNaN(fl) ? null : fl,
+          notes:       notesInput.value || null,
+        },
+      };
+    },
+    markSaved({ body }) {
+      const fl = body.flow_cfs;
+      // Show what was saved, including the 0s filled in for a closed gate
+      if (openingInput  && body.opening_in  != null) openingInput.value  = body.opening_in;
+      if (overpourInput && body.overpour_in != null) overpourInput.value = body.overpour_in;
+      if (fl != null) flowInput.value = fl.toFixed(2);
+      if (headInput)     headInput.dataset.savedHead         = body.head_ft     ?? '';
+      if (openingInput)  openingInput.dataset.savedOpening   = body.opening_in  ?? '';
+      if (overpourInput) overpourInput.dataset.savedOverpour = body.overpour_in ?? '';
+      flowInput.dataset.savedFlow = fl ?? '';
+      [headDeltaEl, openingDeltaEl, overpourDeltaEl, flowDeltaEl].forEach(d => { if (d) d.innerHTML = ''; });
       const label = row.querySelector('.rr-label');
-      const existingDate = label.querySelector('.prev-date:not([style*="italic"])') || label.querySelector('.prev-date');
+      const existingDate = label.querySelector('.prev-date:not([style*="italic"])');
       const flowText = fl != null ? `${fl.toFixed(2)} cfs · Today` : 'Today';
       if (existingDate) existingDate.textContent = flowText;
-      else label.insertAdjacentHTML('beforeend', `<div class="prev-date">${flowText}</div>`);
-      updatePondBadge(cardEl, 'Today');
-      showToast(`${gate.label} saved`, 'success');
-    } catch (err) {
-      errDiv.textContent = err.message;
-      errDiv.classList.remove('hidden');
-      saveBtn.disabled = false;
-      saveBtn.textContent = 'Save Gate';
-    }
-  });
+      else {
+        const gateNote = label.querySelector('.prev-date');   // the italic gate note, if any
+        const html = `<div class="prev-date">${flowText}</div>`;
+        if (gateNote) gateNote.insertAdjacentHTML('beforebegin', html);
+        else label.insertAdjacentHTML('beforeend', html);
+      }
+    },
+  };
 
   return wrap;
+}
+
+// Bottom of a pond / outlet card: Total Outflow (live, from the gates being
+// entered) with the previous day's total under it, then the one Save button for
+// every gate and canal inflow on the card. The staff gauge keeps its own Save.
+function appendPondSave(form, cardEl, ent, rows, dateInput, timeInput) {
+  const outGates = rows.filter(r => r.querySelector('.pg-flow[data-dir="out"]')).length;
+  if (outGates) {
+    const p = ent.prevOut;
+    const totalRow = document.createElement('div');
+    totalRow.className = 'pond-total-row';
+    totalRow.innerHTML = `
+      <div>Total Outflow
+        <div class="pond-prev-total">${p
+          ? `Previous day (${escHtml(fmtDate(p.day))}): <strong>${Number(p.total_cfs).toFixed(2)} cfs</strong>`
+          : 'Previous day: no readings'}</div>
+      </div>
+      <span class="pond-total-cfs">—</span>`;
+    form.appendChild(totalRow);
+  }
+  if (!rows.length) return;
+
+  const saveRow = document.createElement('div');
+  saveRow.className = 'pond-save-row';
+  saveRow.innerHTML = `<button class="btn btn-save pond-save-btn">Save ${escHtml(ent.name)}</button><span class="save-status"></span>`;
+  form.appendChild(saveRow);
+  const btn = saveRow.querySelector('.pond-save-btn');
+  const status = saveRow.querySelector('.save-status');
+  const label = btn.textContent;
+
+  btn.addEventListener('click', async () => {
+    if (!dateInput.value || !timeInput.value) return showToast('Date and time are required', 'error');
+    const items = rows.map(r => ({ row: r, item: r.pondRow.collect() })).filter(x => x.item);
+    const gates = items.filter(x => x.item.kind === 'gate');
+    const canal = items.filter(x => x.item.kind === 'canal');
+    if (!items.length) return showToast('No readings entered', 'error');
+    btn.disabled = true; btn.textContent = 'Saving…';
+    status.textContent = ''; status.className = 'save-status';
+    try {
+      const result = await api('POST', '/api/readings/ponds', {
+        reading_date: dateInput.value,
+        reading_time: timeInput.value,
+        gates: gates.map(x => x.item.body),
+        canal: canal.map(x => x.item.body),
+      }, ent.name);
+      items.forEach(x => x.row.pondRow.markSaved(x.item));
+      updatePondTotal(cardEl);
+      const closed = gates.filter(x => x.item.closed).length;
+      const closedTxt = closed ? ` (${closed} closed)` : '';
+      if (result.queued) {
+        status.textContent = '⏳ Saved offline — will sync when connected';
+        status.className = 'save-status warn';
+        showToast(`${ent.name} queued offline`, 'warn');
+      } else {
+        status.textContent = `✓ ${items.length} reading${items.length !== 1 ? 's' : ''} saved${closedTxt}`;
+        status.className = 'save-status success';
+        updatePondBadge(cardEl, 'Today');
+        showToast(`${ent.name} saved${closedTxt}`, 'success');
+      }
+    } catch (err) {
+      status.textContent = 'Error: ' + err.message;
+      status.className = 'save-status error';
+      showToast('Save failed: ' + err.message, 'error');
+    } finally {
+      btn.disabled = false; btn.textContent = label;
+    }
+  });
 }
 
 function updatePondTotal(cardEl) {
   const totalEl = cardEl.querySelector('.pond-total-cfs');
   if (!totalEl) return;
   let liveTotal = 0, savedForTyped = 0, hasAny = false, hasSaved = false;
-  cardEl.querySelectorAll('.pg-flow').forEach(inp => {
+  cardEl.querySelectorAll('.pg-flow[data-dir="out"]').forEach(inp => {
     const v = parseFloat(inp.value);
     if (!isNaN(v)) {
       liveTotal += v;

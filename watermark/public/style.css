@@ -831,14 +831,13 @@ input[type="date"].ctrl-input { min-height: 44px; }
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 4px;
+  padding: 10px 12px;
 }
 .pp-save-row .btn-save { flex-shrink: 0; min-height: 40px; padding: 8px 20px; }
 .save-status { font-size: 0.9rem; color: var(--text-dim); }
 .save-status.success { color: #4caf50; }
 .save-status.error { color: var(--red-light); }
+.save-status.warn { color: var(--yellow); }
 
 .placeholder-msg {
   text-align: center;
@@ -1442,6 +1441,77 @@ input[type="date"].ctrl-input { min-height: 44px; }
 
 .report-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .report-scroll > .report-table { min-width: 640px; }
+
+/* ── Pumping Plant report ─────────────────────────────────────────────────── */
+/* Plant pills, equipment chips and the chart frame come from the SCADA
+   dashboard's classes so the two read as one system. */
+.ppr-card + .ppr-card { margin-top: 14px; }
+/* Four range buttons have to fit a phone: let them share the row instead of
+   each holding the shared 96px minimum. */
+#ppr-range { flex: 1 1 260px; min-width: 0; }
+#ppr-range .seg-btn { min-width: 0; padding: 10px 6px; }
+.ppr-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.ppr-title, .ppr-sub { text-align: left; }
+.ppr-sub { margin-bottom: 10px; }
+.ppr-total { text-align: right; flex-shrink: 0; }
+.ppr-total-val { font-size: 1.6rem; font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
+.ppr-total-unit { font-size: 0.85rem; color: var(--text-dim); margin-left: 4px; }
+.ppr-total-label {
+  font-size: 0.62rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--text-dim);
+}
+.ppr-glance-wrap { position: relative; width: 100%; }
+.ppr-note { font-size: 0.76rem; color: var(--text-dim); margin-top: 8px; line-height: 1.4; }
+.ppr-table td { vertical-align: top; }
+.ppr-at { font-size: 0.7rem; color: var(--text-dim); white-space: nowrap; }
+.ppr-est { color: var(--yellow); margin-right: 2px; }
+.ppr-unit { font-size: 0.72rem; color: var(--text-dim); }
+/* Type pills (one type across every plant) sit ahead of the plant pills */
+.ppr-pill-sep { flex-basis: 100%; height: 0; }
+.ppr-type-pill:not(.active) { border-style: dashed; }
+/* Check column — readings that look wrong */
+.ppr-check { min-width: 150px; }
+.ppr-issue { font-size: 0.74rem; color: var(--yellow); line-height: 1.35; }
+.ppr-issue-stale { color: var(--text-dim); }
+.ppr-row-issue td:first-child { box-shadow: inset 3px 0 0 var(--yellow); }
+.ppr-check-summary { font-size: 0.82rem; font-weight: 600; margin-bottom: 8px; }
+.ppr-check-warn { color: var(--yellow); }
+.ppr-check-ok { color: var(--green); }
+
+/* ── Canal Readings — Monthly ─────────────────────────────────────────────── */
+/* Turnout picker: the DWR multi-select, sized for a report toolbar. */
+.canal-ms { flex: 1 1 200px; min-width: 180px; max-width: 320px; }
+.canal-ms .dwr-ms-btn { padding: 6px 10px; font-size: 0.85rem; border-radius: var(--radius-sm); }
+.canal-ms .dwr-ms-btn { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.canal-ms .dwr-ms-panel { max-height: 340px; }
+.canal-ms-actions {
+  display: flex; gap: 6px; padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; background: var(--surface2); z-index: 1;
+}
+.canal-ms-retired { color: var(--text-dim); font-size: 0.78rem; }
+.canal-month-foot { font-size: 0.78rem; color: var(--text-dim); margin: 0 2px 10px; line-height: 1.45; }
+.canal-month-card + .canal-month-card { margin-top: 14px; }
+.canal-month-table th, .canal-month-table td { white-space: nowrap; }
+.canal-month-table td.cm-note { white-space: normal; min-width: 160px; color: var(--text-dim); font-size: 0.8rem; }
+/* Repeated (no reading that day) rows recede; the starting row is the baseline. */
+.canal-month-table tr.cm-carried td { color: var(--text-dim); }
+.canal-month-table tr.cm-start td { font-style: italic; background: var(--surface2); }
+.canal-month-table tfoot td {
+  font-weight: 700; border-top: 2px solid var(--border); border-bottom: none;
+}
+.canal-adj-btn {
+  background: none; border: 1px dashed var(--border); border-radius: 6px;
+  color: inherit; font: inherit; font-variant-numeric: tabular-nums;
+  padding: 2px 6px; min-height: 28px; cursor: pointer;
+}
+.canal-adj-btn:hover { border-color: var(--accent); }
+.canal-adj-btn.is-override, .canal-adj-override { color: var(--yellow); font-weight: 700; }
+.canal-adjust-meta { font-size: 0.85rem; color: var(--text-dim); margin-bottom: 12px; line-height: 1.5; }
+.cm-est { color: var(--yellow); font-weight: 700; margin-right: 2px; }
+.cm-pending { color: var(--text-dim); }
+.cm-pending-note { font-weight: 400; font-size: 0.75rem; color: var(--text-dim); }
+.canal-adjust-meta strong { color: var(--text); }
 
 /* Monthly well grid — wide table with a sticky day column + grouped area headers */
 .wm-table th, .wm-table td { white-space: nowrap; }
@@ -4197,6 +4267,32 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
   display: flex; justify-content: space-between; padding: 10px 12px;
   font-weight: 700; font-variant-numeric: tabular-nums;
 }
+/* Breakdown result: Charge Code | % of Time | Hours, as in the time charging guide. */
+/* Narrow enough for a phone: opt out of the shared 640px wide-table minimum so
+   Hours is never pushed off-screen. */
+.report-scroll > .report-table.cc-split-table { min-width: 0; }
+.cc-split-table { font-size: 0.85rem; }
+.cc-split-table th, .cc-split-table td { padding: 6px 6px; }
+.cc-split-table th { white-space: normal; vertical-align: bottom; }   /* "% of Time" may wrap on a phone */
+.cc-split-table td.cc-item-code { white-space: nowrap; }
+.cc-split-table td.report-num { white-space: nowrap; }
+@media (max-width: 360px) {
+  .cc-split-table { font-size: 0.78rem; }
+  .cc-split-table th, .cc-split-table td { padding: 5px 4px; }
+}
+.cc-split-table tfoot td { font-weight: 700; border-top: 2px solid var(--border); border-bottom: none; }
+.cc-split-table tr.cc-row-na td { color: var(--text-dim); }
+.cc-split-desc { font-size: 0.82rem; color: var(--text-dim); margin: -4px 0 8px; }
+.cc-variant { margin: 0 0 12px; }
+.cc-variant .seg-btn { min-width: 0; padding: 8px 8px; font-size: 0.8rem; white-space: normal; line-height: 1.25; flex-direction: column; }
+.cc-variant-now { display: block; font-size: 0.65rem; font-weight: 600; opacity: 0.8; text-transform: uppercase; letter-spacing: 0.04em; }
+.cc-rules {
+  margin-top: 16px; padding: 10px 12px;
+  border: 1px solid var(--border); border-left: 3px solid var(--yellow); border-radius: var(--radius-sm);
+  background: var(--surface2); font-size: 0.82rem; line-height: 1.45;
+}
+.cc-rules-title { font-weight: 700; margin-bottom: 4px; }
+.cc-rules ul { margin: 0; padding-left: 18px; }
 .csm-comp-row { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
 .csm-comp-row .csm-comp-code { flex: 1; }
 .csm-comp-row .csm-comp-pct { width: 80px; }
