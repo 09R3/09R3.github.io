@@ -4372,3 +4372,117 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
 }
 .scadatest-calc-out { margin-top: 12px; font-size: 0.95rem; }
 .scadatest-calc-out strong { color: var(--accent); font-variant-numeric: tabular-nums; }
+
+/* ── Pesticides → Map (spray map) ────────────────────────────────────────── */
+.spray-top { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+.spray-top .seg-group { flex: 1 1 240px; min-width: 0; }
+.spray-top .seg-btn { min-width: 0; padding: 9px 6px; }
+.spray-chip {
+  font-size: 0.8rem; font-weight: 600; color: var(--text-dim);
+  background: var(--surface2); border: 1px solid var(--border); border-radius: 999px;
+  padding: 6px 12px; min-height: 36px; cursor: pointer; white-space: nowrap;
+}
+.spray-chip.warn { color: var(--text); border-color: var(--yellow); }
+.spray-wrap {
+  position: relative; overflow: hidden;
+  height: calc(100dvh - var(--header-h) - 150px); min-height: 420px;
+  border: 1px solid var(--border); border-radius: var(--radius);
+}
+#spray-map { position: absolute; inset: 0; background: #2b3330; }
+#spray-map.tracing { touch-action: none; cursor: crosshair; }
+.spray-wrap .leaflet-bottom { bottom: 64px; }
+.spray-wrap.drawing .leaflet-bottom { bottom: 120px; }
+.spray-actionbar {
+  position: absolute; left: 6px; right: 6px; bottom: 6px; z-index: 1000;
+  display: grid; grid-template-columns: repeat(5, 1fr);
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 2px;
+}
+.spray-actionbar button {
+  font: inherit; font-size: 0.72rem; font-weight: 600; color: var(--text);
+  background: none; border: 0; border-radius: var(--radius-sm); min-height: 54px; padding: 4px 2px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; cursor: pointer;
+}
+.spray-actionbar button svg { width: 24px; height: 24px; }
+.spray-actionbar button.active { color: var(--accent); }
+.spray-wrap.drawing .spray-actionbar,
+.spray-wrap.drawing .spray-filter-btn,
+.spray-wrap.drawing .spray-float { display: none; }
+.spray-drawbar {
+  position: absolute; left: 6px; right: 6px; bottom: 6px; z-index: 1000;
+  background: var(--surface); border: 1px solid var(--border); border-top: 3px solid var(--accent);
+  border-radius: var(--radius); padding: 8px;
+}
+#spray-draw-hint { margin: 0 0 6px; font-weight: 600; font-size: 0.88rem; color: var(--text); line-height: 1.3; }
+.spray-strip-row { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; font-size: 0.82rem; color: var(--text-dim); }
+.spray-strip-row .ctrl-select { width: auto; min-width: 100px; padding-top: 6px; padding-bottom: 6px; font-size: 0.9rem; }
+/* One row so the bar covers as little of the map as possible */
+.spray-draw-actions { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 6px; }
+.spray-draw-actions .btn { min-height: 44px; padding: 6px 4px; font-size: 0.8rem; line-height: 1.15; }
+.spray-draw-actions .btn.hidden { display: none; }
+.spray-filter-btn {
+  position: absolute; left: 8px; bottom: 84px; z-index: 900;
+  display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 6px 12px;
+  font-size: 0.85rem; font-weight: 600; color: var(--text);
+  background: var(--surface); border: 1px solid var(--border); border-radius: 999px; cursor: pointer;
+}
+.spray-dots { display: flex; }
+.spray-dots i { width: 13px; height: 13px; border-radius: 50%; border: 2px solid var(--surface); margin-left: -5px; }
+.spray-dots i:first-child { margin-left: 0; }
+.spray-float {
+  position: absolute; left: 8px; bottom: 132px; z-index: 1050;
+  width: min(320px, calc(100% - 16px)); max-height: 60%; overflow: auto;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0,0,0,.35); padding: 8px 12px 12px;
+}
+.spray-panel-head { display: flex; justify-content: space-between; align-items: center; color: var(--text); }
+.spray-link { font-size: 0.88rem; font-weight: 600; color: var(--accent); background: none; border: 0; padding: 10px 6px; cursor: pointer; }
+.spray-prod-row { display: flex; align-items: center; gap: 10px; min-height: 46px; cursor: pointer; border-top: 1px solid var(--border); color: var(--text); }
+.spray-prod-row input { width: 22px; height: 22px; margin: 0; accent-color: var(--accent); flex: none; }
+.spray-prod-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.spray-prod-count { color: var(--text-dim); font-size: 0.82rem; }
+.spray-sw { width: 16px; height: 16px; border-radius: 4px; flex: none; display: inline-block; }
+.spray-sw.rei { border: 2px dashed var(--red-light); }
+.spray-sw.faded { opacity: .35; }
+.spray-key { margin-top: 6px; padding-top: 8px; border-top: 1px solid var(--border); display: grid; gap: 6px; font-size: 0.82rem; color: var(--text-dim); }
+.spray-key span { display: flex; align-items: center; gap: 8px; }
+.spray-sheet {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 1100;
+  max-height: 88%; overflow: auto; overscroll-behavior: contain;
+  background: var(--surface); border-top: 1px solid var(--border);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  box-shadow: 0 -10px 30px rgba(0,0,0,.35); padding: 12px 14px 14px;
+}
+.spray-sheet-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.spray-sheet-head h2 { font-size: 1.1rem; font-weight: 700; color: var(--text); }
+.spray-acres { font-weight: 700; color: var(--accent); white-space: nowrap; }
+.spray-hint { font-size: 0.82rem; color: var(--text-dim); margin-top: 4px; }
+.spray-hint:empty { display: none; }
+.spray-check {
+  display: flex; align-items: center; gap: 12px; min-height: 48px; margin-bottom: 16px;
+  padding: 0 12px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--surface2); color: var(--text); font-weight: 600; cursor: pointer;
+}
+.spray-check input { width: 22px; height: 22px; margin: 0; accent-color: var(--green); flex: none; }
+.spray-check:has(input:checked) { border-color: var(--green); }
+.spray-sheet-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.spray-sheet-actions .btn { min-height: 46px; }
+.spray-sheet-actions .btn-danger { grid-column: 1 / -1; }
+.spray-notice {
+  border-left: 4px solid var(--yellow); border-radius: var(--radius-sm);
+  background: var(--surface2); padding: 10px 12px; margin-bottom: 14px; color: var(--text);
+}
+.spray-notice p { margin: 0 0 4px; font-weight: 700; }
+.spray-notice ul { margin: 0; padding-left: 18px; font-size: 0.88rem; color: var(--text-dim); }
+.spray-readonly { font-size: 0.85rem; color: var(--text-dim); margin-bottom: 12px; }
+.spray-history-list { list-style: none; margin: 0 0 14px; padding: 0; }
+.spray-history-list li + li { border-top: 1px solid var(--border); }
+.spray-history-list button {
+  font: inherit; color: var(--text); background: none; border: 0; width: 100%; text-align: left;
+  padding: 11px 2px; display: grid; grid-template-columns: auto 1fr; column-gap: 12px; cursor: pointer;
+}
+.spray-h-date { font-weight: 700; min-width: 4.5em; }
+.spray-h-product { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spray-h-meta { grid-column: 2; color: var(--text-dim); font-size: 0.82rem; }
+.spray-file-btn { display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.spray-visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

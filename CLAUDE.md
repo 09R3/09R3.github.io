@@ -309,7 +309,7 @@ maintenance_vehicles       maintenance_id(PK), vehicle_id(→vehicles), work_dat
 motors                     motor_id(PK), serial_number, manufacturer, model_number, rated_hp(NUMERIC), frame_type, oil_capacity_upper_qt(NUMERIC), oil_capacity_lower_qt(NUMERIC), install_date_current, current_location, status, notes
 pest_tasks                 task_id(PK), description, created_by, created_at, done, done_by, done_at
 pesticide_usage            usage_id(PK), pesticide_id(→pesticides), used_date, used_time, applied_by(→users), quantity(NUMERIC), location_description, notes, created_at
-pesticides                 pesticide_id(PK), name, epa_reg_number, unit_of_measure, active, created_at
+pesticides                 pesticide_id(PK), name, epa_reg_number, unit_of_measure, active, created_at, map_color, needs_watering_in
 pge_meters                 pge_meter_id(PK), building_id(→buildings), meter_name, meter_number, account_number, utility_provider, notes
 piezometers                piezometer_id(PK), piezometer_name, pool, sort_order(NUMERIC), max_depth(NUMERIC), status, gps_latitude(NUMERIC), gps_longitude(NUMERIC), notes, original_name
 pm_records                 pm_id(PK), pm_type, building, completed_date, completed_time, completed_by(→users), checklist(jsonb), notes, created_at
@@ -342,6 +342,7 @@ siphon_breaker_swaps       swap_id(PK), swap_date, location, unit_removed_id(→
 siphon_breakers            pump_unit_id(PK), serial_number, manufacturer, model_number, operating_psi(NUMERIC), max_psi(NUMERIC), install_date_current, current_location, status, notes
 sites                      site_id(PK), site_name, site_type, gps_latitude(NUMERIC), gps_longitude(NUMERIC), notes
 spatial_ref_sys            srid(PK), auth_name, auth_srid, srtext, proj4text
+spray_applications         id(PK uuid), geom(GEOMETRY MultiPolygon 4326), applied_at, pesticide_id(→pesticides), product, epa_reg_number, rate(NUMERIC), rate_unit, applicator, target, rei_hours(NUMERIC), notes, watered_in, method, swath_ft(NUMERIC), created_by, created_at, updated_at, deleted_at
 users                      user_id(PK), username, full_name, role, password, initials, email, is_active
 water_order_lines          line_id(PK), order_id(→water_orders), section, line_key, cfs(NUMERIC), time_of_change, comments
 water_orders               order_id(PK), order_date(UNIQUE), entered_by, created_at, updated_at, wells_cfs(NUMERIC)
@@ -354,5 +355,5 @@ wells                      well_id(PK), common_name, state_well_number, area, di
 ```
 
 Views (not tables): `pond_polygons` (pond points assembled into GeoJSON
-polygons), plus the PostGIS `geometry_columns` / `geography_columns` system
+polygons), `spray_applications_v` (live spray areas with acres and re-entry time), plus the PostGIS `geometry_columns` / `geography_columns` system
 views.

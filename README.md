@@ -133,6 +133,35 @@ for large openings read as beyond the chart rather than being extrapolated.
 **Pesticides** — product list with label and SDS PDFs, usage logging,
 application locations, a treatment checklist, and monthly reporting.
 
+**Pesticides → Map** — a map of where product has been sprayed, so the gaps
+show what still needs doing. After spraying, the operator draws the area:
+**Outline** (tap the corners, tap the first point to close), **Trace** (drag a
+finger around it) or **Canal Strip** (tap along the bank; buffered by the
+sprayed width). **Add My Spot** drops a point at the phone's GPS position.
+The details sheet takes date/time, product (from the Products list), rate,
+applicator (defaults to the signed-in user), target, re-entry hours, watered
+in (only for products that need it) and notes, and warns when the new area
+overlaps one sprayed in the last 30 days.
+
+- Colours: Roundup yellow, Cleantraxx blue then green once watered in, PCQ
+  purple; any other product gets its own colour. `pesticides.map_color` and
+  `pesticides.needs_watering_in` override these per product (set in SQL).
+  Areas fade after 7 and 30 days; a red dashed outline means the re-entry
+  interval hasn't passed.
+- Range buttons (7 Days / 30 Days / Year / All) and a Products filter pick
+  what's shown; History lists the areas with acres and zooms to one. Export /
+  Import GeoJSON for GIS.
+- Works with no signal: areas are kept on the device and sync when back online
+  (`PUT` / `DELETE /api/spray-areas/:id`, `GET /api/spray-areas?since=`); the
+  chip at the top shows Synced / waiting / failed. Newer edits win.
+- The person who drew an area, or a supervisor, can change or delete it
+  (enforced in the endpoints); everyone else sees it read-only. Deletes are
+  soft (`deleted_at`) so other devices drop the area too.
+- Kept separate from the Usage log. Stored in `spray_applications` (PostGIS
+  MultiPolygon); `spray_applications_v` adds acres for Excel/ODBC reporting.
+  Turf (`/vendor/turf.min.js`) does the on-device acreage, strips and overlap
+  check.
+
 **Water orders** — the Cross Valley Canal water order sheet. Supervisors enter
 the CFS, time of change and comments for each inflow and outflow line for a
 given date (including future dates) under Settings → Widgets → Water Orders.

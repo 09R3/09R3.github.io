@@ -133,7 +133,7 @@
         Sign in with Microsoft 365
       </a>
       <div id="ms-login-error" class="error-msg hidden"></div>
-      <div class="login-version">v 3.46</div>
+      <div class="login-version">v 3.47</div>
     </div>
   </div>
 </div>
@@ -1241,6 +1241,156 @@
           </div>
           <span class="dash-label">Products</span>
         </button>
+        <button class="dash-tile" data-pest-panel="map">
+          <div class="dash-icon-wrap">
+            <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-map.svg);mask-image:url(/marv-site/icons/icon-map.svg)"></span>
+          </div>
+          <span class="dash-label">Map</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Map panel: sprayed areas drawn on the map (see "Spray map" in app.js) -->
+    <div id="pest-panel-map" class="maint-panel hidden">
+      <div class="spray-top">
+        <div class="seg-group" id="spray-range">
+          <button class="seg-btn" data-range="7">7 Days</button>
+          <button class="seg-btn" data-range="30">30 Days</button>
+          <button class="seg-btn" data-range="year">Year</button>
+          <button class="seg-btn" data-range="all">All</button>
+        </div>
+        <button class="spray-chip" id="spray-sync-chip" type="button">Synced</button>
+      </div>
+      <div class="spray-wrap" id="spray-wrap">
+        <div id="spray-map" role="application" aria-label="Map of sprayed areas"></div>
+
+        <button type="button" class="spray-filter-btn" id="spray-filter-btn" aria-expanded="false">
+          <span class="spray-dots" id="spray-filter-dots" aria-hidden="true"></span>
+          <span id="spray-filter-label">Products</span>
+        </button>
+        <div class="spray-float hidden" id="spray-product-panel">
+          <div class="spray-panel-head">
+            <strong>Show on map</strong>
+            <span>
+              <button type="button" class="spray-link" id="spray-show-all">All</button>
+              <button type="button" class="spray-link" id="spray-show-none">None</button>
+            </span>
+          </div>
+          <div id="spray-prod-list"></div>
+          <div class="spray-key" id="spray-key"></div>
+        </div>
+
+        <nav class="spray-actionbar" id="spray-actionbar" aria-label="Map tools">
+          <button type="button" data-spray-mode="outline">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M5 7l9-3 6 7-4 9-11-3z"/><circle cx="5" cy="7" r="1.6" fill="currentColor"/><circle cx="14" cy="4" r="1.6" fill="currentColor"/><circle cx="20" cy="11" r="1.6" fill="currentColor"/><circle cx="16" cy="20" r="1.6" fill="currentColor"/><circle cx="5" cy="17" r="1.6" fill="currentColor"/></svg>
+            Outline
+          </button>
+          <button type="button" data-spray-mode="trace">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 17c-3-3-2-9 3-11s10 0 10 5-4 8-8 7-4-4-1-5"/></svg>
+            Trace
+          </button>
+          <button type="button" data-spray-mode="strip">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 8c4-2 6 2 9 0s5-2 9 0M3 16c4-2 6 2 9 0s5-2 9 0"/></svg>
+            Canal Strip
+          </button>
+          <button type="button" id="spray-locate-btn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+            My Location
+          </button>
+          <button type="button" id="spray-history-btn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+            History
+          </button>
+        </nav>
+
+        <div class="spray-drawbar hidden" id="spray-drawbar">
+          <p id="spray-draw-hint" aria-live="polite"></p>
+          <div class="spray-strip-row hidden" id="spray-strip-row">
+            <label for="spray-strip-width">Sprayed width</label>
+            <select id="spray-strip-width" class="ctrl-select">
+              <option value="6">6 ft</option><option value="10">10 ft</option><option value="15">15 ft</option>
+              <option value="20">20 ft</option><option value="30">30 ft</option><option value="40">40 ft</option>
+              <option value="60">60 ft</option>
+            </select>
+          </div>
+          <div class="spray-draw-actions">
+            <button id="spray-undo-btn" class="btn btn-secondary" type="button">Undo Point</button>
+            <button id="spray-gps-btn" class="btn btn-secondary" type="button">Add My Spot</button>
+            <button id="spray-cancel-draw-btn" class="btn btn-secondary" type="button">Cancel</button>
+            <button id="spray-finish-btn" class="btn btn-primary" type="button" disabled>Add Details</button>
+          </div>
+        </div>
+
+        <!-- Details sheet -->
+        <section class="spray-sheet hidden" id="spray-form-sheet" aria-labelledby="spray-form-title">
+          <form id="spray-form" novalidate>
+            <div class="spray-sheet-head">
+              <h2 id="spray-form-title">New Sprayed Area</h2>
+              <span class="spray-acres" id="spray-form-acres"></span>
+            </div>
+            <div class="spray-notice hidden" id="spray-overlap">
+              <p id="spray-overlap-title"></p>
+              <ul id="spray-overlap-list"></ul>
+            </div>
+            <div class="spray-readonly hidden" id="spray-readonly">Entered by <span id="spray-readonly-by"></span>. Only they or a supervisor can change it.</div>
+            <div class="two-col">
+              <div class="form-group"><label for="spray-f-date">Date</label><input id="spray-f-date" type="date" class="ctrl-input ctrl-input-sm" required></div>
+              <div class="form-group"><label for="spray-f-time">Time</label><input id="spray-f-time" type="time" class="ctrl-input ctrl-input-sm"></div>
+            </div>
+            <div class="form-group">
+              <label for="spray-f-product">Product</label>
+              <select id="spray-f-product" class="ctrl-select"></select>
+              <input id="spray-f-product-text" class="ctrl-input hidden" autocomplete="off" placeholder="Product name">
+              <div class="spray-hint" id="spray-product-hint"></div>
+            </div>
+            <div class="two-col">
+              <div class="form-group"><label for="spray-f-rate">Rate</label><input id="spray-f-rate" class="ctrl-input" type="number" inputmode="decimal" step="any" min="0"></div>
+              <div class="form-group">
+                <label for="spray-f-rate-unit">Unit</label>
+                <select id="spray-f-rate-unit" class="ctrl-select">
+                  <option>fl oz/acre</option><option>oz/acre</option><option>pt/acre</option><option>qt/acre</option>
+                  <option>gal/acre</option><option>lb/acre</option><option>fl oz/gal</option><option>% v/v</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-group">
+              <label for="spray-f-applicator">Applicator</label>
+              <input id="spray-f-applicator" class="ctrl-input" list="spray-applicator-list" autocomplete="off">
+              <datalist id="spray-applicator-list"></datalist>
+            </div>
+            <div class="two-col">
+              <div class="form-group"><label for="spray-f-target">Target Weed / Pest</label><input id="spray-f-target" class="ctrl-input" autocomplete="off"></div>
+              <div class="form-group"><label for="spray-f-rei">Re-entry (hrs)</label><input id="spray-f-rei" class="ctrl-input" type="number" inputmode="decimal" step="any" min="0"></div>
+            </div>
+            <label class="spray-check hidden" id="spray-watered-row" for="spray-f-watered">
+              <input id="spray-f-watered" type="checkbox"><span>Watered in</span>
+            </label>
+            <div class="form-group">
+              <label for="spray-f-notes">Notes</label>
+              <textarea id="spray-f-notes" class="ctrl-textarea ctrl-input" rows="3" placeholder="Wind, conditions, equipment"></textarea>
+            </div>
+            <div class="spray-sheet-actions">
+              <button type="button" class="btn btn-secondary" id="spray-discard-btn">Discard</button>
+              <button type="submit" class="btn btn-save" id="spray-save-btn">Save Area</button>
+              <button type="button" class="btn btn-danger hidden" id="spray-delete-btn">Delete Area</button>
+            </div>
+          </form>
+        </section>
+
+        <!-- History sheet -->
+        <section class="spray-sheet hidden" id="spray-history-sheet" aria-labelledby="spray-history-title">
+          <div class="spray-sheet-head">
+            <h2 id="spray-history-title">History</h2>
+            <button type="button" class="btn btn-secondary btn-sm" id="spray-history-close">Close</button>
+          </div>
+          <p class="spray-hint" id="spray-history-summary"></p>
+          <ul class="spray-history-list" id="spray-history-list"></ul>
+          <div class="spray-sheet-actions">
+            <button type="button" class="btn btn-secondary" id="spray-export-btn">Export GeoJSON</button>
+            <label class="btn btn-secondary spray-file-btn" for="spray-import-input">Import GeoJSON</label>
+            <input type="file" id="spray-import-input" accept=".geojson,.json,application/geo+json,application/json" class="spray-visually-hidden">
+          </div>
+        </section>
       </div>
     </div>
 
@@ -2031,7 +2181,7 @@
     <div id="settings-panel-appinfo" class="settings-panel hidden">
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 3.46</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 3.47</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>

@@ -644,6 +644,51 @@ pool.query(`
   )
 `).catch(err => console.error('Migration error (pest_tasks):', err.message));
 
+// Spray map (Pesticides → Map): one row per sprayed area drawn on the map.
+// The id is a UUID made on the device so an area drawn offline keeps its id
+// when it syncs. Rows are soft-deleted so other devices learn about deletes.
+// map_color / needs_watering_in on pesticides are optional overrides for the
+// map colour and the "Watered in" checkbox (NULL = the page's built-in rules).
+pool.query(`CREATE EXTENSION IF NOT EXISTS postgis`)
+  .catch(() => { /* already there on the live DB; may lack rights to create */ })
+  .then(() => pool.query(`
+    CREATE TABLE IF NOT EXISTS spray_applications (
+      id             uuid PRIMARY KEY,
+      geom           geometry(MultiPolygon, 4326) NOT NULL,
+      applied_at     timestamptz NOT NULL,
+      pesticide_id   integer REFERENCES pesticides (pesticide_id),
+      product        text NOT NULL,
+      epa_reg_number text,
+      rate           numeric(10,3),
+      rate_unit      text,
+      applicator     text,
+      target         text,
+      rei_hours      numeric(6,1),
+      notes          text,
+      watered_in     boolean NOT NULL DEFAULT false,
+      method         text CHECK (method IN ('outline', 'trace', 'strip', 'import')),
+      swath_ft       numeric(6,1),
+      created_by     text,
+      created_at     timestamptz NOT NULL DEFAULT now(),
+      updated_at     timestamptz NOT NULL DEFAULT now(),
+      deleted_at     timestamptz
+    )`))
+  .then(() => pool.query(`CREATE INDEX IF NOT EXISTS spray_applications_geom_idx    ON spray_applications USING gist (geom)`))
+  .then(() => pool.query(`CREATE INDEX IF NOT EXISTS spray_applications_applied_idx ON spray_applications (applied_at DESC)`))
+  .then(() => pool.query(`CREATE INDEX IF NOT EXISTS spray_applications_updated_idx ON spray_applications (updated_at)`))
+  .then(() => pool.query(`ALTER TABLE pesticides ADD COLUMN IF NOT EXISTS map_color text`))
+  .then(() => pool.query(`ALTER TABLE pesticides ADD COLUMN IF NOT EXISTS needs_watering_in boolean`))
+  // Reporting view (Excel/ODBC): acres from the real geometry
+  .then(() => pool.query(`
+    CREATE OR REPLACE VIEW spray_applications_v AS
+    SELECT id, applied_at, pesticide_id, product, epa_reg_number, rate, rate_unit, applicator, target, rei_hours,
+           applied_at + coalesce(rei_hours, 0) * interval '1 hour' AS reentry_allowed_at,
+           round((ST_Area(geom::geography) / 4046.8564224)::numeric, 2) AS acres,
+           watered_in, method, swath_ft, notes, created_by, created_at, updated_at, geom
+    FROM spray_applications
+    WHERE deleted_at IS NULL`))
+  .catch(err => console.error('Migration error (spray_applications):', err.message));
+
 pool.query(`
   CREATE TABLE IF NOT EXISTS pond_locations (
     location_id SERIAL PRIMARY KEY,
@@ -6026,6 +6071,10 @@ app.get('/api/pesticides', requireAuth, async (req, res) => {
     // table_name='pesticides', distinguished by file_type.
     const { rows } = await pool.query(
       `SELECT p.pesticide_id, p.name, p.epa_reg_number, p.unit_of_measure, p.active, p.created_at,
+              -- read through to_jsonb so this list still works if the spray-map
+              -- columns haven't been added yet
+              to_jsonb(p)->>'map_color' AS map_color,
+              (to_jsonb(p)->>'needs_watering_in')::boolean AS needs_watering_in,
               lb.rel_path AS label_path, lb.original_name AS label_name,
               sd.rel_path AS sds_path,   sd.original_name AS sds_name
        FROM pesticides p
@@ -6205,6 +6254,99 @@ app.delete('/api/pesticides/:id/docs/:kind', requireAuth, requireRole(...SUPERVI
 
 // ── Treatment List (shared spray/bait checklist) ───────────────────────────
 // Active (unchecked) tasks by default; pass ?history=1 for checked-off tasks.
+// ── Spray map ─────────────────────────────────────────────────────────────────
+// The Map page keeps areas on the device and syncs: it PUTs each area it has
+// changed (newer updated_at wins), DELETEs removed ones (soft delete), then
+// GETs everything changed since its last pull. Editing or deleting someone
+// else's area needs supervisor level — the creator-or-supervisor rule.
+const SPRAY_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const SPRAY_METHODS = new Set(['outline', 'trace', 'strip', 'import']);
+
+async function sprayCanEdit(req, id) {
+  const { rows } = await pool.query('SELECT created_by FROM spray_applications WHERE id = $1', [id]);
+  if (!rows.length) return { exists: false, ok: true };
+  return { exists: true, ok: rows[0].created_by === req.user.username || SUPERVISOR_ROLES.includes(req.user.role) };
+}
+
+app.get('/api/spray-areas', requireAuth, async (req, res) => {
+  const since = req.query.since && !isNaN(Date.parse(req.query.since)) ? new Date(req.query.since).toISOString() : null;
+  try {
+    const { rows } = await pool.query(`
+      SELECT json_build_object(
+        'type', 'FeatureCollection',
+        'features', coalesce(json_agg(json_build_object(
+          'type', 'Feature', 'id', id,
+          'geometry', ST_AsGeoJSON(geom, 7)::json,
+          'properties', json_build_object(
+            'id', id, 'applied_at', applied_at, 'pesticide_id', pesticide_id,
+            'product', product, 'epa_reg_number', epa_reg_number, 'rate', rate,
+            'rate_unit', rate_unit, 'applicator', applicator, 'target', target,
+            'rei_hours', rei_hours, 'notes', notes, 'watered_in', watered_in,
+            'method', method, 'swath_ft', swath_ft, 'created_by', created_by,
+            'created_at', created_at, 'updated_at', updated_at, 'deleted_at', deleted_at)
+        ) ORDER BY applied_at), '[]'::json)) AS fc
+      FROM spray_applications
+      WHERE ($1::timestamptz IS NULL AND deleted_at IS NULL)
+         OR ($1::timestamptz IS NOT NULL AND updated_at > $1::timestamptz)`, [since]);
+    res.json(rows[0].fc);
+  } catch (err) { handleErr(res, err); }
+});
+
+app.put('/api/spray-areas/:id', requireAuth, async (req, res) => {
+  const { id } = req.params;
+  const f = req.body || {};
+  const p = f.properties || {};
+  const g = f.geometry;
+  if (!SPRAY_ID_RE.test(id)) return res.status(400).json({ error: 'Invalid id' });
+  if (!g || !['Polygon', 'MultiPolygon'].includes(g.type)) return res.status(400).json({ error: 'Area must be a polygon' });
+  if (!p.applied_at || isNaN(Date.parse(p.applied_at))) return res.status(400).json({ error: 'applied_at required' });
+  if (!String(p.product || '').trim()) return res.status(400).json({ error: 'product required' });
+  const num = v => (v === '' || v == null || isNaN(Number(v)) ? null : Number(v));
+  const txt = v => (v == null || String(v).trim() === '' ? null : String(v).trim());
+  const updatedAt = p.updated_at && !isNaN(Date.parse(p.updated_at)) ? new Date(p.updated_at).toISOString() : new Date().toISOString();
+  try {
+    const perm = await sprayCanEdit(req, id);
+    if (!perm.ok) return res.status(403).json({ error: 'Only the person who drew this area or a supervisor can change it' });
+    const { rows } = await pool.query(`
+      INSERT INTO spray_applications
+        (id, geom, applied_at, pesticide_id, product, epa_reg_number, rate, rate_unit, applicator, target,
+         rei_hours, notes, watered_in, method, swath_ft, created_by, updated_at)
+      VALUES ($1, ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON($2), 4326)), 3)),
+              $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+      ON CONFLICT (id) DO UPDATE SET
+        geom = EXCLUDED.geom, applied_at = EXCLUDED.applied_at, pesticide_id = EXCLUDED.pesticide_id,
+        product = EXCLUDED.product, epa_reg_number = EXCLUDED.epa_reg_number, rate = EXCLUDED.rate,
+        rate_unit = EXCLUDED.rate_unit, applicator = EXCLUDED.applicator, target = EXCLUDED.target,
+        rei_hours = EXCLUDED.rei_hours, notes = EXCLUDED.notes, watered_in = EXCLUDED.watered_in,
+        method = COALESCE(spray_applications.method, EXCLUDED.method),
+        swath_ft = COALESCE(spray_applications.swath_ft, EXCLUDED.swath_ft),
+        updated_at = EXCLUDED.updated_at, deleted_at = NULL
+      WHERE spray_applications.updated_at <= EXCLUDED.updated_at
+      RETURNING id`,
+      [id, JSON.stringify(g), new Date(p.applied_at).toISOString(), num(p.pesticide_id),
+       String(p.product).trim(), txt(p.epa_reg_number), num(p.rate), txt(p.rate_unit), txt(p.applicator),
+       txt(p.target), num(p.rei_hours), txt(p.notes), p.watered_in === true,
+       SPRAY_METHODS.has(p.method) ? p.method : null, num(p.swath_ft), req.user.username, updatedAt]);
+    // No row back = the server already has a newer edit; the next pull brings it down.
+    res.json({ ok: true, applied: rows.length > 0 });
+  } catch (err) {
+    if (/geojson|geometry|ST_/i.test(err.message)) return res.status(400).json({ error: 'That shape could not be saved' });
+    handleErr(res, err);
+  }
+});
+
+app.delete('/api/spray-areas/:id', requireAuth, async (req, res) => {
+  const { id } = req.params;
+  if (!SPRAY_ID_RE.test(id)) return res.status(400).json({ error: 'Invalid id' });
+  try {
+    const perm = await sprayCanEdit(req, id);
+    if (!perm.exists) return res.status(404).json({ error: 'Not found' });
+    if (!perm.ok) return res.status(403).json({ error: 'Only the person who drew this area or a supervisor can delete it' });
+    await pool.query('UPDATE spray_applications SET deleted_at = now(), updated_at = now() WHERE id = $1', [id]);
+    res.json({ ok: true });
+  } catch (err) { handleErr(res, err); }
+});
+
 app.get('/api/pest-tasks', requireAuth, async (req, res) => {
   const history = req.query.history === '1';
   try {

@@ -1510,6 +1510,7 @@ function onLogout() {
   el('dash-reports-tile').classList.add('hidden');
   el('settings-admin-section').classList.add('hidden');
   el('settings-widgets-section').classList.add('hidden');
+  sprayOnLogout();
   // Reset pumping plant
   pp.sites = []; pp.buildings = {}; pp.loadedSites = new Set(); pp.activeTab = null;
   ppLoaded = false;
@@ -10137,6 +10138,7 @@ const PEST_PANEL_NAMES = {
   location: 'Application Location',
   reports:  'Monthly Report',
   products: 'Products',
+  map:      'Map',
 };
 function openPestPanel(panelId) {
   el('pest-main').classList.add('hidden');
@@ -10149,9 +10151,11 @@ function openPestPanel(panelId) {
   if (panelId === 'location') initPestLocationPanel();
   if (panelId === 'reports')  initPestReportsPanel();
   if (panelId === 'products') initPestProductsPanel();
+  if (panelId === 'map')      initPestMapPanel();
 }
 
 function closePestPanel() {
+  if (sprayDraw.mode) sprayCancelDraw();
   document.querySelectorAll('.maint-panel[id^="pest-panel-"]').forEach(p => p.classList.add('hidden'));
   el('pest-main').classList.remove('hidden');
   setPanelNav(el('screen-pesticides'), () => showScreen('dashboard'), 'Pesticides');
@@ -10167,6 +10171,819 @@ document.querySelectorAll('[data-pest-panel]').forEach(btn => {
 });
 
 // .maint-back-btn buttons inside pest panels removed from HTML — navigation handled by setPanelNav()
+
+// ── Spray map (Pesticides → Map) ──────────────────────────────────────────────
+// Operators draw what they sprayed after putting product down: Outline (tap the
+// corners), Trace (drag a finger) or Canal Strip (tap along a bank, buffered by
+// the sprayed width). Gaps on the map are what still needs spraying. Areas are
+// kept on the device first (localStorage) so drawing works with no signal, then
+// synced: PUT each changed area, DELETE removed ones, GET what changed since the
+// last pull (server: /api/spray-areas). Kept separate from the Usage log.
+// Editing someone else's area needs supervisor level (enforced server-side).
+const SPRAY = {
+  STORE_KEY: 'wm.spray.records',
+  PREFS_KEY: 'wm.spray.prefs',
+  CENTER: [35.37, -119.02],
+  ZOOM: 11,
+  OVERLAP_DAYS: 30,
+  // Map colour by product name; pesticides.map_color / needs_watering_in win.
+  RULES: [
+    { label: 'Roundup',    match: /round\s*-?\s*up/i,    color: '#F5C400' },
+    { label: 'Cleantraxx', match: /clean\s*-?\s*traxx/i, color: '#1474D4', needsWateringIn: true },
+    { label: 'PCQ',        match: /\bpcq\b/i,            color: '#8E44C9' },
+  ],
+  // Products without a rule get one of these, picked by pesticide id
+  PALETTE: ['#E67E22', '#1ABC9C', '#E84393', '#00B8D4', '#A3CB38', '#FD7272', '#C8A2C8', '#F8A5C2'],
+  WATERED_COLOR: '#2E9E44',
+  OTHER_COLOR: '#D0D5D2',
+  SYNC_EVERY_MS: 120000,
+};
+const SPRAY_DAY = 86400000;
+const SPRAY_SQM_PER_ACRE = 4046.8564224;
+
+let sprayMap = null, sprayLayer = null, sprayDraft = null;
+let sprayRecords = [], sprayPesticides = [], sprayPrefs = null;
+let spraySyncing = false, spraySyncError = null, sprayFormCtx = null;
+let sprayLoc = { marker: null, circle: null, watch: null, first: true };
+const sprayDraw = { mode: null, pts: [], tracing: false, last: null };
+let _turfLoaded = null;
+
+function sprayLoadJSON(key, fallback) {
+  try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; } catch { return fallback; }
+}
+function spraySaveJSON(key, val) {
+  try { localStorage.setItem(key, JSON.stringify(val)); return true; } catch { return false; }
+}
+function sprayPersist() {
+  if (!spraySaveJSON(SPRAY.STORE_KEY, sprayRecords)) showToast('This device could not save. Export your areas from History.', 'error');
+  spraySyncChip();
+}
+function spraySavePrefs() { spraySaveJSON(SPRAY.PREFS_KEY, sprayPrefs); }
+
+// Areas this device hasn't synced belong to whoever drew them — only that user
+// pushes them, so the server records the right person.
+function sprayMine(r) { return !r.owner || r.owner === currentUser?.username; }
+function sprayCanEdit(r) {
+  return !r.created_by || r.created_by === currentUser?.username || isSupervisorLevel(currentUser?.role);
+}
+
+// Logout: keep unsynced drawings (they sync when that person signs back in),
+// drop the rest so a shared device doesn't hold a stale copy.
+function sprayOnLogout() {
+  const recs = sprayLoadJSON(SPRAY.STORE_KEY, []);
+  spraySaveJSON(SPRAY.STORE_KEY, Array.isArray(recs) ? recs.filter(r => r.dirty) : []);
+  const prefs = sprayLoadJSON(SPRAY.PREFS_KEY, {});
+  if (prefs) { prefs.lastPull = null; spraySaveJSON(SPRAY.PREFS_KEY, prefs); }
+}
+
+function loadTurf() {
+  if (window.turf) return Promise.resolve();
+  if (_turfLoaded) return _turfLoaded;
+  _turfLoaded = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = '/vendor/turf.min.js'; s.onload = resolve;
+    s.onerror = () => { _turfLoaded = null; reject(new Error('Failed to load map tools')); };
+    document.head.appendChild(s);
+  });
+  return _turfLoaded;
+}
+
+const sprayPad = n => String(n).padStart(2, '0');
+const sprayDateInput = d => `${d.getFullYear()}-${sprayPad(d.getMonth() + 1)}-${sprayPad(d.getDate())}`;
+const sprayTimeInput = d => `${sprayPad(d.getHours())}:${sprayPad(d.getMinutes())}`;
+const sprayNum = v => (v === '' || v == null || isNaN(Number(v))) ? null : Number(v);
+const sprayRound = (n, d) => Math.round(n * 10 ** d) / 10 ** d;
+const sprayFmtAcres = a => (a < 10 ? a.toFixed(2) : a.toFixed(1));
+function sprayFmtDate(iso) {
+  const d = new Date(iso);
+  const opts = { month: 'short', day: 'numeric' };
+  if (d.getFullYear() !== new Date().getFullYear()) opts.year = 'numeric';
+  return d.toLocaleDateString('en-US', opts);
+}
+function sprayAcres(geom) {
+  try { return turf.area({ type: 'Feature', geometry: geom, properties: {} }) / SPRAY_SQM_PER_ACRE; } catch { return 0; }
+}
+
+// ── age, filter, colour ──
+const sprayAge = r => (Date.now() - new Date(r.applied_at).getTime()) / SPRAY_DAY;
+const sprayReiActive = r => r.rei_hours > 0 && Date.now() < new Date(r.applied_at).getTime() + r.rei_hours * 3600000;
+function sprayInRange(r) {
+  if (r.deleted) return false;
+  const f = sprayPrefs.range;
+  if (f === 'all') return true;
+  if (f === 'year') return new Date(r.applied_at).getFullYear() === new Date().getFullYear();
+  return sprayAge(r) <= Number(f);
+}
+const sprayProductKey = r => (r.pesticide_id != null ? `id:${r.pesticide_id}` : `name:${(r.product || '').trim().toLowerCase()}`);
+const sprayVisible = () => sprayRecords.filter(r => sprayInRange(r) && !sprayPrefs.hidden.includes(sprayProductKey(r)));
+const sprayFindPesticide = id => sprayPesticides.find(p => String(p.pesticide_id) === String(id));
+const sprayActivePesticides = () => sprayPesticides.filter(p => p.active !== false && p.name).sort((a, b) => a.name.localeCompare(b.name));
+
+function sprayRule(name, pesticideId) {
+  const p = pesticideId != null ? sprayFindPesticide(pesticideId) : null;
+  const rule = SPRAY.RULES.find(x => x.match.test(name || '')) || {};
+  const fallback = pesticideId != null ? SPRAY.PALETTE[Math.abs(Number(pesticideId)) % SPRAY.PALETTE.length] : SPRAY.OTHER_COLOR;
+  return {
+    color: (p && p.map_color) || rule.color || fallback,
+    needsWateringIn: p && p.needs_watering_in != null ? !!p.needs_watering_in : !!rule.needsWateringIn,
+  };
+}
+const sprayNeedsWater = r => sprayRule(r.product, r.pesticide_id).needsWateringIn;
+function sprayColor(r) {
+  const rule = sprayRule(r.product, r.pesticide_id);
+  return rule.needsWateringIn && r.watered_in ? SPRAY.WATERED_COLOR : rule.color;
+}
+function sprayStyle(r) {
+  const c = sprayColor(r), d = sprayAge(r);
+  const s = d <= 7  ? { color: c, fillColor: c, fillOpacity: .5,  weight: 2.5 }
+          : d <= 30 ? { color: c, fillColor: c, fillOpacity: .3,  weight: 2 }
+          :           { color: c, fillColor: c, fillOpacity: .15, weight: 1, opacity: .6 };
+  if (sprayReiActive(r)) Object.assign(s, { color: '#ef5350', weight: 3.5, dashArray: '8 6', opacity: 1 });
+  return s;
+}
+const sprayDraftStyle = () => ({ color: '#FFFFFF', weight: 2, dashArray: '6 5', fillColor: '#FFFFFF', fillOpacity: .3 });
+
+// ── panel ──
+async function initPestMapPanel() {
+  sprayPrefs = Object.assign(
+    { applicator: '', rateUnit: 'fl oz/acre', lastPesticideId: null, stripWidth: 20, range: '30', hidden: [], lastPull: null },
+    sprayLoadJSON(SPRAY.PREFS_KEY, {}));
+  if (!Array.isArray(sprayPrefs.hidden)) sprayPrefs.hidden = [];
+  sprayRecords = sprayLoadJSON(SPRAY.STORE_KEY, []);
+  if (!Array.isArray(sprayRecords)) sprayRecords = [];
+  el('spray-range').querySelectorAll('.seg-btn').forEach(b => b.classList.toggle('active', b.dataset.range === sprayPrefs.range));
+
+  try { await loadTurf(); } catch (err) {
+    el('spray-wrap').innerHTML = `<div class="placeholder-msg">Failed to load.</div>`;
+    return;
+  }
+  if (!sprayMap) sprayBuildMap();
+  // The panel was hidden while Leaflet measured it
+  requestAnimationFrame(() => sprayMap.invalidateSize());
+  sprayRender();
+  if (!sprayMap._sprayFitted) {
+    const list = sprayVisible();
+    if (list.length) {
+      const b = L.featureGroup(list.map(r => L.geoJSON(r.geometry))).getBounds();
+      if (b.isValid()) sprayMap.fitBounds(b, { padding: [30, 90], maxZoom: 16 });
+    }
+    sprayMap._sprayFitted = true;
+  }
+  spraySync();
+}
+
+function sprayBuildMap() {
+  sprayMap = L.map('spray-map', { zoomControl: false, preferCanvas: true }).setView(SPRAY.CENTER, SPRAY.ZOOM);
+  sprayMap.createPane('labels');
+  sprayMap.getPane('labels').style.zIndex = 450;
+  sprayMap.getPane('labels').style.pointerEvents = 'none';
+  const satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    { maxZoom: 21, maxNativeZoom: 19, attribution: 'Imagery &copy; Esri' }).addTo(sprayMap);
+  const streets = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+    { maxZoom: 21, maxNativeZoom: 19, attribution: '&copy; OpenStreetMap contributors' });
+  const reference = L.layerGroup([
+    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}',
+      { maxZoom: 21, maxNativeZoom: 19, pane: 'labels' }),
+    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+      { maxZoom: 21, maxNativeZoom: 19, pane: 'labels' }),
+  ]).addTo(sprayMap);
+  L.control.layers({ 'Satellite': satellite, 'Street Map': streets }, { 'Roads & Places': reference }, { position: 'topright' }).addTo(sprayMap);
+  if (!L.Browser.mobile) L.control.zoom({ position: 'topright' }).addTo(sprayMap);
+  sprayLayer = L.featureGroup().addTo(sprayMap);
+  sprayDraft = L.featureGroup().addTo(sprayMap);
+
+  sprayMap.on('click', e => {
+    if (sprayDraw.mode === 'outline' || sprayDraw.mode === 'strip') { sprayDraw.pts.push(e.latlng); sprayUpdateDraft(); }
+    else if (!sprayDraw.mode) sprayFilterPanel(false);
+  });
+
+  // Freehand trace
+  const mapEl = el('spray-map');
+  mapEl.addEventListener('pointerdown', e => {
+    if (sprayDraw.mode !== 'trace' || !e.isPrimary) return;
+    e.preventDefault();
+    sprayDraw.tracing = true;
+    sprayDraw.pts = [sprayMap.mouseEventToLatLng(e)];
+    sprayDraw.last = [e.clientX, e.clientY];
+    try { mapEl.setPointerCapture(e.pointerId); } catch { /* */ }
+    sprayUpdateDraft();
+  });
+  mapEl.addEventListener('pointermove', e => {
+    if (!sprayDraw.tracing || !e.isPrimary) return;
+    const dx = e.clientX - sprayDraw.last[0], dy = e.clientY - sprayDraw.last[1];
+    if (dx * dx + dy * dy < 25) return;
+    sprayDraw.last = [e.clientX, e.clientY];
+    sprayDraw.pts.push(sprayMap.mouseEventToLatLng(e));
+    sprayUpdateDraft();
+  });
+  const endTrace = e => {
+    if (!sprayDraw.tracing || (e && !e.isPrimary)) return;
+    sprayDraw.tracing = false;
+    const pts = sprayDraw.pts.map(ll => sprayMap.latLngToLayerPoint(ll));
+    sprayDraw.pts = L.LineUtil.simplify(pts, 2).map(p => sprayMap.layerPointToLatLng(p));
+    if (sprayDraw.pts.length < 3) { sprayDraw.pts = []; showToast('Trace a bigger loop to make an area.', 'warn'); }
+    sprayUpdateDraft();
+  };
+  mapEl.addEventListener('pointerup', endTrace);
+  mapEl.addEventListener('pointercancel', endTrace);
+
+  setInterval(() => { if (!el('pest-panel-map').classList.contains('hidden')) sprayRender(); }, 60000);
+  setInterval(spraySync, SPRAY.SYNC_EVERY_MS);
+  window.addEventListener('online', spraySync);
+}
+
+function sprayRender() {
+  if (!sprayLayer) return;
+  sprayLayer.clearLayers();
+  const list = sprayVisible().sort((a, b) => new Date(a.applied_at) - new Date(b.applied_at));
+  for (const r of list) {
+    const layer = L.geoJSON(r.geometry, { style: () => sprayStyle(r) });
+    layer.on('click', e => {
+      if (sprayDraw.mode) return;   // let the map click add a point instead
+      L.DomEvent.stopPropagation(e);
+      sprayOpenForm({ record: r });
+    });
+    sprayLayer.addLayer(layer);
+  }
+  sprayRenderHistory();
+  sprayFilterButton();
+}
+
+// ── product filter ──
+function sprayProductOptions() {
+  const opts = new Map();
+  const add = (key, name, pid) => {
+    if (!opts.has(key)) opts.set(key, { key, name, color: sprayRule(name, pid).color, count: 0 });
+    return opts.get(key);
+  };
+  sprayActivePesticides().forEach(p => add(`id:${p.pesticide_id}`, p.name, p.pesticide_id));
+  sprayRecords.forEach(r => {
+    if (r.deleted) return;
+    const o = add(sprayProductKey(r), r.product, r.pesticide_id);
+    if (sprayInRange(r)) o.count++;
+  });
+  return [...opts.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+function sprayFilterButton() {
+  const opts = sprayProductOptions();
+  const shown = opts.filter(o => !sprayPrefs.hidden.includes(o.key));
+  el('spray-filter-label').textContent = shown.length === opts.length ? 'Products' : `Products: ${shown.length} of ${opts.length}`;
+  const dots = el('spray-filter-dots'); dots.textContent = '';
+  shown.slice(0, 4).forEach(o => { const i = document.createElement('i'); i.style.background = o.color; dots.appendChild(i); });
+}
+function sprayRenderProductPanel() {
+  const list = el('spray-prod-list'); list.textContent = '';
+  const opts = sprayProductOptions();
+  if (!opts.length) list.innerHTML = '<div class="placeholder-msg">No products found.</div>';
+  opts.forEach(o => {
+    const row = document.createElement('label'); row.className = 'spray-prod-row';
+    const cb = document.createElement('input'); cb.type = 'checkbox';
+    cb.checked = !sprayPrefs.hidden.includes(o.key);
+    cb.addEventListener('change', () => {
+      sprayPrefs.hidden = sprayPrefs.hidden.filter(k => k !== o.key);
+      if (!cb.checked) sprayPrefs.hidden.push(o.key);
+      spraySavePrefs(); sprayRender();
+    });
+    const sw = document.createElement('i'); sw.className = 'spray-sw'; sw.style.background = o.color;
+    const name = document.createElement('span'); name.className = 'spray-prod-name'; name.textContent = o.name;
+    const count = document.createElement('span'); count.className = 'spray-prod-count';
+    count.textContent = `${o.count} area${o.count === 1 ? '' : 's'}`;
+    row.append(cb, sw, name, count);
+    list.appendChild(row);
+  });
+  const key = el('spray-key'); key.textContent = '';
+  const line = (cls, bg, text) => {
+    const span = document.createElement('span');
+    const sw = document.createElement('i'); sw.className = `spray-sw ${cls}`; if (bg) sw.style.background = bg;
+    span.append(sw, document.createTextNode(text)); key.appendChild(span);
+  };
+  const waterNames = [...new Set([
+    ...SPRAY.RULES.filter(r => r.needsWateringIn).map(r => r.label),
+    ...sprayActivePesticides().filter(p => p.needs_watering_in).map(p => p.name),
+  ])];
+  waterNames.forEach(n => line('', SPRAY.WATERED_COLOR, `${n} after it is watered in`));
+  line('rei', '', 'Re-entry not yet allowed');
+  line('faded', '#8A928F', 'Faded: sprayed more than 30 days ago');
+}
+function sprayFilterPanel(open) {
+  el('spray-product-panel').classList.toggle('hidden', !open);
+  el('spray-filter-btn').setAttribute('aria-expanded', String(open));
+  if (open) sprayRenderProductPanel();
+}
+el('spray-filter-btn').addEventListener('click', () => sprayFilterPanel(el('spray-product-panel').classList.contains('hidden')));
+el('spray-show-all').addEventListener('click', () => { sprayPrefs.hidden = []; spraySavePrefs(); sprayRender(); sprayRenderProductPanel(); });
+el('spray-show-none').addEventListener('click', () => {
+  sprayPrefs.hidden = sprayProductOptions().map(o => o.key); spraySavePrefs(); sprayRender(); sprayRenderProductPanel();
+});
+el('spray-range').addEventListener('click', e => {
+  const b = e.target.closest('.seg-btn');
+  if (!b) return;
+  el('spray-range').querySelectorAll('.seg-btn').forEach(x => x.classList.toggle('active', x === b));
+  sprayPrefs.range = b.dataset.range; spraySavePrefs(); sprayRender();
+});
+
+// ── drawing ──
+const SPRAY_HINTS = {
+  outline: 'Tap around the edge of the sprayed area.',
+  trace:   'Drag one finger around the sprayed area.',
+  strip:   'Tap points along the bank you sprayed.',
+};
+function sprayStartDraw(mode) {
+  if (sprayDraw.mode) sprayCancelDraw();
+  sprayCloseSheets(true);
+  sprayFilterPanel(false);
+  Object.assign(sprayDraw, { mode, pts: [], tracing: false });
+  el('spray-wrap').classList.add('drawing');
+  el('spray-drawbar').classList.remove('hidden');
+  el('spray-strip-row').classList.toggle('hidden', mode !== 'strip');
+  el('spray-strip-width').value = String(sprayPrefs.stripWidth);
+  el('spray-gps-btn').classList.toggle('hidden', mode === 'trace');
+  el('spray-undo-btn').textContent = mode === 'trace' ? 'Redo' : 'Undo Point';
+  sprayMap.doubleClickZoom.disable();
+  if (mode === 'trace') {
+    sprayMap.dragging.disable(); sprayMap.touchZoom.disable(); sprayMap.boxZoom.disable();
+    el('spray-map').classList.add('tracing');
+  }
+  sprayUpdateDraft();
+}
+function sprayEndDraw() {
+  Object.assign(sprayDraw, { mode: null, pts: [], tracing: false });
+  el('spray-wrap').classList.remove('drawing');
+  el('spray-drawbar').classList.add('hidden');
+  if (!sprayMap) return;
+  sprayMap.dragging.enable(); sprayMap.touchZoom.enable(); sprayMap.boxZoom.enable(); sprayMap.doubleClickZoom.enable();
+  el('spray-map').classList.remove('tracing');
+}
+function sprayCancelDraw() { sprayEndDraw(); sprayDraft?.clearLayers(); }
+
+function sprayDraftGeometry() {
+  const pts = sprayDraw.pts;
+  if (sprayDraw.mode === 'strip') {
+    if (pts.length < 2) return null;
+    const widthFt = Number(el('spray-strip-width').value) || 20;
+    try {
+      const buf = turf.buffer(turf.lineString(pts.map(p => [p.lng, p.lat])), widthFt / 2, { units: 'feet' });
+      return buf ? buf.geometry : null;
+    } catch { return null; }
+  }
+  if (sprayDraw.tracing || pts.length < 3) return null;
+  const ring = pts.map(p => [p.lng, p.lat]);
+  ring.push(ring[0]);
+  return { type: 'Polygon', coordinates: [ring] };
+}
+
+function sprayUpdateDraft() {
+  sprayDraft.clearLayers();
+  const pts = sprayDraw.pts;
+  const geom = sprayDraftGeometry();
+  const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#2196f3';
+  if (sprayDraw.mode === 'strip') {
+    if (geom) sprayDraft.addLayer(L.geoJSON(geom, { style: sprayDraftStyle }));
+    if (pts.length >= 2) sprayDraft.addLayer(L.polyline(pts, { color: '#FFFFFF', weight: 2, interactive: false }));
+  } else if (sprayDraw.mode === 'trace' && sprayDraw.tracing) {
+    if (pts.length >= 2) sprayDraft.addLayer(L.polyline(pts, { color: '#FFFFFF', weight: 3, interactive: false }));
+  } else if (geom) {
+    sprayDraft.addLayer(L.geoJSON(geom, { style: sprayDraftStyle, interactive: false }));
+  } else if (pts.length === 2) {
+    sprayDraft.addLayer(L.polyline(pts, { color: '#FFFFFF', weight: 2, dashArray: '6 5', interactive: false }));
+  }
+  if (sprayDraw.mode === 'outline' || sprayDraw.mode === 'strip') {
+    pts.forEach((p, i) => {
+      const closer = i === 0 && sprayDraw.mode === 'outline' && pts.length >= 3;
+      const m = L.circleMarker(p, {
+        radius: closer ? 11 : 6, color: '#FFFFFF', weight: 2, fillColor: accent, fillOpacity: 1,
+        bubblingMouseEvents: !closer, interactive: closer,
+      });
+      if (closer) m.on('click', sprayFinishDraw);   // tap the first point to close the shape
+      sprayDraft.addLayer(m);
+    });
+  }
+  el('spray-finish-btn').disabled = !geom;
+  el('spray-undo-btn').disabled = pts.length === 0;
+  el('spray-draw-hint').textContent = geom
+    ? `About ${sprayFmtAcres(sprayAcres(geom))} acres. ${sprayDraw.mode === 'trace' ? 'Redo or add details.' : 'Keep adding points or add details.'}`
+    : (sprayDraw.mode ? SPRAY_HINTS[sprayDraw.mode] : '');
+}
+
+function sprayFinishDraw() {
+  const geom = sprayDraftGeometry();
+  if (!geom) return;
+  const meta = { method: sprayDraw.mode, swath_ft: sprayDraw.mode === 'strip' ? Number(el('spray-strip-width').value) : null };
+  if (meta.swath_ft) { sprayPrefs.stripWidth = meta.swath_ft; spraySavePrefs(); }
+  sprayEndDraw();
+  sprayDraft.clearLayers();
+  sprayDraft.addLayer(L.geoJSON(geom, { style: sprayDraftStyle, interactive: false }));
+  sprayOpenForm({ geometry: geom, meta });
+}
+
+document.querySelectorAll('[data-spray-mode]').forEach(b => b.addEventListener('click', () => sprayStartDraw(b.dataset.sprayMode)));
+el('spray-undo-btn').addEventListener('click', () => {
+  if (sprayDraw.mode === 'trace') sprayDraw.pts = []; else sprayDraw.pts.pop();
+  sprayUpdateDraft();
+});
+el('spray-cancel-draw-btn').addEventListener('click', sprayCancelDraw);
+el('spray-finish-btn').addEventListener('click', sprayFinishDraw);
+el('spray-strip-width').addEventListener('change', sprayUpdateDraft);
+
+// ── location ──
+function sprayShowLocation(pos) {
+  const ll = L.latLng(pos.coords.latitude, pos.coords.longitude);
+  if (!sprayLoc.marker) {
+    sprayLoc.circle = L.circle(ll, { radius: pos.coords.accuracy, color: '#2A8CFF', weight: 1, fillOpacity: .12, interactive: false }).addTo(sprayMap);
+    sprayLoc.marker = L.circleMarker(ll, { radius: 8, color: '#FFFFFF', weight: 3, fillColor: '#2A8CFF', fillOpacity: 1, interactive: false }).addTo(sprayMap);
+  } else {
+    sprayLoc.marker.setLatLng(ll); sprayLoc.circle.setLatLng(ll).setRadius(pos.coords.accuracy);
+  }
+  return ll;
+}
+function sprayLocationError(err) {
+  if (!window.isSecureContext) return showToast('Location needs the page served over HTTPS.', 'error');
+  showToast(err && err.code === 1 ? 'Location is blocked. Allow it in your browser settings.'
+    : 'Could not find your location. Try again in the open.', 'error');
+}
+el('spray-locate-btn').addEventListener('click', () => {
+  if (!navigator.geolocation) return showToast('This device does not share its location.', 'error');
+  if (sprayLoc.watch !== null) {
+    if (sprayLoc.marker) sprayMap.setView(sprayLoc.marker.getLatLng(), Math.max(sprayMap.getZoom(), 17));
+    return;
+  }
+  el('spray-locate-btn').classList.add('active');
+  sprayLoc.first = true;
+  sprayLoc.watch = navigator.geolocation.watchPosition(pos => {
+    const ll = sprayShowLocation(pos);
+    if (sprayLoc.first) { sprayMap.setView(ll, Math.max(sprayMap.getZoom(), 17)); sprayLoc.first = false; }
+  }, err => {
+    sprayLocationError(err);
+    navigator.geolocation.clearWatch(sprayLoc.watch); sprayLoc.watch = null;
+    el('spray-locate-btn').classList.remove('active');
+  }, { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 });
+});
+el('spray-gps-btn').addEventListener('click', () => {
+  if (!navigator.geolocation) return showToast('This device does not share its location.', 'error');
+  const btn = el('spray-gps-btn');
+  btn.disabled = true; btn.textContent = 'Finding You…';
+  navigator.geolocation.getCurrentPosition(pos => {
+    btn.disabled = false; btn.textContent = 'Add My Spot';
+    if (!sprayDraw.mode || sprayDraw.mode === 'trace') return;
+    const ll = sprayShowLocation(pos);
+    sprayDraw.pts.push(ll); sprayUpdateDraft(); sprayMap.panTo(ll);
+    const ft = Math.round(pos.coords.accuracy * 3.28084);
+    if (ft > 30) showToast(`Point added. GPS is only accurate to about ${ft} ft here.`, 'warn');
+  }, err => {
+    btn.disabled = false; btn.textContent = 'Add My Spot';
+    sprayLocationError(err);
+  }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
+});
+
+// ── sheets ──
+function sprayOpenSheet(id) {
+  sprayFilterPanel(false);
+  sprayCloseSheets(true);
+  el(id).classList.remove('hidden');
+  el(id).scrollTop = 0;
+}
+function sprayCloseSheets(keepDraft) {
+  ['spray-form-sheet', 'spray-history-sheet'].forEach(id => el(id).classList.add('hidden'));
+  if (!keepDraft) sprayDraft?.clearLayers();
+}
+
+// ── details form ──
+function sprayFillProduct(record) {
+  const sel = el('spray-f-product'), txt = el('spray-f-product-text');
+  const list = sprayActivePesticides();
+  const useList = list.length > 0;
+  sel.classList.toggle('hidden', !useList);
+  txt.classList.toggle('hidden', useList);
+  if (!useList) {   // no product list cached yet (never online): type it
+    txt.value = record ? record.product : '';
+    sprayProductHint();
+    return;
+  }
+  sel.textContent = '';
+  const ph = new Option('Choose a product', ''); ph.disabled = true; sel.add(ph);
+  list.forEach(p => sel.add(new Option(p.name, String(p.pesticide_id))));
+  // Keep an older record's product selectable even if it's no longer active or was typed in
+  if (record) {
+    if (record.pesticide_id != null && !list.some(p => String(p.pesticide_id) === String(record.pesticide_id))) {
+      sel.add(new Option(`${record.product} (no longer active)`, String(record.pesticide_id)));
+    } else if (record.pesticide_id == null && record.product) {
+      sel.add(new Option(`${record.product} (typed in)`, '__text__'));
+    }
+  }
+  let want = record ? (record.pesticide_id != null ? String(record.pesticide_id) : '__text__')
+                    : (sprayPrefs.lastPesticideId != null ? String(sprayPrefs.lastPesticideId) : '');
+  if (![...sel.options].some(o => o.value === want)) want = '';
+  sel.value = want;
+  sprayProductHint();
+}
+function sprayProductHint() {
+  const sel = el('spray-f-product');
+  const p = sel.classList.contains('hidden') ? null : sprayFindPesticide(sel.value);
+  const parts = [];
+  if (p?.epa_reg_number) parts.push(`EPA Reg. No. ${p.epa_reg_number}`);
+  if (p?.unit_of_measure) parts.push(`measured in ${p.unit_of_measure}`);
+  el('spray-product-hint').textContent = parts.join(', ');
+  const c = sprayReadProduct();
+  el('spray-watered-row').classList.toggle('hidden', !(c.product && sprayRule(c.product, c.pesticide_id).needsWateringIn));
+}
+el('spray-f-product').addEventListener('change', sprayProductHint);
+el('spray-f-product-text').addEventListener('input', sprayProductHint);
+
+function sprayReadProduct() {
+  const sel = el('spray-f-product');
+  const rec = sprayFormCtx?.record;
+  if (sel.classList.contains('hidden')) return { pesticide_id: null, product: el('spray-f-product-text').value.trim(), epa_reg_number: null };
+  if (sel.value === '__text__' && rec) return { pesticide_id: null, product: rec.product, epa_reg_number: rec.epa_reg_number || null };
+  const p = sprayFindPesticide(sel.value);
+  if (p) return { pesticide_id: p.pesticide_id, product: p.name, epa_reg_number: p.epa_reg_number || null };
+  if (rec && rec.pesticide_id != null && String(rec.pesticide_id) === sel.value) {
+    return { pesticide_id: rec.pesticide_id, product: rec.product, epa_reg_number: rec.epa_reg_number || null };
+  }
+  return { pesticide_id: null, product: '', epa_reg_number: null };
+}
+
+function sprayOverlaps(geom, excludeId) {
+  const feat = { type: 'Feature', geometry: geom, properties: {} };
+  return sprayRecords
+    .filter(r => !r.deleted && r.id !== excludeId && sprayAge(r) <= SPRAY.OVERLAP_DAYS && sprayAge(r) > -2)
+    .filter(r => { try { return turf.booleanIntersects(feat, { type: 'Feature', geometry: r.geometry, properties: {} }); } catch { return false; } })
+    .sort((a, b) => new Date(b.applied_at) - new Date(a.applied_at));
+}
+
+function sprayOpenForm({ record, geometry, meta }) {
+  sprayFormCtx = { record: record || null, geometry: record ? record.geometry : geometry, meta: meta || null };
+  const when = record ? new Date(record.applied_at) : new Date();
+  const canEdit = !record || sprayCanEdit(record);
+  el('spray-f-date').value = sprayDateInput(when);
+  el('spray-f-time').value = sprayTimeInput(when);
+  sprayFillProduct(record);
+  el('spray-f-rate').value = record?.rate != null ? record.rate : '';
+  el('spray-f-rate-unit').value = record?.rate_unit || sprayPrefs.rateUnit || 'fl oz/acre';
+  // Applicator defaults to the signed-in user, like "Performed By" elsewhere
+  el('spray-f-applicator').value = record ? (record.applicator || '') : (currentUser?.full_name || sprayPrefs.applicator || '');
+  el('spray-f-target').value = record ? (record.target || '') : '';
+  el('spray-f-rei').value = record?.rei_hours != null ? record.rei_hours : '';
+  el('spray-f-notes').value = record ? (record.notes || '') : '';
+  el('spray-f-watered').checked = record ? !!record.watered_in : false;
+
+  const dl = el('spray-applicator-list'); dl.textContent = '';
+  [...new Set(sprayRecords.filter(r => !r.deleted && r.applicator).map(r => r.applicator))].sort()
+    .forEach(v => dl.appendChild(new Option(v)));
+
+  el('spray-form-title').textContent = record ? `Sprayed ${sprayFmtDate(record.applied_at)}` : 'New Sprayed Area';
+  el('spray-form-acres').textContent = `${sprayFmtAcres(sprayAcres(sprayFormCtx.geometry))} acres`;
+  el('spray-save-btn').textContent = record ? 'Save Changes' : 'Save Area';
+  el('spray-save-btn').classList.toggle('hidden', !canEdit);
+  el('spray-discard-btn').textContent = record ? 'Close' : 'Discard';
+  el('spray-delete-btn').classList.toggle('hidden', !record || !canEdit);
+  el('spray-readonly').classList.toggle('hidden', canEdit);
+  el('spray-readonly-by').textContent = record?.created_by || '';
+  el('spray-form').querySelectorAll('input, select, textarea').forEach(i => { i.disabled = !canEdit; });
+
+  const hits = sprayOverlaps(sprayFormCtx.geometry, record?.id);
+  el('spray-overlap').classList.toggle('hidden', !hits.length);
+  if (hits.length) {
+    el('spray-overlap-title').textContent = hits.length === 1
+      ? `Overlaps an area sprayed in the last ${SPRAY.OVERLAP_DAYS} days`
+      : `Overlaps ${hits.length} areas sprayed in the last ${SPRAY.OVERLAP_DAYS} days`;
+    const ul = el('spray-overlap-list'); ul.textContent = '';
+    hits.slice(0, 5).forEach(r => {
+      const li = document.createElement('li');
+      li.textContent = `${sprayFmtDate(r.applied_at)}, ${r.product}${r.applicator ? `, ${r.applicator}` : ''}`;
+      ul.appendChild(li);
+    });
+  }
+  sprayOpenSheet('spray-form-sheet');
+}
+
+function sprayUpsert(rec) {
+  const i = sprayRecords.findIndex(r => r.id === rec.id);
+  if (i >= 0) sprayRecords[i] = rec; else sprayRecords.push(rec);
+  sprayPersist();
+}
+
+// Required: date and product. Everything else is optional.
+el('spray-form').addEventListener('submit', e => {
+  e.preventDefault();
+  if (!el('spray-f-date').value) { el('spray-f-date').focus(); return showToast('Add the date it was sprayed.', 'error'); }
+  const choice = sprayReadProduct();
+  if (!choice.product) return showToast('Choose the product that was sprayed.', 'error');
+  const applied = new Date(`${el('spray-f-date').value}T${el('spray-f-time').value || '12:00'}`);
+  const now = new Date().toISOString();
+  const isEdit = !!sprayFormCtx.record;
+  const rec = isEdit ? Object.assign({}, sprayFormCtx.record) : {
+    id: sprayUuid(),
+    geometry: sprayFormCtx.geometry,
+    method: sprayFormCtx.meta?.method || null,
+    swath_ft: sprayFormCtx.meta ? sprayFormCtx.meta.swath_ft : null,
+    created_at: now,
+    created_by: currentUser?.username || null,
+    deleted: false,
+  };
+  Object.assign(rec, {
+    applied_at: applied.toISOString(),
+    product: choice.product,
+    pesticide_id: choice.pesticide_id,
+    epa_reg_number: choice.epa_reg_number,
+    rate: sprayNum(el('spray-f-rate').value),
+    rate_unit: el('spray-f-rate-unit').value,
+    applicator: el('spray-f-applicator').value.trim(),
+    target: el('spray-f-target').value.trim(),
+    rei_hours: sprayNum(el('spray-f-rei').value),
+    notes: el('spray-f-notes').value.trim(),
+    watered_in: sprayRule(choice.product, choice.pesticide_id).needsWateringIn && el('spray-f-watered').checked,
+    acres: sprayRound(sprayAcres(rec.geometry), 2),
+    updated_at: now,
+    dirty: true,
+    owner: currentUser?.username || null,
+  });
+  sprayUpsert(rec);
+  Object.assign(sprayPrefs, { applicator: rec.applicator, rateUnit: rec.rate_unit, lastPesticideId: choice.pesticide_id });
+  spraySavePrefs();
+  sprayCloseSheets();
+  sprayRender();
+  const visible = sprayInRange(rec) && !sprayPrefs.hidden.includes(sprayProductKey(rec));
+  showToast(visible ? (isEdit ? 'Changes saved' : 'Area saved')
+    : 'Area saved — the date range or product filter is hiding it', visible ? 'success' : 'warn');
+  spraySync();
+});
+el('spray-discard-btn').addEventListener('click', () => sprayCloseSheets());
+el('spray-delete-btn').addEventListener('click', () => {
+  const r = sprayFormCtx?.record;
+  if (!r) return;
+  if (!confirm(`Delete the area sprayed on ${sprayFmtDate(r.applied_at)} with ${r.product}?`)) return;
+  sprayUpsert(Object.assign({}, r, { deleted: true, dirty: true, owner: currentUser?.username || null, updated_at: new Date().toISOString() }));
+  sprayCloseSheets(); sprayRender(); showToast('Area deleted', 'success'); spraySync();
+});
+
+function sprayUuid() {
+  try { if (crypto.randomUUID) return crypto.randomUUID(); } catch { /* */ }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 3 | 8)).toString(16);
+  });
+}
+
+// ── history ──
+function sprayZoomTo(r) {
+  const b = L.geoJSON(r.geometry).getBounds();
+  const h = el('spray-wrap').clientHeight;
+  sprayMap.fitBounds(b, { paddingTopLeft: [24, 24], paddingBottomRight: [24, Math.round(h * .6)], maxZoom: 18 });
+}
+function sprayRenderHistory() {
+  const list = sprayVisible().sort((a, b) => new Date(b.applied_at) - new Date(a.applied_at));
+  const total = list.reduce((s, r) => s + (r.acres || 0), 0);
+  el('spray-history-summary').textContent = list.length
+    ? `${list.length} area${list.length === 1 ? '' : 's'}, ${sprayFmtAcres(total)} acres` : '';
+  const ul = el('spray-history-list'); ul.textContent = '';
+  if (!list.length) {
+    ul.innerHTML = '<li class="placeholder-msg">No sprayed areas found.</li>';
+    return;
+  }
+  for (const r of list) {
+    const li = document.createElement('li');
+    const b = document.createElement('button'); b.type = 'button';
+    const d = document.createElement('span'); d.className = 'spray-h-date'; d.textContent = sprayFmtDate(r.applied_at);
+    const p = document.createElement('span'); p.className = 'spray-h-product'; p.textContent = r.product;
+    const m = document.createElement('span'); m.className = 'spray-h-meta';
+    m.textContent = [`${sprayFmtAcres(r.acres || 0)} acres`, r.applicator,
+      sprayNeedsWater(r) ? (r.watered_in ? 'watered in' : 'not watered in yet') : '',
+      sprayReiActive(r) ? 're-entry not yet allowed' : '',
+      r.dirty ? 'waiting to sync' : ''].filter(Boolean).join(', ');
+    b.append(d, p, m);
+    b.addEventListener('click', () => { sprayZoomTo(r); sprayOpenForm({ record: r }); });
+    li.appendChild(b); ul.appendChild(li);
+  }
+}
+el('spray-history-btn').addEventListener('click', () => { sprayRenderHistory(); sprayOpenSheet('spray-history-sheet'); });
+el('spray-history-close').addEventListener('click', () => sprayCloseSheets());
+
+// ── GeoJSON export / import ──
+function sprayToFeature(r) {
+  const props = Object.assign({}, r);
+  delete props.geometry; delete props.dirty; delete props.deleted; delete props.owner;
+  return { type: 'Feature', id: r.id, geometry: r.geometry, properties: props };
+}
+el('spray-export-btn').addEventListener('click', () => {
+  const live = sprayRecords.filter(r => !r.deleted);
+  if (!live.length) return showToast('No sprayed areas found.', 'error');
+  const fc = { type: 'FeatureCollection', features: live.map(sprayToFeature) };
+  downloadBlob(new Blob([JSON.stringify(fc, null, 2)], { type: 'application/geo+json' }),
+    `spray-areas-${sprayDateInput(new Date())}.geojson`);
+});
+
+function sprayMergeIncoming(f, fromServer) {
+  if (!f || !f.geometry || !/Polygon$/.test(f.geometry.type)) return false;
+  const p = f.properties || {};
+  // Imported areas get a fresh id unless it's one of ours, so a file can't overwrite someone else's
+  let id = p.id || f.id;
+  if (!fromServer && (!id || !/^[0-9a-f-]{36}$/i.test(id) || !sprayRecords.some(r => r.id === id))) id = sprayUuid();
+  const idx = sprayRecords.findIndex(r => r.id === id);
+  const existing = idx >= 0 ? sprayRecords[idx] : null;
+  if (p.deleted_at) {
+    if (existing && !existing.dirty) sprayRecords.splice(idx, 1);
+    return true;
+  }
+  if (existing && existing.dirty && fromServer) return false;   // a local edit waits to be pushed
+  if (existing && new Date(p.updated_at || 0) <= new Date(existing.updated_at || 0)) return false;
+  const now = new Date().toISOString();
+  const rec = {
+    id, geometry: f.geometry,
+    applied_at: p.applied_at || now,
+    product: p.product || 'Unknown product',
+    pesticide_id: p.pesticide_id != null ? p.pesticide_id : null,
+    epa_reg_number: p.epa_reg_number || null,
+    rate: p.rate != null ? Number(p.rate) : null,
+    rate_unit: p.rate_unit || '',
+    applicator: p.applicator || '',
+    target: p.target || '',
+    rei_hours: p.rei_hours != null ? Number(p.rei_hours) : null,
+    notes: p.notes || '',
+    watered_in: p.watered_in === true || p.watered_in === 'true',
+    method: fromServer ? (p.method || null) : 'import',
+    swath_ft: p.swath_ft != null ? Number(p.swath_ft) : null,
+    acres: sprayRound(sprayAcres(f.geometry), 2),
+    created_by: fromServer ? (p.created_by || null) : (currentUser?.username || null),
+    created_at: p.created_at || now,
+    updated_at: fromServer ? (p.updated_at || now) : now,
+    deleted: false,
+    dirty: !fromServer,
+    owner: fromServer ? null : (currentUser?.username || null),
+  };
+  if (existing) sprayRecords[idx] = rec; else sprayRecords.push(rec);
+  return true;
+}
+el('spray-import-input').addEventListener('change', async e => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  try {
+    const data = JSON.parse(await file.text());
+    const feats = data.type === 'FeatureCollection' ? data.features : [data];
+    let n = 0;
+    for (const f of feats) if (sprayMergeIncoming(f, false)) n++;
+    sprayPersist(); sprayRender();
+    showToast(n ? `Imported ${n} area${n === 1 ? '' : 's'}` : 'No polygon areas found in that file.', n ? 'success' : 'warn');
+    spraySync();
+  } catch {
+    showToast('That file is not valid GeoJSON.', 'error');
+  }
+});
+
+// ── sync ──
+function spraySyncChip() {
+  const chip = el('spray-sync-chip');
+  const pending = sprayRecords.filter(r => r.dirty && sprayMine(r)).length;
+  chip.classList.remove('warn');
+  if (spraySyncing) { chip.textContent = 'Syncing…'; return; }
+  if (spraySyncError) { chip.textContent = 'Sync failed — tap to retry'; chip.classList.add('warn'); return; }
+  if (pending) { chip.textContent = `${pending} waiting to sync`; chip.classList.add('warn'); return; }
+  chip.textContent = 'Synced';
+}
+
+async function spraySync() {
+  spraySyncChip();
+  if (spraySyncing || !navigator.onLine || !currentUser) return;
+  spraySyncing = true; spraySyncChip();
+  try {
+    try {
+      const list = await api('GET', '/api/pesticides');
+      if (Array.isArray(list) && list.length) sprayPesticides = list;
+    } catch { /* keep what we had */ }
+    const rejected = [];
+    for (const r of sprayRecords.filter(x => x.dirty && sprayMine(x))) {
+      const url = `/api/spray-areas/${encodeURIComponent(r.id)}`;
+      const res = r.deleted
+        ? await fetch(url, { method: 'DELETE' })
+        : await fetch(url, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sprayToFeature(r)) });
+      if (res.ok || (r.deleted && res.status === 404)) { r.dirty = false; continue; }
+      // 400/403 won't get better by retrying: drop the local change and let the pull restore the server copy
+      if (res.status === 400 || res.status === 403) {
+        const body = await res.json().catch(() => ({}));
+        rejected.push(body.error || `Server returned ${res.status}`);
+        r.dirty = false; r.deleted = false; r._stale = true;
+        continue;
+      }
+      throw new Error(`Server returned ${res.status}`);
+    }
+    sprayRecords = sprayRecords.filter(x => !(x.deleted && !x.dirty));
+    // A rejected change is refetched in full so the server copy comes back
+    const fullPull = rejected.length > 0 || !sprayPrefs.lastPull;
+    if (rejected.length) sprayRecords = sprayRecords.filter(x => !x._stale);
+    const pullStarted = new Date(Date.now() - 60000).toISOString();
+    const fc = await api('GET', `/api/spray-areas${fullPull ? '' : `?since=${encodeURIComponent(sprayPrefs.lastPull)}`}`);
+    if (fullPull) sprayRecords = sprayRecords.filter(x => x.dirty);   // the full list replaces the synced copies
+    (fc.features || []).forEach(f => sprayMergeIncoming(f, true));
+    sprayPrefs.lastPull = pullStarted; spraySavePrefs();
+    spraySyncError = null;
+    if (rejected.length) showToast(rejected[0], 'error');
+  } catch (err) {
+    spraySyncError = err.message || 'Sync failed';
+  } finally {
+    spraySyncing = false;
+    sprayPersist(); sprayRender();
+  }
+}
+el('spray-sync-chip').addEventListener('click', () => { spraySyncError = null; spraySync(); });
 
 // ── Usage Panel ───────────────────────────────────────────────────────────────
 async function initPestUsagePanel() {
