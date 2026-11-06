@@ -4,10 +4,10 @@
 #  Save next to your deploy.sh, e.g. /opt/appdata/watermark/deploy-check.sh
 #  Run with:  bash /opt/appdata/watermark/deploy-check.sh
 #
-#  1. Checks GitHub, Docker Hub (the node:22-alpine base image) and the npm
-#     registry. If the base image or npm can't be reached, it tries Google's
-#     and Amazon's copies of the base image, then offers to build the new code
-#     on top of the current image's libraries instead.
+#  1. Checks GitHub, the npm registry and the Node 22 base image (Google's
+#     mirror first, then Docker Hub, then Amazon's copy — see BASE_SOURCES).
+#     If the base image or npm can't be reached, it offers to build the new
+#     code on top of the current image's libraries instead.
 #  2. Builds the new image while the old container keeps running.
 #  3. Only if the build succeeds: stops the old container and starts the new
 #     one. If the new one doesn't reach the database, offers to roll back.
@@ -25,8 +25,9 @@ CONTAINER_NAME="watermark"
 IMAGE_NAME="watermark"
 HOST_PORT=3067                                  # port on the server
 UPLOADS_SHARE="/mnt/user/watermark-uploads"     # photo/PDF uploads folder
-BASE_IMAGE="node:22-alpine"
-BASE_MIRRORS=("mirror.gcr.io/library/node:22-alpine" "public.ecr.aws/docker/library/node:22-alpine")
+# Where to get the Node 22 base image, tried in this order. Google's copy of
+# Docker Hub first (Docker Hub itself times out from this server).
+BASE_SOURCES=("mirror.gcr.io/library/node:22-alpine" "node:22-alpine" "public.ecr.aws/docker/library/node:22-alpine")
 NET_TIMEOUT=15                                  # seconds per connection check
 PULL_TIMEOUT=180                                # seconds for a base-image pull
 HEALTH_WAIT=40                                  # seconds to wait for "Database connected"
@@ -85,24 +86,24 @@ reachable "https://github.com" && ok "GitHub" || fail "Can't reach GitHub — th
 NPM_OK=0
 reachable "https://registry.npmjs.org/" && { ok "npm registry (libraries)"; NPM_OK=1; } || warn "npm registry unreachable"
 
-# Base image: Docker Hub, then the mirrors. A mirror copy is tagged as
-# node:22-alpine so the normal Dockerfile uses it.
+# Base image: the first source in BASE_SOURCES that pulls, else any of them
+# already on this server. The build is told which one via --build-arg.
+src_name() { case "$1" in *.*/*) echo "${1%%/*}" ;; *) echo "Docker Hub" ;; esac; }
 BASE_OK=0
-if timeout "$PULL_TIMEOUT" docker pull -q "$BASE_IMAGE" >/dev/null 2>&1; then
-    ok "Docker Hub ($BASE_IMAGE)"; BASE_OK=1
-else
-    warn "Docker Hub unreachable for $BASE_IMAGE"
-    for m in "${BASE_MIRRORS[@]}"; do
-        if timeout "$PULL_TIMEOUT" docker pull -q "$m" >/dev/null 2>&1; then
-            docker tag "$m" "$BASE_IMAGE"
-            ok "Got the base image from ${m%%/*}"; BASE_OK=1; break
-        else
-            warn "${m%%/*} unreachable"
+BASE_REF=""
+for src in "${BASE_SOURCES[@]}"; do
+    if timeout "$PULL_TIMEOUT" docker pull -q "$src" >/dev/null 2>&1; then
+        ok "Base image from $(src_name "$src")"; BASE_OK=1; BASE_REF="$src"; break
+    else
+        warn "$(src_name "$src") unreachable"
+    fi
+done
+if [ $BASE_OK -eq 0 ]; then
+    for src in "${BASE_SOURCES[@]}"; do
+        if docker image inspect "$src" >/dev/null 2>&1; then
+            ok "Using the copy of $src already on this server"; BASE_OK=2; BASE_REF="$src"; break
         fi
     done
-    if [ $BASE_OK -eq 0 ] && docker image inspect "$BASE_IMAGE" >/dev/null 2>&1; then
-        ok "Using the copy of $BASE_IMAGE already on this server"; BASE_OK=2
-    fi
 fi
 
 # The image the running container uses (falls back to the image tag)
@@ -150,13 +151,10 @@ echo ""
 echo "[3/5] Building the new image (the current container keeps running)..."
 docker tag "$CURRENT_IMAGE" "$IMAGE_NAME:previous" 2>/dev/null || true
 if [ "$MODE" = full ]; then
-    if [ $BASE_OK -eq 2 ]; then
-        # Classic builder: uses the local base image without asking Docker Hub
-        DOCKER_BUILDKIT=0 docker build --quiet --tag "$IMAGE_NAME:new" "$BUILD_DIR" >/dev/null \
-            || fail "Build failed."
-    else
-        docker build --quiet --tag "$IMAGE_NAME:new" "$BUILD_DIR" >/dev/null || fail "Build failed."
-    fi
+    # The base image is on this server now; the classic builder uses that copy
+    # as-is (the newer builder would check with the registry again).
+    DOCKER_BUILDKIT=0 docker build --quiet --build-arg "BASE_IMAGE=$BASE_REF" \
+        --tag "$IMAGE_NAME:new" "$BUILD_DIR" >/dev/null || fail "Build failed." 
 else
     cat > "$BUILD_DIR/Dockerfile.reuse" <<EOF
 FROM $IMAGE_NAME:previous

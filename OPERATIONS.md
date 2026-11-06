@@ -173,10 +173,11 @@ bash /opt/appdata/watermark/deploy-check.sh
 ```
 
 1. Shows the settings and asks to continue.
-2. Checks GitHub (required), the npm registry, and the `node:22-alpine` base
-   image — Docker Hub first, then `mirror.gcr.io` and `public.ecr.aws` (a
-   mirror copy is tagged as `node:22-alpine`), then a copy already on the
-   server (built with the classic builder so Docker Hub isn't contacted).
+2. Checks GitHub (required), the npm registry, and the Node 22 base image in
+   the order of `BASE_SOURCES`: Google's mirror (`mirror.gcr.io`), Docker Hub,
+   Amazon (`public.ecr.aws`), then any of those already on the server. The
+   build gets the one it found via `--build-arg BASE_IMAGE=…` and uses the
+   classic builder, so it doesn't contact the registry again.
 3. If the base image or npm can't be had, offers to **reuse the current
    image's libraries**: the new code is copied on top of the running image.
    Only allowed when `package-lock.json` is unchanged; otherwise it stops.
@@ -194,6 +195,11 @@ network, extra ports), change `PUBLISH_ARGS` in `deploy-check.sh` to match.
 
 `Dockerfile` copies only `package.json`, `package-lock.json`, `server.js`,
 `scada-config.json` and `public/`, then `npm ci --omit=dev`.
+
+The base image is `ARG BASE_IMAGE`, defaulting to Google's mirror of Docker
+Hub (`mirror.gcr.io/library/node:22-alpine`) because Docker Hub times out
+from the deploy server. Plain `docker build` / `deploy.sh` use the mirror
+too; pass `--build-arg BASE_IMAGE=node:22-alpine` to go straight to Docker Hub.
 
 Consequently **`db/migrations/` is not in the image** and is never executed at
 runtime. Those 17 numbered SQL files are historical/manual — see §6.
