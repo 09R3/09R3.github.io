@@ -61,6 +61,9 @@ function getInfluxQuery() {
   return _influxQuery;
 }
 
+// Step n's flow tag is SCADA_STEP_FLOW_TAGS[n-1] (Skid.Flw2 is step 1).
+const SCADA_STEP_FLOW_TAGS = ['Flw2', 'Flw3', 'Flw4', 'Flw5', 'Flw6'];
+
 // Every display tag-path the UI needs: sensors (X.SCL.PV) + per-pump bits.
 function scadaAllTagPaths(config) {
   const sensors = config.defaultSensors || [];
@@ -77,9 +80,13 @@ function scadaAllTagPaths(config) {
         `${site.influxSite}.${pump}.SBVlv.Cntrl.O_Cmd`,  // siphon breaker: true = closed
       );
     }
-    // Skid-level status (A plants): downstream-override disable + forward/reverse mode
+    // Skid-level status (A plants): downstream-override disable + forward/reverse
+    // mode, the active flow step (Seq, 0 = none) and each step's flow (Flw2–Flw6
+    // are steps 1–5).
     if (/A$/.test(site.influxSite)) {
-      tags.push(`${site.influxSite}.Skid.DSDis`, `${site.influxSite}.Skid.FRmode`);
+      tags.push(`${site.influxSite}.Skid.DSDis`, `${site.influxSite}.Skid.FRmode`,
+                `${site.influxSite}.Skid.Seq`,
+                ...SCADA_STEP_FLOW_TAGS.map(f => `${site.influxSite}.Skid.${f}`));
     }
   }
   return tags;
@@ -268,6 +275,59 @@ async function scadaGetReverseHours(influxSite, rangeOpts, pumps) {
   const result = {};
   pumps.forEach(p => { result[p] = (counts[p] * grid) / 3600; });
   return result;
+}
+
+// Time an A-plant spent in each flow step (Skid.Seq: 0 = no step, 1–5) over a
+// range. Seq is a step signal, so it's sampled onto a grid (last value per
+// window, carried forward through gaps) and each window's length is credited to
+// the step in force. The value going into the range comes from the last reading
+// before it, so a step that started earlier still counts from the range start.
+// Returns { seconds: { "0": s, "1": s, … }, start, end }.
+async function scadaGetStepSeconds(influxSite, rangeOpts) {
+  const qApi = getInfluxQuery();
+  if (!qApi) throw new Error('InfluxDB not configured');
+  let s, e;
+  if (typeof rangeOpts === 'object') {
+    s = new Date(rangeOpts.start); e = new Date(rangeOpts.end);
+    if (isNaN(s) || isNaN(e)) throw new Error('invalid custom range');
+  } else {
+    const hrsMap = { '1h':1,'8h':8,'12h':12,'6h':6,'24h':24,'7d':168,'30d':720 };
+    e = new Date();
+    s = new Date(e.getTime() - (hrsMap[rangeOpts] || 24) * 3600000);
+  }
+  if (e.getTime() > Date.now()) e = new Date();   // don't count time that hasn't happened
+  if (e <= s) return { seconds: {}, start: s.toISOString(), end: e.toISOString() };
+  const grid = reverseGridSeconds((e - s) / 3600000);
+  const tag  = `${influxSite}.Skid.Seq`;
+  const base = `from(bucket: "${INFLUX_BUCKET}")`;
+  const filt = `filter(fn: (r) => r._measurement == "plc_tags" and r.tag == "${tag}" and r._field == "value")`;
+
+  let cur = null;
+  const before = `${base} |> range(start: ${new Date(s.getTime() - 30 * 86400000).toISOString()}, stop: ${s.toISOString()}) |> ${filt} |> last()`;
+  for await (const { values, tableMeta } of qApi.iterateRows(before)) cur = tableMeta.toObject(values)._value;
+
+  const flux = `${base} |> range(start: ${s.toISOString()}, stop: ${e.toISOString()}) |> ${filt}
+    |> aggregateWindow(every: ${grid}s, fn: last, createEmpty: true)`;
+  const rows = [];
+  for await (const { values, tableMeta } of qApi.iterateRows(flux)) {
+    const row = tableMeta.toObject(values);
+    rows.push([new Date(row._time).getTime(), row._value]);   // _time = window end
+  }
+  rows.sort((a, b) => a[0] - b[0]);
+  const seconds = {};
+  let prev = s.getTime();
+  for (const [t, v] of rows) {
+    const end = Math.min(t, e.getTime());
+    const len = (end - prev) / 1000;
+    // Each window is credited to its last reading (to within one grid step)
+    if (v != null) cur = v;
+    if (cur != null && len > 0) {
+      const k = String(Math.round(Number(cur)));
+      seconds[k] = (seconds[k] || 0) + len;
+    }
+    prev = Math.max(prev, end);
+  }
+  return { seconds, start: s.toISOString(), end: e.toISOString() };
 }
 
 // ── Power monitoring (power_meters bucket) ─────────────────────────────────────
@@ -7937,6 +7997,20 @@ app.get('/api/scada/runtime-reverse', requireAuth, requireScadaAccess, async (re
   const rangeOpts = (start && end) ? { start: String(start), end: String(end) } : String(range || '24h');
   try {
     res.json(await scadaGetReverseHours(String(influxSite), rangeOpts, siteConfig.pumps));
+  } catch (err) { handleErr(res, err); }
+});
+
+// Seconds spent in each flow step at one A-plant over a range (Steps section of
+// the plant page). ?site=CVC_PP7A&range=24h  or  &start=ISO&end=ISO
+app.get('/api/scada/steps', requireAuth, requireScadaAccess, async (req, res) => {
+  if (!SCADA_CONFIG) return res.status(503).json({ error: 'SCADA not configured' });
+  const { site: influxSite, range, start, end } = req.query;
+  const siteConfig = SCADA_CONFIG.sites.find(s => s.influxSite === String(influxSite || ''));
+  if (!siteConfig) return res.status(404).json({ error: 'site not found' });
+  if (!/A$/.test(siteConfig.influxSite)) return res.json({ seconds: {} });   // steps are A-plant only
+  const rangeOpts = (start && end) ? { start: String(start), end: String(end) } : String(range || '24h');
+  try {
+    res.json(await scadaGetStepSeconds(siteConfig.influxSite, rangeOpts));
   } catch (err) { handleErr(res, err); }
 });
 

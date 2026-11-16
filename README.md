@@ -77,6 +77,13 @@ sensor tiles, pump cards and trend charts; multi-tag trends; pump run-hour and
 reverse-flow totals; and power monitoring. Charts support drag-select statistics
 (high, low, difference, standard deviation).
 
+Flow steps (A plants): each overview card shows **Current Step** from
+`<site>.Skid.Seq` (0 = no step). The plant page has a **Steps** section under
+Sensors with Step 1–5, each showing its flow (`Skid.Flw2`–`Skid.Flw6`), the
+active step highlighted, and how long each step was active over the section's
+range (starts as the Overview's range; `/api/scada/steps` samples Seq onto a
+grid, carrying the last value forward). Tapping a step charts its flow.
+
 **Reports** — vehicle mileage and last service, KF completion, maintenance
 issues, PM grids, piezometers, canal readings (daily, and monthly per turnout
 like the CVC turnout sheets), pond levels, well readings and pumping plant meter

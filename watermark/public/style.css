@@ -4156,6 +4156,21 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
   .scada-sensor-tile { padding: 8px 6px; }
 }
 
+/* ── Flow steps (plant page) ─────────────────────────────────────────────── */
+.scada-steps-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin: 16px 0 8px; flex-wrap: wrap; }
+.scada-steps-sub { font-size: 0.72rem; color: var(--text-dim); }
+.scada-steps-range { margin-bottom: 8px; }
+.scada-steps-range .seg-btn { min-width: 0; padding: 8px 4px; }
+.scada-step-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+.scada-step-tile.active { border-color: #43a047; background: rgba(67,160,71,0.14); box-shadow: 0 0 0 1px #43a047; }
+.scada-step-tile.active .scada-sensor-label { color: #43a047; font-weight: 700; }
+.scada-step-time { font-size: 0.74rem; font-weight: 600; color: var(--text); margin-top: 4px; font-variant-numeric: tabular-nums; }
+.scada-steps-note { font-size: 0.72rem; color: var(--text-dim); margin-top: 6px; }
+.scada-steps-note:empty { display: none; }
+@media (max-width: 700px) {
+  .scada-step-grid { grid-template-columns: repeat(3, 1fr); gap: 6px; }
+}
+
 /* ── SCADA plant pills (Trends + Runtime) ────────────────────────────────── */
 .scada-plant-pills { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
 .scada-plant-pill {
