@@ -133,7 +133,7 @@
         Sign in with Microsoft 365
       </a>
       <div id="ms-login-error" class="error-msg hidden"></div>
-      <div class="login-version">v 3.50</div>
+      <div class="login-version">v 3.51</div>
     </div>
   </div>
 </div>
@@ -1254,12 +1254,20 @@
     <div id="pest-panel-map" class="maint-panel hidden">
       <div class="spray-top">
         <div class="seg-group" id="spray-range">
-          <button class="seg-btn" data-range="7">7 Days</button>
-          <button class="seg-btn" data-range="30">30 Days</button>
+          <button class="seg-btn" data-range="7">7d</button>
+          <button class="seg-btn" data-range="30">30d</button>
+          <button class="seg-btn" data-range="6m">6 mo</button>
           <button class="seg-btn" data-range="year">Year</button>
           <button class="seg-btn" data-range="all">All</button>
+          <button class="seg-btn" data-range="custom">Custom</button>
         </div>
         <button class="spray-chip" id="spray-sync-chip" type="button">Synced</button>
+      </div>
+      <div class="spray-custom hidden" id="spray-custom-row">
+        <label for="spray-from">From</label>
+        <input type="date" id="spray-from" class="ctrl-input ctrl-input-sm">
+        <label for="spray-to">To</label>
+        <input type="date" id="spray-to" class="ctrl-input ctrl-input-sm">
       </div>
       <div class="spray-wrap" id="spray-wrap">
         <div id="spray-map" role="application" aria-label="Map of sprayed areas"></div>
@@ -1391,6 +1399,11 @@
             <input type="file" id="spray-import-input" accept=".geojson,.json,application/geo+json,application/json" class="spray-visually-hidden">
           </div>
         </section>
+      </div>
+      <!-- Supervisors: after rain, mark every product that needs watering in as done -->
+      <div class="spray-water-row hidden" id="spray-water-row">
+        <button type="button" class="btn btn-save" id="spray-water-all-btn">Mark All Watered In</button>
+        <span class="spray-hint" id="spray-water-hint"></span>
       </div>
     </div>
 
@@ -2181,7 +2194,7 @@
     <div id="settings-panel-appinfo" class="settings-panel hidden">
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 3.50</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 3.51</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>

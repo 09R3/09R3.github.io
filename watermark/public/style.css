@@ -4391,7 +4391,18 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
 /* ── Pesticides → Map (spray map) ────────────────────────────────────────── */
 .spray-top { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
 .spray-top .seg-group { flex: 1 1 240px; min-width: 0; }
-.spray-top .seg-btn { min-width: 0; padding: 9px 6px; }
+.spray-top .seg-btn { min-width: 0; padding: 9px 4px; font-size: 0.85rem; }
+@media (max-width: 480px) {
+  /* six range buttons need the whole row on a phone; the sync chip wraps under */
+  .spray-top .seg-group { flex-basis: 100%; }
+  .spray-top .spray-chip { margin-left: auto; }
+}
+.spray-custom { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; font-size: 0.82rem; color: var(--text-dim); }
+.spray-custom .ctrl-input-sm { flex: 1 1 130px; min-width: 0; max-width: 200px; }
+.spray-water-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 10px; }
+.spray-water-row .btn { min-height: 44px; }
+.spray-water-row .btn:disabled { opacity: .45; cursor: default; }
+.spray-water-row .spray-hint { margin-top: 0; }
 .spray-chip {
   font-size: 0.8rem; font-weight: 600; color: var(--text-dim);
   background: var(--surface2); border: 1px solid var(--border); border-radius: 999px;

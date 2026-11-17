@@ -6395,6 +6395,22 @@ app.put('/api/spray-areas/:id', requireAuth, async (req, res) => {
   }
 });
 
+// Supervisors, after rain: mark every live area of a product that needs
+// watering in as watered in. "Needs watering in" is pesticides.needs_watering_in
+// when set, otherwise the product name looks like Cleantraxx — the same rule
+// the Map page uses for its colours and the Watered in checkbox.
+app.post('/api/spray-areas/watered-in', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
+  try {
+    const { rowCount } = await pool.query(`
+      UPDATE spray_applications sa SET watered_in = true, updated_at = now()
+      WHERE sa.deleted_at IS NULL AND NOT sa.watered_in AND sa.applied_at <= now()
+        AND COALESCE(
+          (SELECT (to_jsonb(p)->>'needs_watering_in')::boolean FROM pesticides p WHERE p.pesticide_id = sa.pesticide_id),
+          sa.product ~* 'clean\\s*-?\\s*traxx')`);
+    res.json({ ok: true, updated: rowCount });
+  } catch (err) { handleErr(res, err); }
+});
+
 app.delete('/api/spray-areas/:id', requireAuth, async (req, res) => {
   const { id } = req.params;
   if (!SPRAY_ID_RE.test(id)) return res.status(400).json({ error: 'Invalid id' });

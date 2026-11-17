@@ -10270,8 +10270,16 @@ const sprayReiActive = r => r.rei_hours > 0 && Date.now() < new Date(r.applied_a
 function sprayInRange(r) {
   if (r.deleted) return false;
   const f = sprayPrefs.range;
+  const at = new Date(r.applied_at);
   if (f === 'all') return true;
-  if (f === 'year') return new Date(r.applied_at).getFullYear() === new Date().getFullYear();
+  if (f === 'year') return at.getFullYear() === new Date().getFullYear();
+  if (f === '6m') { const from = new Date(); from.setMonth(from.getMonth() - 6); return at >= from; }
+  if (f === 'custom') {
+    // Whole days, local time; a blank date is no limit on that side
+    const from = sprayPrefs.customFrom ? new Date(`${sprayPrefs.customFrom}T00:00`) : null;
+    const to   = sprayPrefs.customTo   ? new Date(`${sprayPrefs.customTo}T23:59:59.999`) : null;
+    return (!from || at >= from) && (!to || at <= to);
+  }
   return sprayAge(r) <= Number(f);
 }
 const sprayProductKey = r => (r.pesticide_id != null ? `id:${r.pesticide_id}` : `name:${(r.product || '').trim().toLowerCase()}`);
@@ -10306,12 +10314,17 @@ const sprayDraftStyle = () => ({ color: '#FFFFFF', weight: 2, dashArray: '6 5', 
 // ── panel ──
 async function initPestMapPanel() {
   sprayPrefs = Object.assign(
-    { applicator: '', rateUnit: 'fl oz/acre', lastPesticideId: null, stripWidth: 20, range: '30', hidden: [], lastPull: null },
+    { applicator: '', rateUnit: 'fl oz/acre', lastPesticideId: null, stripWidth: 20, range: '30', hidden: [], lastPull: null,
+      customFrom: '', customTo: '' },
     sprayLoadJSON(SPRAY.PREFS_KEY, {}));
   if (!Array.isArray(sprayPrefs.hidden)) sprayPrefs.hidden = [];
   sprayRecords = sprayLoadJSON(SPRAY.STORE_KEY, []);
   if (!Array.isArray(sprayRecords)) sprayRecords = [];
   el('spray-range').querySelectorAll('.seg-btn').forEach(b => b.classList.toggle('active', b.dataset.range === sprayPrefs.range));
+  el('spray-custom-row').classList.toggle('hidden', sprayPrefs.range !== 'custom');
+  el('spray-from').value = sprayPrefs.customFrom || '';
+  el('spray-to').value   = sprayPrefs.customTo || '';
+  el('spray-water-row').classList.toggle('hidden', !isSupervisorLevel(currentUser?.role));
 
   try { await loadTurf(); } catch (err) {
     el('spray-wrap').innerHTML = `<div class="placeholder-msg">Failed to load.</div>`;
@@ -10407,6 +10420,7 @@ function sprayRender() {
   }
   sprayRenderHistory();
   sprayFilterButton();
+  sprayWaterButton();
 }
 
 // ── product filter ──
@@ -10479,7 +10493,54 @@ el('spray-range').addEventListener('click', e => {
   const b = e.target.closest('.seg-btn');
   if (!b) return;
   el('spray-range').querySelectorAll('.seg-btn').forEach(x => x.classList.toggle('active', x === b));
-  sprayPrefs.range = b.dataset.range; spraySavePrefs(); sprayRender();
+  sprayPrefs.range = b.dataset.range;
+  el('spray-custom-row').classList.toggle('hidden', sprayPrefs.range !== 'custom');
+  if (sprayPrefs.range === 'custom' && !sprayPrefs.customFrom && !sprayPrefs.customTo) {
+    // Start a first custom range on the last 30 days so the map isn't empty
+    const d = new Date(); el('spray-to').value = sprayPrefs.customTo = sprayDateInput(d);
+    d.setDate(d.getDate() - 30); el('spray-from').value = sprayPrefs.customFrom = sprayDateInput(d);
+  }
+  spraySavePrefs(); sprayRender();
+});
+['spray-from', 'spray-to'].forEach(id => el(id).addEventListener('change', () => {
+  sprayPrefs.customFrom = el('spray-from').value;
+  sprayPrefs.customTo   = el('spray-to').value;
+  spraySavePrefs(); sprayRender();
+}));
+
+// ── Mark all watered in (supervisors) ──
+// After rain, every area of a product that needs watering in (Cleantraxx, or a
+// product with pesticides.needs_watering_in) is marked watered in — all dates,
+// not just the range on screen. Done on the server (supervisor-only endpoint),
+// then pulled back down by a sync.
+// Same rule as the server: areas dated in the future aren't marked.
+const sprayNeedsWaterNow = () => sprayRecords.filter(r =>
+  !r.deleted && sprayNeedsWater(r) && !r.watered_in && new Date(r.applied_at) <= new Date());
+function sprayWaterButton() {
+  const btn = el('spray-water-all-btn'), hint = el('spray-water-hint');
+  if (el('spray-water-row').classList.contains('hidden')) return;
+  const n = sprayNeedsWaterNow().length;
+  btn.disabled = n === 0;
+  hint.textContent = n ? `${n} area${n === 1 ? '' : 's'} not watered in yet` : 'All areas are watered in.';
+}
+el('spray-water-all-btn').addEventListener('click', async () => {
+  const n = sprayNeedsWaterNow().length;
+  if (!n) return;
+  if (!navigator.onLine) return showToast('Needs a connection — try again when back online.', 'error');
+  if (!confirm(`Mark ${n} area${n === 1 ? '' : 's'} as watered in? Use this after rain or irrigation.`)) return;
+  const btn = el('spray-water-all-btn');
+  btn.disabled = true; btn.textContent = 'Marking…';
+  try {
+    await spraySync();                       // push anything drawn on this device first
+    const r = await api('POST', '/api/spray-areas/watered-in', {});
+    await spraySync();                       // pull the updated areas back down
+    showToast(`Marked ${r.updated} area${r.updated === 1 ? '' : 's'} as watered in`, 'success');
+  } catch (err) {
+    showToast('Failed: ' + err.message, 'error');
+  } finally {
+    btn.textContent = 'Mark All Watered In';
+    sprayWaterButton();
+  }
 });
 
 // ── drawing ──
