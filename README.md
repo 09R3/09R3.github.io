@@ -155,9 +155,14 @@ overlaps one sprayed in the last 30 days.
   `pesticides.needs_watering_in` override these per product (set in SQL).
   Areas fade after 7 and 30 days; a red dashed outline means the re-entry
   interval hasn't passed.
-- Range buttons (7 Days / 30 Days / Year / All) and a Products filter pick
-  what's shown; History lists the areas with acres and zooms to one. Export /
-  Import GeoJSON for GIS.
+- Range buttons (7d / 30d / 6 mo / Year / All / Custom from–to dates) and a
+  Products filter pick what's shown; History lists the areas with acres and
+  zooms to one. Export / Import GeoJSON for GIS.
+- **Mark All Watered In** (supervisors only, under the map; enforced by
+  `POST /api/spray-areas/watered-in`): after rain, marks every area of a
+  product that needs watering in (Cleantraxx, or `needs_watering_in`) as
+  watered in — all dates, not just the range shown; future-dated areas are
+  left alone.
 - Works with no signal: areas are kept on the device and sync when back online
   (`PUT` / `DELETE /api/spray-areas/:id`, `GET /api/spray-areas?since=`); the
   chip at the top shows Synced / waiting / failed. Newer edits win.
