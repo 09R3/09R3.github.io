@@ -39,6 +39,10 @@ let _overviewRange       = localStorage.getItem('scadaOverviewRange') || '24h';
 let _overviewCustomStart = localStorage.getItem('scadaOverviewCustomStart') || '';
 let _overviewCustomEnd   = localStorage.getItem('scadaOverviewCustomEnd') || '';
 let _overviewCharts  = new Map();   // groupKey → Chart instance
+// Plant page Steps section: its range starts as the Overview's range each time
+// a plant is opened, and can be changed there without touching the Overview.
+let _stepsRange = '24h', _stepsCustomStart = '', _stepsCustomEnd = '';
+let _stepsLoadGen = 0;
 let _overviewLoadGen = 0;           // cancel stale loads on range change
 
 function destroyOverviewCharts() {
@@ -787,6 +791,7 @@ function renderScadaOverview() {
         <div data-ov-revmode="${escHtml(g.a.influxSite)}" style="font-size:0.72rem;font-weight:700;color:#ef4444;margin-bottom:3px${revMode ? '' : ';display:none'}">(Reverse Mode)</div>
         <div style="display:flex;gap:0;align-items:flex-start">${sides}${bldgTempColHtml(g)}</div>
         <div style="font-size:0.7rem;color:var(--text-dim);margin-top:3px" data-ov-flow="${escHtml(g.key)}">${flowLinesHtml(g)}</div>
+        ${stepLineHtml(g)}
       </div>
       <div style="flex:0 0 38%;border-left:1px solid var(--border);position:relative;min-height:88px">
         <canvas data-ov-plant="${g.key}" style="position:absolute;inset:0;width:100%;height:100%"></canvas>
@@ -836,6 +841,32 @@ function dwrTitleHtml(g) {
   const total = vals.every(v => v != null) ? vals.reduce((a, b) => a + b, 0) : null;
   return ` <span style="font-weight:500;font-size:0.8rem;color:var(--accent)"
     data-ov-dwr="${escHtml(paths.join(','))}" data-ov-dwr-unit="${escHtml(comp.unit || '')}">— DWR ${total == null ? '—' : total.toFixed(1)} ${escHtml(comp.unit || '')}</span>`;
+}
+
+// ── Flow steps (A plants) ─────────────────────────────────────────────────────
+// Skid.Seq is the active flow step (0 = none, 1–5); step n's flow is Skid.Flw(n+1).
+const SCADA_STEPS = [1, 2, 3, 4, 5];
+const scadaStepSeqPath  = site => `${site.influxSite}.Skid.Seq`;
+const scadaStepFlowPath = (site, n) => `${site.influxSite}.Skid.Flw${n + 1}`;
+const scadaHasSteps     = site => /A$/.test(site.influxSite);
+function scadaStepNow(site) {
+  const v = scadaVal(scadaStepSeqPath(site));
+  return v == null || isNaN(Number(v)) ? null : Math.round(Number(v));
+}
+// "Current Step: 3" under the overview card's flow line
+function stepLineHtml(g) {
+  if (!scadaHasSteps(g.a)) return '';
+  const n = scadaStepNow(g.a);
+  return `<div style="font-size:0.7rem;color:var(--text-dim)">Current Step:&nbsp;<strong data-ov-step="${escHtml(g.a.influxSite)}">${n == null ? '—' : n}</strong></div>`;
+}
+function fmtStepFlow(v) {
+  return v == null || isNaN(Number(v)) ? '—' : Number(v).toLocaleString('en-US', { maximumFractionDigits: 1 });
+}
+// 2h 05m / 45m / 0m
+function fmtStepTime(sec) {
+  const mins = Math.round((sec || 0) / 60);
+  const h = Math.floor(mins / 60), m = mins % 60;
+  return h ? `${h}h ${String(m).padStart(2, '0')}m` : `${m}m`;
 }
 
 // Building-temp column (right side of the readings block) — one row per site in the group.
@@ -927,6 +958,11 @@ function patchScadaOverview() {
   body.querySelectorAll('[data-ov-flow]').forEach(elm => {
     const g = flowGroups.find(x => x.key === elm.dataset.ovFlow);
     if (g) elm.innerHTML = flowLinesHtml(g);
+  });
+  body.querySelectorAll('[data-ov-step]').forEach(elm => {
+    const site = scadaSiteByInflux(elm.dataset.ovStep);
+    const n = site ? scadaStepNow(site) : null;
+    elm.textContent = n == null ? '—' : n;
   });
   body.querySelectorAll('[data-ov-revmode]').forEach(elm => {
     const site = _scadaConfig?.sites.find(s => s.influxSite === elm.dataset.ovRevmode);
@@ -1027,6 +1063,9 @@ function openScadaPlant(groupKey) {
   destroyOverviewCharts();
   if (_scadaChart) { _scadaChart.destroy(); _scadaChart = null; }
   setPanelNav(el('screen-scada'), () => showScadaTab('overview'), 'SCADA – ' + g.name);
+  _stepsRange = _overviewRange;
+  _stepsCustomStart = _overviewCustomStart;
+  _stepsCustomEnd   = _overviewCustomEnd;
   renderScadaPlantDetail(g);
 }
 
@@ -1103,6 +1142,7 @@ function renderScadaPlantDetail(g) {
       <div class="scada-flow-totals" data-flow-group="${escHtml(g.key)}">${detailFlowBtnsHtml(g)}</div>
     </div>
     ${sensorSection}
+    ${stepsSectionHtml(g)}
     <div class="scada-section-hdr">Pumps</div>
     <div class="scada-pump-grid">${pumpCards}</div>
     <div class="scada-section-hdr" id="scada-chart-hdr">Tap a tile or pump to view its trend</div>
@@ -1138,6 +1178,8 @@ function renderScadaPlantDetail(g) {
   el('scada-body').querySelectorAll('[data-selectable]').forEach(tile =>
     tile.addEventListener('click', () => selectScadaDetailTag(tile)));
 
+  wireStepsSection(g);
+
   el('scada-body').querySelectorAll('[data-flow-site]').forEach(btn => {
     btn.addEventListener('click', () => {
       el('scada-body').querySelectorAll('.selected').forEach(x => x.classList.remove('selected'));
@@ -1153,6 +1195,77 @@ function renderScadaPlantDetail(g) {
       drawScadaFlowChart(el('scada-chart-canvas'), g, detailRangeArg(), _scadaDetailFlowSite);
     });
   });
+}
+
+// Steps section on the plant page: one tile per step with its flow (Skid.Flw2–6),
+// the active step (Skid.Seq) highlighted, and how long each step was active over
+// the section's range. Tapping a tile charts that step's flow like a sensor tile.
+function stepsSectionHtml(g) {
+  const site = g.a;
+  if (!scadaHasSteps(site)) return '';
+  const now = scadaStepNow(site);
+  const tiles = SCADA_STEPS.map(n => {
+    const path = scadaStepFlowPath(site, n);
+    return `<div class="scada-sensor-tile scada-step-tile${now === n ? ' active' : ''}" data-step="${n}"
+        data-step-site="${escHtml(site.influxSite)}" data-scada-tag="${escHtml(path)}" data-selectable>
+      <div class="scada-sensor-label">Step ${n}</div>
+      <div class="scada-sensor-value" data-step-flow="${escHtml(path)}">${fmtStepFlow(scadaVal(path))}</div>
+      <div class="scada-sensor-unit">cfs</div>
+      <div class="scada-step-time" data-step-time="${n}">…</div>
+    </div>`;
+  }).join('');
+  return `<div class="scada-steps-head">
+      <div class="scada-section-hdr" style="margin:0">Steps</div>
+      <span class="scada-steps-sub" id="scada-steps-sub"></span>
+    </div>
+    <div class="seg-group scada-steps-range" id="scada-steps-range">${scadaRangeBtnsHtml(_stepsRange)}</div>
+    ${scadaCustomRangeHtml(_stepsCustomStart, _stepsCustomEnd, 'scada-steps', _stepsRange !== 'custom')}
+    <div class="scada-step-grid">${tiles}</div>
+    <div class="scada-steps-note" id="scada-steps-note"></div>`;
+}
+
+function wireStepsSection(g) {
+  if (!el('scada-steps-range')) return;
+  el('scada-steps-range').querySelectorAll('.seg-btn').forEach(b =>
+    b.addEventListener('click', () => {
+      el('scada-steps-range').querySelectorAll('.seg-btn').forEach(x => x.classList.toggle('active', x === b));
+      _stepsRange = b.dataset.range;
+      el('scada-steps-custom').classList.toggle('hidden', _stepsRange !== 'custom');
+      if (_stepsRange !== 'custom') loadStepTimes(g);
+      else el('scada-steps-sub').textContent = 'Pick a custom range, then Apply';
+    }));
+  el('scada-steps-apply').addEventListener('click', () => {
+    _stepsCustomStart = el('scada-steps-from').value;
+    _stepsCustomEnd   = el('scada-steps-to').value;
+    loadStepTimes(g);
+  });
+  loadStepTimes(g);
+}
+
+async function loadStepTimes(g) {
+  const gen = ++_stepsLoadGen;
+  const custom = _stepsRange === 'custom';
+  const timeEls = el('scada-body').querySelectorAll('[data-step-time]');
+  const sub = el('scada-steps-sub'), note = el('scada-steps-note');
+  if (custom && (!_stepsCustomStart || !_stepsCustomEnd)) {
+    timeEls.forEach(e => { e.textContent = '—'; });
+    if (sub) sub.textContent = 'Pick a custom range';
+    return;
+  }
+  timeEls.forEach(e => { e.textContent = '…'; });
+  if (sub) sub.textContent = `Time active · ${custom ? 'custom range' : 'last ' + _stepsRange}`;
+  const qs = scadaRangeQS(custom ? { start: _stepsCustomStart, end: _stepsCustomEnd } : _stepsRange);
+  try {
+    const r = await api('GET', `/api/scada/steps?site=${encodeURIComponent(g.a.influxSite)}&${qs}`);
+    if (gen !== _stepsLoadGen || !el('scada-steps-note')) return;
+    const secs = r.seconds || {};
+    timeEls.forEach(e => { e.textContent = fmtStepTime(secs[e.dataset.stepTime]); });
+    note.textContent = secs['0'] ? `No step active: ${fmtStepTime(secs['0'])}` : '';
+  } catch {
+    if (gen !== _stepsLoadGen) return;
+    timeEls.forEach(e => { e.textContent = '—'; });
+    if (note) note.textContent = 'Failed to load.';
+  }
 }
 
 function detailRangeArg() {
@@ -1226,6 +1339,13 @@ function patchScadaPlantDetail() {
     const [influx, p] = elm.dataset.scadaCfs.split('|');
     const site = scadaSiteByInflux(influx);
     if (site) elm.innerHTML = pumpRatedCfs(site, p).html;
+  });
+  body.querySelectorAll('[data-step-flow]').forEach(elm => {
+    elm.textContent = fmtStepFlow(scadaVal(elm.dataset.stepFlow));
+  });
+  body.querySelectorAll('[data-step]').forEach(tile => {
+    const site = scadaSiteByInflux(tile.dataset.stepSite);
+    tile.classList.toggle('active', !!site && scadaStepNow(site) === Number(tile.dataset.step));
   });
   const flowEl = body.querySelector('[data-flow-group]');
   if (flowEl) {

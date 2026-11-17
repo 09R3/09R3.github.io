@@ -162,10 +162,44 @@ Both scripts are `set -e`, so any failing step aborts the run.
 | 4/5 | `rm -rf _source` | Clone is discarded; the image is the artifact. |
 | 5/5 | `docker run --detach --restart unless-stopped --network host --env-file .env -v $UPLOADS_SHARE:/app/uploads` | Prints the URL and log command. |
 
+### 4.2a Safe deploy (`deploy-check.sh`)
+
+`deploy-check.sh` sits next to `deploy.sh` (e.g. `/opt/appdata/watermark/`)
+and reads its folder, branch, container/image names, `HOST_PORT` and
+`UPLOADS_SHARE` from it. It does not touch `.env`.
+
+```bash
+bash /opt/appdata/watermark/deploy-check.sh
+```
+
+1. Shows the settings and asks to continue.
+2. Checks GitHub (required), the npm registry, and the Node 22 base image in
+   the order of `BASE_SOURCES`: Google's mirror (`mirror.gcr.io`), Docker Hub,
+   Amazon (`public.ecr.aws`), then any of those already on the server. The
+   build gets the one it found via `--build-arg BASE_IMAGE=…` and uses the
+   classic builder, so it doesn't contact the registry again.
+3. If the base image or npm can't be had, offers to **reuse the current
+   image's libraries**: the new code is copied on top of the running image.
+   Only allowed when `package-lock.json` is unchanged; otherwise it stops.
+4. Builds `IMAGE:new` while the old container keeps running. A failed build
+   stops here with nothing changed.
+5. Tags the running image `IMAGE:previous`, swaps containers, and waits up to
+   40 s for `Database connected`. If it doesn't appear, offers to roll back to
+   `IMAGE:previous`.
+
+The container is published with `-p HOST_PORT:PORT` (PORT from `.env`,
+default 4000). If your `deploy.sh` sets other `PUBLISH_ARGS` (a Docker
+network, extra ports), change `PUBLISH_ARGS` in `deploy-check.sh` to match.
+
 ### 4.3 What ends up in the image
 
 `Dockerfile` copies only `package.json`, `package-lock.json`, `server.js`,
 `scada-config.json` and `public/`, then `npm ci --omit=dev`.
+
+The base image is `ARG BASE_IMAGE`, defaulting to Google's mirror of Docker
+Hub (`mirror.gcr.io/library/node:22-alpine`) because Docker Hub times out
+from the deploy server. Plain `docker build` / `deploy.sh` use the mirror
+too; pass `--build-arg BASE_IMAGE=node:22-alpine` to go straight to Docker Hub.
 
 Consequently **`db/migrations/` is not in the image** and is never executed at
 runtime. Those 17 numbered SQL files are historical/manual — see §6.
