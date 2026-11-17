@@ -81,7 +81,7 @@ ask "Continue with these settings?" y || fail "Cancelled."
 # ── 1. Connection checks ──────────────────────────────────────────────────────
 echo ""
 echo "[1/5] Checking connections..."
-reachable "https://github.com" && ok "GitHub" || fail "Can't reach GitHub — the new code can't be downloaded."
+reachable "www.github.com" && ok "GitHub" || fail "Can't reach GitHub — the new code can't be downloaded."
 
 NPM_OK=0
 reachable "https://registry.npmjs.org/" && { ok "npm registry (libraries)"; NPM_OK=1; } || warn "npm registry unreachable"
