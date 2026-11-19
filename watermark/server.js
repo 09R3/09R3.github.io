@@ -151,6 +151,9 @@ async function scadaGetHistory(tagPath, rangeOpts) {
   const qApi = getInfluxQuery();
   if (!qApi) throw new Error('InfluxDB not configured');
   const isStatus = /\.(Run|Fail|Enable)$/.test(tagPath);
+  // Status bits: max (any "on" in the window shows). Skid.Seq is a step number,
+  // so averaging would invent steps in between — take the window's last value.
+  const aggFn = isStatus ? 'max' : /\.Skid\.Seq$/.test(tagPath) ? 'last' : 'mean';
   let rangeClause, every;
   if (typeof rangeOpts === 'object') {
     const s = new Date(rangeOpts.start); const e = new Date(rangeOpts.end);
@@ -166,7 +169,7 @@ async function scadaGetHistory(tagPath, rangeOpts) {
     from(bucket: "${INFLUX_BUCKET}")
       |> ${rangeClause}
       |> filter(fn: (r) => r._measurement == "plc_tags" and r.tag == "${tagPath}" and r._field == "value")
-      |> aggregateWindow(every: ${every}, fn: ${isStatus ? 'max' : 'mean'}, createEmpty: false)`;
+      |> aggregateWindow(every: ${every}, fn: ${aggFn}, createEmpty: false)`;
   const points = [];
   for await (const { values, tableMeta } of qApi.iterateRows(flux)) {
     const row = tableMeta.toObject(values);
@@ -6986,6 +6989,64 @@ app.put('/api/settings/running-wells', requireAuth, requireRole(...SUPERVISOR_RO
   } catch (err) {
     handleErr(res, err);
   }
+});
+
+// ── Time Off Settings ─────────────────────────────────────────────────────────
+// Who HR → Time Off Request emails go to: supervisor/admin user ids kept in
+// app_settings 'time_off_recipients'. Supervisor level picks them in Settings;
+// every user can read the resolved addresses, since the request form needs them.
+const TIME_OFF_KEY   = 'time_off_recipients';
+const TIME_OFF_ROLES = ['supervisor', 'admin'];
+
+async function timeOffSelectedIds() {
+  const { rows } = await pool.query('SELECT value FROM app_settings WHERE key = $1', [TIME_OFF_KEY]);
+  try {
+    const ids = rows.length ? JSON.parse(rows[0].value) : [];
+    return Array.isArray(ids) ? ids.map(Number).filter(Number.isInteger) : [];
+  } catch { return []; }
+}
+
+app.get('/api/settings/time-off', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
+  try {
+    const selected = new Set(await timeOffSelectedIds());
+    const { rows } = await pool.query(
+      `SELECT user_id, username, full_name, role, email FROM users
+       WHERE role = ANY($1) AND is_active IS NOT FALSE
+       ORDER BY COALESCE(full_name, username)`, [TIME_OFF_ROLES]);
+    res.json({ people: rows.map(u => ({ ...u, selected: selected.has(u.user_id) })) });
+  } catch (err) { handleErr(res, err); }
+});
+
+app.put('/api/settings/time-off', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
+  const { user_ids } = req.body;
+  if (!Array.isArray(user_ids)) return res.status(400).json({ error: 'user_ids must be an array' });
+  const ids = [...new Set(user_ids.map(Number))];
+  if (!ids.every(Number.isInteger)) return res.status(400).json({ error: 'user_ids must be numbers' });
+  try {
+    // Only active supervisors/admins can be picked
+    const { rows } = await pool.query(
+      `SELECT user_id FROM users WHERE user_id = ANY($1) AND role = ANY($2) AND is_active IS NOT FALSE`,
+      [ids, TIME_OFF_ROLES]);
+    if (rows.length !== ids.length) return res.status(400).json({ error: 'Only active supervisors and admins can be picked' });
+    await pool.query(
+      `INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+      [TIME_OFF_KEY, JSON.stringify(ids)]);
+    res.json({ ok: true });
+  } catch (err) { handleErr(res, err); }
+});
+
+// Addresses for the request email: picked people who are still active
+// supervisors/admins and have an email on their user record.
+app.get('/api/time-off/recipients', requireAuth, async (req, res) => {
+  try {
+    const ids = await timeOffSelectedIds();
+    const { rows } = await pool.query(
+      `SELECT email FROM users
+       WHERE user_id = ANY($1) AND role = ANY($2) AND is_active IS NOT FALSE AND COALESCE(email, '') <> ''
+       ORDER BY COALESCE(full_name, username)`, [ids, TIME_OFF_ROLES]);
+    res.json({ emails: rows.map(r => r.email.trim()) });
+  } catch (err) { handleErr(res, err); }
 });
 
 // ── Water Orders ─────────────────────────────────────────────────────────────

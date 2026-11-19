@@ -1070,6 +1070,9 @@ input[type="date"].ctrl-input { min-height: 44px; }
   height: 100%; background: var(--accent); border-radius: 2px;
 }
 
+.to-person-meta { display: block; font-size: 0.78rem; color: var(--text-dim); }
+.to-no-email { opacity: .55; }
+
 .settings-menu-label {
   font-size: 0.72rem;
   font-weight: 600;
@@ -4155,6 +4158,21 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
   .scada-sensor-grid { grid-template-columns: 1fr 1fr; gap: 6px; }
   .scada-sensor-tile { padding: 8px 6px; }
 }
+
+/* ── Trends: collapsible tag groups ──────────────────────────────────────── */
+.scada-trend-groups { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+.scada-trend-group { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
+.scada-trend-group > summary {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 10px 12px; min-height: 44px; cursor: pointer; list-style: none;
+  font-size: 0.82rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dim);
+}
+.scada-trend-group > summary::-webkit-details-marker { display: none; }
+.scada-trend-group > summary::after { content: '\25B8'; font-size: 0.8rem; transition: transform var(--transition); }
+.scada-trend-group[open] > summary::after { transform: rotate(90deg); }
+.scada-trend-group > summary > span:first-child { flex: 1; }
+.scada-trend-count { font-size: 0.72rem; font-weight: 600; text-transform: none; letter-spacing: 0; color: var(--accent); }
+.scada-trend-group .scada-trend-chips { padding: 0 10px 10px; margin: 0; }
 
 /* ── Flow steps (plant page) ─────────────────────────────────────────────── */
 .scada-steps-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin: 16px 0 8px; flex-wrap: wrap; }

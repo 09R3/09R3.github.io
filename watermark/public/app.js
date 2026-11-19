@@ -724,11 +724,13 @@ function onLogin(user) {
   // Reset all role-gated elements before applying role
   el('nav-reports-item').classList.add('hidden');
   el('dash-reports-tile').classList.add('hidden');
+  el('settings-tools-section').classList.add('hidden');
   el('settings-admin-section').classList.add('hidden');
   el('settings-widgets-section').classList.add('hidden');
   if (isSupervisorLevel(user.role)) {
     el('nav-reports-item').classList.remove('hidden');
     el('dash-reports-tile').classList.remove('hidden');
+    el('settings-tools-section').classList.remove('hidden');
     el('settings-admin-section').classList.remove('hidden');
     el('settings-widgets-section').classList.remove('hidden');
   }
@@ -1508,6 +1510,7 @@ function onLogout() {
   // Hide role-gated elements so next login starts clean
   el('nav-reports-item').classList.add('hidden');
   el('dash-reports-tile').classList.add('hidden');
+  el('settings-tools-section').classList.add('hidden');
   el('settings-admin-section').classList.add('hidden');
   el('settings-widgets-section').classList.add('hidden');
   sprayOnLogout();
@@ -7649,6 +7652,7 @@ const SETTINGS_PANEL_NAMES = {
   bugreports:       'Bug Reports',
   usermgmt:         'User Management',
   chargecodes:      'Charge Code Settings',
+  'time-off':       'Time Off Settings',
 };
 function openSettingsPanel(panelId) {
   el('settings-main').classList.add('hidden');
@@ -7666,6 +7670,7 @@ function openSettingsPanel(panelId) {
   if (panelId === 'gps-selector')   initGPSSelectorSettingsPanel();
   if (panelId === 'scada-roles')    initScadaRolesPanel();
   if (panelId === 'chargecodes')    initChargeCodesSettings();
+  if (panelId === 'time-off')       initTimeOffSettingsPanel();
   if (panelId === 'appinfo') {
     const ls = localStorage.getItem('watermark-last-sync');
     el('settings-last-sync').textContent = ls ? new Date(ls).toLocaleString() : 'Never';
@@ -8513,6 +8518,42 @@ el('rw-settings-save-btn').addEventListener('click', async () => {
     await api('PUT', '/api/settings/running-wells', { well_ids: checked, pool_extras });
     showToast('Running wells saved');
     loadDashboardStats();
+  } catch (err) {
+    showToast(err.message, 'error');
+  } finally {
+    _save();
+  }
+});
+
+// ── Time Off Settings: who time-off request emails go to ─────────────────────
+async function initTimeOffSettingsPanel() {
+  const list = el('to-settings-list');
+  list.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const { people } = await api('GET', '/api/settings/time-off');
+    if (!people.length) { list.innerHTML = '<div class="placeholder-msg">No supervisors or admins found.</div>'; return; }
+    list.innerHTML = people.map(u => {
+      const email = (u.email || '').trim();
+      return `<div class="rw-well-row to-person-row">
+        <label class="rw-well-label${email ? '' : ' to-no-email'}">
+          <input type="checkbox" class="to-person-cb" data-id="${u.user_id}" ${u.selected && email ? 'checked' : ''} ${email ? '' : 'disabled'}>
+          <span>${escHtml(u.full_name || u.username)}
+            <span class="to-person-meta">${escHtml(ROLE_LABELS[u.role] || u.role)} · ${email ? escHtml(email) : 'no email on account'}</span></span>
+        </label>
+      </div>`;
+    }).join('');
+  } catch (err) {
+    list.innerHTML = '<div class="placeholder-msg">Failed to load.</div>';
+  }
+}
+
+el('to-settings-save-btn').addEventListener('click', async () => {
+  const user_ids = [...document.querySelectorAll('.to-person-cb:checked')].map(cb => Number(cb.dataset.id));
+  const _save = beginSave(el('to-settings-save-btn'));
+  try {
+    await api('PUT', '/api/settings/time-off', { user_ids });
+    _timeOffRecipients = null;   // the request form re-reads them
+    showToast(user_ids.length ? 'Time off recipients saved' : 'Saved — no one will be pre-filled on time off requests');
   } catch (err) {
     showToast(err.message, 'error');
   } finally {
@@ -15594,7 +15635,17 @@ el('cc-split-variant').addEventListener('click', e => {
   renderCCSplitResult();
 });
 
+// Who the request email goes to (Settings → Time Off Settings). Fetched when the
+// panel opens so the mail app can be opened straight from the Send tap.
+let _timeOffRecipients = null;
+async function loadTimeOffRecipients() {
+  try { _timeOffRecipients = (await api('GET', '/api/time-off/recipients')).emails || []; }
+  catch { /* offline: keep what we had */ }
+  return _timeOffRecipients;
+}
+
 function initTimeOffPanel() {
+  loadTimeOffRecipients();
   const today = new Date().toLocaleDateString('en-CA');
   torRanges = [];
   el('tor-start').value  = today;
@@ -15683,7 +15734,7 @@ el('tor-start').addEventListener('change', () => {
 
 el('tor-add-range-btn').addEventListener('click', addTorRange);
 
-el('tor-submit-btn').addEventListener('click', () => {
+el('tor-submit-btn').addEventListener('click', async () => {
   const notes    = el('tor-notes').value.trim();
   const errEl    = el('tor-error');
   errEl.classList.add('hidden');
@@ -15709,7 +15760,11 @@ el('tor-submit-btn').addEventListener('click', () => {
 
   if (notes) body += `Notes:\n${notes}\n`;
 
-  const to = 'syoder@kcwa.com,mansolabehere@kcwa.com';
+  // Recipients come from Settings → Time Off Settings. If none are set the
+  // email still opens, with the To line left for the sender to fill in.
+  const emails = _timeOffRecipients ?? await loadTimeOffRecipients() ?? [];
+  if (!emails.length) showToast('No time off recipients set — add them in the email, or ask a supervisor to pick them in Settings', 'warn');
+  const to = emails.filter(e => /^[^\s,?&#]+@[^\s,?&#]+$/.test(e)).join(',');
   window.location.href = `mailto:${to}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 });
 

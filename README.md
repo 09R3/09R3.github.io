@@ -82,7 +82,13 @@ Flow steps (A plants): each overview card shows **Current Step** from
 Sensors with Step 1–5, each showing its flow (`Skid.Flw2`–`Skid.Flw6`), the
 active step highlighted, and how long each step was active over the section's
 range (starts as the Overview's range; `/api/scada/steps` samples Seq onto a
-grid, carrying the last value forward). Tapping a step charts its flow.
+grid, carrying the last value forward). Tapping a step charts when it was
+active (a shaded band from the `Skid.Seq` history), and the stats under any
+chart give on/off series as time on and % of the span.
+
+Trends groups the chips into collapsible **Sensors**, **Steps** and **Pumps**
+sections (open/closed is remembered; each shows how many are selected). Steps
+can be overlaid on sensors and pumps — up to 8 series at once.
 
 **Reports** — vehicle mileage and last service, KF completion, maintenance
 issues, PM grids, piezometers, canal readings (daily, and monthly per turnout
@@ -245,6 +251,13 @@ their total without it.
 
 **HR** — time-off requests and a charge-code reference with a split calculator
 that breaks hours across codes to the nearest quarter hour.
+
+Time off requests open an email addressed to the people picked in **Settings →
+Admin → Time Off Settings** (any supervisor-level user can change the list;
+only active supervisors and admins with an email on their user account can be
+picked). Stored as user ids in `app_settings` key `time_off_recipients`; no
+addresses are kept in the code. With nobody picked, the email opens with the
+To line blank.
 
 The Breakdown tab leads with the **Field Staff Time Charging Guide** (updated
 Oct 21, 2026), shown as Charge Code | % of Time | Hours with the guide's rules

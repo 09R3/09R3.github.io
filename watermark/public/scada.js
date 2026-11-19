@@ -209,6 +209,19 @@ function scadaSelFmt(v, extra = 0) {
   return Number(v).toFixed(dp + extra);
 }
 
+// Seconds an on/off (stepped) series was on between lo and hi: each point's
+// value holds until the next point. null when the series has no points there.
+function scadaOnSeconds(dataset, lo, hi) {
+  const pts = (dataset.data || []).filter(p => p?.x != null && p.y != null);
+  let on = 0, any = false;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = Math.max(pts[i].x, lo), b = Math.min(pts[i + 1].x, hi);
+    if (b <= a) continue;
+    any = true;
+    if (pts[i].y >= 0.5) on += (b - a) / 1000;
+  }
+  return any ? on : null;
+}
 function scadaSelStatsEl(canvas) {
   const wrap = canvas.closest('.scada-chart-wrap') || canvas.parentElement;
   let box = wrap.nextElementSibling;
@@ -249,9 +262,19 @@ function renderScadaSelStats(canvas, chart) {
     }));
     if (!isFinite(lo)) { box.innerHTML = '<div class="scada-sel-hint">No data to summarise.</div>'; return; }
   }
-  const rows = [];
+  const rows = [], onRows = [];
   chart.data.datasets.forEach(ds => {
-    if (ds.yAxisID === 'yStatus') return;      // on/off band — stats not meaningful
+    if (ds.yAxisID === 'yStatus') {            // on/off band — report time on instead
+      const on = scadaOnSeconds(ds, lo, hi);
+      if (on == null) return;
+      const pct = hi > lo ? Math.round(on * 1000 / (hi - lo) * 100) : 0;
+      onRows.push(`<tr>
+        <td><span class="scada-sel-swatch" style="background:${escHtml(String(ds.borderColor))}"></span>${escHtml(ds.label || '')}</td>
+        <td class="report-num"><strong>${fmtStepTime(on)}</strong></td>
+        <td class="report-num">${pct}%</td>
+      </tr>`);
+      return;
+    }
     const s = scadaSelStats(ds, lo, hi);
     if (!s) return;
     rows.push(`<tr>
@@ -264,7 +287,7 @@ function renderScadaSelStats(canvas, chart) {
       <td class="report-num">${s.n}</td>
     </tr>`);
   });
-  if (!rows.length) { box.innerHTML = '<div class="scada-sel-hint">No data points in that span.</div>'; return; }
+  if (!rows.length && !onRows.length) { box.innerHTML = '<div class="scada-sel-hint">No data points in that span.</div>'; return; }
 
   const fmtT = ms => new Date(ms).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
   const mins = Math.round((hi - lo) / 60000);
@@ -275,11 +298,14 @@ function renderScadaSelStats(canvas, chart) {
       ${sel ? '<button class="btn btn-secondary btn-xs scada-sel-clear">Clear</button>'
             : '<span class="scada-sel-span">drag to measure a span</span>'}
     </div>
-    <div class="scada-sel-tablewrap"><table class="report-table scada-sel-table">
+    ${rows.length ? `<div class="scada-sel-tablewrap"><table class="report-table scada-sel-table">
       <thead><tr><th>Series</th><th class="report-num">High</th><th class="report-num">Low</th>
         <th class="report-num">Diff</th><th class="report-num">Std Dev</th>
         <th class="report-num">Mean</th><th class="report-num">Pts</th></tr></thead>
-      <tbody>${rows.join('')}</tbody></table></div>`;
+      <tbody>${rows.join('')}</tbody></table></div>` : ''}
+    ${onRows.length ? `<div class="scada-sel-tablewrap"><table class="report-table scada-sel-table">
+      <thead><tr><th>On / Active</th><th class="report-num">Time</th><th class="report-num">Of span</th></tr></thead>
+      <tbody>${onRows.join('')}</tbody></table></div>` : ''}`;
   // Clearing reverts to whole-chart stats rather than blanking the panel.
   box.querySelector('.scada-sel-clear')?.addEventListener('click', () => {
     chart.$scadaSel = null;
@@ -358,9 +384,10 @@ async function drawScadaChart(canvas, tagPaths, range) {
     await loadScadaVendor();
     const qs = scadaRangeQS(range);
 
-    // Separate regular tag paths from synthetic computed-sum tags
-    const regPaths = tagPaths.filter(p => !p.startsWith('~sum~'));
+    // Separate regular tag paths from synthetic computed-sum and step tags
+    const regPaths = tagPaths.filter(p => !p.startsWith('~sum~') && !p.startsWith('~step~'));
     const sumTags  = tagPaths.filter(p =>  p.startsWith('~sum~'));
+    const stepTags = tagPaths.filter(p =>  p.startsWith('~step~'));
 
     let series = {};
     if (regPaths.length === 1) {
@@ -382,14 +409,28 @@ async function drawScadaChart(canvas, tagPaths, range) {
       series[sumTag] = [...pts.entries()].sort((a, b) => a[0] < b[0] ? -1 : 1);
     }
 
+    // Step tags: 1 while the plant's Skid.Seq equals that step, else 0. One
+    // Seq history per plant serves all of its steps.
+    if (stepTags.length) {
+      const seqPaths = [...new Set(stepTags.map(t => parseStepTag(t)?.seqPath).filter(Boolean))];
+      const r = await api('GET', `/api/scada/history?tags=${encodeURIComponent(seqPaths.join(','))}&${qs}`);
+      const s = r.series || {};
+      for (const t of stepTags) {
+        const st = parseStepTag(t);
+        if (st) series[t] = (s[st.seqPath] || []).map(([ts, v]) => [ts, Math.round(Number(v)) === st.n ? 1 : 0]);
+      }
+    }
+
     if (_scadaChartKey !== key) return; // selection changed while fetching
 
     const c = scadaThemeColors();
     const single = tagPaths.length === 1;
-    const anyStatus = tagPaths.some(p => SCADA_STATUS_RE.test(p));
+    const isStatusTag = p => SCADA_STATUS_RE.test(p) || p.startsWith('~step~');
+    const anyStatus = tagPaths.some(isStatusTag);
+    const allStatus = tagPaths.every(isStatusTag);
     const datasets = tagPaths.map((p, i) => {
       const color = SCADA_COLORS[i % SCADA_COLORS.length];
-      const status = SCADA_STATUS_RE.test(p);
+      const status = isStatusTag(p);
       if (status) {
         // On/off state: filled stepped band on a hidden 0–1 axis so it reads as a
         // solid bar while running (empty when off) and never distorts the level scale.
@@ -429,7 +470,8 @@ async function drawScadaChart(canvas, tagPaths, range) {
         scales: {
           x: { type: 'time', time: { tooltipFormat: 'MMM d, h:mm a' },
                ticks: { color: c.dim, maxTicksLimit: 8, autoSkip: true }, grid: { color: c.grid } },
-          y: { ticks: { color: c.dim }, grid: { color: c.grid } },
+          // Only on/off bands plotted → the value axis has nothing to show
+          y: { display: !allStatus, ticks: { color: c.dim }, grid: { color: c.grid } },
           ...(anyStatus ? { yStatus: { display: false, min: 0, max: 1, position: 'right' } } : {}),
         },
       },
@@ -630,6 +672,13 @@ function parseSumTag(tag) {
   return { label: parts[0], unit: parts[1] || '', paths: (parts[2] || '').split(',').filter(Boolean) };
 }
 
+// Synthetic step tag "~step~CVC_PP7A~3": step 3 active (Skid.Seq == 3) at PP 7A.
+const scadaStepTag = (site, n) => `~step~${site.influxSite}~${n}`;
+function parseStepTag(tag) {
+  const m = /^~step~([A-Za-z0-9_]+)~([1-9])$/.exec(tag);
+  return m ? { site: m[1], n: Number(m[2]), seqPath: `${m[1]}.Skid.Seq` } : null;
+}
+
 // Skid-level status helpers (A plants expose these tags).
 function siteReverseMode(site) { return isOn(scadaVal(`${site.influxSite}.Skid.FRmode`)); }
 function siteOverridesDisabled(site) { return isOn(scadaVal(`${site.influxSite}.Skid.DSDis`)); }
@@ -706,6 +755,11 @@ function scadaSiteByInflux(influx) { return _scadaConfig.sites.find(s => s.influ
 
 // Human-readable label for any tag path (including synthetic ~sum~ tags).
 function scadaTagLabel(path) {
+  if (path.startsWith('~step~')) {
+    const st = parseStepTag(path);
+    const site = st ? scadaSiteByInflux(st.site) : null;
+    return st ? `${site ? shortSiteName(site) : st.site} · Step ${st.n}` : path;
+  }
   if (path.startsWith('~sum~')) {
     const parsed = parseSumTag(path);
     if (!parsed) return path;
@@ -1199,7 +1253,7 @@ function renderScadaPlantDetail(g) {
 
 // Steps section on the plant page: one tile per step with its flow (Skid.Flw2–6),
 // the active step (Skid.Seq) highlighted, and how long each step was active over
-// the section's range. Tapping a tile charts that step's flow like a sensor tile.
+// the section's range. Tapping a tile charts when that step was active.
 function stepsSectionHtml(g) {
   const site = g.a;
   if (!scadaHasSteps(site)) return '';
@@ -1207,7 +1261,7 @@ function stepsSectionHtml(g) {
   const tiles = SCADA_STEPS.map(n => {
     const path = scadaStepFlowPath(site, n);
     return `<div class="scada-sensor-tile scada-step-tile${now === n ? ' active' : ''}" data-step="${n}"
-        data-step-site="${escHtml(site.influxSite)}" data-scada-tag="${escHtml(path)}" data-selectable>
+        data-step-site="${escHtml(site.influxSite)}" data-scada-tag="${escHtml(scadaStepTag(site, n))}" data-selectable>
       <div class="scada-sensor-label">Step ${n}</div>
       <div class="scada-sensor-value" data-step-flow="${escHtml(path)}">${fmtStepFlow(scadaVal(path))}</div>
       <div class="scada-sensor-unit">cfs</div>
@@ -1287,7 +1341,9 @@ function selectScadaDetailTag(tile) {
 
   // Update section header to show what's charted
   const isSensor = tile.classList.contains('scada-sensor-tile');
-  const label = isSensor
+  const label = path.startsWith('~step~')
+    ? `${tile.querySelector('.scada-sensor-label')?.textContent || 'Step'} — when active (shaded)`
+    : isSensor
     ? (tile.querySelector('.scada-sensor-label')?.textContent || 'Sensor')
     : ('Pump ' + (tile.querySelector('.scada-pump-label')?.textContent?.replace('Pump ', '') || '?') + ' RPM');
   const hdr = el('scada-chart-hdr');
@@ -1399,7 +1455,7 @@ function renderScadaTrends() {
     <div class="scada-plant-pills" id="scada-trend-pills">
       ${groups.map(g => `<button class="scada-plant-pill${g.key===_scadaTrendPlant?' active':''}" data-plant="${g.key}">PP ${g.num}</button>`).join('')}
     </div>
-    <div class="scada-trend-chips" id="scada-trend-chips"></div>
+    <div class="scada-trend-groups" id="scada-trend-chips"></div>
     <div class="scada-chart-controls">
       <div class="seg-group" id="scada-trend-range">${scadaRangeBtnsHtml(_scadaTrendRange)}</div>
     </div>
@@ -1431,7 +1487,7 @@ function renderScadaTrends() {
   el('scada-trend-clear').addEventListener('click', () => {
     _scadaTrendTags.clear();
     localStorage.setItem('scadaTrendTags', '[]');
-    el('scada-trend-chips').querySelectorAll('.scada-trend-chip').forEach(c => c.classList.remove('selected'));
+    buildScadaTrendChips();   // clears the highlights and the group counts
     if (_scadaChart) { _scadaChart.destroy(); _scadaChart = null; }
     const empty = el('scada-trend-empty');
     if (empty) empty.classList.remove('hidden');
@@ -1452,7 +1508,14 @@ function renderScadaTrends() {
   refreshScadaTrendChart();
 }
 
-// Chips for all tags (sensors + pump run + computed sums) in the selected plant (A + B).
+// Chips for the selected plant (A + B), in collapsible groups so the screen
+// isn't a wall of buttons: Sensors (incl. computed sums), Steps (A plants: when
+// each flow step was active) and Pumps (run state). Open/closed is remembered.
+let _scadaTrendOpen = (() => {
+  try { const v = JSON.parse(localStorage.getItem('scadaTrendOpen')); return new Set(Array.isArray(v) ? v : ['sensors']); }
+  catch { return new Set(['sensors']); }
+})();
+
 function buildScadaTrendChips() {
   const wrap = el('scada-trend-chips');
   if (!wrap) return;
@@ -1460,26 +1523,39 @@ function buildScadaTrendChips() {
   if (!g) { wrap.innerHTML = ''; return; }
 
   const sites = g.b ? [g.a, g.b] : [g.a];
-  const paths = sites.flatMap(site => {
-    const sensors = site.sensors || _scadaConfig.defaultSensors || [];
-    return [
-      ...sensors.map(s => scadaSensorPath(site, s)),
-      ...site.pumps.map(p => scadaPumpPath(site, p, 'MTR.Cntrl.Run')),
-    ];
-  });
-
-  // Add synthetic computed-sum chips (e.g. DWR Total)
+  const sensorTags = sites.flatMap(site =>
+    (site.sensors || _scadaConfig.defaultSensors || []).map(s => scadaSensorPath(site, s)));
+  // Synthetic computed-sum chips (e.g. DWR Total)
   const computedTags = sites.flatMap(site =>
     (site.computedSensors || []).map(c => {
       const cpaths = c.sum.map(s => scadaSensorPath(site, s));
       return `~sum~${c.label}~${c.unit||''}~${cpaths.join(',')}`;
-    })
-  );
+    }));
+  const stepTags = sites.filter(scadaHasSteps).flatMap(site => SCADA_STEPS.map(n => scadaStepTag(site, n)));
+  const pumpTags = sites.flatMap(site => site.pumps.map(p => scadaPumpPath(site, p, 'MTR.Cntrl.Run')));
 
-  const allTags = [...paths, ...computedTags];
-  wrap.innerHTML = allTags.map(tag =>
-    `<button class="scada-trend-chip${_scadaTrendTags.has(tag)?' selected':''}" data-trend-tag="${escHtml(tag)}">
-      ${escHtml(scadaTagLabel(tag))}</button>`).join('');
+  const groups = [
+    { key: 'sensors', label: 'Sensors', tags: [...sensorTags, ...computedTags] },
+    { key: 'steps',   label: 'Steps',   tags: stepTags },
+    { key: 'pumps',   label: 'Pumps',   tags: pumpTags },
+  ].filter(x => x.tags.length);
+
+  const countText = tags => {
+    const n = tags.filter(t => _scadaTrendTags.has(t)).length;
+    return n ? `${n} selected` : '';
+  };
+  wrap.innerHTML = groups.map(grp => `
+    <details class="scada-trend-group" data-group="${grp.key}"${_scadaTrendOpen.has(grp.key) ? ' open' : ''}>
+      <summary><span>${grp.label}</span><span class="scada-trend-count">${countText(grp.tags)}</span></summary>
+      <div class="scada-trend-chips">${grp.tags.map(tag =>
+        `<button class="scada-trend-chip${_scadaTrendTags.has(tag)?' selected':''}" data-trend-tag="${escHtml(tag)}">
+          ${escHtml(scadaTagLabel(tag))}</button>`).join('')}</div>
+    </details>`).join('');
+
+  wrap.querySelectorAll('details').forEach(d => d.addEventListener('toggle', () => {
+    if (d.open) _scadaTrendOpen.add(d.dataset.group); else _scadaTrendOpen.delete(d.dataset.group);
+    localStorage.setItem('scadaTrendOpen', JSON.stringify([..._scadaTrendOpen]));
+  }));
 
   wrap.querySelectorAll('[data-trend-tag]').forEach(chip =>
     chip.addEventListener('click', () => {
@@ -1493,6 +1569,9 @@ function buildScadaTrendChips() {
       }
       localStorage.setItem('scadaTrendTags', JSON.stringify([..._scadaTrendTags]));
       chip.classList.toggle('selected', _scadaTrendTags.has(path));
+      const det = chip.closest('details');
+      const grp = groups.find(x => x.key === det.dataset.group);
+      det.querySelector('.scada-trend-count').textContent = countText(grp.tags);
       refreshScadaTrendChart();
     }));
 }
