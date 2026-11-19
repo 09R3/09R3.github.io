@@ -15697,6 +15697,7 @@ function renderTorRanges() {
     listEl.classList.add('hidden');
     listEl.innerHTML = '';
     el('tor-submit-btn').disabled = true;
+    el('tor-send-hint').classList.remove('hidden');
     return;
   }
   listEl.classList.remove('hidden');
@@ -15717,6 +15718,7 @@ function renderTorRanges() {
     });
   });
   el('tor-submit-btn').disabled = false;
+  el('tor-send-hint').classList.add('hidden');
 }
 
 document.querySelectorAll('[data-hr-panel]').forEach(btn => {
@@ -15764,7 +15766,8 @@ el('tor-submit-btn').addEventListener('click', async () => {
   // email still opens, with the To line left for the sender to fill in.
   const emails = _timeOffRecipients ?? await loadTimeOffRecipients() ?? [];
   if (!emails.length) showToast('No time off recipients set — add them in the email, or ask a supervisor to pick them in Settings', 'warn');
-  const to = emails.filter(e => /^[^\s,?&#]+@[^\s,?&#]+$/.test(e)).join(',');
+  // ", " between addresses (space sent as %20) so the To line reads cleanly
+  const to = emails.filter(e => /^[^\s,?&#]+@[^\s,?&#]+$/.test(e)).join(',%20');
   window.location.href = `mailto:${to}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 });
 

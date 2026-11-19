@@ -3766,6 +3766,8 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
 }
 .tor-add-row .form-group { margin-bottom: 0; }
 .tor-add-btn { flex-shrink: 0; white-space: nowrap; }
+#tor-submit-btn:disabled { opacity: .45; cursor: not-allowed; }
+.tor-send-hint { font-size: 0.8rem; color: var(--text-dim); margin-top: 6px; }
 .tor-ranges-list {
   margin-bottom: 14px;
   border: 1px solid var(--border);
