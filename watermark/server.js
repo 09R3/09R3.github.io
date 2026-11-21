@@ -5250,7 +5250,8 @@ async function dsWaterOrder(day, canal) {
       const r = byKey.get(lk);
       const ordered = r ? dsNum(r.cfs) : null;
       const ids = (links[lk] || []).map(Number);
-      if (ordered == null && !ids.length) continue;   // nothing ordered, nothing to compare
+      // Only lines on that day's order (a CFS entered — 0 counts: ordered off)
+      if (ordered == null) continue;
       const reads = ids.map(id => ({ id, name: nameOf.get(id) || `#${id}`, row: latest.get(id) }));
       const readCfs = reads.filter(x => x.row && x.row.cfs != null);
       const actual = readCfs.length ? readCfs.reduce((s, x) => s + x.row.cfs, 0) : null;
@@ -5407,6 +5408,9 @@ async function dailySummaryView(day) {
     data = await buildDailySummary(day);
     state = day === today ? (hhmm < DS_SNAPSHOT_TIME ? 'preview' : 'open') : 'live';
   }
+  // Copies saved before lines were limited to the day's order still list every
+  // linked line — show only lines with an ordered CFS
+  if (data.order?.lines) data = { ...data, order: { ...data.order, lines: data.order.lines.filter(l => l.ordered != null) } };
   const diff = row?.snapshot ? dsDiff(row.snapshot, data) : { marks: {}, removed: [] };
   // After the day is final, note if readings have been edited since
   let changed_since_final = 0;

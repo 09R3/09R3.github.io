@@ -112,8 +112,10 @@ and pump hours per plant, with anything out of the ordinary listed at the top.
   previous reading.
 - Water order vs read: each order line is linked to the canal structure(s)
   that carry it (**Link Turnouts** in the report; stored in `app_settings`
-  `water_order_structure_links`). The latest CFS read that day at the linked
-  structures is compared with the ordered CFS; flagged beyond max(5 cfs, 10%).
+  `water_order_structure_links`). Only lines on that day's order are listed
+  (a CFS entered; 0 counts, so a line ordered off but still flowing shows up).
+  The latest CFS read that day at the linked structures is compared with the
+  ordered CFS; flagged beyond max(5 cfs, 10%).
 - Pumping plants: pump hours that day and the Pumping Plant report's meter
   checks (backwards, over 24 h/day, unusually high).
 - Thresholds are the `DS_*` constants at the top of the Daily Summary section
