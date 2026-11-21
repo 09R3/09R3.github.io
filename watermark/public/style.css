@@ -4532,3 +4532,29 @@ input.dwr-dtw-nm { color: var(--text-dim); font-style: italic; }
 .spray-h-meta { grid-column: 2; color: var(--text-dim); font-size: 0.82rem; }
 .spray-file-btn { display: flex; align-items: center; justify-content: center; cursor: pointer; }
 .spray-visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* ── Daily Summary report ───────────────────────────────────────────────── */
+.ds-card .report-section-title { margin-top: 14px; }
+.ds-state { font-size: 0.8rem; color: var(--text-dim); text-align: center; margin-bottom: 10px; }
+.ds-state-preview { color: var(--yellow); }
+.ds-flags { border-radius: var(--radius-sm); padding: 8px 10px; margin-bottom: 8px; font-size: 0.85rem; }
+.ds-flags-ok { background: rgba(46,125,50,0.12); color: var(--green); font-weight: 600; }
+.ds-flags-warn { background: rgba(245,127,23,0.12); border: 1px solid var(--yellow); }
+.ds-flags-head { font-weight: 700; color: var(--yellow); margin-bottom: 4px; }
+.ds-flags ul { margin: 0; padding-left: 18px; }
+.ds-flags li { margin: 2px 0; line-height: 1.35; }
+.ds-counts { font-size: 0.78rem; color: var(--text-dim); }
+.ds-table td { vertical-align: top; }
+.ds-flag-row td { background: rgba(245,127,23,0.10); }
+.ds-flag-line td { font-size: 0.76rem; color: var(--yellow); padding-top: 0; }
+.ds-dim { font-size: 0.75rem; color: var(--text-dim); }
+.ds-mark { font-size: 0.68rem; font-weight: 700; color: var(--accent); white-space: nowrap; }
+.ds-note { font-size: 0.74rem; color: var(--text-dim); margin-top: 10px; line-height: 1.4; }
+.ds-sec-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.ds-link-row { padding: 8px 0; border-bottom: 1px solid var(--border); }
+.ds-link-label { font-weight: 600; font-size: 0.88rem; margin-bottom: 4px; }
+.ds-link-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.ds-link-chip { display: inline-flex; align-items: center; gap: 4px; background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 999px; padding: 3px 4px 3px 10px; font-size: 0.8rem; }
+.ds-link-chip button { background: none; border: 0; color: var(--text-dim); font-size: 1rem; cursor: pointer; padding: 0 4px; min-height: 28px; }
+.ds-link-add { flex: 1 1 180px; min-width: 0; max-width: 280px; padding-top: 6px; padding-bottom: 6px; font-size: 0.85rem; }

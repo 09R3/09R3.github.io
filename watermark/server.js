@@ -5044,6 +5044,492 @@ app.get('/api/reports/pumping-plant/export', async (req, res) => {
   } catch (err) { handleErr(res, err); }
 });
 
+// ── Daily Summary report ─────────────────────────────────────────────────────
+// One page per day for supervisors: canal readings, staff gauges, well readings,
+// water order vs what was read, and pumping plant hours — with anything out of
+// the ordinary flagged. The server saves a copy at 3:30 PM (the "snapshot") and
+// a final copy just after midnight; viewing the day shows the latest data with
+// anything added, changed or removed since 3:30 marked.
+//
+// Totalizer check (canal turnouts and wells): acre-feet since the previous
+// reading vs what the recorded CFS would give over that time (average of the
+// two readings' CFS × hours / 12.1). Flagged when it went backwards, or when it
+// is off by more than DS_TOTALIZER_TOL and by more than DS_TOTALIZER_MIN_AF.
+const DS_TOTALIZER_TOL    = 0.25;   // 25 %
+const DS_TOTALIZER_MIN_AF = 1;      // ignore differences under 1 AF
+const DS_TOTALIZER_MAX_DAYS = 7;    // longer gaps: flow likely changed, no estimate
+const DS_GAUGE_JUMP_FT    = 1;      // staff gauge change from previous reading
+const DS_ORDER_TOL_CFS    = 5;      // water order vs read: flag beyond max(5 cfs, 10 %)
+const DS_ORDER_TOL_PCT    = 0.10;
+const DS_SNAPSHOT_TIME    = '15:30';
+const DS_LINKS_KEY        = 'water_order_structure_links';
+
+pool.query(`
+  CREATE TABLE IF NOT EXISTS daily_summaries (
+    day          DATE PRIMARY KEY,
+    snapshot     JSONB,
+    snapshot_at  TIMESTAMPTZ,
+    final        JSONB,
+    final_at     TIMESTAMPTZ
+  )
+`).catch(err => console.error('Migration error (daily_summaries):', err.message));
+
+const dsNum = v => (v == null || v === '' || isNaN(Number(v)) ? null : Number(v));
+const dsRound = (v, d = 2) => (v == null ? null : Math.round(v * 10 ** d) / 10 ** d);
+const dsTs = (date, time) => `${date}T${String(time || '00:00:00').slice(0, 8)}`;
+const dsHours = (a, b) => (Date.parse(b + 'Z') - Date.parse(a + 'Z')) / 3600000;
+function dsMd(date) {
+  const [, m, d] = String(date).split('-');
+  return `${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][Number(m) - 1]} ${Number(d)}`;
+}
+
+// AF since the previous reading vs the AF the flow implies. Returns the row's
+// numbers plus any flags (text).
+function dsTotalizerCheck(cur, prev) {
+  const out = { af_since: null, expected_af: null, hours: null, prev_at: null, flags: [] };
+  if (cur.totalizer == null || !prev || prev.totalizer == null) return out;
+  out.prev_at = prev.ts;
+  out.hours = dsHours(prev.ts, cur.ts);
+  out.af_since = cur.totalizer - prev.totalizer;
+  if (out.af_since < -1e-6) {
+    out.flags.push(`Totalizer went backwards (${prev.totalizer.toFixed(2)} → ${cur.totalizer.toFixed(2)} AF)`);
+    return out;
+  }
+  if (!(out.hours > 0) || out.hours > DS_TOTALIZER_MAX_DAYS * 24) return out;
+  const flows = [prev.cfs, cur.cfs].filter(v => v != null);
+  if (!flows.length) return out;
+  const cfs = flows.reduce((a, b) => a + b, 0) / flows.length;
+  out.expected_af = cfs * out.hours / 12.1;
+  const diff = out.af_since - out.expected_af;
+  if (Math.abs(diff) > DS_TOTALIZER_MIN_AF && Math.abs(diff) > out.expected_af * DS_TOTALIZER_TOL) {
+    out.flags.push(diff > 0
+      ? `Totalizer higher than flow suggests: ${out.af_since.toFixed(2)} AF vs ~${out.expected_af.toFixed(2)} AF expected`
+      : `Totalizer lower than flow suggests: ${out.af_since.toFixed(2)} AF vs ~${out.expected_af.toFixed(2)} AF expected`);
+  }
+  return out;
+}
+
+async function dsCanal(day) {
+  const { rows } = await pool.query(`
+    SELECT r.reading_id, r.structure_id, cs.structure_name,
+           to_char(r.reading_date, 'YYYY-MM-DD') AS d, r.reading_time::text AS t,
+           COALESCE(r.instantaneous_flow_cfs, r.derived_flow_cfs) AS cfs,
+           COALESCE(r.adjusted_af, r.totalizer_reading_af) AS totalizer,
+           (r.adjusted_af IS NOT NULL) AS corrected, r.entered_by, r.notes,
+           p.d AS pd, p.t AS pt, p.cfs AS pcfs, p.totalizer AS ptotal
+    FROM readings_canal r
+    JOIN canal_structures cs ON cs.structure_id = r.structure_id
+    LEFT JOIN LATERAL (
+      SELECT to_char(q.reading_date, 'YYYY-MM-DD') AS d, q.reading_time::text AS t,
+             COALESCE(q.instantaneous_flow_cfs, q.derived_flow_cfs) AS cfs,
+             COALESCE(q.adjusted_af, q.totalizer_reading_af) AS totalizer
+      FROM readings_canal q
+      WHERE q.structure_id = r.structure_id
+        AND COALESCE(q.adjusted_af, q.totalizer_reading_af) IS NOT NULL
+        AND (q.reading_date + COALESCE(q.reading_time, TIME '00:00'), q.reading_id)
+          < (r.reading_date + COALESCE(r.reading_time, TIME '00:00'), r.reading_id)
+      ORDER BY q.reading_date DESC, q.reading_time DESC NULLS LAST, q.reading_id DESC
+      LIMIT 1
+    ) p ON true
+    WHERE r.reading_date = $1
+    ORDER BY cs.sort_order NULLS LAST, cs.structure_name, r.reading_time NULLS LAST, r.reading_id`, [day]);
+  return rows.map(r => {
+    const cur = { ts: dsTs(r.d, r.t), cfs: dsNum(r.cfs), totalizer: dsNum(r.totalizer) };
+    const prev = r.ptotal != null ? { ts: dsTs(r.pd, r.pt), cfs: dsNum(r.pcfs), totalizer: dsNum(r.ptotal) } : null;
+    const chk = dsTotalizerCheck(cur, prev);
+    return {
+      key: `canal:${r.reading_id}`, reading_id: r.reading_id, structure_id: r.structure_id,
+      name: r.structure_name, time: r.t ? r.t.slice(0, 5) : '', cfs: cur.cfs, totalizer: cur.totalizer,
+      corrected: r.corrected, af_since: dsRound(chk.af_since), expected_af: dsRound(chk.expected_af),
+      prev_at: chk.prev_at, hours: dsRound(chk.hours, 1), entered_by: r.entered_by || '', notes: r.notes || '',
+      flags: chk.flags,
+    };
+  });
+}
+
+async function dsWells(day) {
+  const { rows } = await pool.query(`
+    SELECT r.reading_id, r.well_id, w.common_name, w.area,
+           to_char(r.reading_date, 'YYYY-MM-DD') AS d, r.reading_time::text AS t, r.on_off,
+           r.flow_cfs AS cfs, r.totalizer, r.entered_by, r.notes,
+           p.d AS pd, p.t AS pt, p.cfs AS pcfs, p.totalizer AS ptotal
+    FROM readings_well r
+    JOIN wells w ON w.well_id = r.well_id
+    LEFT JOIN LATERAL (
+      SELECT to_char(q.reading_date, 'YYYY-MM-DD') AS d, q.reading_time::text AS t,
+             q.flow_cfs AS cfs, q.totalizer
+      FROM readings_well q
+      WHERE q.well_id = r.well_id AND q.totalizer IS NOT NULL
+        AND (q.reading_date + COALESCE(q.reading_time, TIME '00:00'), q.reading_id)
+          < (r.reading_date + COALESCE(r.reading_time, TIME '00:00'), r.reading_id)
+      ORDER BY q.reading_date DESC, q.reading_time DESC NULLS LAST, q.reading_id DESC
+      LIMIT 1
+    ) p ON true
+    WHERE r.reading_date = $1
+    ORDER BY w.area NULLS LAST, w.common_name, r.reading_time NULLS LAST, r.reading_id`, [day]);
+  return rows.map(r => {
+    const cur = { ts: dsTs(r.d, r.t), cfs: dsNum(r.cfs), totalizer: dsNum(r.totalizer) };
+    const prev = r.ptotal != null ? { ts: dsTs(r.pd, r.pt), cfs: dsNum(r.pcfs), totalizer: dsNum(r.ptotal) } : null;
+    const chk = dsTotalizerCheck(cur, prev);
+    return {
+      key: `well:${r.reading_id}`, reading_id: r.reading_id, well_id: r.well_id,
+      name: r.common_name, area: r.area || '', time: r.t ? r.t.slice(0, 5) : '', on_off: r.on_off || '',
+      cfs: cur.cfs, totalizer: cur.totalizer, af_since: dsRound(chk.af_since), expected_af: dsRound(chk.expected_af),
+      prev_at: chk.prev_at, hours: dsRound(chk.hours, 1), entered_by: r.entered_by || '', notes: r.notes || '',
+      flags: chk.flags,
+    };
+  });
+}
+
+async function dsGauges(day) {
+  const { rows } = await pool.query(`
+    SELECT g.reading_id, g.pond_id, g.outlet_id,
+           COALESCE(p.name, o.name) AS name, COALESCE(pl.name, ol.name) AS location,
+           COALESCE(p.max_gauge, o.max_gauge) AS max_gauge,
+           g.reading_time::text AS t, g.level_ft, g.entered_by, g.notes,
+           to_char(prev.reading_date, 'YYYY-MM-DD') AS pd, prev.level_ft AS plevel
+    FROM readings_staff_gauge g
+    LEFT JOIN ponds p          ON p.pond_id = g.pond_id
+    LEFT JOIN pond_locations pl ON pl.location_id = p.location_id
+    LEFT JOIN river_outlets o  ON o.outlet_id = g.outlet_id
+    LEFT JOIN pond_locations ol ON ol.location_id = o.location_id
+    LEFT JOIN LATERAL (
+      SELECT q.reading_date, q.level_ft FROM readings_staff_gauge q
+      WHERE (q.pond_id = g.pond_id OR q.outlet_id = g.outlet_id)
+        AND (q.reading_date + COALESCE(q.reading_time, TIME '00:00'), q.reading_id)
+          < (g.reading_date + COALESCE(g.reading_time, TIME '00:00'), g.reading_id)
+      ORDER BY q.reading_date DESC, q.reading_time DESC NULLS LAST, q.reading_id DESC
+      LIMIT 1
+    ) prev ON true
+    WHERE g.reading_date = $1
+    ORDER BY COALESCE(pl.sort_order, ol.sort_order) NULLS LAST, COALESCE(p.sort_order, o.sort_order) NULLS LAST,
+             name, g.reading_time NULLS LAST`, [day]);
+  return rows.map(r => {
+    const level = dsNum(r.level_ft), prevLevel = dsNum(r.plevel), max = dsNum(r.max_gauge);
+    const change = level != null && prevLevel != null ? level - prevLevel : null;
+    const flags = [];
+    if (level != null && max != null && level > max) flags.push(`Above max gauge (${level.toFixed(2)} > ${max.toFixed(2)} ft)`);
+    if (change != null && Math.abs(change) > DS_GAUGE_JUMP_FT)
+      flags.push(`Changed ${change > 0 ? '+' : ''}${change.toFixed(2)} ft since ${dsMd(r.pd)}`);
+    return {
+      key: `gauge:${r.reading_id}`, reading_id: r.reading_id, name: r.name || '?', location: r.location || '',
+      time: r.t ? r.t.slice(0, 5) : '', level, prev_level: prevLevel, prev_date: r.pd, change: dsRound(change),
+      max_gauge: max, entered_by: r.entered_by || '', notes: r.notes || '', flags,
+    };
+  });
+}
+
+async function dsLinks() {
+  const { rows } = await pool.query('SELECT value FROM app_settings WHERE key = $1', [DS_LINKS_KEY]);
+  try {
+    const v = rows.length ? JSON.parse(rows[0].value) : {};
+    return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+  } catch { return {}; }
+}
+
+// Ordered CFS (that day's water order) vs the CFS read that day at the canal
+// structures each order line is linked to (latest reading of the day per
+// structure, summed). Lines are linked in the report (supervisors).
+async function dsWaterOrder(day, canal) {
+  const { rows: [order] } = await pool.query(
+    `SELECT order_id FROM water_orders WHERE order_date = $1`, [day]);
+  const links = await dsLinks();
+  if (!order) return { has_order: false, lines: [] };
+  const { rows } = await pool.query(
+    `SELECT section, line_key, cfs, time_of_change, comments FROM water_order_lines WHERE order_id = $1`, [order.order_id]);
+  const byKey = new Map(rows.map(r => [`${r.section}:${r.line_key}`, r]));
+  const latest = new Map();   // structure_id → latest canal row that day
+  for (const c of canal) latest.set(c.structure_id, c);   // canal rows are in time order
+  const { rows: names } = await pool.query('SELECT structure_id, structure_name FROM canal_structures');
+  const nameOf = new Map(names.map(n => [n.structure_id, n.structure_name]));
+  const lines = [];
+  for (const [section, defs] of Object.entries(WATER_ORDER_SECTIONS)) {
+    for (const def of defs) {
+      if (def.computed) continue;
+      const lk = `${section}:${def.key}`;
+      const r = byKey.get(lk);
+      const ordered = r ? dsNum(r.cfs) : null;
+      const ids = (links[lk] || []).map(Number);
+      if (ordered == null && !ids.length) continue;   // nothing ordered, nothing to compare
+      const reads = ids.map(id => ({ id, name: nameOf.get(id) || `#${id}`, row: latest.get(id) }));
+      const readCfs = reads.filter(x => x.row && x.row.cfs != null);
+      const actual = readCfs.length ? readCfs.reduce((s, x) => s + x.row.cfs, 0) : null;
+      const flags = [];
+      if (!ids.length) {
+        // not linked — shown, not flagged
+      } else if (!readCfs.length) {
+        if ((ordered || 0) > 0) flags.push('Ordered but not read today');
+      } else {
+        const diff = actual - (ordered || 0);
+        if (Math.abs(diff) > Math.max(DS_ORDER_TOL_CFS, Math.abs(ordered || 0) * DS_ORDER_TOL_PCT))
+          flags.push(`Read ${actual.toFixed(1)} cfs vs ${(ordered || 0).toFixed(1)} ordered (${diff > 0 ? '+' : ''}${diff.toFixed(1)})`);
+      }
+      lines.push({
+        key: `order:${lk}`, line: lk, section, label: def.label, ordered,
+        time_of_change: r?.time_of_change || '', linked: ids.length > 0,
+        structures: reads.map(x => ({ name: x.name, cfs: x.row?.cfs ?? null, time: x.row?.time || '' })),
+        actual: dsRound(actual, 1), diff: actual != null ? dsRound(actual - (ordered || 0), 1) : null, flags,
+      });
+    }
+  }
+  return { has_order: true, lines };
+}
+
+// Pump hours run that day at each plant, plus the Pumping Plant report's meter
+// checks (went backwards, over 24 h/day, unusually high) for that day.
+async function dsPlants(day) {
+  const { rows: sites } = await pool.query(`
+    SELECT DISTINCT s.site_id::text AS site_id, s.site_name::text AS site_name
+    FROM pump_positions pp JOIN sites s ON s.site_id::text = pp.site_id::text
+    WHERE COALESCE(s.site_name, '') !~* 'service.?truck'`);
+  const out = [];
+  for (const s of sites) {
+    try {
+      const r = await buildPumpingPlantReport({ siteId: s.site_id }, { range: 'custom', start: day, end: day });
+      if (!r || r.error || r.notFound) continue;
+      const pumps = r.equipment.filter(e => e.type === 'pump');
+      const issues = r.equipment.flatMap(e => e.issues.filter(i => i.kind !== 'stale').map(i => `${e.label}: ${i.text}`));
+      out.push({
+        key: `plant:${s.site_id}`, name: String(s.site_name).replace('Site', 'Plant'),
+        pump_hours: dsRound(r.pump_hours_total, 1),
+        pumps_run: pumps.filter(e => (e.total || 0) > 0.05).length, pumps: pumps.length,
+        readings: r.equipment.reduce((n, e) => n + (e.readings || 0), 0),
+        flags: issues,
+      });
+    } catch (err) {
+      console.error('Daily summary plant', s.site_id, err.message);
+    }
+  }
+  out.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+  return out;
+}
+
+async function buildDailySummary(day) {
+  const canal  = await dsCanal(day);
+  const gauges = await dsGauges(day);
+  const wells  = await dsWells(day);
+  const order  = await dsWaterOrder(day, canal);
+  const plants = await dsPlants(day);
+  const { rows: [{ now }] } = await pool.query(`SELECT to_char(LOCALTIMESTAMP, 'YYYY-MM-DD"T"HH24:MI:SS') AS now`);
+  return { day, built_at: now, canal, gauges, wells, order, plants };
+}
+
+// Pacific "now" (the pool runs in America/Los_Angeles)
+async function dsNow() {
+  const { rows: [r] } = await pool.query(
+    `SELECT to_char(CURRENT_DATE, 'YYYY-MM-DD') AS today,
+            to_char(CURRENT_DATE - 1, 'YYYY-MM-DD') AS yesterday,
+            to_char(LOCALTIME, 'HH24:MI') AS hhmm`);
+  return r;
+}
+
+// Every minute: at/after 3:30 PM save today's snapshot once; after midnight
+// save yesterday's final copy once. ON CONFLICT / WHERE keep it to one write
+// even if two servers share the database.
+let _dsTicking = false;
+async function dailySummaryTick() {
+  if (_dsTicking) return;
+  _dsTicking = true;
+  try {
+    const { today, yesterday, hhmm } = await dsNow();
+    if (hhmm >= DS_SNAPSHOT_TIME) {
+      const { rows } = await pool.query('SELECT 1 FROM daily_summaries WHERE day = $1 AND snapshot IS NOT NULL', [today]);
+      if (!rows.length) {
+        const data = await buildDailySummary(today);
+        await pool.query(
+          `INSERT INTO daily_summaries (day, snapshot, snapshot_at) VALUES ($1, $2, NOW())
+           ON CONFLICT (day) DO UPDATE SET snapshot = EXCLUDED.snapshot, snapshot_at = NOW()
+           WHERE daily_summaries.snapshot IS NULL`, [today, JSON.stringify(data)]);
+        console.log(`Daily summary: saved 3:30 snapshot for ${today}`);
+      }
+    }
+    const { rows: y } = await pool.query('SELECT final FROM daily_summaries WHERE day = $1', [yesterday]);
+    if (!y.length || y[0].final == null) {
+      const data = await buildDailySummary(yesterday);
+      await pool.query(
+        `INSERT INTO daily_summaries (day, final, final_at) VALUES ($1, $2, NOW())
+         ON CONFLICT (day) DO UPDATE SET final = EXCLUDED.final, final_at = NOW()
+         WHERE daily_summaries.final IS NULL`, [yesterday, JSON.stringify(data)]);
+      console.log(`Daily summary: finalized ${yesterday}`);
+    }
+  } catch (err) {
+    if (!/does not exist/.test(err.message)) console.error('Daily summary tick:', err.message);
+  } finally {
+    _dsTicking = false;
+  }
+}
+setTimeout(dailySummaryTick, 15000);
+setInterval(dailySummaryTick, 60000);
+
+// What changed between two copies of the report, by row key: rows added,
+// changed (any shown value differs) or removed.
+const DS_SECTIONS = ['canal', 'gauges', 'wells', 'plants'];
+function dsRows(data) {
+  return [...DS_SECTIONS.flatMap(k => data[k] || []), ...((data.order && data.order.lines) || [])];
+}
+// Only a row's own entered values count as a change — not figures derived from
+// other readings (AF since last, previous level…), which move when an earlier
+// day is edited.
+const DS_DERIVED = ['flags', 'af_since', 'expected_af', 'hours', 'prev_at', 'prev_level', 'prev_date', 'change'];
+// Key order doesn't count: the saved copies come back from JSONB with their
+// keys reordered.
+function dsStable(v) {
+  if (Array.isArray(v)) return `[${v.map(dsStable).join(',')}]`;
+  if (v && typeof v === 'object') return `{${Object.keys(v).sort().map(k => `${JSON.stringify(k)}:${dsStable(v[k])}`).join(',')}}`;
+  return JSON.stringify(v ?? null);
+}
+function dsDiff(base, cur) {
+  const strip = r => dsStable(Object.fromEntries(Object.entries(r).filter(([k]) => !DS_DERIVED.includes(k))));
+  const before = new Map(dsRows(base).map(r => [r.key, strip(r)]));
+  const marks = {}, removed = [];
+  for (const r of dsRows(cur)) {
+    if (!before.has(r.key)) marks[r.key] = 'added';
+    else if (before.get(r.key) !== strip(r)) marks[r.key] = 'changed';
+  }
+  const curKeys = new Set(dsRows(cur).map(r => r.key));
+  for (const r of dsRows(base)) {
+    if (!curKeys.has(r.key) && !r.key.startsWith('order:') && !r.key.startsWith('plant:'))
+      removed.push(r.name ? `${r.name}${r.time ? ' ' + r.time : ''}` : r.key);
+  }
+  return { marks, removed };
+}
+
+// The report for one day, as shown: the final copy once the day is over (else
+// the live data), with changes since the 3:30 snapshot marked.
+async function dailySummaryView(day) {
+  const { today, hhmm } = await dsNow();
+  if (day > today) return { error: 'That day has not happened yet' };
+  const { rows: [row] } = await pool.query(
+    `SELECT snapshot, final, snapshot_at, final_at FROM daily_summaries WHERE day = $1`, [day]);
+  let data, state;
+  if (row?.final) { data = row.final; state = 'final'; }
+  else {
+    data = await buildDailySummary(day);
+    state = day === today ? (hhmm < DS_SNAPSHOT_TIME ? 'preview' : 'open') : 'live';
+  }
+  const diff = row?.snapshot ? dsDiff(row.snapshot, data) : { marks: {}, removed: [] };
+  // After the day is final, note if readings have been edited since
+  let changed_since_final = 0;
+  if (state === 'final') {
+    const live = await buildDailySummary(day);
+    const d = dsDiff(data, live);
+    changed_since_final = Object.keys(d.marks).filter(k => !k.startsWith('order:') && !k.startsWith('plant:')).length + d.removed.length;
+  }
+  const flagCount = dsRows(data).reduce((n, r) => n + (r.flags ? r.flags.length : 0), 0);
+  return {
+    ...data, state, flag_count: flagCount,
+    snapshot_at: row?.snapshot_at || null, final_at: row?.final_at || null,
+    marks: diff.marks, removed: diff.removed, changed_since_final,
+  };
+}
+
+function dsDayParam(q) {
+  const day = String(q.date || '');
+  return isValidIsoDate(day) ? day : null;
+}
+
+app.get('/api/reports/daily-summary', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
+  const day = dsDayParam(req.query);
+  if (!day) return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
+  try {
+    const v = await dailySummaryView(day);
+    if (v.error) return res.status(400).json({ error: v.error });
+    res.json(v);
+  } catch (err) { handleErr(res, err); }
+});
+
+// Order-line → canal structure links for "Water order vs actual"
+app.get('/api/reports/daily-summary/links', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
+  try {
+    const { rows: structures } = await pool.query(
+      `SELECT structure_id, structure_name FROM canal_structures
+       WHERE in_service IS NOT FALSE ORDER BY sort_order NULLS LAST, structure_name`);
+    const lines = Object.entries(WATER_ORDER_SECTIONS).flatMap(([section, defs]) =>
+      defs.filter(d => !d.computed).map(d => ({ line: `${section}:${d.key}`, section, label: d.label })));
+    res.json({ lines, structures, links: await dsLinks() });
+  } catch (err) { handleErr(res, err); }
+});
+
+app.put('/api/reports/daily-summary/links', requireAuth, requireRole(...SUPERVISOR_ROLES), async (req, res) => {
+  const links = req.body?.links;
+  if (!links || typeof links !== 'object' || Array.isArray(links)) return res.status(400).json({ error: 'links must be an object' });
+  const clean = {};
+  try {
+    const { rows } = await pool.query('SELECT structure_id FROM canal_structures');
+    const valid = new Set(rows.map(r => r.structure_id));
+    for (const [line, ids] of Object.entries(links)) {
+      const [section, key] = String(line).split(':');
+      if (!WATER_ORDER_KEYS[section] || !WATER_ORDER_KEYS[section].has(key)) return res.status(400).json({ error: `Unknown order line ${line}` });
+      if (!Array.isArray(ids)) return res.status(400).json({ error: 'Each line needs a list of structure ids' });
+      const list = [...new Set(ids.map(Number))];
+      if (!list.every(id => valid.has(id))) return res.status(400).json({ error: 'Unknown canal structure' });
+      if (list.length) clean[`${section}:${key}`] = list;
+    }
+    await pool.query(
+      `INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+      [DS_LINKS_KEY, JSON.stringify(clean)]);
+    res.json({ ok: true, links: clean });
+  } catch (err) { handleErr(res, err); }
+});
+
+app.get('/api/reports/daily-summary/export', async (req, res) => {
+  const { token } = req.query;
+  if (token) {
+    const t = downloadTokens.get(token);
+    if (!t || Date.now() > t.expires) return res.status(401).json({ error: 'Invalid or expired token' });
+    downloadTokens.delete(token);
+  } else {
+    const sessionUser = getSession(req.cookies?.fo_session);
+    if (!sessionUser) return res.status(401).json({ error: 'Unauthorized' });
+    if (!SUPERVISOR_ROLES.includes(sessionUser.role)) return res.status(403).json({ error: 'Forbidden' });
+  }
+  const day = dsDayParam(req.query);
+  if (!day) return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
+  try {
+    const v = await dailySummaryView(day);
+    if (v.error) return res.status(400).json({ error: v.error });
+    const mark = r => ({ added: 'Added after 3:30', changed: 'Changed after 3:30' }[v.marks[r.key]] || '');
+    const chk = r => (r.flags || []).join('; ');
+    const n = x => (x == null ? '' : x);
+    const wb = XLSX.utils.book_new();
+    const add = (name, aoa, cols) => {
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+      ws['!cols'] = cols.map(w => ({ wch: w }));
+      XLSX.utils.book_append_sheet(wb, ws, name);
+    };
+    const flags = dsRows(v).flatMap(r => (r.flags || []).map(f => [r.name || r.label, f]));
+    add('Summary', [
+      [`Daily Summary — ${day}`],
+      [{ final: 'Final', open: 'Open (updates until midnight)', preview: 'Preview (report is saved at 3:30 PM)', live: 'Built from current data' }[v.state] || v.state],
+      [`Canal readings: ${v.canal.length}`, `Staff gauges: ${v.gauges.length}`, `Well readings: ${v.wells.length}`],
+      [],
+      ['Flagged', 'Check'], ...(flags.length ? flags : [['None', '']]),
+      ...(v.removed.length ? [[], ['Removed after 3:30', v.removed.join('; ')]] : []),
+    ], [36, 90]);
+    add('Canal', [['Structure', 'Time', 'CFS', 'Totalizer (AF)', 'AF since last', 'Expected AF', 'Hours since last', 'Entered by', 'Notes', 'Check', 'After 3:30'],
+      ...v.canal.map(r => [r.name, r.time, n(r.cfs), n(r.totalizer) + (r.corrected ? ' (corrected)' : ''), n(r.af_since), n(r.expected_af), n(r.hours), r.entered_by, r.notes, chk(r), mark(r)])],
+      [30, 7, 8, 16, 12, 12, 10, 12, 30, 60, 18]);
+    add('Staff Gauges', [['Location', 'Pond / Outlet', 'Time', 'Level (ft)', 'Previous', 'Change', 'Max', 'Entered by', 'Notes', 'Check', 'After 3:30'],
+      ...v.gauges.map(r => [r.location, r.name, r.time, n(r.level), n(r.prev_level), n(r.change), n(r.max_gauge), r.entered_by, r.notes, chk(r), mark(r)])],
+      [18, 26, 7, 10, 10, 9, 8, 12, 30, 50, 18]);
+    add('Wells', [['Well', 'Area', 'Time', 'On/Off', 'CFS', 'Totalizer (AF)', 'AF since last', 'Expected AF', 'Hours since last', 'Entered by', 'Check', 'After 3:30'],
+      ...v.wells.map(r => [r.name, r.area, r.time, r.on_off, n(r.cfs), n(r.totalizer), n(r.af_since), n(r.expected_af), n(r.hours), r.entered_by, chk(r), mark(r)])],
+      [20, 10, 7, 7, 8, 14, 12, 12, 10, 12, 60, 18]);
+    add('Water Order', [['Line', 'Section', 'Ordered CFS', 'Read CFS', 'Difference', 'Linked structures', 'Check'],
+      ...v.order.lines.map(r => [r.label, r.section, n(r.ordered), n(r.actual), n(r.diff),
+        r.linked ? r.structures.map(s => `${s.name}${s.cfs != null ? ` ${s.cfs} cfs @ ${s.time}` : ' (not read)'}`).join('; ') : 'not linked', chk(r)])],
+      [36, 9, 12, 10, 11, 50, 50]);
+    add('Pumping Plants', [['Plant', 'Pump hours', 'Pumps run', 'Readings', 'Check'],
+      ...v.plants.map(r => [r.name, n(r.pump_hours), `${r.pumps_run}/${r.pumps}`, r.readings, chk(r)])],
+      [18, 11, 10, 10, 90]);
+    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="DailySummary_${day}.xlsx"`);
+    res.send(buf);
+  } catch (err) { handleErr(res, err); }
+});
+
 // ── Canal Readings — Monthly ────────────────────────────────────────────────
 // One row per day for each selected turnout / turn-in, from the last day of the
 // previous month (the starting point) to the end of the month, or to today for

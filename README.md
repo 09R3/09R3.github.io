@@ -95,6 +95,30 @@ issues, PM grids, piezometers, canal readings (daily, and monthly per turnout
 like the CVC turnout sheets), pond levels, well readings and pumping plant meter
 usage.
 
+**Daily Summary** (Reports → Daily Summary, supervisor level) is one page per
+day: canal readings, staff gauges, well readings, water order vs what was read,
+and pump hours per plant, with anything out of the ordinary listed at the top.
+
+- The server saves the day's report at **3:30 PM** and a **final** copy just
+  after midnight (`daily_summaries`; a one-minute timer in `server.js`). Until
+  midnight the report shows the latest readings with anything added or changed
+  after 3:30 marked, and readings deleted after 3:30 listed. A final day notes
+  if readings were edited after it was finalized.
+- Totalizer check (canal turnouts and wells): AF since the previous reading vs
+  what the CFS implies (average of the two readings' CFS × hours ÷ 12.1).
+  Flagged if it went backwards, or is off by more than 25% and 1 AF. No
+  estimate when the previous reading is more than 7 days back.
+- Staff gauges: flagged above their max gauge, or more than 1 ft from the
+  previous reading.
+- Water order vs read: each order line is linked to the canal structure(s)
+  that carry it (**Link Turnouts** in the report; stored in `app_settings`
+  `water_order_structure_links`). The latest CFS read that day at the linked
+  structures is compared with the ordered CFS; flagged beyond max(5 cfs, 10%).
+- Pumping plants: pump hours that day and the Pumping Plant report's meter
+  checks (backwards, over 24 h/day, unusually high).
+- Thresholds are the `DS_*` constants at the top of the Daily Summary section
+  in `server.js`. Export: CSV / Excel (one sheet per section) / PDF (one page).
+
 **Pumping Plant report** (Reports → Pumping Plant) shows what each plant's
 meters used over a range — pump hours, air compressor hours, PG&E kWh and power
 monitor kWh — laid out like the SCADA dashboard: plant pills, quick ranges

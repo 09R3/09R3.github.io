@@ -11655,7 +11655,7 @@ let vehicleReportType = 'mileage';
 let lastReportRows  = [];
 
 // ── Navigation ────────────────────────────────────────────────────────────────
-const ALL_REPORT_PANELS = ['vehicles','kf','maintenance','pms','piezometers','canal','ponds','wells','pp'];
+const ALL_REPORT_PANELS = ['daily','vehicles','kf','maintenance','pms','piezometers','canal','ponds','wells','pp'];
 
 function initReportsScreen() {
   el('report-main').classList.remove('hidden');
@@ -11663,6 +11663,7 @@ function initReportsScreen() {
 }
 
 const REPORT_PANEL_NAMES = {
+  daily:        'Daily Summary',
   vehicles:     'Vehicles',
   kf:           'KF Monthly',
   maintenance:  'Maintenance Issues',
@@ -11679,6 +11680,7 @@ function openReportPanel(cat) {
   el(`report-panel-${cat}`).classList.remove('hidden');
   setPanelNav(el('screen-reports'), closeReportPanel,
     'Reports - ' + (REPORT_PANEL_NAMES[cat] || cat));
+  if (cat === 'daily')       initDailySummaryPanel();
   if (cat === 'vehicles')    initVehicleReportPanel();
   if (cat === 'kf')          initKFReportPanel();
   if (cat === 'maintenance') initMaintenanceReportPanel();
@@ -11701,6 +11703,316 @@ el('screen-reports').addEventListener('click', e => {
   if (tile) openReportPanel(tile.dataset.reportCat);
 });
 // report-*-back buttons removed from HTML — navigation handled by setPanelNav()
+
+// ── Daily Summary ─────────────────────────────────────────────────────────────
+// One day's canal readings, staff gauges, well readings, water order vs read
+// and pumping plant hours, with anything out of the ordinary flagged. Built on
+// the server (buildDailySummary); the server saves a copy at 3:30 PM and a final
+// one after midnight, and marks what was added or changed after 3:30.
+let dsDay = null, lastDailySummary = null, _dsSeq = 0;
+const dsLocalDate = d => d.toLocaleDateString('en-CA');
+const DS_STATE = {
+  preview: 'Preview — the day’s report is saved at 3:30 PM',
+  open:    'Saved at 3:30 PM · updates until midnight',
+  final:   'Final',
+  live:    'No 3:30 copy for this day — built from current readings',
+};
+const DS_SECTION_NAMES = { canal: 'Canal', gauges: 'Staff Gauge', wells: 'Well', order: 'Water Order', plants: 'Pumping Plant' };
+
+function initDailySummaryPanel() {
+  if (!dsDay) dsDay = todayISO();
+  loadDailySummary();
+}
+
+function dsSetDay(day) {
+  const today = todayISO();
+  dsDay = day > today ? today : day;
+  loadDailySummary();
+}
+el('ds-prev').addEventListener('click', () => { const d = new Date(`${dsDay}T12:00`); d.setDate(d.getDate() - 1); dsSetDay(dsLocalDate(d)); });
+el('ds-next').addEventListener('click', () => { const d = new Date(`${dsDay}T12:00`); d.setDate(d.getDate() + 1); dsSetDay(dsLocalDate(d)); });
+el('ds-today').addEventListener('click', () => dsSetDay(todayISO()));
+el('ds-date').addEventListener('change', () => { if (el('ds-date').value) dsSetDay(el('ds-date').value); });
+
+async function loadDailySummary() {
+  const seq = ++_dsSeq;
+  el('ds-date').value = dsDay;
+  el('ds-date').max = todayISO();
+  el('ds-next').disabled = dsDay >= todayISO();
+  const out = el('ds-output');
+  out.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const data = await api('GET', `/api/reports/daily-summary?date=${dsDay}`);
+    if (seq !== _dsSeq) return;
+    lastDailySummary = data;
+    renderDailySummary(data);
+  } catch (err) {
+    if (seq !== _dsSeq) return;
+    lastDailySummary = null;
+    // A day the server hasn't reached yet (phone clock ahead) says so
+    out.innerHTML = /not happened yet/.test(err.message || '')
+      ? `<div class="placeholder-msg">${escHtml(err.message)}.</div>`
+      : '<div class="placeholder-msg">Failed to load.</div>';
+  }
+}
+
+const dsFmt = (v, d = 2) => (v == null ? '—' : Number(v).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d }));
+function dsFmtDate(day) {
+  return new Date(`${day}T12:00`).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+}
+function dsFmtStamp(ts) {
+  return ts ? new Date(ts).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+}
+function dsStateLine(d) {
+  // Readings only — order lines and plant totals move with them
+  const changes = Object.keys(d.marks || {}).filter(k => /^(canal|gauge|well):/.test(k)).length + (d.removed || []).length;
+  const parts = [DS_STATE[d.state] || d.state];
+  if (d.state === 'final' && d.final_at) parts[0] = `Final · saved ${dsFmtStamp(d.final_at)}`;
+  if (d.snapshot_at && changes) parts.push(`${changes} change${changes === 1 ? '' : 's'} after 3:30 PM`);
+  if (d.changed_since_final) parts.push(`${d.changed_since_final} reading${d.changed_since_final === 1 ? '' : 's'} edited since it was finalized`);
+  return parts.join(' · ');
+}
+// "after 3:30" badge for rows added or changed since the 3:30 snapshot
+function dsMarkHtml(d, r) {
+  const m = d.marks?.[r.key];
+  return m ? ` <span class="ds-mark">${m === 'added' ? 'added' : 'changed'} after 3:30</span>` : '';
+}
+// Every flag in the report, in section order, for the list at the top
+function dsAllFlags(d) {
+  const out = [];
+  const add = (sec, rows) => rows.forEach(r => (r.flags || []).forEach(f =>
+    out.push({ sec, name: r.name || r.label, time: r.time || '', text: f })));
+  add('canal', d.canal); add('gauges', d.gauges); add('wells', d.wells);
+  add('order', d.order?.lines || []); add('plants', d.plants);
+  return out;
+}
+
+function dsTable(cols, rows, rowFn) {
+  return `<div class="report-scroll"><table class="report-table ds-table">
+    <thead><tr>${cols.map(c => `<th${c.num ? ' class="report-num"' : ''}>${c.label}</th>`).join('')}</tr></thead>
+    <tbody>${rows.map(r => {
+      const flagged = (r.flags || []).length > 0;
+      return `<tr${flagged ? ' class="ds-flag-row"' : ''}>${rowFn(r)}</tr>` + (flagged
+        ? `<tr class="ds-flag-line"><td colspan="${cols.length}">${r.flags.map(f => `&#9888; ${escHtml(f)}`).join('<br>')}</td></tr>` : '');
+    }).join('')}</tbody></table></div>`;
+}
+
+function renderDailySummary(d) {
+  const flags = dsAllFlags(d);
+  const empty = what => `<div class="placeholder-msg">No ${what} found.</div>`;
+  const tot = r => `${dsFmt(r.totalizer)}${r.corrected ? ' <span class="ds-dim">(corr.)</span>' : ''}`;
+  const since = r => (r.af_since == null ? '—'
+    : `${dsFmt(r.af_since)}${r.expected_af != null ? ` <span class="ds-dim">/ ~${dsFmt(r.expected_af)}</span>` : ''}`);
+
+  const canal = d.canal.length ? dsTable(
+    [{ label: 'Structure' }, { label: 'Time' }, { label: 'CFS', num: true }, { label: 'Totalizer AF', num: true },
+     { label: 'AF since last / expected', num: true }, { label: 'By' }],
+    d.canal, r => `<td>${escHtml(r.name)}${dsMarkHtml(d, r)}</td><td>${escHtml(r.time)}</td>
+      <td class="report-num">${dsFmt(r.cfs, 1)}</td><td class="report-num">${tot(r)}</td>
+      <td class="report-num">${since(r)}</td><td>${escHtml(r.entered_by)}</td>`) : empty('canal readings');
+
+  const gauges = d.gauges.length ? dsTable(
+    [{ label: 'Pond / Outlet' }, { label: 'Time' }, { label: 'Level ft', num: true }, { label: 'Change', num: true },
+     { label: 'Max', num: true }, { label: 'By' }],
+    d.gauges, r => `<td>${escHtml(r.name)}${r.location ? ` <span class="ds-dim">${escHtml(r.location)}</span>` : ''}${dsMarkHtml(d, r)}</td>
+      <td>${escHtml(r.time)}</td><td class="report-num">${dsFmt(r.level)}</td>
+      <td class="report-num">${r.change == null ? '—' : (r.change > 0 ? '+' : '') + dsFmt(r.change)}</td>
+      <td class="report-num">${r.max_gauge == null ? '' : dsFmt(r.max_gauge)}</td><td>${escHtml(r.entered_by)}</td>`) : empty('staff gauge readings');
+
+  const wells = d.wells.length ? dsTable(
+    [{ label: 'Well' }, { label: 'Time' }, { label: 'On/Off' }, { label: 'CFS', num: true }, { label: 'Totalizer AF', num: true },
+     { label: 'AF since last / expected', num: true }],
+    d.wells, r => `<td>${escHtml(r.name)}${dsMarkHtml(d, r)}</td><td>${escHtml(r.time)}</td><td>${escHtml(r.on_off)}</td>
+      <td class="report-num">${dsFmt(r.cfs, 2)}</td><td class="report-num">${dsFmt(r.totalizer)}</td>
+      <td class="report-num">${since(r)}</td>`) : empty('well readings');
+
+  const ol = d.order?.lines || [];
+  const order = !d.order?.has_order ? '<div class="placeholder-msg">No water order found for this day.</div>'
+    : ol.length ? dsTable(
+      [{ label: 'Order line' }, { label: 'Ordered', num: true }, { label: 'Read', num: true }, { label: 'Diff', num: true }, { label: 'Read at' }],
+      ol, r => `<td>${escHtml(r.label)} <span class="ds-dim">${r.section === 'inflow' ? 'in' : 'out'}</span></td>
+        <td class="report-num">${dsFmt(r.ordered, 1)}</td>
+        <td class="report-num">${r.linked ? dsFmt(r.actual, 1) : '<span class="ds-dim">not linked</span>'}</td>
+        <td class="report-num">${r.diff == null ? '' : (r.diff > 0 ? '+' : '') + dsFmt(r.diff, 1)}</td>
+        <td class="ds-dim">${r.linked ? r.structures.map(s => `${escHtml(s.name)}${s.time ? ' ' + escHtml(s.time) : ' (not read)'}`).join(', ') : ''}</td>`)
+    : empty('water order lines');
+
+  const plants = d.plants.length ? dsTable(
+    [{ label: 'Plant' }, { label: 'Pump hours', num: true }, { label: 'Pumps run', num: true }, { label: 'Readings', num: true }],
+    d.plants, r => `<td>${escHtml(r.name)}</td><td class="report-num">${dsFmt(r.pump_hours, 1)}</td>
+      <td class="report-num">${r.pumps_run}/${r.pumps}</td><td class="report-num">${r.readings}</td>`) : empty('pumping plant readings');
+
+  const flagBox = flags.length
+    ? `<div class="ds-flags ds-flags-warn"><div class="ds-flags-head">&#9888; ${flags.length} to check</div><ul>${flags.map(f =>
+        `<li><strong>${escHtml(DS_SECTION_NAMES[f.sec])} · ${escHtml(f.name)}${f.time ? ' ' + escHtml(f.time) : ''}</strong> — ${escHtml(f.text)}</li>`).join('')}</ul></div>`
+    : '<div class="ds-flags ds-flags-ok">No readings out of the ordinary.</div>';
+  const removed = (d.removed || []).length
+    ? `<div class="ds-note">Removed after 3:30 PM: ${d.removed.map(escHtml).join(', ')}</div>` : '';
+
+  el('ds-output').innerHTML = `
+    <div class="report-card ds-card">
+      <div class="report-title">Daily Summary</div>
+      <div class="report-subtitle">${escHtml(dsFmtDate(d.day))}</div>
+      <div class="ds-state ds-state-${d.state}">${escHtml(dsStateLine(d))}</div>
+      ${flagBox}${removed}
+      <div class="ds-counts">${d.canal.length} canal · ${d.gauges.length} staff gauge · ${d.wells.length} well reading${d.wells.length === 1 ? '' : 's'}</div>
+      <div class="report-section-title">Canal Readings</div>${canal}
+      <div class="report-section-title">Staff Gauges</div>${gauges}
+      <div class="report-section-title">Wells</div>${wells}
+      <div class="report-section-title ds-sec-row">Water Order vs Read
+        <button class="btn btn-secondary btn-xs" id="ds-links-btn">Link Turnouts</button></div>${order}
+      <div class="report-section-title">Pumping Plants</div>${plants}
+      <div class="ds-note">Totalizer: AF since the last reading vs what its CFS would give over that time; flagged if backwards,
+        or off by more than 25% and 1 AF. Staff gauge: above max, or more than 1 ft from the last reading.
+        Water order: read CFS (latest that day, at the linked structures) more than 5 cfs and 10% from ordered.</div>
+    </div>`;
+  el('ds-links-btn').addEventListener('click', openDsLinks);
+}
+
+// ── Link water order lines to canal structures ──
+let _dsLinks = null;
+async function openDsLinks() {
+  el('ds-links-modal').classList.remove('hidden');
+  const body = el('ds-links-body');
+  body.innerHTML = '<div class="placeholder-msg">Loading…</div>';
+  try {
+    const r = await api('GET', '/api/reports/daily-summary/links');
+    _dsLinks = { ...r, links: Object.fromEntries(Object.entries(r.links || {}).map(([k, v]) => [k, v.map(Number)])) };
+    renderDsLinks();
+  } catch {
+    body.innerHTML = '<div class="placeholder-msg">Failed to load.</div>';
+  }
+}
+function renderDsLinks() {
+  const { lines, structures, links } = _dsLinks;
+  const nameOf = new Map(structures.map(s => [s.structure_id, s.structure_name]));
+  const opts = structures.map(s => `<option value="${s.structure_id}">${escHtml(s.structure_name)}</option>`).join('');
+  el('ds-links-body').innerHTML = ['inflow', 'outflow'].map(sec => `
+    <div class="report-section-title">${sec === 'inflow' ? 'Inflow' : 'Outflow'}</div>
+    ${lines.filter(l => l.section === sec).map(l => `
+      <div class="ds-link-row" data-line="${escHtml(l.line)}">
+        <div class="ds-link-label">${escHtml(l.label)}</div>
+        <div class="ds-link-chips">${(links[l.line] || []).map(id =>
+          `<span class="ds-link-chip">${escHtml(nameOf.get(id) || '#' + id)}<button type="button" data-remove="${id}" aria-label="Remove">&times;</button></span>`).join('')}
+          <select class="ctrl-select ds-link-add"><option value="">+ Add structure…</option>${opts}</select>
+        </div>
+      </div>`).join('')}`).join('');
+  el('ds-links-body').querySelectorAll('.ds-link-row').forEach(row => {
+    const line = row.dataset.line;
+    row.querySelector('.ds-link-add').addEventListener('change', e => {
+      const id = Number(e.target.value);
+      if (!id) return;
+      links[line] = [...new Set([...(links[line] || []), id])];
+      renderDsLinks();
+    });
+    row.querySelectorAll('[data-remove]').forEach(b => b.addEventListener('click', () => {
+      links[line] = (links[line] || []).filter(x => x !== Number(b.dataset.remove));
+      renderDsLinks();
+    }));
+  });
+}
+const closeDsLinks = () => el('ds-links-modal').classList.add('hidden');
+el('ds-links-close').addEventListener('click', closeDsLinks);
+el('ds-links-cancel').addEventListener('click', closeDsLinks);
+el('ds-links-save').addEventListener('click', async () => {
+  if (!_dsLinks) return;
+  const _save = beginSave(el('ds-links-save'));
+  try {
+    await api('PUT', '/api/reports/daily-summary/links', { links: _dsLinks.links });
+    showToast('Turnout links saved', 'success');
+    closeDsLinks();
+    loadDailySummary();
+  } catch (err) {
+    showToast(err.message, 'error');
+  } finally {
+    _save();
+  }
+});
+
+// ── Exports ──
+el('ds-export-btn').addEventListener('click', () => {
+  if (!lastDailySummary) return showToast('No report data to export', 'error');
+  exportContext = 'daily-summary';
+  el('export-modal-subtitle').textContent = `Daily Summary — ${dsFmtDate(lastDailySummary.day)}`;
+  el('export-modal').classList.remove('hidden');
+});
+
+function dsCsv(d) {
+  const q = v => (v == null || v === '') ? '' : /[,"\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v);
+  const line = a => a.map(q).join(',');
+  const chk = r => (r.flags || []).join('; ');
+  const mark = r => ({ added: 'Added after 3:30', changed: 'Changed after 3:30' }[d.marks?.[r.key]] || '');
+  const out = [line([`Daily Summary — ${d.day}`]), line([dsStateLine(d)]), '',
+    line(['Flagged']), ...dsAllFlags(d).map(f => line([`${DS_SECTION_NAMES[f.sec]} · ${f.name} ${f.time}`.trim(), f.text])), '',
+    line(['Canal Readings']), line(['Structure', 'Time', 'CFS', 'Totalizer AF', 'AF since last', 'Expected AF', 'Entered by', 'Notes', 'Check', 'After 3:30']),
+    ...d.canal.map(r => line([r.name, r.time, r.cfs, r.totalizer, r.af_since, r.expected_af, r.entered_by, r.notes, chk(r), mark(r)])), '',
+    line(['Staff Gauges']), line(['Location', 'Pond / Outlet', 'Time', 'Level ft', 'Previous', 'Change', 'Max', 'Entered by', 'Check', 'After 3:30']),
+    ...d.gauges.map(r => line([r.location, r.name, r.time, r.level, r.prev_level, r.change, r.max_gauge, r.entered_by, chk(r), mark(r)])), '',
+    line(['Wells']), line(['Well', 'Time', 'On/Off', 'CFS', 'Totalizer AF', 'AF since last', 'Expected AF', 'Check', 'After 3:30']),
+    ...d.wells.map(r => line([r.name, r.time, r.on_off, r.cfs, r.totalizer, r.af_since, r.expected_af, chk(r), mark(r)])), '',
+    line(['Water Order vs Read']), line(['Line', 'Section', 'Ordered CFS', 'Read CFS', 'Diff', 'Check']),
+    ...(d.order?.lines || []).map(r => line([r.label, r.section, r.ordered, r.linked ? r.actual : 'not linked', r.diff, chk(r)])), '',
+    line(['Pumping Plants']), line(['Plant', 'Pump hours', 'Pumps run', 'Readings', 'Check']),
+    ...d.plants.map(r => line([r.name, r.pump_hours, `${r.pumps_run}/${r.pumps}`, r.readings, chk(r)])),
+  ];
+  return out.join('\r\n');
+}
+
+// Own markup (not the screen's) so it fits one page where possible
+const DS_PDF_CSS = `
+  .pdf-root, .pdf-root * { color: #000; }
+  .ds-p-title { font-size: 13pt; font-weight: 700; text-align: center; }
+  .ds-p-sub { font-size: 8.5pt; text-align: center; margin: 1px 0 6px; }
+  .ds-p-h { font-size: 8pt; font-weight: 700; text-transform: uppercase; border-bottom: 1px solid #000; margin: 7px 0 2px; padding-bottom: 1px; }
+  .ds-p-flags { border: 1px solid #b45309; background: #fff7e6; padding: 3px 6px; font-size: 7.5pt; margin-bottom: 4px; }
+  .ds-p-flags div { margin: 1px 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 7.5pt; }
+  th { text-align: left; font-size: 6.8pt; text-transform: uppercase; border-bottom: 1px solid #000; padding: 1px 3px; }
+  td { padding: 1px 3px; border-bottom: 0.5px solid #ddd; vertical-align: top; }
+  .n { text-align: right; white-space: nowrap; }
+  .f td { background: #fff3cd; }
+  .fl td { font-size: 7pt; color: #92400e; border-bottom: 0.5px solid #ddd; padding-left: 10px; }
+  .m { font-size: 6.5pt; color: #1d4ed8; }
+  .note { font-size: 6.8pt; color: #333; margin-top: 4px; }
+  tr { page-break-inside: avoid; }`;
+
+function buildDailySummaryPdfHtml(d) {
+  const f2 = (v, n = 2) => (v == null ? '' : Number(v).toFixed(n));
+  const mk = r => (d.marks?.[r.key] ? ` <span class="m">(${d.marks[r.key]} after 3:30)</span>` : '');
+  const tbl = (head, rows, cells) => rows.length ? `<table><thead><tr>${head.map(h => `<th${h[1] ? ' class="n"' : ''}>${h[0]}</th>`).join('')}</tr></thead><tbody>${
+    rows.map(r => `<tr${(r.flags || []).length ? ' class="f"' : ''}>${cells(r)}</tr>${(r.flags || []).length
+      ? `<tr class="fl"><td colspan="${head.length}">&#9888; ${r.flags.map(escHtml).join(' &nbsp;&#9888; ')}</td></tr>` : ''}`).join('')}</tbody></table>`
+    : '<div class="note">None.</div>';
+  const flags = dsAllFlags(d);
+  return `
+    <div class="ds-p-title">Daily Summary — ${escHtml(dsFmtDate(d.day))}</div>
+    <div class="ds-p-sub">${escHtml(dsStateLine(d))}</div>
+    <div class="ds-p-flags">${flags.length ? `<strong>&#9888; ${flags.length} to check</strong>${flags.map(f =>
+      `<div>${escHtml(DS_SECTION_NAMES[f.sec])} · ${escHtml(f.name)}${f.time ? ' ' + escHtml(f.time) : ''} — ${escHtml(f.text)}</div>`).join('')}`
+      : 'No readings out of the ordinary.'}</div>
+    <div class="ds-p-h">Canal Readings (${d.canal.length})</div>
+    ${tbl([['Structure'], ['Time'], ['CFS', 1], ['Totalizer AF', 1], ['AF since', 1], ['Expected', 1], ['By']], d.canal, r =>
+      `<td>${escHtml(r.name)}${mk(r)}</td><td>${escHtml(r.time)}</td><td class="n">${f2(r.cfs, 1)}</td><td class="n">${f2(r.totalizer)}</td>
+       <td class="n">${f2(r.af_since)}</td><td class="n">${f2(r.expected_af)}</td><td>${escHtml(r.entered_by)}</td>`)}
+    <div class="ds-p-h">Staff Gauges (${d.gauges.length})</div>
+    ${tbl([['Pond / Outlet'], ['Location'], ['Time'], ['Level', 1], ['Change', 1], ['Max', 1], ['By']], d.gauges, r =>
+      `<td>${escHtml(r.name)}${mk(r)}</td><td>${escHtml(r.location)}</td><td>${escHtml(r.time)}</td><td class="n">${f2(r.level)}</td>
+       <td class="n">${r.change == null ? '' : (r.change > 0 ? '+' : '') + f2(r.change)}</td><td class="n">${f2(r.max_gauge)}</td><td>${escHtml(r.entered_by)}</td>`)}
+    <div class="ds-p-h">Wells (${d.wells.length})</div>
+    ${tbl([['Well'], ['Time'], ['On/Off'], ['CFS', 1], ['Totalizer AF', 1], ['AF since', 1], ['Expected', 1]], d.wells, r =>
+      `<td>${escHtml(r.name)}${mk(r)}</td><td>${escHtml(r.time)}</td><td>${escHtml(r.on_off)}</td><td class="n">${f2(r.cfs)}</td>
+       <td class="n">${f2(r.totalizer)}</td><td class="n">${f2(r.af_since)}</td><td class="n">${f2(r.expected_af)}</td>`)}
+    <div class="ds-p-h">Water Order vs Read</div>
+    ${d.order?.has_order ? tbl([['Line'], ['Ordered', 1], ['Read', 1], ['Diff', 1]], d.order.lines, r =>
+      `<td>${escHtml(r.label)}</td><td class="n">${f2(r.ordered, 1)}</td><td class="n">${r.linked ? f2(r.actual, 1) : 'not linked'}</td>
+       <td class="n">${r.diff == null ? '' : (r.diff > 0 ? '+' : '') + f2(r.diff, 1)}</td>`) : '<div class="note">No water order for this day.</div>'}
+    <div class="ds-p-h">Pumping Plants</div>
+    ${tbl([['Plant'], ['Pump hours', 1], ['Pumps run', 1], ['Readings', 1]], d.plants, r =>
+      `<td>${escHtml(r.name)}</td><td class="n">${f2(r.pump_hours, 1)}</td><td class="n">${r.pumps_run}/${r.pumps}</td><td class="n">${r.readings}</td>`)}
+    ${(d.removed || []).length ? `<div class="note">Removed after 3:30 PM: ${d.removed.map(escHtml).join(', ')}</div>` : ''}
+    <div class="note">Totalizer flagged if backwards, or off from what its CFS implies by more than 25% and 1 AF.
+      Staff gauge flagged above max or more than 1 ft from the last reading.</div>`;
+}
 
 // ── Vehicles Panel ────────────────────────────────────────────────────────────
 function updateReportsMonthLabel() {
@@ -13984,6 +14296,12 @@ el('export-csv-btn').addEventListener('click', async () => {
     return;
   }
 
+  if (exportContext === 'daily-summary') {
+    if (!lastDailySummary) return;
+    await shareFile(new Blob([dsCsv(lastDailySummary)], { type: 'text/csv' }), `DailySummary_${lastDailySummary.day}.csv`, 'Daily Summary');
+    return;
+  }
+
   if (exportContext === 'pp-report') {
     if (!lastPPReport) return;
     await shareFile(new Blob([pprCsv(lastPPReport)], { type: 'text/csv' }), `${pprExportName(lastPPReport)}.csv`, 'Pumping Plant');
@@ -14088,6 +14406,14 @@ el('export-xlsx-btn').addEventListener('click', async () => {
       const res = await fetch(`/api/reports/vehicle-service/export?token=${token}`);
       if (!res.ok) throw new Error('Export failed');
       await shareFile(await res.blob(), 'LastService.xlsx', 'Last Service');
+      return;
+    }
+    if (exportContext === 'daily-summary') {
+      if (!lastDailySummary) throw new Error('No report data to export');
+      const { token } = await api('POST', '/api/reports/download-token', {});
+      const res = await fetch(`/api/reports/daily-summary/export?date=${lastDailySummary.day}&token=${token}`);
+      if (!res.ok) throw new Error('Export failed');
+      await shareFile(await res.blob(), `DailySummary_${lastDailySummary.day}.xlsx`, 'Daily Summary');
       return;
     }
     if (exportContext === 'pp-report') {
@@ -14394,6 +14720,9 @@ el('export-pdf-btn').addEventListener('click', async () => {
       const card = el('report-output').querySelector('.report-card');
       if (!card) throw new Error('No report to export');
       await sharePdfFromHtml(card.outerHTML, REPORT_PDF_CSS, 'LastService', 'Last Service');
+    } else if (exportContext === 'daily-summary') {
+      if (!lastDailySummary) throw new Error('No report to export');
+      await sharePdfFromHtml(buildDailySummaryPdfHtml(lastDailySummary), DS_PDF_CSS, `DailySummary_${lastDailySummary.day}`, 'Daily Summary');
     } else if (exportContext === 'pp-report') {
       if (!lastPPReport) throw new Error('No report to export');
       await sharePdfFromHtml(await buildPPReportPdfHtml(lastPPReport), PPR_PDF_CSS, pprExportName(lastPPReport), 'Pumping Plant');

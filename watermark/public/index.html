@@ -133,7 +133,7 @@
         Sign in with Microsoft 365
       </a>
       <div id="ms-login-error" class="error-msg hidden"></div>
-      <div class="login-version">v 3.53</div>
+      <div class="login-version">v 3.54</div>
     </div>
   </div>
 </div>
@@ -1654,6 +1654,12 @@
 
     <!-- Category tiles -->
     <div id="report-main" class="dashboard-grid">
+      <div class="dash-tile" data-report-cat="daily">
+        <div class="dash-icon-wrap">
+          <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-reports.svg);mask-image:url(/marv-site/icons/icon-reports.svg)"></span>
+        </div>
+        <div class="dash-label">Daily Summary</div>
+      </div>
       <div class="dash-tile" data-report-cat="vehicles">
         <div class="dash-icon-wrap">
           <span class="app-icon" style="width:28px;height:28px;-webkit-mask-image:url(/marv-site/icons/icon-vehicles.svg);mask-image:url(/marv-site/icons/icon-vehicles.svg)"></span>
@@ -1819,6 +1825,18 @@
 
     <!-- Pumping Plant panel: usage from the pump hour, compressor hour, PG&E and
          power monitor meters, laid out like the SCADA dashboard -->
+    <!-- Daily Summary: one day's readings with anything odd flagged (see buildDailySummary in server.js) -->
+    <div id="report-panel-daily" class="maint-panel hidden">
+      <div class="report-toolbar">
+        <button class="btn btn-secondary btn-sm" id="ds-prev" title="Previous day" aria-label="Previous day">&#8592;</button>
+        <input type="date" id="ds-date" class="ctrl-input ctrl-input-sm">
+        <button class="btn btn-secondary btn-sm" id="ds-next" title="Next day" aria-label="Next day">&#8594;</button>
+        <button class="btn btn-secondary btn-sm" id="ds-today">Today</button>
+        <button class="btn btn-secondary btn-sm" id="ds-export-btn" style="margin-left:auto"><span class="app-icon" style="width:14px;height:14px;-webkit-mask-image:url(/marv-site/icons/icon-download.svg);mask-image:url(/marv-site/icons/icon-download.svg)"></span> Export</button>
+      </div>
+      <div id="ds-output"><div class="placeholder-msg">Loading…</div></div>
+    </div>
+
     <div id="report-panel-pp" class="maint-panel hidden">
       <div class="scada-plant-pills" id="ppr-plants"></div>
       <div class="report-toolbar">
@@ -2213,7 +2231,7 @@
     <div id="settings-panel-appinfo" class="settings-panel hidden">
       <div class="settings-section">
         <div class="settings-card">
-          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 3.53</span></div>
+          <div class="settings-row"><span class="settings-label">Version</span><span class="settings-value" id="appinfo-version-tap" style="cursor:default">v 3.54</span></div>
           <div class="settings-row"><span class="settings-label">Last Sync</span><span id="settings-last-sync" class="settings-value">—</span></div>
           <div class="settings-row"><span class="settings-label">Database</span><span id="settings-db-status" class="settings-value">—</span></div>
         </div>
@@ -3454,6 +3472,27 @@
 
 <!-- Toast notification -->
 <div id="toast" class="toast hidden"></div>
+
+<!-- Daily Summary: link water order lines to the canal structures that carry them -->
+<div id="ds-links-modal" class="modal-overlay hidden">
+  <div class="modal-card" style="max-width:640px">
+    <div class="modal-header">
+      <h2>Link Water Order Lines</h2>
+      <button class="modal-close" id="ds-links-close">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:0.85rem;color:var(--text-dim);margin:0 0 10px">
+        Pick the canal structure(s) whose readings make up each water order line. The
+        Daily Summary compares the ordered CFS with the CFS read there that day.
+      </p>
+      <div id="ds-links-body"><div class="placeholder-msg">Loading…</div></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" id="ds-links-cancel">Cancel</button>
+      <button class="btn btn-save" id="ds-links-save">Save</button>
+    </div>
+  </div>
+</div>
 
 <script src="app.js"></script>
 <script src="scada.js"></script>

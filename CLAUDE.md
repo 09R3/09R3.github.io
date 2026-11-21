@@ -297,6 +297,7 @@ canal_issues               issue_id(PK), pool, status, description, reported_dat
 canal_structures           structure_id(PK), structure_name, structure_type, flow_direction, in_service, sort_order, constructed_date, gate_capacity(NUMERIC), design_capacity(NUMERIC), operational_capacity(NUMERIC), owner, who_maintains, gps_latitude(NUMERIC), gps_longitude(NUMERIC), has_flow_meter, meter_type, meter_model, meter_status, formula_or_chart_ref, notes
 charge_code_splits         split_id(PK), name, components(jsonb), status, created_by, created_at, updated_at
 charge_codes               code_id(PK), code, description, status, created_by, created_at, updated_at
+daily_summaries            day(PK DATE), snapshot(jsonb), snapshot_at, final(jsonb), final_at
 dirt_work_issues           issue_id(PK), pool, work_type, description, location_notes, reported_date, resolved_date, status, action_taken, resolution_notes, po_number, cost(NUMERIC), assigned_to, entered_by, notes, gps_lat(DOUBLE), gps_lon(DOUBLE), created_at, updated_at
 equipment_issues           issue_id(PK), equipment_type, equipment_id, equipment_name, status, description, reported_date, resolved_date, resolution_notes, entered_by, assigned_to, notes, created_at, updated_at, action_taken, po_number, cost(NUMERIC)
 equipment_swaps            swap_id(PK), category, swap_date, location, item_removed_id, item_installed_id, removed_description, installed_description, performed_by, notes, entered_by, created_at
